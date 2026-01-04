@@ -411,6 +411,14 @@ std::string token_type_to_string(const GloinTokenType type) {
             return "IN";
         case GLOIN_TOKEN_RANGE:
             return "RANGE";
+        case GLOIN_TOKEN_PACKED:
+            return "PACKED";
+        case GLOIN_TOKEN_BIT:
+            return "BIT";
+        case GLOIN_TOKEN_KEYWORD_AT:
+            return "AT_KEYWORD";
+        case GLOIN_TOKEN_CUSTOM_WIDTH_INT:
+            return "CUSTOM_WIDTH_INT";
         case GLOIN_TOKEN_BE_I8: return "BE_I8";
         case GLOIN_TOKEN_BE_I16: return "BE_I16";
         case GLOIN_TOKEN_BE_I32: return "BE_I32";
@@ -726,6 +734,9 @@ GloinTokenType get_keyword_type(std::string_view identifier) {
         {"spawnable", GLOIN_TOKEN_SPAWNABLE},
         {"run", GLOIN_TOKEN_RUN},
         {"in", GLOIN_TOKEN_IN},
+        {"packed", GLOIN_TOKEN_PACKED},
+        {"bit", GLOIN_TOKEN_BIT},
+        {"at", GLOIN_TOKEN_KEYWORD_AT},
         // Big Endian
         {"be_i8", GLOIN_TOKEN_BE_I8}, {"be_i16", GLOIN_TOKEN_BE_I16}, {"be_i32", GLOIN_TOKEN_BE_I32}, {"be_i64", GLOIN_TOKEN_BE_I64}, {"be_i128", GLOIN_TOKEN_BE_I128},
         {"be_u8", GLOIN_TOKEN_BE_U8}, {"be_u16", GLOIN_TOKEN_BE_U16}, {"be_u32", GLOIN_TOKEN_BE_U32}, {"be_u64", GLOIN_TOKEN_BE_U64}, {"be_u128", GLOIN_TOKEN_BE_U128},
@@ -737,6 +748,21 @@ GloinTokenType get_keyword_type(std::string_view identifier) {
     if (const auto it = keywords.find(identifier); it != keywords.end()) {
         return it->second;
     }
+
+    // Check for custom width integers (u4, u5, etc.)
+    if (identifier.size() > 1 && identifier[0] == 'u') {
+        bool all_digits = true;
+        for (size_t i = 1; i < identifier.size(); ++i) {
+            if (!isdigit(identifier[i])) {
+                all_digits = false;
+                break;
+            }
+        }
+        if (all_digits) {
+            return GLOIN_TOKEN_CUSTOM_WIDTH_INT;
+        }
+    }
+
     return GLOIN_TOKEN_IDENTIFIER;
 }
 

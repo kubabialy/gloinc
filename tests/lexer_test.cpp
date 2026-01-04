@@ -188,3 +188,21 @@ TEST(LexerTest, HandlesEndiannessKeywords) {
     ExpectToken(lexer.next_token(), GLOIN_TOKEN_BE_I64, "be_i64");
     ExpectToken(lexer.next_token(), GLOIN_TOKEN_LE_I8, "le_i8");
 }
+
+TEST(LexerTest, HandlesBitmappingKeywords) {
+    std::string input = "packed bit at";
+    Lexer lexer(input);
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_PACKED, "packed");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_BIT, "bit");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_KEYWORD_AT, "at");
+}
+
+TEST(LexerTest, HandlesCustomWidthIntegers) {
+    std::string input = "u4 u5 u6 u2 u20";
+    Lexer lexer(input);
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_CUSTOM_WIDTH_INT, "u4");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_CUSTOM_WIDTH_INT, "u5");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_CUSTOM_WIDTH_INT, "u6");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_CUSTOM_WIDTH_INT, "u2");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_CUSTOM_WIDTH_INT, "u20");
+}
