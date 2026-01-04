@@ -44,7 +44,12 @@ GloinToken Lexer::next_token() {
             while (temp_pos < src.size() &&
                    (isdigit(src[temp_pos]) || src[temp_pos] == '.')) {
                 if (src[temp_pos] == '.') {
-                    has_decimal = 1;
+                    // Check if it is followed by another dot (Range operator ..)
+                    if (temp_pos + 1 < src.size() && src[temp_pos + 1] == '.') {
+                        has_decimal = 0;
+                    } else {
+                        has_decimal = 1;
+                    }
                     break;
                 }
                 temp_pos++;
@@ -228,6 +233,11 @@ GloinToken Lexer::next_token() {
                 advance();
                 return {"?", line, GLOIN_TOKEN_QUESTION, column};
             case '.':
+                if (peek_token() == '.') {
+                    advance();
+                    advance();
+                    return {"..", line, GLOIN_TOKEN_RANGE, column};
+                }
                 advance();
                 return {".", line, GLOIN_TOKEN_DOT, column};
             case ',':
@@ -397,6 +407,30 @@ std::string token_type_to_string(const GloinTokenType type) {
             return "SPAWNABLE";
         case GLOIN_TOKEN_RUN:
             return "RUN";
+        case GLOIN_TOKEN_IN:
+            return "IN";
+        case GLOIN_TOKEN_RANGE:
+            return "RANGE";
+        case GLOIN_TOKEN_BE_I8: return "BE_I8";
+        case GLOIN_TOKEN_BE_I16: return "BE_I16";
+        case GLOIN_TOKEN_BE_I32: return "BE_I32";
+        case GLOIN_TOKEN_BE_I64: return "BE_I64";
+        case GLOIN_TOKEN_BE_I128: return "BE_I128";
+        case GLOIN_TOKEN_BE_U8: return "BE_U8";
+        case GLOIN_TOKEN_BE_U16: return "BE_U16";
+        case GLOIN_TOKEN_BE_U32: return "BE_U32";
+        case GLOIN_TOKEN_BE_U64: return "BE_U64";
+        case GLOIN_TOKEN_BE_U128: return "BE_U128";
+        case GLOIN_TOKEN_LE_I8: return "LE_I8";
+        case GLOIN_TOKEN_LE_I16: return "LE_I16";
+        case GLOIN_TOKEN_LE_I32: return "LE_I32";
+        case GLOIN_TOKEN_LE_I64: return "LE_I64";
+        case GLOIN_TOKEN_LE_I128: return "LE_I128";
+        case GLOIN_TOKEN_LE_U8: return "LE_U8";
+        case GLOIN_TOKEN_LE_U16: return "LE_U16";
+        case GLOIN_TOKEN_LE_U32: return "LE_U32";
+        case GLOIN_TOKEN_LE_U64: return "LE_U64";
+        case GLOIN_TOKEN_LE_U128: return "LE_U128";
         case GLOIN_TOKEN_COMMENT:
             return "COMMENT";
         case GLOIN_TOKEN_NEWLINE:
@@ -691,6 +725,13 @@ GloinTokenType get_keyword_type(std::string_view identifier) {
         {"deferred", GLOIN_TOKEN_DEFERRED},
         {"spawnable", GLOIN_TOKEN_SPAWNABLE},
         {"run", GLOIN_TOKEN_RUN},
+        {"in", GLOIN_TOKEN_IN},
+        // Big Endian
+        {"be_i8", GLOIN_TOKEN_BE_I8}, {"be_i16", GLOIN_TOKEN_BE_I16}, {"be_i32", GLOIN_TOKEN_BE_I32}, {"be_i64", GLOIN_TOKEN_BE_I64}, {"be_i128", GLOIN_TOKEN_BE_I128},
+        {"be_u8", GLOIN_TOKEN_BE_U8}, {"be_u16", GLOIN_TOKEN_BE_U16}, {"be_u32", GLOIN_TOKEN_BE_U32}, {"be_u64", GLOIN_TOKEN_BE_U64}, {"be_u128", GLOIN_TOKEN_BE_U128},
+        // Little Endian
+        {"le_i8", GLOIN_TOKEN_LE_I8}, {"le_i16", GLOIN_TOKEN_LE_I16}, {"le_i32", GLOIN_TOKEN_LE_I32}, {"le_i64", GLOIN_TOKEN_LE_I64}, {"le_i128", GLOIN_TOKEN_LE_I128},
+        {"le_u8", GLOIN_TOKEN_LE_U8}, {"le_u16", GLOIN_TOKEN_LE_U16}, {"le_u32", GLOIN_TOKEN_LE_U32}, {"le_u64", GLOIN_TOKEN_LE_U64}, {"le_u128", GLOIN_TOKEN_LE_U128},
         {"_", GLOIN_TOKEN_UNDERSCORE}
     };
     if (const auto it = keywords.find(identifier); it != keywords.end()) {

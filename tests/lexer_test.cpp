@@ -159,3 +159,32 @@ TEST(LexerTest, HandlesUnknown) {
     Lexer lexer(input);
     ExpectToken(lexer.next_token(), GLOIN_TOKEN_UNKNOWN, "$");
 }
+
+TEST(LexerTest, HandlesInKeyword) {
+    std::string input = "in";
+    Lexer lexer(input);
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_IN, "in");
+}
+
+TEST(LexerTest, HandlesRangeOperator) {
+    std::string input = "..";
+    Lexer lexer(input);
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_RANGE, "..");
+}
+
+TEST(LexerTest, HandlesRangeInContext) {
+    std::string input = "0..10";
+    Lexer lexer(input);
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_NUMBER, "0");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_RANGE, "..");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_NUMBER, "10");
+}
+
+TEST(LexerTest, HandlesEndiannessKeywords) {
+    std::string input = "be_u32 le_u16 be_i64 le_i8";
+    Lexer lexer(input);
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_BE_U32, "be_u32");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_LE_U16, "le_u16");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_BE_I64, "be_i64");
+    ExpectToken(lexer.next_token(), GLOIN_TOKEN_LE_I8, "le_i8");
+}
