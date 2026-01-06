@@ -206,3 +206,61 @@ TEST(LexerTest, HandlesCustomWidthIntegers) {
     ExpectToken(lexer.next_token(), GLOIN_TOKEN_CUSTOM_WIDTH_INT, "u2");
     ExpectToken(lexer.next_token(), GLOIN_TOKEN_CUSTOM_WIDTH_INT, "u20");
 }
+
+// Helper to check token details including position
+void ExpectTokenPos(const GloinToken& token, GloinTokenType type, const std::string& literal, int line, int column) {
+    EXPECT_EQ(token.type, type) << "Expected type " << type << " but got " << token.type;
+    EXPECT_EQ(token.literal, literal) << "Expected literal '" << literal << "' but got '" << token.literal << "'";
+    EXPECT_EQ(token.line_number, line) << "Expected line " << line << " but got " << token.line_number << " for token '" << literal << "'";
+    EXPECT_EQ(token.column, column) << "Expected column " << column << " but got " << token.column << " for token '" << literal << "'";
+}
+
+TEST(LexerTest, TrackLineNumbers) {
+    std::string input = "a\nb\nc";
+    Lexer lexer(input);
+
+    // 'a' at 1:1
+    ExpectTokenPos(lexer.next_token(), GLOIN_TOKEN_IDENTIFIER, "a", 1, 1);
+    
+    GloinToken nl1 = lexer.next_token();
+    EXPECT_EQ(nl1.type, GLOIN_TOKEN_NEWLINE);
+    
+    GloinToken b = lexer.next_token();
+    EXPECT_EQ(b.literal, "b");
+    
+    GloinToken nl2 = lexer.next_token();
+    EXPECT_EQ(nl2.type, GLOIN_TOKEN_NEWLINE);
+    
+    GloinToken c = lexer.next_token();
+    EXPECT_EQ(c.literal, "c");
+    
+    // Correct behavior should be:
+    // a: line 1
+    // nl1: line 1
+    // b: line 2
+    // nl2: line 2
+    // c: line 3
+    
+    EXPECT_EQ(c.line_number, 3);
+}
+
+TEST(LexerTest, TrackColumns) {
+    std::string input = "abc ghi";
+    Lexer lexer(input);
+    
+    // abc at 1:1. Len 3.
+    ExpectTokenPos(lexer.next_token(), GLOIN_TOKEN_IDENTIFIER, "abc", 1, 1);
+    
+    // space at 1:4. Skipped.
+    
+    // ghi at 1:5.
+    ExpectTokenPos(lexer.next_token(), GLOIN_TOKEN_IDENTIFIER, "ghi", 1, 5);
+}
+
+TEST(LexerTest, TrackFloatColumns) {
+    std::string input = "1.23";
+    Lexer lexer(input);
+    
+    // 1.23 at 1:1
+    ExpectTokenPos(lexer.next_token(), GLOIN_TOKEN_FLOAT, "1.23", 1, 1);
+}

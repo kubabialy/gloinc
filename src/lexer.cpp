@@ -17,11 +17,11 @@ GloinToken Lexer::next_token() {
         }
 
         if (current_char == '\n') {
-            column = 1;
-            line++;
+            const int start_line = line;
+            const int start_column = column;
             const std::string_view literal(&src[position], 1);
             advance();
-            return {literal, line, GLOIN_TOKEN_NEWLINE, column};
+            return {literal, start_line, GLOIN_TOKEN_NEWLINE, start_column};
         }
 
         if (current_char == '/' && peek_token() == '/') {
@@ -29,12 +29,16 @@ GloinToken Lexer::next_token() {
             continue;
         }
 
+        // Capture start position for the token
+        const int start_line = line;
+        const int start_column = column;
+
         if (current_char == '"') {
-            return read_string(line, column);
+            return read_string(start_line, start_column);
         }
 
         if (current_char == '\'') {
-            return {read_char(), line, GLOIN_TOKEN_CHAR, column};
+            return {read_char(), start_line, GLOIN_TOKEN_CHAR, start_column};
         }
 
         if (isdigit(current_char)) {
@@ -56,203 +60,203 @@ GloinToken Lexer::next_token() {
             }
 
             if (has_decimal) {
-                return {read_float(), line, GLOIN_TOKEN_FLOAT, column};
+                return {read_float(), start_line, GLOIN_TOKEN_FLOAT, start_column};
             }
 
-            return {read_number(), line, GLOIN_TOKEN_NUMBER, column};
+            return {read_number(), start_line, GLOIN_TOKEN_NUMBER, start_column};
         }
 
         if (isalpha(current_char) || current_char == '_') {
             const auto identifier = read_identifier();
-            return {identifier, line, get_keyword_type(identifier), column};
+            return {identifier, start_line, get_keyword_type(identifier), start_column};
         }
 
         switch (current_char) {
             case '(':
                 advance();
-                return {{"(", 1}, line, GLOIN_TOKEN_LPAREN, column};
+                return {{"(", 1}, start_line, GLOIN_TOKEN_LPAREN, start_column};
             case ')':
                 advance();
-                return {{")", 1}, line, GLOIN_TOKEN_RPAREN, column};
+                return {{")", 1}, start_line, GLOIN_TOKEN_RPAREN, start_column};
             case '{':
                 advance();
-                return {{"{", 1}, line, GLOIN_TOKEN_LBRACE, column};
+                return {{"{", 1}, start_line, GLOIN_TOKEN_LBRACE, start_column};
             case '}':
                 advance();
-                return {{"}", 1}, line, GLOIN_TOKEN_RBRACE, column};
+                return {{"}", 1}, start_line, GLOIN_TOKEN_RBRACE, start_column};
             case '[':
                 advance();
-                return {{"[", 1}, line, GLOIN_TOKEN_LBRACKET, column};
+                return {{"[", 1}, start_line, GLOIN_TOKEN_LBRACKET, start_column};
             case ']':
                 advance();
-                return {{"]", 1}, line, GLOIN_TOKEN_RBRACKET, column};
+                return {{"]", 1}, start_line, GLOIN_TOKEN_RBRACKET, start_column};
             case ';':
                 advance();
-                return {";", line, GLOIN_TOKEN_SEMICOLON, column};
+                return {";", start_line, GLOIN_TOKEN_SEMICOLON, start_column};
             case ':':
                 if (peek_token() == ':') {
                     advance();
                     advance();
-                    return {"::", line, GLOIN_TOKEN_DOUBLE_COLON, column};
+                    return {"::", start_line, GLOIN_TOKEN_DOUBLE_COLON, start_column};
                 }
                 advance();
-                return {":", line, GLOIN_TOKEN_COLON, column};
+                return {":", start_line, GLOIN_TOKEN_COLON, start_column};
             case '=':
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"==", line, GLOIN_TOKEN_EQ, column};
+                    return {"==", start_line, GLOIN_TOKEN_EQ, start_column};
                 }
 
                 if (peek_token() == '>') {
                     advance();
                     advance();
-                    return {"=>", line, GLOIN_TOKEN_DOUBLE_ARROW, column};
+                    return {"=>", start_line, GLOIN_TOKEN_DOUBLE_ARROW, start_column};
                 }
 
                 advance();
-                return {"=", line, GLOIN_TOKEN_ASSIGN, column};
+                return {"=", start_line, GLOIN_TOKEN_ASSIGN, start_column};
             case '+':
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"+=", line, GLOIN_TOKEN_PLUS_ASSIGN, column};
+                    return {"+=", start_line, GLOIN_TOKEN_PLUS_ASSIGN, start_column};
                 }
                 advance();
-                return {"+", line, GLOIN_TOKEN_PLUS, column};
+                return {"+", start_line, GLOIN_TOKEN_PLUS, start_column};
             case '-':
                 if (peek_token() == '>') {
                     advance();
                     advance();
-                    return {"->", line, GLOIN_TOKEN_ARROW, column};
+                    return {"->", start_line, GLOIN_TOKEN_ARROW, start_column};
                 }
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"-=", line, GLOIN_TOKEN_MINUS_ASSIGN, column};
+                    return {"-=", start_line, GLOIN_TOKEN_MINUS_ASSIGN, start_column};
                 }
                 advance();
-                return {"-", line, GLOIN_TOKEN_MINUS, column};
+                return {"-", start_line, GLOIN_TOKEN_MINUS, start_column};
             case '*':
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"*=", line, GLOIN_TOKEN_MULTIPLY_ASSIGN, column};
+                    return {"*=", start_line, GLOIN_TOKEN_MULTIPLY_ASSIGN, start_column};
                 }
                 advance();
-                return {"*", line, GLOIN_TOKEN_MULTIPLY, column};
+                return {"*", start_line, GLOIN_TOKEN_MULTIPLY, start_column};
             case '/':
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"/=", line, GLOIN_TOKEN_DIVIDE_ASSIGN, column};
+                    return {"/=", start_line, GLOIN_TOKEN_DIVIDE_ASSIGN, start_column};
                 }
                 advance();
-                return {"/", line, GLOIN_TOKEN_DIVIDE, column};
+                return {"/", start_line, GLOIN_TOKEN_DIVIDE, start_column};
             case '!':
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"!=", line, GLOIN_TOKEN_NE, column};
+                    return {"!=", start_line, GLOIN_TOKEN_NE, start_column};
                 }
                 advance();
-                return {"!", line, GLOIN_TOKEN_NOT, column};
+                return {"!", start_line, GLOIN_TOKEN_NOT, start_column};
             case '<':
                 if (peek_token() == '<') {
                     advance();
                     advance();
-                    return {"<<", line, GLOIN_TOKEN_SHL, column};
+                    return {"<<", start_line, GLOIN_TOKEN_SHL, start_column};
                 }
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"<=", line, GLOIN_TOKEN_LE, column};
+                    return {"<=", start_line, GLOIN_TOKEN_LE, start_column};
                 }
                 advance();
-                return {"<", line, GLOIN_TOKEN_LT, column};
+                return {"<", start_line, GLOIN_TOKEN_LT, start_column};
             case '>':
                 if (peek_token() == '>') {
                     advance();
                     advance();
-                    return {">>", line, GLOIN_TOKEN_SHR, column};
+                    return {">>", start_line, GLOIN_TOKEN_SHR, start_column};
                 }
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {">=", line, GLOIN_TOKEN_GE, column};
+                    return {">=", start_line, GLOIN_TOKEN_GE, start_column};
                 }
 
                 advance();
-                return {">", line, GLOIN_TOKEN_GT, column};
+                return {">", start_line, GLOIN_TOKEN_GT, start_column};
             case '&':
                 if (peek_token() == '&') {
                     advance();
                     advance();
-                    return {"&&", line, GLOIN_TOKEN_AND, column};
+                    return {"&&", start_line, GLOIN_TOKEN_AND, start_column};
                 }
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"&=", line, GLOIN_TOKEN_AND_ASSIGN, column};
+                    return {"&=", start_line, GLOIN_TOKEN_AND_ASSIGN, start_column};
                 }
                 advance();
-                return {"&", line, GLOIN_TOKEN_AMPERSAND, column};
+                return {"&", start_line, GLOIN_TOKEN_AMPERSAND, start_column};
             case '|':
                 if (peek_token() == '|') {
                     advance();
                     advance();
-                    return {"||", line, GLOIN_TOKEN_OR, column};
+                    return {"||", start_line, GLOIN_TOKEN_OR, start_column};
                 }
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"|=", line, GLOIN_TOKEN_OR_ASSIGN, column};
+                    return {"|=", start_line, GLOIN_TOKEN_OR_ASSIGN, start_column};
                 }
                 advance();
-                return {"|", line, GLOIN_TOKEN_PIPE, column};
+                return {"|", start_line, GLOIN_TOKEN_PIPE, start_column};
             case '^':
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"^=", line, GLOIN_TOKEN_XOR_ASSIGN, column};
+                    return {"^=", start_line, GLOIN_TOKEN_XOR_ASSIGN, start_column};
                 }
                 advance();
-                return {"^", line, GLOIN_TOKEN_CARET, column};
+                return {"^", start_line, GLOIN_TOKEN_CARET, start_column};
             case '~':
                 advance();
-                return {"~", line, GLOIN_TOKEN_TILDE, column};
+                return {"~", start_line, GLOIN_TOKEN_TILDE, start_column};
             case '%':
                 if (peek_token() == '=') {
                     advance();
                     advance();
-                    return {"%=", line, GLOIN_TOKEN_MODULO_ASSIGN, column};
+                    return {"%=", start_line, GLOIN_TOKEN_MODULO_ASSIGN, start_column};
                 }
                 advance();
-                return {"%", line, GLOIN_TOKEN_PERCENT, column};
+                return {"%", start_line, GLOIN_TOKEN_PERCENT, start_column};
             case '?':
                 advance();
-                return {"?", line, GLOIN_TOKEN_QUESTION, column};
+                return {"?", start_line, GLOIN_TOKEN_QUESTION, start_column};
             case '.':
                 if (peek_token() == '.') {
                     advance();
                     advance();
-                    return {"..", line, GLOIN_TOKEN_RANGE, column};
+                    return {"..", start_line, GLOIN_TOKEN_RANGE, start_column};
                 }
                 advance();
-                return {".", line, GLOIN_TOKEN_DOT, column};
+                return {".", start_line, GLOIN_TOKEN_DOT, start_column};
             case ',':
                 advance();
-                return {",", line, GLOIN_TOKEN_COMMA, column};
+                return {",", start_line, GLOIN_TOKEN_COMMA, start_column};
             case '#':
                 advance();
-                return {"#", line, GLOIN_TOKEN_HASH, column};
+                return {"#", start_line, GLOIN_TOKEN_HASH, start_column};
             case '@':
                 advance();
-                return {"@", line, GLOIN_TOKEN_AT, column};
+                return {"@", start_line, GLOIN_TOKEN_AT, start_column};
             default:
                 advance();
                 const std::string_view literal(&src[position - 1], 1);
-                return {literal, line, GLOIN_TOKEN_UNKNOWN, column};
+                return {literal, start_line, GLOIN_TOKEN_UNKNOWN, start_column};
         }
     }
 
@@ -528,56 +532,6 @@ void Lexer::advance() {
 }
 
 void Lexer::skip_comment() {
-    static const std::unordered_map<std::string_view, GloinTokenType> keywords = {
-        {"import", GLOIN_TOKEN_IMPORT},
-        {"extern", GLOIN_TOKEN_EXTERN},
-        {"fn", GLOIN_TOKEN_FN},
-        {"def", GLOIN_TOKEN_DEF},
-        {"mut", GLOIN_TOKEN_MUT},
-        {"const", GLOIN_TOKEN_CONST},
-        {"return", GLOIN_TOKEN_RETURN},
-        {"bool", GLOIN_TOKEN_BOOL},
-        {"i8", GLOIN_TOKEN_I8},
-        {"i16", GLOIN_TOKEN_I16},
-        {"i32", GLOIN_TOKEN_I32},
-        {"i64", GLOIN_TOKEN_I64},
-        {"i128", GLOIN_TOKEN_I128},
-        {"u8", GLOIN_TOKEN_U8},
-        {"u16", GLOIN_TOKEN_U16},
-        {"u32", GLOIN_TOKEN_U32},
-        {"u64", GLOIN_TOKEN_U64},
-        {"u128", GLOIN_TOKEN_U128},
-        {"f32", GLOIN_TOKEN_F32},
-        {"f64", GLOIN_TOKEN_F64},
-        {"f128", GLOIN_TOKEN_F128},
-        {"string", GLOIN_TOKEN_STRING},
-        {"void", GLOIN_TOKEN_VOID},
-        {"true", GLOIN_TOKEN_TRUE},
-        {"false", GLOIN_TOKEN_FALSE},
-        {"null", GLOIN_TOKEN_NULL},
-        {"struct", GLOIN_TOKEN_STRUCT},
-        {"enum", GLOIN_TOKEN_ENUM},
-        {"pub", GLOIN_TOKEN_PUB},
-        {"priv", GLOIN_TOKEN_PRIV},
-        {"static", GLOIN_TOKEN_STATIC},
-        {"self", GLOIN_TOKEN_SELF},
-        {"if", GLOIN_TOKEN_IF},
-        {"unless", GLOIN_TOKEN_UNLESS},
-        {"else", GLOIN_TOKEN_ELSE},
-        {"for", GLOIN_TOKEN_FOR},
-        {"while", GLOIN_TOKEN_WHILE},
-        {"switch", GLOIN_TOKEN_SWITCH},
-        {"match", GLOIN_TOKEN_MATCH},
-        {"case", GLOIN_TOKEN_CASE},
-        {"default", GLOIN_TOKEN_DEFAULT},
-        {"break", GLOIN_TOKEN_BREAK},
-        {"continue", GLOIN_TOKEN_CONTINUE},
-        {"defer", GLOIN_TOKEN_DEFER},
-        {"deferred", GLOIN_TOKEN_DEFERRED},
-        {"spawnable", GLOIN_TOKEN_SPAWNABLE},
-        {"run", GLOIN_TOKEN_RUN}
-    };
-
     if (current_char == '/' && peek_token() == '/') {
         advance();
         advance();
@@ -587,7 +541,7 @@ void Lexer::skip_comment() {
     }
 }
 
-std::string_view Lexer::capture_view(int start_pos) const {
+std::string_view Lexer::capture_view(const int start_pos) const {
     return std::string_view(src).substr(start_pos, position - start_pos);
 }
 
@@ -621,7 +575,7 @@ std::string_view Lexer::read_number() {
     return capture_view(start_pos);
 }
 
-GloinToken Lexer::read_string(int start_line, int start_column) {
+GloinToken Lexer::read_string(const int start_line, const int start_column) {
     advance(); // Skip opening quote
     const int start_pos = position;
     while (current_char != '\0' && current_char != '"') {
