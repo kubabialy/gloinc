@@ -5,7 +5,9 @@ set(CMAKE_CXX_STANDARD 23)
 
 add_executable(gloinc main.cpp
         src/lexer.h
-        src/lexer.cpp)
+        src/lexer.cpp
+        src/parser.cpp
+        src/parser.h)
 
 include(FetchContent)
 FetchContent_Declare(
@@ -18,7 +20,7 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
-add_executable(gloinc_test tests/lexer_test.cpp src/lexer.cpp src/lexer.h)
+add_executable(gloinc_test tests/lexer_test.cpp tests/parser_test.cpp src/lexer.cpp src/lexer.h src/parser.cpp src/parser.h src/AST.h)
 target_link_libraries(gloinc_test GTest::gtest_main)
 
 include(GoogleTest)
