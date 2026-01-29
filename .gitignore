@@ -1,1 +1,29 @@
-.idea
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build directories
+build/
+cmake-build-debug/
+cmake-build-release/
+bin/
+lib/
+
+# Executables
+gloinc
+gloinc_test
+*.exe
+*.out
+
+# CMake generated files (if not in build dir)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+!Makefile
+
+# OS generated
+.DS_Store
+Thumbs.db
