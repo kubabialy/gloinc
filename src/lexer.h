@@ -129,9 +129,9 @@ struct GloinToken {
 
 class Lexer {
 public:
-    explicit Lexer(const std::string &src) : src(src) {
+    explicit Lexer(std::string src) : src(std::move(src)) {
         this->position = 0;
-        this->current_char = src.empty() ? '\0' : src[position];
+        this->current_char = this->src.empty() ? '\0' : this->src[position];
         this->line = 1;
         this->column = 1;
     }
@@ -143,7 +143,7 @@ private:
     int current_char;
     int line;
     int column;
-    const std::string &src;
+    std::string src;
 
     void skip_whitespace();
 
