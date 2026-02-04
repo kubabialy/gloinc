@@ -118,25 +118,32 @@ def main() -> i32 {
 
 ### Pointers, References and Memory Management
 
-Gloin supports pointers and references in the same way as C or C++ does.
-You can modify the value pointed to by a pointer or reference. You can also create a new pointer or reference to the same value.
+Gloin supports pointers and references in the same way as C or C++ does, with some key differences for safety and clarity.
 
-Gloin does not have garbage collection and expects you to manage memory manually, to make the process less cumbersome, it provides you with a `defer` statement.
-The `defer` statement will be executed when the current function returns, similarily to how `defer` works in Go or Zig. 
-An important note is that the `defer` wokrs in LIFO order, so that the last defered function is executed first.
+#### Pointers (`*T` vs `&T`)
+
+- `*T`: A raw, nullable pointer. Equivalent to `T*` in C. It can be null and requires explicit checks or unsafe blocks to dereference (in future versions).
+- `&T`: A non-nullable reference. It is guaranteed to point to a valid object. It cannot be null.
+
+`self` in struct methods is always a pointer.
+
+#### Memory Management
+
+Gloin does not have garbage collection and expects you to manage memory manually. To assist with this, it provides:
+
+1.  **Arena Allocation**: The preferred way to manage memory for request lifecycles or temporary objects.
+2.  **`defer` statement**: Executed when the current function returns, in LIFO order (Last-In-First-Out).
 
 ```gloin
 def main() -> i32 {
-    def x: *SomeX = get_some_x();
-    defer x.free();
-    
-    def y: &SomeY = x.get_some_y();
-    defer y.free();
+    // Arena allocation example (conceptual)
+    def arena: Arena = Arena::new();
+    defer arena.free(); // Frees everything allocated in this arena
+
+    def x: *SomeX = arena.alloc(SomeX);
     
     return 0;
 }
-// The defered functions will be executed in LIFO order
-// y.free() -> x.free() -> exit(0)
 ```
 
 Example of pointer usage:
@@ -146,7 +153,7 @@ import "@std"
 
 def main() -> i32 {
     def mut value: i32 = 42;
-    def ptr: *i32 = &value;  // Get address of value
+    def ptr: &i32 = &value;  // Get address of value as non-nullable reference
     
     std.print("Value: ");
     std.println(std.to_string(value));
@@ -163,10 +170,66 @@ def main() -> i32 {
 }
 ```
 
+### Strings
+
+The `string` type in Gloin is a fat pointer consisting of a pointer to the character data and a length.
+
+```gloin
+struct String {
+    ptr: *u8,
+    len: usize
+}
+```
+
+This means passing strings by value is cheap (two words), and slicing is efficient.
+
 ### Structs and Enums
 
-Gloin supports structs and enums. Structs are similar to Go structs, except that they have methods declared in the same scope and their visibility is private by default.
-To make a method public, you must add the `pub` keyword before the method definition. The `priv` keyword can be used to make a method private, but since it's the default visibility, it's not necessary to write it.
+Gloin supports structs and enums. Structs are similar to Go structs, except that they have methods declared in the same scope.
+
+#### Method Lowering (Syntactic Sugar)
+
+Methods defined inside a struct are purely syntactic sugar. They are lowered to global functions with the struct instance passed as a pointer in the first argument.
+
+```gloin
+def struct Foo {
+    def x: int,
+    
+    // Instance method
+    def bar(self) -> int { 
+        return 1; 
+    }
+}
+```
+
+Is exactly equivalent to:
+
+```gloin
+def struct Foo {
+    def x: int
+}
+
+// Lowered global function
+// Naming convention: StructName_MethodName
+def Foo_bar(self: *Foo) -> int {
+    return 1;
+}
+```
+
+When you call a method:
+```gloin
+def f: Foo = ...;
+f.bar();
+```
+
+It is compiled as:
+```gloin
+Foo_bar(&f);
+```
+
+Accessing `self.x` inside the method is simply accessing the field of the pointer passed as the first argument.
+
+To make a method public, you must add the `pub` keyword before the definition. The `priv` keyword can be used to make a method private, but since it's the default visibility, it's not necessary to write it.
 
 ```gloin
 import "@std"
@@ -395,15 +458,42 @@ def packed struct Flags {
 By defining the exact bit-offset, the compiler can generate perfect AND/OR/SHIFT sequences. 
 Because the struct is packed, there is zero padding, making it safe to cast directly from a network buffer.
 
+### Bit Indexing and Endianness
+
+Bit indexing in `packed` structs is strictly tied to the endianness of the backing storage type.
+
+- **Little Endian (`u32`, `le_u32`)**: Bit 0 is the Least Significant Bit (LSB).
+  - Example: `def flags: u4 at 0` occupies the lowest 4 bits of the word.
+  - Usage: Standard x86/ARM local processing.
+
+- **Big Endian (`be_u32`)**: Bit 0 is the Most Significant Bit (MSB).
+  - Example: `def flags: u4 at 0` occupies the highest 4 bits of the word.
+  - Usage: Network protocols (TCP/IP), file formats.
+
+This ensures that "Bit 0" always corresponds to the "first bit" as defined by the protocol or architecture being modeled, avoiding common portability pitfalls.
+
+```gloin
+// Network Protocol (Big Endian): Bit 0 is MSB
+def packed struct(be_u32) NetworkHeader {
+    def version: u4 at 0, // Top 4 bits (31-28)
+    def ihl: u4 at 4,     // Next 4 bits (27-24)
+}
+
+// Hardware Register (Little Endian): Bit 0 is LSB
+def packed struct(le_u32) DeviceReg {
+    def enable: bit at 0, // Bottom bit (0)
+    def mode: u2 at 1,    // Bits 1-2
+}
+```
+
 #### `packed` keyword
 
 The `packed` keyword tells the compiler not to add padding for alignment, ensuring the memory layout matches the TCP/IP spec exactly.
-Sometimes you often need to map a struct directly onto a sequence of bits from a packet. 
-In C, this is messy with bitmasks. In Gloin, we can use the def keyword with explicit bit-widths.
+It is mandatory to specify the storage container (backing integer type) for the packed struct to define the "Word" size for bit-manipulation operations.
 
 ```gloin
-// A 20-byte IPv4 Header definition
-def packed struct IPv4Header {
+// A 20-byte IPv4 Header definition backed by u32 words
+def packed struct(u32) IPv4Header {
     def version: u4,           // 4 bits
     def ihl: u4,               // 4 bits
     def dscp: u6,              // 6 bits
@@ -413,3 +503,5 @@ def packed struct IPv4Header {
     // ... rest of the fields
 }
 ```
+
+The storage type (e.g., `u32`) dictates how the compiler generates shift and mask instructions.

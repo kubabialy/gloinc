@@ -60,6 +60,24 @@ struct StringLiteral : public Expression {
     }
 };
 
+struct ArrayLiteral : public Expression {
+    std::vector<std::unique_ptr<Expression>> elements;
+    
+    explicit ArrayLiteral(std::vector<std::unique_ptr<Expression>> elements) 
+        : elements(std::move(elements)) {}
+        
+    std::string to_string() const override {
+        std::stringstream ss;
+        ss << "[";
+        for (size_t i = 0; i < elements.size(); ++i) {
+            ss << elements[i]->to_string();
+            if (i < elements.size() - 1) ss << ", ";
+        }
+        ss << "]";
+        return ss.str();
+    }
+};
+
 struct Identifier : public Expression {
     std::string value;
     
@@ -149,6 +167,24 @@ struct AssignmentExpression : public Expression {
         
     std::string to_string() const override {
         return "(" + left->to_string() + " = " + right->to_string() + ")";
+    }
+};
+
+struct StructLiteral : public Expression {
+    std::unique_ptr<Identifier> name;
+    std::vector<std::pair<std::string, std::unique_ptr<Expression>>> fields;
+    
+    StructLiteral(std::unique_ptr<Identifier> name, std::vector<std::pair<std::string, std::unique_ptr<Expression>>> fields)
+        : name(std::move(name)), fields(std::move(fields)) {}
+        
+    std::string to_string() const override {
+        std::stringstream ss;
+        ss << name->to_string() << " { ";
+        for (const auto& field : fields) {
+            ss << field.first << ": " << field.second->to_string() << ", ";
+        }
+        ss << "}";
+        return ss.str();
     }
 };
 
@@ -262,6 +298,99 @@ struct DeferStatement : public Statement {
     
     std::string to_string() const override {
         return "defer " + call->to_string() + ";";
+    }
+};
+
+struct SpawnExpression : public Expression {
+    std::unique_ptr<Expression> call; // Should be a CallExpression
+    
+    explicit SpawnExpression(std::unique_ptr<Expression> call) : call(std::move(call)) {}
+    
+    std::string to_string() const override {
+        return "run " + call->to_string();
+    }
+};
+
+struct AwaitExpression : public Expression {
+    std::unique_ptr<Expression> expr; 
+    
+    explicit AwaitExpression(std::unique_ptr<Expression> expr) : expr(std::move(expr)) {}
+    
+    std::string to_string() const override {
+        return "await " + expr->to_string();
+    }
+};
+
+struct Parameter {
+    std::unique_ptr<Identifier> name;
+    std::unique_ptr<Identifier> type;
+    
+    Parameter(std::unique_ptr<Identifier> n, std::unique_ptr<Identifier> t)
+        : name(std::move(n)), type(std::move(t)) {}
+};
+
+struct FunctionDefinition : public Statement {
+    std::unique_ptr<Identifier> name;
+    std::vector<Parameter> parameters;
+    std::unique_ptr<Identifier> return_type;
+    std::unique_ptr<BlockStatement> body;
+    bool is_spawnable;
+    bool is_deferred;
+    
+    FunctionDefinition(std::unique_ptr<Identifier> n, std::vector<Parameter> params, std::unique_ptr<Identifier> ret, std::unique_ptr<BlockStatement> b, bool spawn = false, bool defer = false)
+        : name(std::move(n)), parameters(std::move(params)), return_type(std::move(ret)), body(std::move(b)), is_spawnable(spawn), is_deferred(defer) {}
+        
+    std::string to_string() const override {
+        std::stringstream ss;
+        ss << "def " << (is_spawnable ? "spawnable " : "") << (is_deferred ? "deferred " : "") << name->to_string() << "(";
+        for (size_t i = 0; i < parameters.size(); ++i) {
+            ss << parameters[i].name->to_string() << ": " << parameters[i].type->to_string();
+            if (i < parameters.size() - 1) ss << ", ";
+        }
+        ss << ") -> " << return_type->to_string() << " " << body->to_string();
+        return ss.str();
+    }
+};
+
+struct StructField {
+    bool is_public;
+    std::unique_ptr<Identifier> name;
+    std::unique_ptr<Identifier> type;
+    int offset; // For packed structs (bit offset)
+    
+    StructField(bool pub, std::unique_ptr<Identifier> n, std::unique_ptr<Identifier> t, int off = -1)
+        : is_public(pub), name(std::move(n)), type(std::move(t)), offset(off) {}
+};
+
+struct StructDefinition : public Statement {
+    std::unique_ptr<Identifier> name;
+    std::vector<StructField> fields;
+    std::vector<std::unique_ptr<FunctionDefinition>> methods;
+    bool is_packed;
+    std::unique_ptr<Identifier> backing_type; // For packed structs
+
+    StructDefinition(std::unique_ptr<Identifier> n, std::vector<StructField> f, std::vector<std::unique_ptr<FunctionDefinition>> m, bool packed = false, std::unique_ptr<Identifier> backing = nullptr)
+        : name(std::move(n)), fields(std::move(f)), methods(std::move(m)), is_packed(packed), backing_type(std::move(backing)) {}
+        
+    std::string to_string() const override {
+        std::stringstream ss;
+        ss << "def " << (is_packed ? "packed " : "") << "struct";
+        if (backing_type) {
+            ss << "(" << backing_type->to_string() << ")";
+        }
+        ss << " " << name->to_string() << " { ";
+        for (const auto& field : fields) {
+            ss << (field.is_public ? "pub " : "") << "def " << field.name->to_string() << ": " << field.type->to_string();
+            if (field.offset != -1) {
+                ss << " at " << field.offset;
+            }
+            ss << ", ";
+        }
+        for (const auto& method : methods) {
+            ss << method->to_string() << " ";
+        }
+        ss << "}";
+        return ss.str();
     }
 };
 

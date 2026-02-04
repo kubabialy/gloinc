@@ -4,6 +4,7 @@
 #include <ostream>
 #include <unordered_map>
 #include <cctype>
+#include <vector>
 
 GloinToken Lexer::next_token() {
     GloinToken token;
@@ -263,6 +264,20 @@ GloinToken Lexer::next_token() {
     return {{"", 1}, line, GLOIN_TOKEN_EOF, column};
 }
 
+std::vector<GloinToken> Lexer::tokenize() {
+    std::vector<GloinToken> tokens;
+    GloinToken token = next_token();
+    while (token.type != GLOIN_TOKEN_EOF) {
+        tokens.push_back(token);
+        token = next_token();
+    }
+    // Optionally include EOF? Parser expects it?
+    // Usually parser loops until EOF.
+    // If parser takes vector, it might expect EOF at end.
+    tokens.push_back(token);
+    return tokens;
+}
+
 std::string token_type_to_string(const GloinTokenType type) {
     switch (type) {
         case GLOIN_TOKEN_EOF:
@@ -409,6 +424,10 @@ std::string token_type_to_string(const GloinTokenType type) {
             return "DEFAULT";
         case GLOIN_TOKEN_SPAWNABLE:
             return "SPAWNABLE";
+        case GLOIN_TOKEN_SPAWN:
+            return "SPAWN";
+        case GLOIN_TOKEN_AWAIT:
+            return "AWAIT";
         case GLOIN_TOKEN_RUN:
             return "RUN";
         case GLOIN_TOKEN_IN:
@@ -686,6 +705,8 @@ GloinTokenType get_keyword_type(std::string_view identifier) {
         {"defer", GLOIN_TOKEN_DEFER},
         {"deferred", GLOIN_TOKEN_DEFERRED},
         {"spawnable", GLOIN_TOKEN_SPAWNABLE},
+        {"spawn", GLOIN_TOKEN_SPAWN},
+        {"await", GLOIN_TOKEN_AWAIT},
         {"run", GLOIN_TOKEN_RUN},
         {"in", GLOIN_TOKEN_IN},
         {"packed", GLOIN_TOKEN_PACKED},

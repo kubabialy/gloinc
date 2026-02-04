@@ -2,6 +2,7 @@
 #define GLOINC_LEXER_H
 #include <cstddef>
 #include <string>
+#include <vector>
 
 enum GloinTokenType {
     GLOIN_TOKEN_EOF,
@@ -50,6 +51,8 @@ enum GloinTokenType {
     GLOIN_TOKEN_DEFER,
     GLOIN_TOKEN_DEFERRED,
     GLOIN_TOKEN_SPAWNABLE,
+    GLOIN_TOKEN_SPAWN, // NEW: spawn
+    GLOIN_TOKEN_AWAIT, // NEW: await
     GLOIN_TOKEN_RUN,
     GLOIN_TOKEN_IN,
     GLOIN_TOKEN_RANGE, // ..
@@ -137,6 +140,8 @@ public:
     }
 
     [[nodiscard]] GloinToken next_token();
+    
+    [[nodiscard]] std::vector<GloinToken> tokenize();
 
 private:
     int position;
