@@ -1,0 +1,7 @@
+import @std/io;
+
+// A simple "Hello World" program
+def main() -> i32 {
+    print("Hello, Gloin World!");
+    return 0;
+}

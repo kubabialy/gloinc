@@ -237,11 +237,12 @@ std::unique_ptr<Expression> GloinParser::parse_prefix() {
     case GLOIN_TOKEN_SPAWN: // Fallthrough
     case GLOIN_TOKEN_RUN: {
         // run expression (usually a function call)
+        GloinTokenType op = current_token.type;
         advance_token();
         // Parse the expression with lower precedence to allow function calls (precedence 70)
         // Using 60 (Multiplication level) ensures spawn binds tighter than + (50) but looser than call (70)
         auto right = parse_expression(60); 
-        return std::make_unique<SpawnExpression>(std::move(right));
+        return std::make_unique<SpawnExpression>(op, std::move(right));
     }
     case GLOIN_TOKEN_AWAIT: {
         advance_token();
@@ -514,17 +515,23 @@ std::unique_ptr<Statement> GloinParser::parse_def_statement() {
 std::unique_ptr<Statement> GloinParser::parse_statement() {
     switch (current_token.type) {
         case GLOIN_TOKEN_DEF:
-            return parse_def_statement(); // Changed from parse_variable_declaration
+            return parse_def_statement();
         case GLOIN_TOKEN_RETURN:
             return parse_return_statement();
         case GLOIN_TOKEN_IF:
             return parse_if_statement();
+        case GLOIN_TOKEN_UNLESS:
+            return parse_unless_statement();
         case GLOIN_TOKEN_WHILE:
             return parse_while_statement();
+        case GLOIN_TOKEN_FOR:
+            return parse_for_statement();
         case GLOIN_TOKEN_DEFER:
             return parse_defer_statement();
         case GLOIN_TOKEN_LBRACE:
             return parse_block_statement();
+        case GLOIN_TOKEN_IMPORT:
+            return parse_import_statement();
         default:
             return parse_expression_statement();
     }
@@ -1005,6 +1012,73 @@ std::unique_ptr<Statement> GloinParser::parse_struct_definition(bool is_packed) 
     advance_token(); // Eat '}'
     
     return std::make_unique<StructDefinition>(std::move(name), std::move(fields), std::move(methods), is_packed, std::move(backing_type));
+}
+
+std::unique_ptr<ImportStatement> GloinParser::parse_import_statement() {
+    // Current token is 'import'
+    advance_token();
+
+    if (current_token.type != GLOIN_TOKEN_STRING) {
+        std::cerr << "Expected string literal after import" << std::endl;
+        return nullptr;
+    }
+
+    auto path = std::string(current_token.literal);
+    advance_token();
+
+    if (current_token.type == GLOIN_TOKEN_SEMICOLON) {
+        advance_token();
+    }
+
+    return std::make_unique<ImportStatement>(path);
+}
+
+std::unique_ptr<UnlessStatement> GloinParser::parse_unless_statement() {
+    // Current token is 'unless'
+    advance_token();
+
+    auto condition = parse_expression(0);
+
+    if (next_token.type != GLOIN_TOKEN_LBRACE) {
+        std::cerr << "Expected '{' after unless condition\n";
+        return nullptr;
+    }
+    advance_token(); // Move to '{'
+
+    auto consequence = parse_block_statement();
+
+    return std::make_unique<UnlessStatement>(std::move(condition), std::move(consequence));
+}
+
+std::unique_ptr<ForStatement> GloinParser::parse_for_statement() {
+    // Current token is 'for'
+    advance_token();
+
+    // Parse initializer
+    auto init = parse_statement();
+    // parse_statement advances past the semicolon.
+
+    // Parse condition
+    auto condition = parse_expression(0);
+    if (current_token.type == GLOIN_TOKEN_SEMICOLON) {
+        advance_token();
+    } else if (next_token.type == GLOIN_TOKEN_SEMICOLON) {
+		advance_token();
+		advance_token();
+	}
+
+
+    // Parse increment
+    auto increment = parse_expression(0);
+    if (next_token.type != GLOIN_TOKEN_LBRACE) {
+         std::cerr << "Expected '{' after for components\n";
+         return nullptr;
+    }
+	advance_token();
+
+    auto body = parse_block_statement();
+
+    return std::make_unique<ForStatement>(std::move(init), std::move(condition), std::move(increment), std::move(body));
 }
 
 void GloinParser::parse() {

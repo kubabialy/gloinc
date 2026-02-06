@@ -240,7 +240,7 @@ TEST(CodeGenTest, GenerateSpawn) {
     std::vector<std::unique_ptr<Expression>> args;
     args.push_back(std::make_unique<IntegerLiteral>(1, "1"));
     auto call = std::make_unique<CallExpression>(std::make_unique<Identifier>("worker"), std::move(args));
-    auto spawn = std::make_unique<SpawnExpression>(std::move(call));
+    auto spawn = std::make_unique<SpawnExpression>(GLOIN_TOKEN_RUN, std::move(call));
     
     mainBody->statements.push_back(std::make_unique<ExpressionStatement>(std::move(spawn)));
     mainBody->statements.push_back(std::make_unique<ReturnStatement>(nullptr));

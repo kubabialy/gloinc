@@ -81,6 +81,18 @@ target_link_libraries(gloinc PRIVATE
         MLIRControlFlowDialect
         MLIRMemRefDialect
         MLIRSCFDialect
+        MLIRExecutionEngine
+        MLIRFuncToLLVM
+        MLIRControlFlowToLLVM
+        MLIRReconcileUnrealizedCasts
+        MLIRArithToLLVM
+        MLIRMemRefToLLVM
+        MLIRTargetLLVMIRExport
+        LLVMSupport
+        LLVMCore
+        LLVMExecutionEngine
+        LLVMRuntimeDyld
+        stdc++
 )
 
 
@@ -111,6 +123,8 @@ add_executable(gloinc_test
     tests/e2e_test.cpp
     tests/basic_codegen_test.cpp
     tests/array_string_test.cpp
+    tests/unless_test.cpp
+    tests/jit_test.cpp
     src/codegen.cpp
     src/codegen.h
     src/lexer.cpp 
@@ -122,13 +136,35 @@ add_executable(gloinc_test
     src/sema.h
     src/dialect/GloinDialect.cpp
     src/dialect/GloinDialect.h
+    src/jit_runner.cpp
+    src/jit_runner.h
 )
 add_dependencies(gloinc_test GloinDialectIncGen GloinTypesIncGen GloinOpsIncGen)
-target_link_libraries(gloinc_test 
+target_link_libraries(gloinc_test PRIVATE
     GTest::gtest_main
-    MLIR
+    MLIRIR
+    MLIRSupport
+    MLIRParser
+    MLIRSideEffectInterfaces
+    MLIRControlFlowInterfaces
+    MLIRCallInterfaces
+    MLIRArithDialect
+    MLIRFuncDialect
+    MLIRControlFlowDialect
+    MLIRMemRefDialect
+    MLIRSCFDialect
+    MLIRExecutionEngine
+    MLIRFuncToLLVM
+    MLIRControlFlowToLLVM
+    MLIRReconcileUnrealizedCasts
+    MLIRArithToLLVM
+    MLIRMemRefToLLVM
+    MLIRTargetLLVMIRExport
     LLVMSupport
     LLVMCore
+    LLVMExecutionEngine
+    LLVMRuntimeDyld
+    stdc++
 )
 
 include(GoogleTest)

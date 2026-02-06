@@ -26,20 +26,13 @@ int JitRunner::run(mlir::ModuleOp module) {
     std::cout << "Targets initialized\n";
 
     // Register the translation from MLIR to LLVM IR
-    // mlir::registerLLVMDialectTranslation(*module.getContext());
+    mlir::registerLLVMDialectTranslation(*module.getContext());
     std::cout << "Translations registered\n";
 
     // Create a pass manager to lower dialects to LLVM
     mlir::PassManager pm(module.getContext());
 
     
-    // Lower SCF to ControlFlow first
-    pm.addPass(mlir::createSCFToControlFlowPass());
-    
-    // Lower ControlFlow to LLVM
-    pm.addPass(mlir::createConvertControlFlowToLLVMPass());
-
-    // Lower Arith to LLVM
     pm.addPass(mlir::createArithToLLVMConversionPass());
     
     // Lower Func to LLVM
@@ -50,6 +43,7 @@ int JitRunner::run(mlir::ModuleOp module) {
     
     // Clean up casts
     pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+
 
     if (mlir::failed(pm.run(module))) {
         std::cerr << "JIT Lowering failed\n";

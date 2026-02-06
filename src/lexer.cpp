@@ -17,14 +17,6 @@ GloinToken Lexer::next_token() {
             continue;
         }
 
-        if (current_char == '\n') {
-            const int start_line = line;
-            const int start_column = column;
-            const std::string_view literal(&src[position], 1);
-            advance();
-            return {literal, start_line, GLOIN_TOKEN_NEWLINE, start_column};
-        }
-
         if (current_char == '/' && peek_token() == '/') {
             skip_comment();
             continue;
@@ -112,7 +104,6 @@ GloinToken Lexer::next_token() {
                 if (peek_token() == '>') {
                     advance();
                     advance();
-                    return {"=>", start_line, GLOIN_TOKEN_DOUBLE_ARROW, start_column};
                 }
 
                 advance();
@@ -241,7 +232,6 @@ GloinToken Lexer::next_token() {
                 if (peek_token() == '.') {
                     advance();
                     advance();
-                    return {"..", start_line, GLOIN_TOKEN_RANGE, start_column};
                 }
                 advance();
                 return {".", start_line, GLOIN_TOKEN_DOT, start_column};
@@ -260,7 +250,6 @@ GloinToken Lexer::next_token() {
                 return {literal, start_line, GLOIN_TOKEN_UNKNOWN, start_column};
         }
     }
-
     return {{"", 1}, line, GLOIN_TOKEN_EOF, column};
 }
 
@@ -286,8 +275,6 @@ std::string token_type_to_string(const GloinTokenType type) {
             return "IMPORT";
         case GLOIN_TOKEN_EXTERN:
             return "EXTERN";
-        case GLOIN_TOKEN_FN:
-            return "FN";
         case GLOIN_TOKEN_DEF:
             return "DEF";
         case GLOIN_TOKEN_MUT:
@@ -380,8 +367,6 @@ std::string token_type_to_string(const GloinTokenType type) {
             return "VOID";
         case GLOIN_TOKEN_ARROW:
             return "ARROW";
-        case GLOIN_TOKEN_DOUBLE_ARROW:
-            return "DOUBLE_ARROW";
         case GLOIN_TOKEN_DOT:
             return "DOT";
         case GLOIN_TOKEN_DOUBLE_COLON:
@@ -414,26 +399,10 @@ std::string token_type_to_string(const GloinTokenType type) {
             return "FOR";
         case GLOIN_TOKEN_WHILE:
             return "WHILE";
-        case GLOIN_TOKEN_MATCH:
-            return "MATCH";
-        case GLOIN_TOKEN_SWITCH:
-            return "SWITCH";
-        case GLOIN_TOKEN_CASE:
-            return "CASE";
-        case GLOIN_TOKEN_DEFAULT:
-            return "DEFAULT";
         case GLOIN_TOKEN_SPAWNABLE:
             return "SPAWNABLE";
-        case GLOIN_TOKEN_SPAWN:
-            return "SPAWN";
-        case GLOIN_TOKEN_AWAIT:
-            return "AWAIT";
         case GLOIN_TOKEN_RUN:
             return "RUN";
-        case GLOIN_TOKEN_IN:
-            return "IN";
-        case GLOIN_TOKEN_RANGE:
-            return "RANGE";
         case GLOIN_TOKEN_PACKED:
             return "PACKED";
         case GLOIN_TOKEN_BIT:
@@ -464,8 +433,6 @@ std::string token_type_to_string(const GloinTokenType type) {
         case GLOIN_TOKEN_LE_U128: return "LE_U128";
         case GLOIN_TOKEN_COMMENT:
             return "COMMENT";
-        case GLOIN_TOKEN_NEWLINE:
-            return "NEWLINE";
         case GLOIN_TOKEN_DEFER:
             return "DEFER";
         case GLOIN_TOKEN_DEFERRED:
@@ -661,7 +628,6 @@ GloinTokenType get_keyword_type(std::string_view identifier) {
     static const std::unordered_map<std::string_view, GloinTokenType> keywords = {
         {"import", GLOIN_TOKEN_IMPORT},
         {"extern", GLOIN_TOKEN_EXTERN},
-        {"fn", GLOIN_TOKEN_FN},
         {"def", GLOIN_TOKEN_DEF},
         {"mut", GLOIN_TOKEN_MUT},
         {"const", GLOIN_TOKEN_CONST},
@@ -696,19 +662,12 @@ GloinTokenType get_keyword_type(std::string_view identifier) {
         {"else", GLOIN_TOKEN_ELSE},
         {"for", GLOIN_TOKEN_FOR},
         {"while", GLOIN_TOKEN_WHILE},
-        {"switch", GLOIN_TOKEN_SWITCH},
-        {"match", GLOIN_TOKEN_MATCH},
-        {"case", GLOIN_TOKEN_CASE},
-        {"default", GLOIN_TOKEN_DEFAULT},
         {"break", GLOIN_TOKEN_BREAK},
         {"continue", GLOIN_TOKEN_CONTINUE},
         {"defer", GLOIN_TOKEN_DEFER},
         {"deferred", GLOIN_TOKEN_DEFERRED},
         {"spawnable", GLOIN_TOKEN_SPAWNABLE},
-        {"spawn", GLOIN_TOKEN_SPAWN},
-        {"await", GLOIN_TOKEN_AWAIT},
         {"run", GLOIN_TOKEN_RUN},
-        {"in", GLOIN_TOKEN_IN},
         {"packed", GLOIN_TOKEN_PACKED},
         {"bit", GLOIN_TOKEN_BIT},
         {"at", GLOIN_TOKEN_KEYWORD_AT},

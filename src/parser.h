@@ -38,6 +38,9 @@ class GloinParser {
     std::unique_ptr<DeferStatement> parse_defer_statement();
     std::unique_ptr<Statement> parse_struct_definition(bool is_packed = false);
     std::unique_ptr<ExpressionStatement> parse_expression_statement();
+    std::unique_ptr<UnlessStatement> parse_unless_statement();
+    std::unique_ptr<ForStatement> parse_for_statement();
+    std::unique_ptr<ImportStatement> parse_import_statement();
 
     std::unique_ptr<Identifier> parse_type();
 

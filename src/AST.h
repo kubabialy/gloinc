@@ -279,6 +279,36 @@ struct IfStatement : public Statement {
     }
 };
 
+struct UnlessStatement : public Statement {
+    std::unique_ptr<Expression> condition;
+    std::unique_ptr<BlockStatement> consequence;
+
+    explicit UnlessStatement(std::unique_ptr<Expression> condition, std::unique_ptr<BlockStatement> consequence)
+        : condition(std::move(condition)), consequence(std::move(consequence)) {}
+
+    std::string to_string() const override {
+        return "unless " + condition->to_string() + " " + consequence->to_string();
+    }
+};
+
+struct ForStatement : public Statement {
+    std::unique_ptr<Statement> init;
+    std::unique_ptr<Expression> condition;
+    std::unique_ptr<Expression> increment;
+    std::unique_ptr<BlockStatement> body;
+
+    ForStatement(std::unique_ptr<Statement> init, std::unique_ptr<Expression> condition,
+                 std::unique_ptr<Expression> increment, std::unique_ptr<BlockStatement> body)
+        : init(std::move(init)), condition(std::move(condition)),
+          increment(std::move(increment)), body(std::move(body)) {}
+
+    std::string to_string() const override {
+        std::stringstream ss;
+        ss << "for " << init->to_string() << " " << condition->to_string() << "; " << increment->to_string() << " " << body->to_string();
+        return ss.str();
+    }
+};
+
 struct WhileStatement : public Statement {
     std::unique_ptr<Expression> condition;
     std::unique_ptr<BlockStatement> body;
@@ -288,6 +318,16 @@ struct WhileStatement : public Statement {
         
     std::string to_string() const override {
         return "while " + condition->to_string() + " " + body->to_string();
+    }
+};
+
+struct ImportStatement : public Statement {
+    std::string path;
+
+    explicit ImportStatement(std::string path) : path(std::move(path)) {}
+
+    std::string to_string() const override {
+        return "import " + path + ";";
     }
 };
 
@@ -302,11 +342,15 @@ struct DeferStatement : public Statement {
 };
 
 struct SpawnExpression : public Expression {
+    GloinTokenType op;
     std::unique_ptr<Expression> call; // Should be a CallExpression
     
-    explicit SpawnExpression(std::unique_ptr<Expression> call) : call(std::move(call)) {}
+    explicit SpawnExpression(GloinTokenType op, std::unique_ptr<Expression> call) : op(op), call(std::move(call)) {}
     
     std::string to_string() const override {
+        if (op == GLOIN_TOKEN_SPAWN) {
+            return "spawn " + call->to_string();
+        }
         return "run " + call->to_string();
     }
 };

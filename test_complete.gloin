@@ -1,0 +1,12 @@
+import @std/io;
+
+def test_for_and_imports() -> i32 {
+    def mut sum: i32 = 0;
+    for def i: i32 = 0; i < 5; i = i + 1 {
+        sum = sum + i;
+    }
+    
+    // Test imports are working alongside for loops
+    print("Sum is: ", sum);
+    return sum;  // Should be 10
+}

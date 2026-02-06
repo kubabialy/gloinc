@@ -1,0 +1,12 @@
+import @std/io;
+
+def test_basic() -> i32 {
+    def x: be_i32 = 0x12345678;
+    def y: le_i32 = 0x789ABCDEF;
+    return x + y;
+}
+
+def main() -> i32 {
+    print("Testing basic endianness types...");
+    return test_basic();
+}
