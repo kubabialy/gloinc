@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-001.** All items start unchecked. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-002.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. The first working compiler milestone is SPEC-021: real source files passing through the CLI with reliable error handling. The proposed first release boundary and supported platforms are decided in SPEC-006; later features remain tracked even if they are outside that release.
 
@@ -31,13 +31,14 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 
 ## 1. Restore a reproducible build
 
-- [ ] **SPEC-001 — Synchronize declarations and implementations.**
+- [x] **SPEC-001 — Synchronize declarations and implementations.**
   Reconcile `parse_generic_params`, function/struct generic parameters, codegen symbol/function/template/defer state, and the `declare` signature. Remove duplicate import-handler declarations. Start in [parser.h](src/parser.h), [AST.h](src/AST.h), and [codegen.h](src/codegen.h).
   **Done when:** parser/AST interfaces compile together and no missing member, mismatched declaration, or duplicate declaration errors remain. Record any remaining toolchain errors under SPEC-002.
 
 - [ ] **SPEC-002 — Establish a supported LLVM/MLIR toolchain and consistent linkage.**
   Select and document a tested LLVM/MLIR version, repair API incompatibilities, and use a consistent component or shared-library strategy. Investigate imported transitive dependencies rather than mixing overlapping archives and shared implementations.
   **Done when:** a fresh build produces both executables and loading all used dialects no longer crashes. The version requirement is enforced or unsupported versions receive an actionable configure error. JIT execution is completed in SPEC-019.
+  **Confirmed blockers after SPEC-001 (LLVM/MLIR 21.1.6):** `src/codegen.cpp:209` and `:326` use the removed `mlir::Type::isa` API; the `LLVM::IntToPtrOp` builder call at `:863` does not match the installed API. These three sites produce seven compiler errors and prevent linking `gloinc_test`. The CLI links with duplicate-library warnings; consistent linkage and dialect-loading verification remain open.
 
 - [ ] **SPEC-003 — Correct the CMake target and dependency structure.**
   Share frontend/backend implementation through reusable targets; make the CLI link the compiler implementation. Pin GoogleTest to an immutable revision or checked archive, honor `BUILD_TESTING`, use target-scoped settings, require the selected C++ standard, and remove platform-specific standard-library assumptions. Keep [Makefile](Makefile) consistent with [CMakeLists.txt](CMakeLists.txt).
@@ -252,4 +253,29 @@ For each completed item, add its date, a short outcome, relevant repository path
 
 | Item | Date | Outcome and evidence |
 | --- | --- | --- |
-| — | — | No implementation items completed yet. |
+| SPEC-001 | 2026-09-08 | Synchronized [parser.h](src/parser.h), [AST.h](src/AST.h), and [codegen.h](src/codegen.h): declared the generic parser helper, retained function/struct generic parameters, restored codegen symbol/function/template/defer state, aligned `declare`, and removed duplicate import declarations. Fresh CMake configuration succeeds; parser/AST and all other configured translation units except codegen compile, and `gloinc` links. Codegen reports only the MLIR API failures recorded under SPEC-002. Independently built existing parser/spec suites: **35/35 pass**. Commands below. |
+
+### SPEC-001 verification
+
+Run from the repository root on Apple Silicon with AppleClang 16, LLVM/MLIR 21.1.6, CMake 4.2.1, and Ninja. This check uses the existing GoogleTest source cache at `build/_deps/googletest-src`; dependency pinning and fetch behavior remain SPEC-003 work.
+
+```sh
+spec001_build_dir=$(mktemp -d /private/tmp/gloinc-spec001.XXXXXX)
+cmake -S . -B "$spec001_build_dir" -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
+cmake --build "$spec001_build_dir" -j 2 -- -k 0 > "$spec001_build_dir/build.log" 2>&1
+# Expected current result: exit 1, seven diagnostics from the three SPEC-002 sites.
+
+/usr/bin/c++ -std=c++23 -pthread -Isrc \
+  -Ibuild/_deps/googletest-src/googletest/include \
+  -Ibuild/_deps/googletest-src/googletest \
+  src/lexer.cpp src/parser.cpp tests/parser_test.cpp tests/spec_test.cpp \
+  build/_deps/googletest-src/googletest/src/gtest-all.cc \
+  build/_deps/googletest-src/googletest/src/gtest_main.cc \
+  -o "$spec001_build_dir/parser-tests"
+"$spec001_build_dir/parser-tests"
+# Result: exit 0; 27 ParserTest and 8 SpecTest cases pass.
+git diff --check
+```
+
+The independent test executable uses the repository sources without temporary repairs and avoids the blocked backend dependency. This verifies the declaration repair; it does not establish generic execution, a working compiler CLI, or a passing full test suite.

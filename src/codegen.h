@@ -18,6 +18,7 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 class CodeGen {
@@ -37,6 +38,7 @@ class CodeGen {
         mlir::Value value; // The SSA value or the MemRef address
         bool is_address;   // True if 'value' is a pointer/memref to the actual data
         mlir::Type type;   // The MLIR type of the value
+        std::string source_type;
     };
 
     struct GenScope {
@@ -45,6 +47,14 @@ class CodeGen {
         std::shared_ptr<GenScope> parent;
     };
     std::shared_ptr<GenScope> current_scope;
+
+    struct FunctionInfo {
+        mlir::func::FuncOp funcOp;
+        const FunctionDefinition *definition;
+    };
+    std::map<std::string, FunctionInfo> function_table;
+    std::map<std::string, const StructDefinition *> generic_struct_defs;
+    std::vector<const DeferStatement *> current_function_defers;
 
     // Type registry
     std::map<std::string, mlir::Type> type_table;
@@ -61,7 +71,8 @@ class CodeGen {
 
     void enter_scope();
     void leave_scope();
-    void declare(const std::string &name, mlir::Value value, bool is_address, mlir::Type type);
+    void declare(const std::string &name, mlir::Value value, bool is_address, mlir::Type type,
+                 const std::string &source_type);
     SymbolInfo lookup(const std::string &name);
 
     // Visitation methods
@@ -88,9 +99,6 @@ class CodeGen {
     void gen_function(const std::string &name, const std::vector<std::string> &args,
                       const Statement *body);
 
-    // Import system support
-    void handle_import(const std::string &import_path);
-    void handle_std_import(const std::string &module_name);
 };
 
 #endif // CODEGEN_H

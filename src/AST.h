@@ -380,9 +380,15 @@ struct FunctionDefinition : public Statement {
     std::unique_ptr<BlockStatement> body;
     bool is_spawnable;
     bool is_deferred;
-    
-    FunctionDefinition(std::unique_ptr<Identifier> n, std::vector<Parameter> params, std::unique_ptr<Identifier> ret, std::unique_ptr<BlockStatement> b, bool spawn = false, bool defer = false)
-        : name(std::move(n)), parameters(std::move(params)), return_type(std::move(ret)), body(std::move(b)), is_spawnable(spawn), is_deferred(defer) {}
+    std::vector<std::string> generic_params;
+
+    FunctionDefinition(std::unique_ptr<Identifier> n, std::vector<Parameter> params,
+                       std::unique_ptr<Identifier> ret, std::unique_ptr<BlockStatement> b,
+                       bool spawn = false, bool defer = false,
+                       std::vector<std::string> generics = {})
+        : name(std::move(n)), parameters(std::move(params)), return_type(std::move(ret)),
+          body(std::move(b)), is_spawnable(spawn), is_deferred(defer),
+          generic_params(std::move(generics)) {}
         
     std::string to_string() const override {
         std::stringstream ss;
@@ -411,10 +417,15 @@ struct StructDefinition : public Statement {
     std::vector<StructField> fields;
     std::vector<std::unique_ptr<FunctionDefinition>> methods;
     bool is_packed;
+    std::vector<std::string> generic_params;
     std::unique_ptr<Identifier> backing_type; // For packed structs
 
-    StructDefinition(std::unique_ptr<Identifier> n, std::vector<StructField> f, std::vector<std::unique_ptr<FunctionDefinition>> m, bool packed = false, std::unique_ptr<Identifier> backing = nullptr)
-        : name(std::move(n)), fields(std::move(f)), methods(std::move(m)), is_packed(packed), backing_type(std::move(backing)) {}
+    StructDefinition(std::unique_ptr<Identifier> n, std::vector<StructField> f,
+                     std::vector<std::unique_ptr<FunctionDefinition>> m, bool packed = false,
+                     std::unique_ptr<Identifier> backing = nullptr,
+                     std::vector<std::string> generics = {})
+        : name(std::move(n)), fields(std::move(f)), methods(std::move(m)), is_packed(packed),
+          generic_params(std::move(generics)), backing_type(std::move(backing)) {}
         
     std::string to_string() const override {
         std::stringstream ss;

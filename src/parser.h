@@ -42,6 +42,7 @@ class GloinParser {
     std::unique_ptr<ForStatement> parse_for_statement();
     std::unique_ptr<ImportStatement> parse_import_statement();
 
+    std::vector<std::string> parse_generic_params();
     std::unique_ptr<Identifier> parse_type();
 
   private:
