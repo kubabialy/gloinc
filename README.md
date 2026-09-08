@@ -42,8 +42,8 @@ cmake --build build -j 2
 ```
 
 The installer reuses an existing 21.1.6 installation or installs the historical
-Homebrew formula and its checksum-verified bottle. It refuses to replace a
-different unversioned `llvm` installation. The prefix is printed as
+Homebrew formula, matching Z3 4.15.4 dependency, and checksum-verified bottles.
+It refuses to replace an incompatible LLVM or Z3 installation. The prefix is printed as
 `GLOIN_LLVM_PREFIX`; use its `lib/cmake/llvm` and `lib/cmake/mlir` paths if different
 from the example. Today's `brew install llvm` may install an unsupported release.
 

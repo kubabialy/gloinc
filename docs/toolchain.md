@@ -12,9 +12,11 @@ and uses C++23. Other platforms have not been validated.
 
 `bash scripts/install-llvm.sh` reuses this release or installs the historical
 [Homebrew formula](https://github.com/Homebrew/homebrew-core/blob/67ebbe50b3d4f240f8c34f998edac9a2898cba86/Formula/l/llvm.rb)
-in a local tap. The formula revision and its SHA-256 are pinned; Homebrew verifies
-the release bottle against the formula's checksum. A different installed
-unversioned LLVM is left untouched and causes an actionable installer error.
+in a local tap together with the matching Z3 4.15.4 dependency. Both formula
+revisions and SHA-256 hashes are pinned; Homebrew verifies each bottle against
+its formula's checksum. The LLVM formula's Z3 dependency is explicitly bound to
+the local tap so a newer, ABI-incompatible Z3 cannot be selected. An incompatible
+installed LLVM or Z3 is left untouched and causes an actionable installer error.
 The CI workflow uses this installer on the
 [hosted macOS 15 arm64 image](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md).
 

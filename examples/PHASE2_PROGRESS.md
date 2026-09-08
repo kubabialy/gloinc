@@ -15,7 +15,7 @@ demonstration, and the JIT smoke test fails.
 | Toolchain and build structure | Repaired in SPEC-002/SPEC-003 for LLVM/MLIR 21.1.6 on Apple Silicon. |
 | For-loops and unless | Incomplete: SPEC-017. |
 | Standard/local/package imports | Incomplete: SPEC-023, SPEC-029, SPEC-030. |
-| Defer across scopes and exits | Incomplete: SPEC-028. |
+| Defer across scopes and exits | Incomplete: SPEC-027. |
 | Endianness and packed bitfields | Incomplete: SPEC-037 through SPEC-039. |
 | Concurrency | Incomplete: SPEC-040 through SPEC-043; the restored spawn assertion fails. |
 | Shared lowering and JIT | Incomplete: SPEC-018/SPEC-019. |

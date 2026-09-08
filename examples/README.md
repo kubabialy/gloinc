@@ -8,7 +8,7 @@ The CLI ignores filenames and tokenizes a hardcoded string: running
 | --- | --- | --- |
 | `hello_world.gloin` | Standard output | CLI and standard-module output: SPEC-020, SPEC-023. |
 | `simple_test.gloin`, `comprehensive_test.gloin`, `P2_SUMMARY_DEMO.gloin` | Mixed features | Not validated end to end; core acceptance: SPEC-021. |
-| `defer_test.gloin` | Deferred cleanup | Scope and exit paths: SPEC-028. |
+| `defer_test.gloin` | Deferred cleanup | Scope and exit paths: SPEC-027. |
 | `basic_endianness_test.gloin` | Byte-order-aware types | Representation and semantics: SPEC-037 through SPEC-039. |
 
 Some examples predate the current specification and use unresolved or unsupported
