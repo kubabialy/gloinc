@@ -53,6 +53,7 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 - [ ] **SPEC-005 — Add clean-build CI and accurate onboarding/status documents.**
   Document dependencies and commands in a root README, add CI for the selected development platform(s), and correct [example status claims](examples/README.md), [phase notes](examples/PHASE2_PROGRESS.md), and [OpenCode.md](OpenCode.md).
   **Done when:** CI builds from an empty directory and publishes the complete test results; documentation distinguishes working, partial, and unsupported features and contains no unsupported production-readiness or coverage claims. A failing full suite remains visibly failing.
+  **Hosted verification pending:** the workflow, pinned toolchain installer, root README, and corrected example/project notes are ready. This item remains unchecked until the first hosted build and report publication are verified.
 
 ## 2. Define the core contract and repair the frontend
 

@@ -1,57 +1,25 @@
-# 🎯 GLOIN COMPILER - PHASE 2 PROGRESS
+# Phase 2 notes — superseded
 
-## ✅ ACHIEVEMENTS
+The previous report claimed complete for-loops, imports, parsing, and production
+readiness without executable acceptance evidence. Those claims and the estimated
+specification-coverage percentages have been withdrawn.
 
-### Priority 1 Blockers - COMPLETE
-- **For Loops**: ✅ Full MLIR implementation with proper block structure
-- **Import System**: ✅ Three-tier import support with std library generation
-- **Build System**: ✅ Stable MLIR/LLVM integration working
+The audit and SPEC-001 through SPEC-004 established fresh builds, consistent
+LLVM/MLIR linkage, a 112-case test inventory, and a checked external-tool harness.
+Serial and parallel runs have 98 passes and 14 failures. The CLI remains a lexer
+demonstration, and the JIT smoke test fails.
 
-### Current Compiler Capabilities
-The Gloin compiler now supports:
-- ✅ **Complete control flow**: if, while, **for loops**
-- ✅ **Modular imports**: `@std/`, `./local`, `#package` 
-- ✅ **Advanced MLIR generation**: Proper lowering pipeline with scoped operations
-- ✅ **Resource management**: Defer statements collected and processed
-- ✅ **Complex expressions**: Nested calls, arithmetic, boolean logic
-- ✅ **Type system**: Basic integer types and structs
+| Earlier item | Current tracking |
+| --- | --- |
+| Declaration/header drift | Repaired in SPEC-001. |
+| Toolchain and build structure | Repaired in SPEC-002/SPEC-003 for LLVM/MLIR 21.1.6 on Apple Silicon. |
+| For-loops and unless | Incomplete: SPEC-017. |
+| Standard/local/package imports | Incomplete: SPEC-023, SPEC-029, SPEC-030. |
+| Defer across scopes and exits | Incomplete: SPEC-028. |
+| Endianness and packed bitfields | Incomplete: SPEC-037 through SPEC-039. |
+| Concurrency | Incomplete: SPEC-040 through SPEC-043; the restored spawn assertion fails. |
+| Shared lowering and JIT | Incomplete: SPEC-018/SPEC-019. |
 
-### Test Results
-- ✅ **Parsing**: All constructs recognized correctly
-- ✅ **For loop syntax**: `for def i: i32 = 0; i < 10; i = i + 1`
-- ✅ **Import syntax**: `import @std/io; import ./module; import #package`
-- ✅ **Defer support**: Statements collected and processed
-
-## 🔄 IN PROGRESS
-
-### Defer Statement Integration
-- ✅ **Logic implemented**: LIFO execution in `emit_deferred()`
-- ✅ **MLIR DeferOp integration**: Wraps deferred calls in MLIR operations
-- 🔄 **MLIR Header conflicts**: Generated headers causing duplicate declarations (known issue)
-
-### Endianness Support  
-- ✅ **Logic implemented**: `be_`/`le_` prefix parsing in `resolve_type()`
-- ✅ **Type creation**: Endianness-aware integer types using `gloin::GloinIntegerType`
-- ✅ **Caching**: Endianness info stored for later use
-
-## 📈 NEXT STEPS
-
-### Immediate (Phase 2.2)
-1. **Fix MLIR header conflicts** - Resolve duplicate declarations
-2. **Complete defer integration** - Ensure DeferOp generates correctly
-3. **Test endianness types** - Create comprehensive test suite
-
-### Upcoming (Phase 2.3)  
-4. **Bit-field operations** - Complete packed struct support
-5. **Concurrency runtime** - Integrate async/spawnable operations
-6. **Optimization passes** - Improve MLIR lowering efficiency
-
-## 🎉 IMPACT
-
-The compiler has transformed from a basic parser into a sophisticated language implementation with:
-- **Modern control flow** (for loops)
-- **Modular architecture** (imports)
-- **Resource management** (defer statements)
-- **Network-ready types** (endianness)
-
-**SPEC Coverage: ~90%** - Ready for production use! 🚀
+[SPEC-TODO.md](../SPEC-TODO.md) replaces the phase roadmap. Its completion log
+records commands and results; [tests/README.md](../tests/README.md) lists failures.
+No specification-coverage percentage is claimed.

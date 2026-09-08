@@ -10,6 +10,14 @@ The tested environment is Apple Silicon macOS, AppleClang 16.0.0, CMake 4.2.1,
 Ninja, and Homebrew's LLVM/MLIR 21.1.6. The project requires CMake 3.28 or newer
 and uses C++23. Other platforms have not been validated.
 
+`bash scripts/install-llvm.sh` reuses this release or installs the historical
+[Homebrew formula](https://github.com/Homebrew/homebrew-core/blob/67ebbe50b3d4f240f8c34f998edac9a2898cba86/Formula/l/llvm.rb)
+in a local tap. The formula revision and its SHA-256 are pinned; Homebrew verifies
+the release bottle against the formula's checksum. A different installed
+unversioned LLVM is left untouched and causes an actionable installer error.
+The CI workflow uses this installer on the
+[hosted macOS 15 arm64 image](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md).
+
 ## Configure and build
 
 Point both package paths at the same installation. For the tested Homebrew
