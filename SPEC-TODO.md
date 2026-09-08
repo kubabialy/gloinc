@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-005.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-006.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. The first working compiler milestone is SPEC-021: real source files passing through the CLI with reliable error handling. The proposed first release boundary and supported platforms are decided in SPEC-006; later features remain tracked even if they are outside that release.
 
@@ -50,10 +50,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** test discovery matches the maintained inventory, serial and parallel runs do not collide on `temp.mlir`, and tool failures cannot be interpreted as successful program output. Known language failures remain explicitly reported until their tasks are completed.
   **Verified:** all 112 maintained cases are discovered, including the four generic tests and eight harness regressions. The orphaned lit checks are now assertions in `CodeGenTest.GenerateSpawn`, exposing a missing spawn operation tracked under SPEC-040/SPEC-041. Serial and parallel runs both produce 98 passes and the same 14 failures; see [tests/README.md](tests/README.md) for the inventory, harness contract, and failure mapping.
 
-- [ ] **SPEC-005 — Add clean-build CI and accurate onboarding/status documents.**
+- [x] **SPEC-005 — Add clean-build CI and accurate onboarding/status documents.**
   Document dependencies and commands in a root README, add CI for the selected development platform(s), and correct [example status claims](examples/README.md), [phase notes](examples/PHASE2_PROGRESS.md), and [OpenCode.md](OpenCode.md).
   **Done when:** CI builds from an empty directory and publishes the complete test results; documentation distinguishes working, partial, and unsupported features and contains no unsupported production-readiness or coverage claims. A failing full suite remains visibly failing.
-  **Hosted verification pending:** the workflow, pinned toolchain installer, root README, and corrected example/project notes are ready. This item remains unchecked until the first hosted build and report publication are verified.
+  **Verified:** [hosted CI](https://github.com/kubabialy/gloinc/actions/runs/34242653935) installs LLVM/MLIR 21.1.6 with its matching Z3 dependency and builds from empty directories with tests enabled and disabled. Published serial/parallel reports both contain all 112 tests, with 98 passes, the same 14 known failures, and no crashes or skipped tests. The workflow remains red for those failures. The root README, toolchain guide, example notes, and OpenCode.md now state the verified capabilities and remaining limitations.
 
 ## 2. Define the core contract and repair the frontend
 
@@ -260,6 +260,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-002 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) requires MLIR 21.1.6 and shared MLIR/LLVM/ExecutionEngine targets; [codegen.cpp](src/codegen.cpp) uses the installed APIs. A fresh Debug build produces both executables. All **4/4 MLIRSetup tests pass**, including the new compiler-dialect regression in [mlir_test.cpp](tests/mlir_test.cpp). Full serial CTest: **87/100 pass, 13 fail, no crashes**; the extra test accounts for the increase from the audited 99 configured tests. Link commands contain no LLVM/MLIR component archives, and `otool -L` confirms shared dependencies. Unsupported-version, missing-target, and static-target configuration probes all reject their fixtures. Requirements are documented in [docs/toolchain.md](docs/toolchain.md); verification and remaining failures follow. |
 | SPEC-003 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) shares `gloin_frontend` and `gloin_backend` between the CLI and tests, requires standard C++23, scopes LLVM settings to backend consumers, and gates a checksum-pinned GoogleTest 1.16.0 download on `BUILD_TESTING`. Fresh ON/OFF builds pass with explicit LLVM/MLIR paths; OFF compiles the complete compiler implementation without test dependencies. [Makefile](Makefile) supports build options, delegates tests to CTest, and preserves failure reporting. **4/4 dialect tests pass; 87/100 full-suite tests pass, with exactly the same 13 failures as SPEC-002 and no crashes.** [docs/toolchain.md](docs/toolchain.md) documents target boundaries and build modes; verification follows. |
 | SPEC-004 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) includes all generic tests, discovers external tools, rejects omitted suite files, and assigns 30-second CTest timeouts. [external_runner.cpp](tests/support/external_runner.cpp) runs tools without a shell in per-invocation temporary directories, enforces child timeouts, checks both statuses, preserves stderr, and separates errors from strict i32 results. Eight harness regressions and five E2E tests pass in parallel. The former lit checks are maintained in [codegen_test.cpp](tests/codegen_test.cpp). Source definitions and CTest discovery match at **112 tests**; serial/parallel full suites both report **98 passes, 14 failures, no crashes**, including the newly exposed missing spawn operation. Full inventory and failure task IDs are in [tests/README.md](tests/README.md). |
+| SPEC-005 | 2026-09-08 | [Compiler CI](.github/workflows/ci.yml) builds both test modes on hosted macOS 15 arm64 and publishes full logs, environment, inventory, and JUnit reports even when tests fail. [install-llvm.sh](scripts/install-llvm.sh) pins LLVM/MLIR 21.1.6 and the required Z3 4.15.4 ABI using checked historical formulas and bottles. [Run 34242653935](https://github.com/kubabialy/gloinc/actions/runs/34242653935), at `ddcc705de5910e30ee0ac4dd949251d5915cdaf5`, passed both clean builds; downloaded serial/parallel reports each confirm **98/112 pass, 14 fail, no crashes or skipped tests**. [README.md](README.md), [toolchain requirements](docs/toolchain.md), [example status](examples/README.md), [phase notes](examples/PHASE2_PROGRESS.md), and [OpenCode.md](OpenCode.md) replace unsupported readiness/coverage claims with measured status. Verification follows. |
 
 ### SPEC-001 verification
 
@@ -393,3 +394,44 @@ git diff --check
 `TEST`/`TEST_F` names extracted from all `tests/*_test.cpp` files match the CTest JSON names exactly, with no duplicates; every discovered case has `TIMEOUT=30`. The four generic tests pass with their original assertions. Migrating the lit checks exposes `CodeGenTest.GenerateSpawn`'s missing operation, increasing the known failure count from 13 to 14 without changing compiler code. The previous 13 failures remain assigned to their existing tasks, and the additional failure is assigned to SPEC-040/SPEC-041.
 
 The harness regression suite verifies optimizer and runner failures despite numeric stdout, malformed/empty/multiple/out-of-range results, a valid negative return value, a missing executable, timeouts in both stages, and concurrent invocations with different results. The child fixture runs from a path containing a space. An unlisted temporary `tests/spec004_unlisted_test.cpp` caused configuration to fail with the expected missing-suite diagnostic; removing the probe restored successful configuration. A fresh `BUILD_TESTING=OFF` configuration still creates no test dependencies and discovers zero tests. Formatting checks passed for the new helper/fixture/tests and rewritten E2E source. No failing cases are disabled or marked as expected successes.
+
+### SPEC-005 verification
+
+[Hosted run 34242653935](https://github.com/kubabialy/gloinc/actions/runs/34242653935)
+verified implementation commit `ddcc705de5910e30ee0ac4dd949251d5915cdaf5` on
+2026-09-08. Its environment report records macOS 15.7.9 arm64, AppleClang 17.0.0,
+CMake 4.4.3, Ninja 1.13.2, and LLVM/MLIR 21.1.6. The installer downloaded the
+historical LLVM and Z3 bottles; pinning Z3 4.15.4 resolves the LLVM bottle's
+requirement for `libz3.4.15.dylib`.
+
+The exact configure/build commands and report handling are maintained in
+[the workflow](.github/workflows/ci.yml). Both build directories were absent at
+startup. Debug configurations with `BUILD_TESTING=OFF` and `ON` both built
+successfully using explicit LLVM/MLIR package paths. The OFF step also verified
+that no `_deps` directory or test executable existed. The ON configuration
+fetched the pinned GoogleTest archive without a local source override.
+
+```sh
+ctest --test-dir build-ci --show-only=json-v1 > ci-reports/inventory.json
+ctest --test-dir build-ci -j 1 --output-on-failure --output-junit "$PWD/ci-reports/serial.xml"
+ctest --test-dir build-ci -j 4 --output-on-failure --output-junit "$PWD/ci-reports/parallel.xml"
+# Both full-suite commands exit 8; the workflow runs both before reporting failure.
+gh run download 34242653935 -n compiler-ci-reports -D "<report-directory>"
+bash -n scripts/install-llvm.sh
+git diff --check
+```
+
+The published artifact was downloaded and inspected: JSON inventory and both
+JUnit reports contain all **112 tests**, with **98 passes, 14 failures, zero
+skipped/disabled cases, and no crashes** in each run. Failure names match the
+SPEC-004 baseline in [tests/README.md](tests/README.md). All four dialect checks,
+five external E2E cases, and eight subprocess-harness regressions pass. The run's
+build steps and artifact publication succeeded; its full-suite step and overall
+conclusion remain failed. Reports include both complete test logs, configure and
+build logs, environment details, CMake caches, and compiler commands. Artifact
+retention is 14 days; the baseline is recorded here for longer-term reference.
+
+Local checks also verified the installer's existing-toolchain reuse path,
+workflow YAML parsing, shell syntax for every workflow command block, relative
+documentation links, and the report step's execution of both suites before
+returning failure. No compiler behavior or test expectations changed for this task.

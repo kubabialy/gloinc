@@ -6,9 +6,12 @@ the matching LLVM version. Other versions are not yet validated and are rejected
 at configuration time. Do not change the version requirement without rebuilding
 and rerunning the dialect tests.
 
-The tested environment is Apple Silicon macOS, AppleClang 16.0.0, CMake 4.2.1,
-Ninja, and Homebrew's LLVM/MLIR 21.1.6. The project requires CMake 3.28 or newer
-and uses C++23. Other platforms have not been validated.
+Local verification used Apple Silicon macOS, AppleClang 16.0.0, CMake 4.2.1,
+Ninja, and Homebrew's LLVM/MLIR 21.1.6. The
+[verified hosted run](https://github.com/kubabialy/gloinc/actions/runs/34242653935)
+used macOS 15.7.9 arm64, AppleClang 17.0.0, CMake 4.4.3, Ninja 1.13.2, and the
+same LLVM/MLIR release. The project requires CMake 3.28 or newer and uses C++23.
+Other platforms have not been validated.
 
 `bash scripts/install-llvm.sh` reuses this release or installs the historical
 [Homebrew formula](https://github.com/Homebrew/homebrew-core/blob/67ebbe50b3d4f240f8c34f998edac9a2898cba86/Formula/l/llvm.rb)

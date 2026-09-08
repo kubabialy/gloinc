@@ -7,7 +7,7 @@ verification evidence in order.
 
 ## Current status
 
-At SPEC-004, fresh builds work on Apple Silicon macOS with LLVM/MLIR 21.1.6.
+Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR 21.1.6.
 The CLI still tokenizes a hardcoded string and ignores input-file arguments.
 It cannot yet compile or run the programs under `examples/`.
 
@@ -83,5 +83,7 @@ environment details, and test inventory are uploaded as `compiler-ci-reports`,
 including on failure. The workflow remains red while the full suite fails.
 Compiler build outputs are not restored from a cache.
 
-The local results above are established; the first hosted run is pending as
-SPEC-005 is introduced. Hosted results will be recorded in the checklist.
+[The verified SPEC-005 run](https://github.com/kubabialy/gloinc/actions/runs/34242653935)
+built both configurations and published the complete reports. Both test runs
+matched the local baseline: 98 passes and the same 14 failures out of 112 tests,
+with no crashes or skipped tests. The run is red because those failures remain.
