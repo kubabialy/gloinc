@@ -70,9 +70,12 @@ runs the lexer demo. Passing it a filename does not verify that program.
 executables link these libraries. Tests drive compiler stages directly;
 connecting them through a file-reading CLI remains SPEC-020.
 
-SPEC-006 resolves syntax ambiguities and the first release boundary. SPEC-021 is
-the first executable-core acceptance milestone. The ordered backlog replaces the
-old phase notes as the implementation plan.
+[SPEC-006's contract](SPEC.md#first-release-contract-spec-006) selects a scalar
+JIT compiler on Apple Silicon macOS for the first release. SPEC-021 is its
+executable-core acceptance milestone; SPEC-046 remains the release gate. Strings,
+standard I/O, aggregates, concurrency, and native binaries are deferred. These
+are planned capabilities, not additions to the verified status above. The ordered
+backlog replaces the old phase notes as the implementation plan.
 
 ## Continuous integration
 

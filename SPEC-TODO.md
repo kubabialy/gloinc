@@ -2,9 +2,9 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-006.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-007.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
-The first milestone is a reproducible build. The first working compiler milestone is SPEC-021: real source files passing through the CLI with reliable error handling. The proposed first release boundary and supported platforms are decided in SPEC-006; later features remain tracked even if they are outside that release.
+The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
 ## How to use this checklist
 
@@ -14,6 +14,7 @@ The first milestone is a reproducible build. The first working compiler mileston
 - Resolve language decisions in SPEC.md before implementing the affected behavior. This checklist does not silently change the language specification.
 - Keep known failures visible and associate them with task IDs. Do not disable tests or weaken assertions just to report a green suite. Obsolete tests should be corrected against an explicit spec decision.
 - If an item proves too large, split it into suffix IDs such as `SPEC-027a`; retain the parent ID and its acceptance criteria.
+- For the selected first release, work through SPEC-021 and then the SPEC-046 release gate. Explicitly deferred items remain unchecked and resume afterward in checklist order; deferral never counts as implementation.
 
 ## Audited baseline
 
@@ -57,9 +58,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 
 ## 2. Define the core contract and repair the frontend
 
-- [ ] **SPEC-006 — Resolve core syntax ambiguities and choose the first release boundary.**
+- [x] **SPEC-006 — Resolve core syntax ambiguities and choose the first release boundary.**
   Reconcile mandatory `def` with `const`, explicit type requirements, `int`/`usize` aliases, `string` versus `String`, visibility placement, statement terminators, and UTF-8 identifier rules. State the supported initial types/features/platforms and whether that release requires JIT, native compilation, or both. Record later decisions under their feature tasks.
   **Done when:** SPEC.md provides canonical examples and an explicit first release feature list. Implementation-only syntax is either documented as an extension or scheduled for rejection; deferred work stays on this checklist.
+  **Decisions:** [the core contract](SPEC.md#first-release-contract-spec-006) selects a JIT-only scalar release on Apple Silicon macOS. Declarations use `def`, constants use `def const`, visibility immediately follows `def`, annotations and statement semicolons are mandatory, identifiers are ASCII in valid UTF-8 source, `int` aliases `i32`, `usize` aliases the target pointer-width unsigned type, and only `string` is the built-in text spelling. Implementation and negative acceptance cases remain in the tasks below; the decision itself does not repair their tests.
 
 - [ ] **SPEC-007 — Introduce source-aware diagnostics and stop on errors.**
   Preserve source file/span information through tokens and AST nodes. Give parsing, semantic checking, and code generation explicit success/failure results. Route every error through the same diagnostic mechanism; unsupported AST nodes must fail explicitly.
@@ -68,10 +70,12 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 - [ ] **SPEC-008 — Repair lexer behavior against the agreed vocabulary.**
   Fix newline/comment handling, multi-character operators, and keyword recognition. Resolve existing `in`, range, `=>`, `spawn`, and `await` test expectations against the spec/extension decisions. Validate malformed numeric/string/character tokens and preserve accurate source positions.
   **Done when:** supported vocabulary has correct tokens and positions; unsupported vocabulary has deliberate behavior; the seven audited lexer failures are resolved without silently accepting obsolete syntax.
+  **SPEC-006 contract:** validate UTF-8 without locale-dependent identifier classification; reject BOM/NUL/non-ASCII identifiers, reserve the documented later/legacy vocabulary, and treat LF/CRLF as trivia with correct line accounting. Newline tokens in lexer tests may remain internal trivia; neither comments nor newlines imply semicolons. Reserved `in`, `..`, and `=>` must not swallow adjacent tokens, even though their syntax is unsupported in the core.
 
 - [ ] **SPEC-009 — Make parsing complete and deterministic.**
   Standardize token consumption, require closing delimiters, and make error recovery always advance. Fix identifier conditions such as `if b { ... }`, operator precedence, and multiline struct/function parsing. Cover [parser.cpp](src/parser.cpp) with complete-program cases.
   **Done when:** ordinary multiline programs parse without diagnostics; truncated blocks/calls and malformed expressions fail; `if b` is not parsed as a struct literal; parser errors cannot leave a supposedly successful partial program.
+  **SPEC-006 contract:** enforce canonical modifier order, explicit annotations, required statement semicolons, comma-separated lists, and the statement-only assignment rule. Reject bare `const`, `pub def`, `fn`, omitted return types, and other unsupported syntax listed in SPEC.md; preserve later feature implementation tasks rather than counting a rejection as implementation.
 
 - [ ] **SPEC-010 — Establish one resolved type/symbol contract for codegen.**
   Choose a typed AST, semantic side tables, or another explicit checked-program representation. Resolve types and declarations once and make codegen consume that information. Define ownership of AST, semantic data, MLIR context, and modules.
@@ -90,6 +94,7 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 - [ ] **SPEC-013 — Implement typed numeric literals and conversions.**
   Parse decimal/hexadecimal/binary integers with full-consumption and range checks. Support the chosen signed/unsigned widths and floating types without forcing every literal to i32/f32. Define overflow, narrowing, explicit casts, and literal compatibility in SPEC.md.
   **Done when:** `0x2A` and `0b101010` mean 42; oversized literals fail rather than becoming zero; integer and float boundary tests agree across Sema and codegen; allocation and store widths match.
+  **SPEC-006 scope:** signed/unsigned 8/16/32/64-bit integers and f32/f64, with exact `int = i32` and target-width `usize` aliases. Define contextual literal typing without inferring declaration types. The 128-bit extension is explicitly deferred under SPEC-013b; unsupported types cannot fall back to i32.
 
 - [ ] **SPEC-014 — Validate functions, calls, returns, and entry points.**
   Check argument count/types, parameter rules, return values, all reachable return paths, and `main`'s supported signature. Define implicit void return and unreachable-source behavior.
@@ -98,6 +103,7 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 - [ ] **SPEC-015 — Implement the supported expression operators.**
   Align lexer/parser/Sema/codegen operator tables. Implement unary minus/not, arithmetic, comparisons, and boolean short-circuiting; choose signed, unsigned, and floating operations from resolved types. Specify division-by-zero, overflow, shifts, and evaluation order for the supported operator set.
   **Done when:** negation and inequality do not crash; float addition uses floating arithmetic; unsigned comparisons/division are correct; short-circuit tests prove that skipped operands have no side effects. Unsupported operators fail explicitly.
+  **SPEC-006 scope:** implement the operator list in SPEC.md, including integer `%`; reject compound assignment, bitwise/shift operators, unary `+`, floating remainder, and assignment expressions for this release. Define precedence, evaluation order, and numeric failure behavior before adding acceptance cases.
 
 - [ ] **SPEC-016 — Correct nested if/while control flow.**
   Require boolean conditions and track the current insertion block after recursive generation. Stop emitting into terminated blocks and correctly terminate merge blocks and loop backedges.
@@ -124,6 +130,7 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 - [ ] **SPEC-021 — Establish the executable core acceptance suite.**
   Convert the core audit reproductions into repository fixtures driven through the CLI. Cover decimal/hex/binary values, calls, mutation, boolean operators, nested control flow, for/unless, and invalid-source diagnostics.
   **Done when:** the supported core examples execute with asserted values/output, negative cases fail before execution, and both targeted tests and the corresponding CI checks pass from a fresh build. This is the first working compiler milestone, not full specification completion.
+  **SPEC-006 scope:** turn the complete core examples and invalid fragments in SPEC.md into source-file fixtures, cover every advertised scalar type/operator, and verify that unsupported later syntax fails before execution. The core has no standard output API; assert returned values and diagnostics. Keep later-feature failures visible in the full suite.
 
 ## 5. Finish data, memory, and basic modules
 
@@ -228,17 +235,25 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 - [ ] **SPEC-045 — Implement native output if included in the release scope.**
   Add LLVM export, target selection/data layout, object emission, runtime linkage, and executable generation through the shared compiler pipeline. Define the supported host/target matrix and diagnostic behavior for unsupported combinations.
   **Done when:** the selected native targets compile and run fixture programs without the JIT, with results matching the reference execution mode. If SPEC-006 selects a JIT-only first release, mark native output explicitly deferred and keep its implementation work open.
+  **SPEC-006 disposition:** native object/executable output and additional host/target platforms are explicitly deferred from the first release. This implementation item stays open; the in-process JIT is the required execution mode.
 
 - [ ] **SPEC-046 — Verify specification coverage and prepare the release.**
   Turn normative spec examples into complete executable or expected-error fixtures. Clearly identify conceptual examples and external dependencies. Finish installation/packaging, version/help information, platform setup instructions, and a feature matrix linked to acceptance tests.
   **Done when:** a fresh checkout can build/test/install by following the README; all tests required by the chosen release scope pass; every advertised feature has end-to-end evidence; remaining unsupported features are documented and rejected. Record serial/parallel results and applicable runtime sanitizer checks. No temporary audit patch, cached old binary, or machine-specific path is required.
+  **SPEC-006 scope:** publish only after SPEC-001 through SPEC-021 and this release gate are verified for the scalar JIT contract. Deferred tasks need not be complete, but their unsupported behavior must be diagnosed. Report targeted core acceptance separately from the unfiltered suite, retaining every unresolved failure and its task ID.
+
+### Deferred numeric extension
+
+- [ ] **SPEC-013b — Specify and implement 128-bit numeric types (deferred).**
+  Preserve the existing i128/u128/f128 intent outside the initial scalar release. Define literal ranges, arithmetic/conversions, ABI/runtime requirements, and target support before exposing these types. Schedule this extension after the core release work; its ID links it to SPEC-013 without enlarging that task.
+  **Done when:** boundary, arithmetic, conversion, call, and execution tests prove the selected 128-bit representations and behavior on documented targets; unsupported variants produce diagnostics rather than smaller fallback types.
 
 ## Specification coverage map
 
 | Specification area | Checklist items |
 | --- | --- |
 | UTF-8, declarations, explicit typing, entry point | SPEC-006 through SPEC-014, SPEC-020 |
-| Variables and constants | SPEC-012, SPEC-013 |
+| Variables, constants, numeric types | SPEC-012, SPEC-013, SPEC-013b |
 | Functions and operators | SPEC-011, SPEC-013 through SPEC-015 |
 | If, unless, while, for | SPEC-016, SPEC-017, SPEC-036 |
 | Strings | SPEC-022, SPEC-030, SPEC-035 |
@@ -261,6 +276,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-003 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) shares `gloin_frontend` and `gloin_backend` between the CLI and tests, requires standard C++23, scopes LLVM settings to backend consumers, and gates a checksum-pinned GoogleTest 1.16.0 download on `BUILD_TESTING`. Fresh ON/OFF builds pass with explicit LLVM/MLIR paths; OFF compiles the complete compiler implementation without test dependencies. [Makefile](Makefile) supports build options, delegates tests to CTest, and preserves failure reporting. **4/4 dialect tests pass; 87/100 full-suite tests pass, with exactly the same 13 failures as SPEC-002 and no crashes.** [docs/toolchain.md](docs/toolchain.md) documents target boundaries and build modes; verification follows. |
 | SPEC-004 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) includes all generic tests, discovers external tools, rejects omitted suite files, and assigns 30-second CTest timeouts. [external_runner.cpp](tests/support/external_runner.cpp) runs tools without a shell in per-invocation temporary directories, enforces child timeouts, checks both statuses, preserves stderr, and separates errors from strict i32 results. Eight harness regressions and five E2E tests pass in parallel. The former lit checks are maintained in [codegen_test.cpp](tests/codegen_test.cpp). Source definitions and CTest discovery match at **112 tests**; serial/parallel full suites both report **98 passes, 14 failures, no crashes**, including the newly exposed missing spawn operation. Full inventory and failure task IDs are in [tests/README.md](tests/README.md). |
 | SPEC-005 | 2026-09-08 | [Compiler CI](.github/workflows/ci.yml) builds both test modes on hosted macOS 15 arm64 and publishes full logs, environment, inventory, and JUnit reports even when tests fail. [install-llvm.sh](scripts/install-llvm.sh) pins LLVM/MLIR 21.1.6 and the required Z3 4.15.4 ABI using checked historical formulas and bottles. [Run 34242653935](https://github.com/kubabialy/gloinc/actions/runs/34242653935), at `ddcc705de5910e30ee0ac4dd949251d5915cdaf5`, passed both clean builds; downloaded serial/parallel reports each confirm **98/112 pass, 14 fail, no crashes or skipped tests**. [README.md](README.md), [toolchain requirements](docs/toolchain.md), [example status](examples/README.md), [phase notes](examples/PHASE2_PROGRESS.md), and [OpenCode.md](OpenCode.md) replace unsupported readiness/coverage claims with measured status. Verification follows. |
+| SPEC-006 | 2026-09-08 | [SPEC.md](SPEC.md) defines the scalar JIT release on Apple Silicon macOS, required types/features, declaration/modifier/type/terminator/UTF-8 rules, three complete core programs, and eleven expected-error fragments. Later designs are separated from the core, spelling contradictions in examples are corrected, and unsupported implementation syntax maps to explicit rejection tasks. Native output and later features remain open; SPEC-013b retains the deferred 128-bit extension. [README.md](README.md) and this checklist agree on SPEC-021 acceptance followed by SPEC-046 release validation. Documentation consistency checks pass; compiler code and test expectations are unchanged. |
 
 ### SPEC-001 verification
 
@@ -435,3 +451,40 @@ Local checks also verified the installer's existing-toolchain reuse path,
 workflow YAML parsing, shell syntax for every workflow command block, relative
 documentation links, and the report step's execution of both suites before
 returning failure. No compiler behavior or test expectations changed for this task.
+
+
+### SPEC-006 verification
+
+Reviewed the specification against `src/lexer.h`, `src/lexer.cpp`,
+`src/parser.cpp`, `src/sema.cpp`, `src/codegen.cpp`, and the lexer/parser/spec
+unit tests. In particular, lexer token declarations do not imply accepted
+syntax; parser defaults for omitted types and the backend's internal `String`
+entry are implementation gaps rather than language rules.
+
+| Acceptance area | Recorded decision/evidence |
+| --- | --- |
+| Declaration and visibility ambiguity | `def const`, visibility immediately after `def`, explicit receiver parameters; later examples use the same order. |
+| Types and aliases | Explicit binding/parameter/return annotations; `int = i32`, target-width unsigned `usize`, lowercase built-in `string`. |
+| Source and delimiters | Valid UTF-8 with ASCII identifiers, reserved vocabulary, LF/CRLF trivia, mandatory statement/import semicolons, comma-separated lists. |
+| Release boundary | Listed scalar types/operators and JIT execution on Apple Silicon macOS; SPEC-021 acceptance and SPEC-046 release gate. |
+| Canonical source | Three complete core programs specify results 42, 42, and 3; eleven invalid fragments document required diagnostics. |
+| Unsupported/deferred work | Disposition table links syntax to rejection/implementation tasks; all deferred tasks stay unchecked, including new SPEC-013b and native-output SPEC-045. |
+
+A Python standard-library audit passed for local Markdown links and anchors,
+balanced code fences, core table columns, all 47 unique checklist task IDs and
+actual task references, the three core examples' entry points/braces, and
+canonical declaration/import/receiver spellings in the later examples. The
+existing illustrative split ID `SPEC-027a` is an example, not a missing task.
+
+```sh
+git diff --check
+git diff --name-only 6f5ce20 --
+# Documentation changes only: README.md, SPEC-TODO.md, SPEC.md.
+```
+
+This is a specification decision, not a compiler implementation change. No
+compiler tests were rerun or reclassified. The last measured full-suite baseline
+remains SPEC-005's 98 passes and 14 failures; the new canonical programs become
+execution/diagnostic acceptance fixtures under SPEC-021 as their implementation
+tasks are completed. Packed-layout and concurrency API ambiguities remain
+explicitly conceptual until SPEC-037/SPEC-038 and SPEC-040 resolve them.
