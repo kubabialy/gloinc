@@ -3,8 +3,6 @@ project(gloinc)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_CXX_STANDARD 23)
-
 # MLIR/LLVM Setup
 # Attempt to auto-detect Homebrew LLVM on macOS if not provided
 if(NOT DEFINED LLVM_DIR AND NOT DEFINED MLIR_DIR)
@@ -45,105 +43,105 @@ include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
 
-include_directories(${LLVM_INCLUDE_DIRS})
-include_directories(${MLIR_INCLUDE_DIRS})
-include_directories(${CMAKE_CURRENT_BINARY_DIR}) # For generated headers
-include_directories(src) 
-
-add_definitions(${LLVM_DEFINITIONS})
-
 # MLIR Dialect Generation
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/src/dialect")
 
-set(GLOIN_DIALECT_INCLUDE "-I${CMAKE_SOURCE_DIR}/src/dialect")
+set(GLOIN_TABLEGEN_INCLUDES
+    ${LLVM_INCLUDE_DIRS}
+    ${MLIR_INCLUDE_DIRS}
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dialect"
+)
 
 set(LLVM_TARGET_DEFINITIONS src/dialect/GloinBase.td)
-mlir_tablegen(src/dialect/GloinDialect.h.inc -gen-dialect-decls ${GLOIN_DIALECT_INCLUDE})
-mlir_tablegen(src/dialect/GloinDialect.cpp.inc -gen-dialect-defs ${GLOIN_DIALECT_INCLUDE})
+mlir_tablegen(src/dialect/GloinDialect.h.inc -gen-dialect-decls EXTRA_INCLUDES ${GLOIN_TABLEGEN_INCLUDES})
+mlir_tablegen(src/dialect/GloinDialect.cpp.inc -gen-dialect-defs EXTRA_INCLUDES ${GLOIN_TABLEGEN_INCLUDES})
 add_public_tablegen_target(GloinDialectIncGen)
 
 set(LLVM_TARGET_DEFINITIONS src/dialect/GloinTypes.td)
-mlir_tablegen(src/dialect/GloinEnums.h.inc -gen-enum-decls ${GLOIN_DIALECT_INCLUDE})
-mlir_tablegen(src/dialect/GloinEnums.cpp.inc -gen-enum-defs ${GLOIN_DIALECT_INCLUDE})
-mlir_tablegen(src/dialect/GloinTypes.h.inc -gen-typedef-decls -typedefs-dialect=gloin ${GLOIN_DIALECT_INCLUDE})
-mlir_tablegen(src/dialect/GloinTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=gloin ${GLOIN_DIALECT_INCLUDE})
+mlir_tablegen(src/dialect/GloinEnums.h.inc -gen-enum-decls EXTRA_INCLUDES ${GLOIN_TABLEGEN_INCLUDES})
+mlir_tablegen(src/dialect/GloinEnums.cpp.inc -gen-enum-defs EXTRA_INCLUDES ${GLOIN_TABLEGEN_INCLUDES})
+mlir_tablegen(src/dialect/GloinTypes.h.inc -gen-typedef-decls -typedefs-dialect=gloin EXTRA_INCLUDES ${GLOIN_TABLEGEN_INCLUDES})
+mlir_tablegen(src/dialect/GloinTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=gloin EXTRA_INCLUDES ${GLOIN_TABLEGEN_INCLUDES})
 add_public_tablegen_target(GloinTypesIncGen)
 
 set(LLVM_TARGET_DEFINITIONS src/dialect/GloinOps.td)
-mlir_tablegen(src/dialect/GloinOps.h.inc -gen-op-decls ${GLOIN_DIALECT_INCLUDE})
-mlir_tablegen(src/dialect/GloinOps.cpp.inc -gen-op-defs ${GLOIN_DIALECT_INCLUDE})
+mlir_tablegen(src/dialect/GloinOps.h.inc -gen-op-decls EXTRA_INCLUDES ${GLOIN_TABLEGEN_INCLUDES})
+mlir_tablegen(src/dialect/GloinOps.cpp.inc -gen-op-defs EXTRA_INCLUDES ${GLOIN_TABLEGEN_INCLUDES})
 add_public_tablegen_target(GloinOpsIncGen)
 
-add_executable(gloinc main.cpp
-        src/lexer.h
-        src/lexer.cpp
-        src/parser.cpp
-        src/parser.h
-        src/AST.h
-        src/sema.cpp
-        src/sema.h
-        src/dialect/GloinDialect.cpp
-        src/dialect/GloinDialect.h)
-
-add_dependencies(gloinc GloinDialectIncGen GloinTypesIncGen GloinOpsIncGen)
-
-target_link_libraries(gloinc PRIVATE
-        MLIR
-        LLVM
+add_library(gloin_frontend STATIC
+    src/lexer.cpp
+    src/parser.cpp
+    src/sema.cpp
 )
+target_include_directories(gloin_frontend PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_features(gloin_frontend PUBLIC cxx_std_23)
 
-
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/refs/heads/main.zip
-)
-# For Windows: Prevent overriding the parent project's compiler/linker settings
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
-
-enable_testing()
-
-add_executable(gloinc_test 
-    tests/lexer_test.cpp 
-    tests/parser_test.cpp 
-    tests/sema_test.cpp 
-    tests/mlir_test.cpp
-    tests/codegen_test.cpp
-    tests/struct_test.cpp
-    tests/codegen_struct_test.cpp
-    tests/spec_test.cpp
-    tests/codegen_spec_test.cpp
-    tests/arena_test.cpp
-    tests/async_test.cpp
-    tests/sema_async_test.cpp
-    tests/e2e_test.cpp
-    tests/basic_codegen_test.cpp
-    tests/array_string_test.cpp
-    tests/unless_test.cpp
-    tests/jit_test.cpp
+add_library(gloin_backend STATIC
     src/codegen.cpp
-    src/codegen.h
-    src/lexer.cpp 
-    src/lexer.h 
-    src/parser.cpp 
-    src/parser.h 
-    src/AST.h 
-    src/sema.cpp 
-    src/sema.h
     src/dialect/GloinDialect.cpp
-    src/dialect/GloinDialect.h
     src/jit_runner.cpp
-    src/jit_runner.h
 )
-add_dependencies(gloinc_test GloinDialectIncGen GloinTypesIncGen GloinOpsIncGen)
-target_link_libraries(gloinc_test PRIVATE
-    GTest::gtest_main
-    # ExecutionEngineShared imports MLIR and LLVM, with no overlapping archives.
+add_dependencies(gloin_backend GloinDialectIncGen GloinTypesIncGen GloinOpsIncGen)
+target_include_directories(gloin_backend PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(gloin_backend SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
+separate_arguments(GLOIN_LLVM_DEFINITIONS NATIVE_COMMAND "${LLVM_DEFINITIONS}")
+target_compile_definitions(gloin_backend PUBLIC ${GLOIN_LLVM_DEFINITIONS})
+target_link_libraries(gloin_backend PUBLIC
+    gloin_frontend
     MLIRExecutionEngineShared
     MLIR
     LLVM
 )
 
-include(GoogleTest)
-gtest_discover_tests(gloinc_test)
+add_executable(gloinc main.cpp)
+target_link_libraries(gloinc PRIVATE gloin_backend)
+set(GLOIN_TARGETS gloin_frontend gloin_backend gloinc)
+
+include(CTest)
+if(BUILD_TESTING)
+    include(FetchContent)
+    FetchContent_Declare(googletest
+        URL https://codeload.github.com/google/googletest/tar.gz/refs/tags/v1.16.0
+        URL_HASH SHA256=78c676fc63881529bf97bf9d45948d905a66833fbfa5318ea2cd7478cb98f399
+        DOWNLOAD_EXTRACT_TIMESTAMP FALSE
+    )
+    set(BUILD_GMOCK OFF CACHE BOOL "Build GoogleMock" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "Install GoogleTest" FORCE)
+    # Match the default shared MSVC runtime without affecting other platforms.
+    if(MSVC)
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    endif()
+    FetchContent_MakeAvailable(googletest)
+
+    add_executable(gloinc_test
+        tests/lexer_test.cpp
+        tests/parser_test.cpp
+        tests/sema_test.cpp
+        tests/mlir_test.cpp
+        tests/codegen_test.cpp
+        tests/struct_test.cpp
+        tests/codegen_struct_test.cpp
+        tests/spec_test.cpp
+        tests/codegen_spec_test.cpp
+        tests/arena_test.cpp
+        tests/async_test.cpp
+        tests/sema_async_test.cpp
+        tests/e2e_test.cpp
+        tests/basic_codegen_test.cpp
+        tests/array_string_test.cpp
+        tests/unless_test.cpp
+        tests/jit_test.cpp
+    )
+    target_link_libraries(gloinc_test PRIVATE gloin_backend GTest::gtest_main)
+    list(APPEND GLOIN_TARGETS gloinc_test)
+
+    include(GoogleTest)
+    gtest_discover_tests(gloinc_test)
+endif()
+
+set_target_properties(${GLOIN_TARGETS} PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)

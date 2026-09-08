@@ -28,16 +28,65 @@ Check that the Homebrew prefix still contains 21.1.6 before using it: an upgrade
 may replace the installation. The build requires the development headers,
 `mlir-tblgen`, and the shared libraries, not just LLVM command-line tools.
 
-GoogleTest is currently fetched during configuration. To reuse an existing source
-cache, add `-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/absolute/path/to/googletest-src`.
-Pinning this dependency and making tests optional are tracked in SPEC-003.
+Tests are enabled by default through CMake's `BUILD_TESTING` option. With tests
+enabled, configuration fetches the [GoogleTest 1.16.0 release](https://github.com/google/googletest/releases/tag/v1.16.0)
+archive and verifies the SHA-256 recorded in `CMakeLists.txt`. GoogleMock and
+GoogleTest installation rules are disabled because this project uses neither.
+For an offline build with tests, extract that archive and add
+`-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/absolute/path/to/googletest-src`.
+This explicit source override bypasses archive verification, so use the pinned
+release when reproducing test results.
+
+To build the compiler without fetching or building any test dependencies:
+
+```sh
+cmake -S . -B build-no-tests -G Ninja -DBUILD_TESTING=OFF \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir
+cmake --build build-no-tests -j 2
+```
+
+This still compiles the frontend, code generator, dialect, and JIT implementation.
+It creates no `gloinc_test` target or GoogleTest fetch steps. Use separate build
+directories for the two modes so old test artifacts do not confuse inspection.
 The full test suite still has known language/JIT failures; use serial execution
 because the existing subprocess tests share `temp.mlir` (SPEC-004).
 
+## Compiler targets and Makefile
+
+| Target | Sources and dependencies |
+| --- | --- |
+| `gloin_frontend` | Static library containing lexer, parser, and semantic analysis; no MLIR dependency. |
+| `gloin_backend` | Static library containing codegen, the Gloin dialect, and JIT; links the frontend and shared LLVM/MLIR libraries. |
+| `gloinc` | CLI entry point linked against `gloin_backend`. It remains a lexer demo until SPEC-020. |
+| `gloinc_test` | Test sources linked against the same backend and GoogleTest; present only with `BUILD_TESTING=ON`. |
+
+Each compiler source compiles once per build directory. Compiler targets require
+C++23 without compiler extensions; include directories and LLVM definitions are
+target usage requirements, so the frontend and GoogleTest do not inherit MLIR
+settings. TableGen receives its include paths explicitly and generates `.inc`
+files under the build directory's `src/dialect`, with generation dependencies
+propagated through the backend target to its consumers.
+
+The Makefile delegates to these CMake targets and CTest:
+
+```sh
+make build BUILD_DIR=build-no-tests BUILD_TESTING=OFF BUILD_ARGS='-j 2'
+make test BUILD_DIR=build CTEST_ARGS='-R ^MLIRSetup'
+make run BUILD_DIR=build-no-tests BUILD_TESTING=OFF
+make clean BUILD_DIR=build-no-tests
+```
+
+`CMAKE_ARGS` passes generator/package paths and other configure options;
+`BUILD_ARGS` passes build options; `CTEST_ARGS` passes test filters/options.
+`make test` explicitly enables tests and preserves CTest's failure exit status.
+`make clean` invokes CMake's clean target in an already configured directory,
+removing build products while retaining the configuration and downloaded sources.
+
 ## Shared-library contract
 
-Both executables link the imported `MLIR` and `LLVM` shared targets. The test
-executable also links `MLIRExecutionEngineShared`, whose imported dependencies
+Both executables link the imported `MLIR`, `LLVM`, and
+`MLIRExecutionEngineShared` shared targets through `gloin_backend`. The latter's imported dependencies
 are the same shared MLIR and LLVM libraries. CMake rejects installations missing
 these targets or exposing them as non-shared libraries. The C++ compiler selects
 its standard library; no explicit `stdc++` link entry is needed.
