@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-004.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-005.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. The first working compiler milestone is SPEC-021: real source files passing through the CLI with reliable error handling. The proposed first release boundary and supported platforms are decided in SPEC-006; later features remain tracked even if they are outside that release.
 
@@ -45,9 +45,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** clean builds work with tests enabled and disabled; disabling tests avoids fetching GoogleTest; TableGen outputs are generated in the build tree; explicit LLVM/MLIR package paths work.
   **Verified:** reusable frontend/backend targets serve both executables; C++23 and LLVM usage requirements are target-scoped. Fresh builds with `BUILD_TESTING=ON/OFF` pass using explicit package paths. GoogleTest 1.16.0 is pinned by archive checksum and only fetched with tests enabled. The Makefile delegates to CMake/CTest; full-suite failures remain visible.
 
-- [ ] **SPEC-004 — Establish the complete test inventory and trustworthy harnesses.**
+- [x] **SPEC-004 — Establish the complete test inventory and trustworthy harnesses.**
   Include the four [generic tests](tests/codegen_generics_test.cpp). Integrate the lit test or replace it with an equivalent maintained test. Give subprocess tests isolated temporary files, discovered tool paths, timeouts, and checked exit status. Classify failures by task ID.
   **Done when:** test discovery matches the maintained inventory, serial and parallel runs do not collide on `temp.mlir`, and tool failures cannot be interpreted as successful program output. Known language failures remain explicitly reported until their tasks are completed.
+  **Verified:** all 112 maintained cases are discovered, including the four generic tests and eight harness regressions. The orphaned lit checks are now assertions in `CodeGenTest.GenerateSpawn`, exposing a missing spawn operation tracked under SPEC-040/SPEC-041. Serial and parallel runs both produce 98 passes and the same 14 failures; see [tests/README.md](tests/README.md) for the inventory, harness contract, and failure mapping.
 
 - [ ] **SPEC-005 — Add clean-build CI and accurate onboarding/status documents.**
   Document dependencies and commands in a root README, add CI for the selected development platform(s), and correct [example status claims](examples/README.md), [phase notes](examples/PHASE2_PROGRESS.md), and [OpenCode.md](OpenCode.md).
@@ -257,6 +258,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-001 | 2026-09-08 | Synchronized [parser.h](src/parser.h), [AST.h](src/AST.h), and [codegen.h](src/codegen.h): declared the generic parser helper, retained function/struct generic parameters, restored codegen symbol/function/template/defer state, aligned `declare`, and removed duplicate import declarations. Fresh CMake configuration succeeds; parser/AST and all other configured translation units except codegen compile, and `gloinc` links. Codegen reports only the MLIR API failures recorded under SPEC-002. Independently built existing parser/spec suites: **35/35 pass**. Commands below. |
 | SPEC-002 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) requires MLIR 21.1.6 and shared MLIR/LLVM/ExecutionEngine targets; [codegen.cpp](src/codegen.cpp) uses the installed APIs. A fresh Debug build produces both executables. All **4/4 MLIRSetup tests pass**, including the new compiler-dialect regression in [mlir_test.cpp](tests/mlir_test.cpp). Full serial CTest: **87/100 pass, 13 fail, no crashes**; the extra test accounts for the increase from the audited 99 configured tests. Link commands contain no LLVM/MLIR component archives, and `otool -L` confirms shared dependencies. Unsupported-version, missing-target, and static-target configuration probes all reject their fixtures. Requirements are documented in [docs/toolchain.md](docs/toolchain.md); verification and remaining failures follow. |
 | SPEC-003 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) shares `gloin_frontend` and `gloin_backend` between the CLI and tests, requires standard C++23, scopes LLVM settings to backend consumers, and gates a checksum-pinned GoogleTest 1.16.0 download on `BUILD_TESTING`. Fresh ON/OFF builds pass with explicit LLVM/MLIR paths; OFF compiles the complete compiler implementation without test dependencies. [Makefile](Makefile) supports build options, delegates tests to CTest, and preserves failure reporting. **4/4 dialect tests pass; 87/100 full-suite tests pass, with exactly the same 13 failures as SPEC-002 and no crashes.** [docs/toolchain.md](docs/toolchain.md) documents target boundaries and build modes; verification follows. |
+| SPEC-004 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) includes all generic tests, discovers external tools, rejects omitted suite files, and assigns 30-second CTest timeouts. [external_runner.cpp](tests/support/external_runner.cpp) runs tools without a shell in per-invocation temporary directories, enforces child timeouts, checks both statuses, preserves stderr, and separates errors from strict i32 results. Eight harness regressions and five E2E tests pass in parallel. The former lit checks are maintained in [codegen_test.cpp](tests/codegen_test.cpp). Source definitions and CTest discovery match at **112 tests**; serial/parallel full suites both report **98 passes, 14 failures, no crashes**, including the newly exposed missing spawn operation. Full inventory and failure task IDs are in [tests/README.md](tests/README.md). |
 
 ### SPEC-001 verification
 
@@ -360,3 +362,33 @@ git diff --check
 The sandbox's DNS restriction initially blocked the tests-enabled fetch; retrying configuration with network access succeeded. CMake's downloaded archive independently hashes to `78c676fc63881529bf97bf9d45948d905a66833fbfa5318ea2cd7478cb98f399`. The tests-disabled build succeeded inside the sandbox without any fetch.
 
 Inspection of each `compile_commands.json` confirms one compile entry per project source (7 without tests, 24 with tests), CMake's AppleClang C++23 flag `-std=c++2b`, and no LLVM include paths/definitions on frontend or GoogleTest compilation. Each build produces eight generated `.inc` files under its own `src/dialect`; none appear in the source tree. Ninja link commands include both compiler libraries and the shared LLVM/MLIR targets for the CLI. Building `gloinc_test` first verifies that consumers receive the generated-header dependencies. A subsequent Makefile test invocation reports `ninja: no work to do` before running CTest. The full-suite failure list matches SPEC-002 exactly; no tests were added, removed, or disabled by this task.
+
+### SPEC-004 verification
+
+Run from the repository root on the established toolchain. Verification used a fresh build directory and a source cache of the pinned GoogleTest 1.16.0 archive; omitting the cache argument below fetches that same archive:
+
+```sh
+spec004_build_dir=$(mktemp -d /private/tmp/gloinc-spec004.XXXXXX)
+cmake -S . -B "$spec004_build_dir/build" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="<pinned-googletest-source-cache>"
+cmake --build "$spec004_build_dir/build" -j 2
+ctest --test-dir "$spec004_build_dir/build" --show-only=json-v1 > "$spec004_build_dir/inventory.json"
+ctest --test-dir "$spec004_build_dir/build" -R '^(ExternalRunnerTest|E2ETest)' \
+  -j 4 --output-on-failure
+# Exit 0: all 13 subprocess and E2E tests pass.
+ctest --test-dir "$spec004_build_dir/build" -j 1 --output-on-failure
+cp "$spec004_build_dir/build/Testing/Temporary/LastTestsFailed.log" "$spec004_build_dir/serial-failures.log"
+ctest --test-dir "$spec004_build_dir/build" -j 4 --output-on-failure
+# Both full-suite commands exit 8: 98/112 pass, 14 fail, no crashes.
+diff -u "$spec004_build_dir/serial-failures.log" \
+  "$spec004_build_dir/build/Testing/Temporary/LastTestsFailed.log"
+test ! -e "$spec004_build_dir/build/temp.mlir"
+git diff --check
+```
+
+`TEST`/`TEST_F` names extracted from all `tests/*_test.cpp` files match the CTest JSON names exactly, with no duplicates; every discovered case has `TIMEOUT=30`. The four generic tests pass with their original assertions. Migrating the lit checks exposes `CodeGenTest.GenerateSpawn`'s missing operation, increasing the known failure count from 13 to 14 without changing compiler code. The previous 13 failures remain assigned to their existing tasks, and the additional failure is assigned to SPEC-040/SPEC-041.
+
+The harness regression suite verifies optimizer and runner failures despite numeric stdout, malformed/empty/multiple/out-of-range results, a valid negative return value, a missing executable, timeouts in both stages, and concurrent invocations with different results. The child fixture runs from a path containing a space. An unlisted temporary `tests/spec004_unlisted_test.cpp` caused configuration to fail with the expected missing-suite diagnostic; removing the probe restored successful configuration. A fresh `BUILD_TESTING=OFF` configuration still creates no test dependencies and discovers zero tests. Formatting checks passed for the new helper/fixture/tests and rewritten E2E source. No failing cases are disabled or marked as expected successes.

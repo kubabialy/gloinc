@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "../src/codegen.h"
 #include "../src/parser.h"
+#include "mlir/IR/Verifier.h"
 
 TEST(CodeGenTest, GenerateComplexFunction) {
     // def main() -> i32 {
@@ -254,8 +255,30 @@ TEST(CodeGenTest, GenerateSpawn) {
     
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
-    
-    ASSERT_TRUE(module != nullptr);
-    module.dump();
+    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate(program));
+    ASSERT_TRUE(module);
+    ASSERT_TRUE(mlir::succeeded(mlir::verify(*module)));
+
+    // Replaces the unregistered tests/lit/spawn.mlir FileCheck assertions.
+    auto worker = module->lookupSymbol<mlir::func::FuncOp>("worker");
+    auto main = module->lookupSymbol<mlir::func::FuncOp>("main");
+    ASSERT_TRUE(worker);
+    ASSERT_TRUE(main);
+    ASSERT_FALSE(worker.getBody().empty());
+    ASSERT_FALSE(main.getBody().empty());
+    EXPECT_TRUE(llvm::isa<mlir::func::ReturnOp>(worker.getBody().back().getTerminator()));
+    EXPECT_TRUE(llvm::isa<mlir::func::ReturnOp>(main.getBody().back().getTerminator()));
+    std::vector<gloin::SpawnOp> spawns;
+    main.walk([&](gloin::SpawnOp op) { spawns.push_back(op); });
+    ASSERT_EQ(spawns.size(), 1u);
+    auto spawn_op = spawns.front();
+    EXPECT_EQ(spawn_op.getCallee(), "worker");
+    ASSERT_EQ(spawn_op->getNumOperands(), 1u);
+    auto constant = spawn_op->getOperand(0).getDefiningOp<mlir::arith::ConstantIntOp>();
+    ASSERT_TRUE(constant);
+    EXPECT_EQ(constant.value(), 1);
+    EXPECT_TRUE(constant.getType().isInteger(32));
+    auto handle = llvm::dyn_cast<gloin::GloinSpawnType>(spawn_op->getResult(0).getType());
+    ASSERT_TRUE(handle);
+    EXPECT_TRUE(handle.getValueType().isInteger(32));
 }

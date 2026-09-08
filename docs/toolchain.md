@@ -49,8 +49,10 @@ cmake --build build-no-tests -j 2
 This still compiles the frontend, code generator, dialect, and JIT implementation.
 It creates no `gloinc_test` target or GoogleTest fetch steps. Use separate build
 directories for the two modes so old test artifacts do not confuse inspection.
-The full test suite still has known language/JIT failures; use serial execution
-because the existing subprocess tests share `temp.mlir` (SPEC-004).
+The full test suite still has known language/JIT failures. Serial and parallel
+execution are supported; subprocess tests use isolated temporary directories and
+checked tool invocations. See the [test inventory and harness](../tests/README.md)
+for timeouts, tool-path overrides, and failure classifications.
 
 ## Compiler targets and Makefile
 
@@ -60,6 +62,7 @@ because the existing subprocess tests share `temp.mlir` (SPEC-004).
 | `gloin_backend` | Static library containing codegen, the Gloin dialect, and JIT; links the frontend and shared LLVM/MLIR libraries. |
 | `gloinc` | CLI entry point linked against `gloin_backend`. It remains a lexer demo until SPEC-020. |
 | `gloinc_test` | Test sources linked against the same backend and GoogleTest; present only with `BUILD_TESTING=ON`. |
+| `gloin_test_process` | Controlled child-process fixture for harness tests; present only with `BUILD_TESTING=ON`. |
 
 Each compiler source compiles once per build directory. Compiler targets require
 C++23 without compiler extensions; include directories and LLVM definitions are

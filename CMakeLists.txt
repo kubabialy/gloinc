@@ -100,6 +100,11 @@ set(GLOIN_TARGETS gloin_frontend gloin_backend gloinc)
 
 include(CTest)
 if(BUILD_TESTING)
+    find_program(GLOIN_MLIR_OPT NAMES mlir-opt HINTS "${LLVM_TOOLS_BINARY_DIR}"
+        NO_DEFAULT_PATH REQUIRED)
+    find_program(GLOIN_MLIR_RUNNER NAMES mlir-runner HINTS "${LLVM_TOOLS_BINARY_DIR}"
+        NO_DEFAULT_PATH REQUIRED)
+
     include(FetchContent)
     FetchContent_Declare(googletest
         URL https://codeload.github.com/google/googletest/tar.gz/refs/tags/v1.16.0
@@ -113,6 +118,20 @@ if(BUILD_TESTING)
         set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     endif()
     FetchContent_MakeAvailable(googletest)
+
+    add_executable(gloin_test_process tests/support/process_fixture.cpp)
+    # Exercise subprocess paths containing spaces in every harness regression test.
+    set_target_properties(gloin_test_process PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test tools")
+    list(APPEND GLOIN_TARGETS gloin_test_process)
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/tests/$<CONFIG>/tool_paths.h" CONTENT
+"#pragma once
+namespace gloin_test {
+inline constexpr auto mlir_opt = R\"tool(${GLOIN_MLIR_OPT})tool\";
+inline constexpr auto mlir_runner = R\"tool(${GLOIN_MLIR_RUNNER})tool\";
+inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process>)tool\";
+}
+")
 
     add_executable(gloinc_test
         tests/lexer_test.cpp
@@ -132,12 +151,26 @@ if(BUILD_TESTING)
         tests/array_string_test.cpp
         tests/unless_test.cpp
         tests/jit_test.cpp
+        tests/codegen_generics_test.cpp
+        tests/external_runner_test.cpp
+        tests/support/external_runner.cpp
     )
+    add_dependencies(gloinc_test gloin_test_process)
+    target_include_directories(gloinc_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/tests/$<CONFIG>")
+    # Keep the explicit source list, but fail configuration if a new suite is omitted.
+    file(GLOB GLOIN_TEST_FILES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/*_test.cpp")
+    get_target_property(GLOIN_TEST_SOURCES gloinc_test SOURCES)
+    foreach(test_file IN LISTS GLOIN_TEST_FILES)
+        if(NOT test_file IN_LIST GLOIN_TEST_SOURCES)
+            message(FATAL_ERROR "Test suite ${test_file} is missing from the gloinc_test target")
+        endif()
+    endforeach()
     target_link_libraries(gloinc_test PRIVATE gloin_backend GTest::gtest_main)
     list(APPEND GLOIN_TARGETS gloinc_test)
 
     include(GoogleTest)
-    gtest_discover_tests(gloinc_test)
+    gtest_discover_tests(gloinc_test PROPERTIES TIMEOUT 30)
 endif()
 
 set_target_properties(${GLOIN_TARGETS} PROPERTIES
