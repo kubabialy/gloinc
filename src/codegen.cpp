@@ -206,7 +206,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
         }
 
         std::vector<mlir::Type> resultTypes;
-        if (!retType.isa<mlir::NoneType>()) {
+        if (!llvm::isa<mlir::NoneType>(retType)) {
             resultTypes.push_back(retType);
         }
 
@@ -323,7 +323,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
             }
 
             std::vector<mlir::Type> resultTypes;
-            if (!retType.isa<mlir::NoneType>()) {
+            if (!llvm::isa<mlir::NoneType>(retType)) {
                 resultTypes.push_back(retType);
             }
 
@@ -862,7 +862,7 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
                                                                       builder.getI64Type(), argVal);
                         argVal = builder.create<mlir::LLVM::IntToPtrOp>(
                             builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context),
-                            ext);
+                            mlir::ValueRange{ext.getResult()});
                     } else {
                         // Fallback: bitcast or error
                         // For now, assume pointer compatible

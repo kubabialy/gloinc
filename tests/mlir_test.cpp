@@ -4,10 +4,27 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "../src/dialect/GloinDialect.h"
+#include "../src/codegen.h"
 
 TEST(MLIRSetup, ContextCreation) {
     mlir::MLIRContext context;
     EXPECT_TRUE(context.isMultithreadingEnabled());
+}
+
+TEST(MLIRSetup, AllCompilerDialects) {
+    mlir::MLIRContext context;
+    CodeGen codegen(context);
+    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate({}));
+
+    // Exercise the compiler's actual registration path. Mixing MLIR archives with
+    // libMLIR previously crashed when these dialects loaded in the same context.
+    EXPECT_NE(context.getLoadedDialect<gloin::GloinDialect>(), nullptr);
+    EXPECT_NE(context.getLoadedDialect<mlir::func::FuncDialect>(), nullptr);
+    EXPECT_NE(context.getLoadedDialect<mlir::arith::ArithDialect>(), nullptr);
+    EXPECT_NE(context.getLoadedDialect<mlir::cf::ControlFlowDialect>(), nullptr);
+    EXPECT_NE(context.getLoadedDialect<mlir::memref::MemRefDialect>(), nullptr);
+    EXPECT_NE(context.getLoadedDialect<mlir::scf::SCFDialect>(), nullptr);
+    EXPECT_NE(context.getLoadedDialect<mlir::LLVM::LLVMDialect>(), nullptr);
 }
 
 TEST(MLIRSetup, DialectRegistration) {

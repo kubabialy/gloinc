@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-002.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-003.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. The first working compiler milestone is SPEC-021: real source files passing through the CLI with reliable error handling. The proposed first release boundary and supported platforms are decided in SPEC-006; later features remain tracked even if they are outside that release.
 
@@ -35,10 +35,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   Reconcile `parse_generic_params`, function/struct generic parameters, codegen symbol/function/template/defer state, and the `declare` signature. Remove duplicate import-handler declarations. Start in [parser.h](src/parser.h), [AST.h](src/AST.h), and [codegen.h](src/codegen.h).
   **Done when:** parser/AST interfaces compile together and no missing member, mismatched declaration, or duplicate declaration errors remain. Record any remaining toolchain errors under SPEC-002.
 
-- [ ] **SPEC-002 — Establish a supported LLVM/MLIR toolchain and consistent linkage.**
+- [x] **SPEC-002 — Establish a supported LLVM/MLIR toolchain and consistent linkage.**
   Select and document a tested LLVM/MLIR version, repair API incompatibilities, and use a consistent component or shared-library strategy. Investigate imported transitive dependencies rather than mixing overlapping archives and shared implementations.
   **Done when:** a fresh build produces both executables and loading all used dialects no longer crashes. The version requirement is enforced or unsupported versions receive an actionable configure error. JIT execution is completed in SPEC-019.
-  **Confirmed blockers after SPEC-001 (LLVM/MLIR 21.1.6):** `src/codegen.cpp:209` and `:326` use the removed `mlir::Type::isa` API; the `LLVM::IntToPtrOp` builder call at `:863` does not match the installed API. These three sites produce seven compiler errors and prevent linking `gloinc_test`. The CLI links with duplicate-library warnings; consistent linkage and dialect-loading verification remain open.
+  **Resolved:** the two removed `mlir::Type::isa` calls and the `LLVM::IntToPtrOp` builder mismatch identified after SPEC-001. Both executables now build against shared LLVM/MLIR 21.1.6 without component archives or duplicate-library warnings. All four dialect setup tests pass. See [toolchain requirements](docs/toolchain.md) and the completion log; the full suite still has 13 language/JIT failures.
 
 - [ ] **SPEC-003 — Correct the CMake target and dependency structure.**
   Share frontend/backend implementation through reusable targets; make the CLI link the compiler implementation. Pin GoogleTest to an immutable revision or checked archive, honor `BUILD_TESTING`, use target-scoped settings, require the selected C++ standard, and remove platform-specific standard-library assumptions. Keep [Makefile](Makefile) consistent with [CMakeLists.txt](CMakeLists.txt).
@@ -254,6 +254,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | Item | Date | Outcome and evidence |
 | --- | --- | --- |
 | SPEC-001 | 2026-09-08 | Synchronized [parser.h](src/parser.h), [AST.h](src/AST.h), and [codegen.h](src/codegen.h): declared the generic parser helper, retained function/struct generic parameters, restored codegen symbol/function/template/defer state, aligned `declare`, and removed duplicate import declarations. Fresh CMake configuration succeeds; parser/AST and all other configured translation units except codegen compile, and `gloinc` links. Codegen reports only the MLIR API failures recorded under SPEC-002. Independently built existing parser/spec suites: **35/35 pass**. Commands below. |
+| SPEC-002 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) requires MLIR 21.1.6 and shared MLIR/LLVM/ExecutionEngine targets; [codegen.cpp](src/codegen.cpp) uses the installed APIs. A fresh Debug build produces both executables. All **4/4 MLIRSetup tests pass**, including the new compiler-dialect regression in [mlir_test.cpp](tests/mlir_test.cpp). Full serial CTest: **87/100 pass, 13 fail, no crashes**; the extra test accounts for the increase from the audited 99 configured tests. Link commands contain no LLVM/MLIR component archives, and `otool -L` confirms shared dependencies. Unsupported-version, missing-target, and static-target configuration probes all reject their fixtures. Requirements are documented in [docs/toolchain.md](docs/toolchain.md); verification and remaining failures follow. |
 
 ### SPEC-001 verification
 
@@ -264,7 +265,7 @@ spec001_build_dir=$(mktemp -d /private/tmp/gloinc-spec001.XXXXXX)
 cmake -S . -B "$spec001_build_dir" -G Ninja -DCMAKE_BUILD_TYPE=Debug \
   -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
 cmake --build "$spec001_build_dir" -j 2 -- -k 0 > "$spec001_build_dir/build.log" 2>&1
-# Expected current result: exit 1, seven diagnostics from the three SPEC-002 sites.
+# Observed at SPEC-001: exit 1, seven diagnostics; resolved by SPEC-002 below.
 
 /usr/bin/c++ -std=c++23 -pthread -Isrc \
   -Ibuild/_deps/googletest-src/googletest/include \
@@ -279,3 +280,42 @@ git diff --check
 ```
 
 The independent test executable uses the repository sources without temporary repairs and avoids the blocked backend dependency. This verifies the declaration repair; it does not establish generic execution, a working compiler CLI, or a passing full test suite.
+
+### SPEC-002 verification
+
+Run from the repository root in the same environment as SPEC-001. The GoogleTest source cache is reused, but the build directory starts empty:
+
+```sh
+spec002_build_dir=$(mktemp -d /private/tmp/gloinc-spec002.XXXXXX)
+cmake -S . -B "$spec002_build_dir" -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
+cmake --build "$spec002_build_dir" -j 2
+"$spec002_build_dir/gloinc"
+ctest --test-dir "$spec002_build_dir" -R '^MLIRSetup\.' --output-on-failure
+ctest --test-dir "$spec002_build_dir" -j 1 --output-on-failure
+otool -L "$spec002_build_dir/gloinc" "$spec002_build_dir/gloinc_test"
+ninja -C "$spec002_build_dir" -t commands gloinc gloinc_test
+git diff --check
+```
+
+Configuration, build, CLI lexer-demo startup, and dialect checks exit 0. Full CTest exits 8 with the failures below; no tests are disabled. The only build warnings are deprecations in MLIR's generated operation accessors. The five external E2E tests pass, subject to the existing harness limitations in SPEC-004. JIT smoke reaches execution-engine creation and reports missing builtin-dialect LLVM translation registration instead of crashing while loading dialects (SPEC-019).
+
+| Remaining tests | Follow-up |
+| --- | --- |
+| `LexerTest.HandlesKeywords`, `HandlesComments`, `HandlesOperatorsAndPunctuation`, `HandlesInKeyword`, `HandlesRangeOperator`, `HandlesRangeInContext`, `TrackLineNumbers` | SPEC-008 |
+| `ParserTest.ParseStructDefinition`, `ParsePackedStruct` | SPEC-009 |
+| `AsyncTest.SpawnGeneration`, `SemaAsyncTest.AsyncTypes` | SPEC-009, SPEC-040, SPEC-041 |
+| `ArrayStringTest.HandlesStringLiterals` | SPEC-022 |
+| `JitRunnerTest.SmokeTest` | SPEC-019 |
+
+Configuration rejection was checked with isolated package fixtures, without changing the installed toolchain. Each fixture lives under `<fixture>/lib/cmake/mlir`, and the actual root CMake project is configured with:
+
+```sh
+cmake -S . -B <empty-build-directory> -G Ninja \
+  -DCMAKE_FIND_ROOT_PATH=<fixture> -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
+  -DMLIR_DIR=<fixture>/lib/cmake/mlir
+```
+
+The unsupported fixture's `MLIRConfigVersion.cmake` advertises 20.1.8 and sets `PACKAGE_VERSION_COMPATIBLE` and `PACKAGE_VERSION_EXACT` to false: CMake rejects it and names the required 21.1.6 version. The other fixtures advertise 21.1.6 with both flags true: one config declares only imported shared `MLIR`/`LLVM` targets, and the other declares static `MLIR` plus shared `LLVM`/`MLIRExecutionEngineShared`. Both exit 1 with the project's actionable missing/shared-target diagnostics before dependency fetching or compilation.

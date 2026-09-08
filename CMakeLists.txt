@@ -15,7 +15,25 @@ if(NOT DEFINED LLVM_DIR AND NOT DEFINED MLIR_DIR)
     endif()
 endif()
 
-find_package(MLIR REQUIRED CONFIG)
+# Keep headers, generated dialect code, and shared libraries on the tested release.
+find_package(MLIR 21.1.6 EXACT REQUIRED CONFIG)
+
+foreach(toolchain_target IN ITEMS MLIR LLVM MLIRExecutionEngineShared)
+    if(NOT TARGET ${toolchain_target})
+        message(FATAL_ERROR
+            "Gloin requires the ${toolchain_target} shared target from LLVM/MLIR 21.1.6. "
+            "Set LLVM_DIR and MLIR_DIR to a matching installation built with "
+            "LLVM_BUILD_LLVM_DYLIB=ON, LLVM_LINK_LLVM_DYLIB=ON, "
+            "MLIR_BUILD_MLIR_DYLIB=ON, MLIR_LINK_MLIR_DYLIB=ON, and MLIR_ENABLE_EXECUTION_ENGINE=ON. "
+            "See docs/toolchain.md.")
+    endif()
+    get_target_property(toolchain_target_type ${toolchain_target} TYPE)
+    if(NOT toolchain_target_type STREQUAL "SHARED_LIBRARY")
+        message(FATAL_ERROR
+            "Gloin requires ${toolchain_target} to be a shared library; found ${toolchain_target_type}. "
+            "Use the shared LLVM/MLIR installation described in docs/toolchain.md.")
+    endif()
+endforeach()
 
 message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
@@ -70,29 +88,8 @@ add_executable(gloinc main.cpp
 add_dependencies(gloinc GloinDialectIncGen GloinTypesIncGen GloinOpsIncGen)
 
 target_link_libraries(gloinc PRIVATE
-        MLIRIR
-        MLIRSupport
-        MLIRParser
-        MLIRSideEffectInterfaces
-        MLIRControlFlowInterfaces
-        MLIRCallInterfaces
-        MLIRArithDialect
-        MLIRFuncDialect
-        MLIRControlFlowDialect
-        MLIRMemRefDialect
-        MLIRSCFDialect
-        MLIRExecutionEngine
-        MLIRFuncToLLVM
-        MLIRControlFlowToLLVM
-        MLIRReconcileUnrealizedCasts
-        MLIRArithToLLVM
-        MLIRMemRefToLLVM
-        MLIRTargetLLVMIRExport
-        LLVMSupport
-        LLVMCore
-        LLVMExecutionEngine
-        LLVMRuntimeDyld
-        stdc++
+        MLIR
+        LLVM
 )
 
 
@@ -142,29 +139,10 @@ add_executable(gloinc_test
 add_dependencies(gloinc_test GloinDialectIncGen GloinTypesIncGen GloinOpsIncGen)
 target_link_libraries(gloinc_test PRIVATE
     GTest::gtest_main
-    MLIRIR
-    MLIRSupport
-    MLIRParser
-    MLIRSideEffectInterfaces
-    MLIRControlFlowInterfaces
-    MLIRCallInterfaces
-    MLIRArithDialect
-    MLIRFuncDialect
-    MLIRControlFlowDialect
-    MLIRMemRefDialect
-    MLIRSCFDialect
-    MLIRExecutionEngine
-    MLIRFuncToLLVM
-    MLIRControlFlowToLLVM
-    MLIRReconcileUnrealizedCasts
-    MLIRArithToLLVM
-    MLIRMemRefToLLVM
-    MLIRTargetLLVMIRExport
-    LLVMSupport
-    LLVMCore
-    LLVMExecutionEngine
-    LLVMRuntimeDyld
-    stdc++
+    # ExecutionEngineShared imports MLIR and LLVM, with no overlapping archives.
+    MLIRExecutionEngineShared
+    MLIR
+    LLVM
 )
 
 include(GoogleTest)
