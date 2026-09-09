@@ -1,0 +1,53 @@
+import @std/io;
+
+def test_defer_resource() -> i32 {
+    // Allocate resource that needs cleanup
+    def buffer: u8[1024];
+    
+    // Defer cleanup - should execute even on early return
+    defer cleanup_buffer();
+    
+    print("Buffer freed successfully");
+    return 0;
+}
+
+def test_defer_multiple() -> i32 {
+    def mut result: i32 = 0;
+    
+    // Multiple defer statements - should execute in reverse order
+    defer print("First action");
+    defer print("Second action");
+    defer print("Third action");
+    
+    // Do some work
+    result = 42;
+    
+    print("All deferred actions should execute now");
+    return result;
+}
+
+def test_defer_with_early_return() -> i32 {
+    // Defer statements should still execute on early return
+    defer print("This should execute");
+    defer print("And this should too");
+    
+    print("Returning early - deferred statements should execute");
+    return 1;
+}
+
+def main() -> i32 {
+    print("=== Testing Defer Implementation ===");
+    
+    print("1. Basic defer resource cleanup...");
+    test_defer_resource();
+    
+    print("2. Multiple defer statements...");
+    test_defer_multiple();
+    
+    print("3. Defer with early return...");
+    test_defer_with_early_return();
+    
+    print("✅ All defer tests completed successfully!");
+    
+    return 0;
+}

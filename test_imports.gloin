@@ -1,0 +1,9 @@
+import @std/io;
+import "./local_module";
+import #external_package;
+
+def test_imports() {
+    // Test that import statements are recognized
+    print("Hello from imports test!");
+    return 42;
+}

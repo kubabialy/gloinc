@@ -1,0 +1,103 @@
+name: Compiler CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS 15 arm64 / LLVM 21.1.6
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare clean build and report directories
+        run: |
+          test ! -e build-ci
+          test ! -e build-ci-no-tests
+          mkdir -p ci-reports
+
+      - name: Install build tools and pinned LLVM/MLIR
+        run: |
+          brew install cmake ninja
+          bash scripts/install-llvm.sh 2>&1 | tee ci-reports/toolchain-install.log
+
+      - name: Record environment
+        run: |
+          {
+            sw_vers
+            uname -m
+            /usr/bin/clang++ --version
+            cmake --version
+            ninja --version
+            "$GLOIN_LLVM_PREFIX/bin/llvm-config" --version
+          } | tee ci-reports/environment.log
+
+      - name: Build without test dependencies
+        run: |
+          cmake -S . -B build-ci-no-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF \
+            -DLLVM_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/llvm" \
+            -DMLIR_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/mlir" \
+            2>&1 | tee ci-reports/configure-no-tests.log
+          cmake --build build-ci-no-tests -j 2 2>&1 | tee ci-reports/build-no-tests.log
+          test ! -e build-ci-no-tests/_deps
+          test ! -e build-ci-no-tests/gloinc_test
+
+      - name: Build with tests
+        id: build
+        run: |
+          cmake -S . -B build-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+            -DLLVM_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/llvm" \
+            -DMLIR_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/mlir" \
+            2>&1 | tee ci-reports/configure.log
+          cmake --build build-ci -j 2 2>&1 | tee ci-reports/build.log
+          ctest --test-dir build-ci --show-only=json-v1 > ci-reports/inventory.json
+
+      - name: Run complete suite serially and in parallel
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set +e
+          ctest --test-dir build-ci -j 1 --output-on-failure \
+            --output-junit "$PWD/ci-reports/serial.xml" 2>&1 | tee ci-reports/serial.log
+          serial_status=${PIPESTATUS[0]}
+          ctest --test-dir build-ci -j 4 --output-on-failure \
+            --output-junit "$PWD/ci-reports/parallel.xml" 2>&1 | tee ci-reports/parallel.log
+          parallel_status=${PIPESTATUS[0]}
+          set -e
+          {
+            echo '## Complete test suite'
+            echo "Serial CTest exit status: $serial_status"
+            echo "Parallel CTest exit status: $parallel_status"
+            echo 'Download compiler-ci-reports for JUnit results, full logs, and test inventory.'
+            echo 'Known language failures remain failures; see tests/README.md for task IDs.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$serial_status" -eq 0 && test "$parallel_status" -eq 0
+
+      - name: Publish build and test evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: compiler-ci-reports
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ci-reports/
+            build-ci/Testing/Temporary/
+            build-ci/compile_commands.json
+            build-ci/CMakeCache.txt
+            build-ci-no-tests/CMakeCache.txt

@@ -1,18 +1,309 @@
 # Gloin Language Spec
 
-This document is a work in progress. It contains the language specification, including syntax, semantics, and standard library details for the Gloin programming language.
+This document defines the intended language. It does not claim that the current
+compiler implements it. [README.md](README.md) records measured implementation
+status; [SPEC-TODO.md](SPEC-TODO.md) tracks implementation and verification.
 
-## Syntax
+## First release contract (SPEC-006)
+
+The first release is the **executable scalar core**, with an in-process JIT on
+**Apple Silicon macOS**, using the supported LLVM/MLIR 21.1.6 toolchain. Native
+object/executable output, cross-compilation, Linux, Windows, and Intel macOS are
+outside this release. This is a scope decision, not a release announcement.
+
+| Required for the first release | Implementation and acceptance |
+| --- | --- |
+| Valid UTF-8 source, the declaration/type/terminator rules below, source-aware errors, rejection of unsupported constructs | SPEC-007 through SPEC-010 |
+| Local immutable/mutable variables, compile-time scalar constants, lexical scopes, definite initialization | SPEC-011/SPEC-012 |
+| `bool`; `i8`, `i16`, `i32`, `i64`; `u8`, `u16`, `u32`, `u64`; `f32`, `f64`; aliases `int` and `usize`; `void` return type | SPEC-010/SPEC-013 |
+| Decimal, hexadecimal, binary integer literals and decimal floating literals; checked literal compatibility | SPEC-013 |
+| Top-level functions with typed value parameters and explicit return types, direct/forward/recursive calls, `def main() -> i32` | SPEC-011/SPEC-014 |
+| Assignment; unary `-` and `!`; binary `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `\|\|`; parentheses and function calls | SPEC-015 |
+| Boolean `if`/`else`, `unless`, `while`, C-style `for`, nested blocks, and early returns | SPEC-016/SPEC-017 |
+| Verified shared lowering, in-process JIT, file-reading CLI with checking/IR inspection modes and reliable failure status | SPEC-018 through SPEC-020 |
+| Complete source-file execution and expected-error fixtures for every advertised core feature | SPEC-021 |
+| Installation instructions, packaging, feature-to-test matrix, and release validation | SPEC-046 |
+
+SPEC-021 is the executable-core milestone; SPEC-046 is still required before
+publishing a release. Detailed numeric overflow/conversion rules, operator
+semantics, scope rules, and CLI exit conventions must be settled under their
+listed tasks before their implementation is accepted. The feature list above is
+fixed for this release; those tasks must not silently expand it.
+
+The first release has no imports, standard library, text output, strings,
+aggregates, pointers/references, allocation, `defer`, or concurrency. Its minimal
+complete program is:
+
+```gloin
+def main() -> i32 {
+    return 42;
+}
+```
+
+Its observable language result is the `i32` returned by `main`. Runtime/compiler
+failure must remain distinguishable from every valid `i32`, including `-1`;
+SPEC-020 defines how the CLI presents results within host exit-status limits.
+The later hello-world milestone requires strings and `@std` (SPEC-022/SPEC-023).
+
+## Core source and syntax rules
+
+These rules are normative, including for declarations in later feature designs.
+Examples in this section specify required behavior, not passing compiler tests.
+
+### Source encoding, identifiers, and trivia
+
+Source files must be valid UTF-8. The first release restricts identifiers to
+ASCII `[A-Za-z_][A-Za-z0-9_]*`, except that `_` alone is reserved and cannot bind a
+name. Names are case-sensitive, with no normalization or case folding. UTF-8
+text is permitted in comments and, when strings are implemented, string data;
+it does not make non-ASCII identifiers legal. Invalid UTF-8, an embedded NUL
+source byte, and non-ASCII identifier characters must produce a diagnostic,
+never truncate the input or depend on the host locale.
+
+Spaces, tabs, LF, and CRLF are whitespace; LF and CRLF each advance the source
+line once. Newlines do not terminate statements. `//` comments run to the end
+of the line or file. Block comments and a UTF-8 BOM are not accepted in the
+first release. SPEC-007/SPEC-008 own encoding validation and source positions.
+A lexer may expose newline tokens internally, but the parser treats them as
+trivia, including inside expressions.
+
+The core keywords are `def`, `mut`, `const`, `pub`, `priv`, `return`, `if`,
+`else`, `unless`, `while`, `for`, `true`, `false`, and the core type spellings.
+The later-feature words `import`, `extern`, `struct`, `enum`, `static`, `self`,
+`defer`, `deferred`, `spawnable`, `run`, `packed`, `bit`, `at`, `null`, `string`,
+`i128`, `u128`, `f128`, `char`, `in`, `break`, and `continue` are reserved. Legacy or
+undecided words `fn`, `spawn`, `await`, `switch`, `match`, `case`, and `default`
+are also reserved; using them as syntax or names must not succeed accidentally.
+Endian-qualified and custom-width integer type spellings are reserved for the
+later layout tasks. Unknown type names must never default to `i32`.
+
+### Lexical literal forms (SPEC-008)
+
+The lexer recognizes decimal integers `[0-9]+`, hexadecimal integers
+`0[xX][0-9A-Fa-f]+`, and binary integers `0[bB][01]+`. A decimal floating
+literal has either a decimal point with digits on both sides, an exponent, or
+both: `1.25`, `1e3`, and `2.5E-2`. An exponent is `[eE][+-]?[0-9]+`. Signs
+outside exponents are separate operators. Leading/trailing decimal points,
+hexadecimal floats, digit separators, and numeric type suffixes are not accepted.
+Malformed forms such as `0x`, `0b102`, `123abc`, and `1e+` are lexical errors,
+not valid numeric prefixes followed by unrelated names. Width/range checks and
+numeric conversion remain SPEC-013; the lexer preserves the original spelling.
+`0..10` is three tokens, including the reserved range operator.
+
+Quoted strings are single-line UTF-8 text. The recognized escapes are `\n`,
+`\r`, `\t`, `\0`, `\\`, `\"`, and `\'`; other escapes and unescaped ASCII control
+characters are errors. A character token uses single quotes and contains exactly
+one Unicode scalar or one of those escapes. Well-formed character tokens are
+still rejected by the core parser, as character expressions are outside the
+release scope. An unterminated quote is an error; lexing resumes at its newline
+or EOF. Quoted token payloads preserve escape spelling without their delimiters;
+source spans include the delimiters. Escape decoding, string storage, and the
+meaning of escaped NUL remain SPEC-022. The `string`/`char` type keywords have
+different token kinds from quoted string/character literals.
+
+Reserved words and punctuation receive deliberate tokens even when the feature
+is unsupported. Recognizing `spawn`, `await`, `in`, `..`, or `=>` does not enable
+legacy syntax: unsupported uses must produce a parser diagnostic. `int` and
+`usize` are type keywords; alias resolution remains SPEC-010/SPEC-013. Signed
+and unsigned integer width spellings, including `i4`, `u20`, `be_u4`, `le_i20`,
+`u16_be`, and `i32_le`, are reserved type names. Their tokenization approves
+neither an integer width nor an endian layout; SPEC-037 through SPEC-039 own
+those decisions. A word such as `integer` or `spawn_value` remains an identifier.
+
+### Declarations, modifiers, and explicit types
+
+Every independent declaration starts with `def`, including constants and
+future structs, fields, enums, and methods. An import is a directive, not a
+`def` declaration. Function parameters and struct-literal field labels are
+parts of a declaration/expression and do not take their own `def`.
+
+Canonical forms are:
+
+```text
+local binding:      def [mut] name: Type [= expression];
+constant:           def [pub|priv] const name: Type = constant_expression;
+function:           def [pub|priv] name(name: Type, ...) -> ReturnType { ... }
+later struct:       def [pub|priv] struct Name { ... }
+later field:        def [pub|priv] [mut] name: Type,
+later method:       def [pub|priv] [static|deferred|spawnable] name(...) -> Type { ... }
+```
+
+Square brackets in these forms mean optional syntax; `...` is explanatory,
+not a language token. Visibility, when present, comes **immediately after
+`def`**, before other modifiers. At most one of `pub`/`priv` is allowed;
+private is the default. Visibility is allowed on top-level functions/constants
+and later type/member declarations, not on local bindings or parameters.
+Visibility is recorded but does not restrict calls within the single source
+file of a core program. Exports/member-access checks arrive with
+SPEC-024/SPEC-026/SPEC-029.
+`mut` and `const` cannot be combined. Other modifier combinations must be
+explicitly specified by their feature tasks before they are accepted.
+
+Every binding, constant, field, and parameter needs a type annotation. Every
+function, including a function returning `void`, needs `-> ReturnType`.
+There is no variable, parameter, return-type, or generic-argument inference.
+A literal may take its type from an explicit declaration, parameter, return,
+or typed operand context; this does not infer a missing declaration annotation.
+SPEC-013 must define compatibility and any default type for context-free
+literal expressions. A typed expression cannot silently change its type to
+match another annotation.
+
+Function parameters are immutable value bindings in the core. Reassigning a
+parameter requires an explicitly declared mutable local copy. Later instance
+methods must spell their receiver type, for example `self: *Person`; bare
+`self` is not an exception to explicit typing. No implicit second receiver is
+added when lowering an explicitly declared receiver.
+
+`def x: i32 = compute();` is an immutable runtime binding. In contrast,
+`def const LIMIT: i32 = 10;` requires a compile-time initializer. SPEC-012
+must specify and check the permitted constant-expression subset; runtime calls
+are not implicitly compile-time evaluable. Local bindings without an
+initializer may only be read after definite initialization (SPEC-012).
+The core allows functions and constants at file scope; runtime global
+variables, nested functions, and user-defined type aliases are not in scope.
+
+### Built-in type spellings
+
+`int` is an exact alias of `i32`, independent of the host. `usize` is an exact
+alias of the target's pointer-width unsigned integer (`u64` on the selected
+arm64 target); it is not a separate nominal type. Aliases do not permit implicit
+conversions to other widths. Built-in names and aliases cannot be redefined.
+`void` is allowed only as a function return type, never as a value binding or
+parameter. `bool` is distinct from every integer type; conditions require
+`bool`, with no numeric truthiness.
+
+The language spelling for the later pointer-plus-length text type is **`string`**.
+`String` is not a built-in name or alias. A backend IR type named `String` is
+an implementation detail; it cannot create a language-visible type. A later
+user-defined `String` would be an ordinary distinct type. String layout and
+ownership remain SPEC-022; this naming decision does not add strings to the
+first release. `i128`, `u128`, `f128`, `char`, custom-width integers, and
+endian-qualified types are outside the initial scalar set and must be rejected
+until their contracts and implementations are added.
+
+### Terminators and delimiters
+
+A declaration of a binding/constant, assignment, expression statement,
+`return`, later `defer`, or import directive ends in `;`. A newline cannot
+replace it, even immediately before `}`. A function/type definition or a
+braced control-flow statement has no trailing `;`. Empty statements are not
+part of the core. Parameters, call arguments, and later struct fields/literal
+entries are separated by commas. A final comma is permitted in those lists;
+struct field declarations use commas rather than statement semicolons.
+
+Braces are mandatory for control-flow bodies; condition parentheses are
+optional expression grouping. In `if ready { ... }`, the brace starts the
+body, never a literal of a type named `ready`. SPEC-009 must preserve this
+rule when aggregate expressions are implemented.
+
+A C-style loop has the shape
+`for def mut i: i32 = 0; i < 3; i = i + 1 { ... }`: two header semicolons
+and no semicolon after its update. SPEC-017 defines omitted components and
+loop-variable scope. Range-loop syntax remains deferred under SPEC-036.
+Assignment is a statement (also allowed in a loop update), not a value-producing
+expression: chained assignments and assignments inside conditions are rejected.
+
+### Canonical core examples
+
+A complete typed program with a forward call and a constant returns `42`:
+
+```gloin
+def const OFFSET: int = 2;
+
+def main() -> i32 {
+    def input: i32 = 40;
+    return add(input, OFFSET);
+}
+
+def add(left: i32, right: i32) -> i32 {
+    return left + right;
+}
+```
+
+A complete mutation/control-flow program returns `3`:
+
+```gloin
+def main() -> i32 {
+    def mut count: i32 = 0;
+    def enabled: bool = true;
+    if enabled {
+        for def mut i: i32 = 0; i < 3; i = i + 1 {
+            count = count + 1;
+        }
+    } else {
+        return -1;
+    }
+    unless count == 3 {
+        return -1;
+    }
+    while count > 3 {
+        count = count - 1;
+    }
+    return count;
+}
+```
+
+These independent fragments require diagnostics (SPEC-007 through SPEC-014):
+
+| Invalid source | Required reason |
+| --- | --- |
+| `const LIMIT: i32 = 3;` | Missing `def`. |
+| `pub def work() -> void {}` | Visibility must follow `def`. |
+| `def const mut n: i32 = 0;` | Conflicting modifiers. |
+| `def n = 1;` | Missing binding type. |
+| `def work(x) -> i32 { return x; }` | Missing parameter type. |
+| `def work() { return; }` | Missing explicit return type. |
+| `def n: i32 = 1` | Missing semicolon, including at end of file. |
+| `def café: i32 = 1;` | Non-ASCII identifier. |
+| `def _: i32 = 1;` | Reserved name. |
+| `def n: Mystery = 1;` | Unknown type; no `i32` fallback. |
+| `def main() -> i32 { if 1 { return 0; } return 1; }` | Condition is not `bool`. |
+
+## Deferred features and implementation-only syntax
+
+No implementation-only syntax is grandfathered into the first release.
+Tokenization, parsing, AST/IR printing, and existing unit-test expectations are
+not language acceptance. The first release must diagnose unsupported features
+before execution, using SPEC-007/SPEC-009/SPEC-010 and the SPEC-021 negative
+fixtures. Feature tasks below remain open even if an initial rejection is added.
+The full test suite continues reporting failures; scope decisions do not disable
+tests or turn unimplemented features into expected successes.
+
+| Syntax or capability outside the core | Disposition and owning tasks |
+| --- | --- |
+| Bare `const`, `pub def`, bare `struct`, untyped declarations/returns, implicit `self`, omitted semicolons | Reject; use canonical forms above (SPEC-008/SPEC-009/SPEC-012/SPEC-014/SPEC-026). |
+| `fn`, `extern`, `switch`/`match`/`case`/`default`, `=>`, `?`, character literals | No accepted core extension. Reject under SPEC-008/SPEC-009/SPEC-015; any future syntax requires a separate contract before implementation. |
+| Compound assignment, bitwise operators, shifts, unary `+`, assignment expressions | Reject for the first release (SPEC-015); integer remainder `%` is included, floating remainder is not. |
+| `i128`, `u128`, `f128` | Deferred numeric extension (SPEC-013b); core type resolution rejects them (SPEC-010/SPEC-013). |
+| Strings, `@std`, standard I/O and conversions | Deferred (SPEC-022/SPEC-023/SPEC-030); `string` is canonical. |
+| Structs, raw pointers/references, methods, `defer`, arenas | Deferred (SPEC-024 through SPEC-028). |
+| Local modules and `#package` imports | Deferred (SPEC-029/SPEC-044). |
+| Generic types/functions, enums, `Result` | Deferred (SPEC-031 through SPEC-034); capitalization must not decide grammar. |
+| `[i32; 3]`, `u8[1024]`, array literals, indexing/slicing | Deferred syntax/layout choice (SPEC-035); neither array spelling is approved for the core. |
+| `for ... in ...`, `..`, `break`, `continue` | Deferred (SPEC-036); lex as reserved syntax and diagnose unsupported use. |
+| Endian spellings, custom-width integers, packed layouts | Deferred (SPEC-037 through SPEC-039). |
+| `deferred`, `spawnable`, `run`, `Deferred`, `Spawn`, joins | Deferred contract/runtime (SPEC-040 through SPEC-043). |
+| Implementation-only `spawn` and `await` | Reject for the first release; SPEC-040 decides whether to retain any later compatibility syntax. |
+| Native object/executable emission and additional targets | Explicitly deferred (SPEC-045). |
+
+## Later language design
+
+The remaining sections describe intended later features and conceptual examples,
+not additional first-release requirements. Their task IDs are in the table
+above. Core spelling rules still apply. Unsettled APIs, memory guarantees,
+packed layouts, and concurrency types must be resolved in their feature tasks
+before these examples become normative executable fixtures. In particular,
+formatted/numeric printing and the named HTTP package are not established APIs.
 
 All Gloin programs are written in UTF-8. Gloin is by design explicit, and does not have implicit typing or type inference.
 The reason for this is that Gloin is designed to be a simple, safe, fast language but most importantly transparent.
 It will not hide complexity from you, but will instead provide you with the tools to understand it.
 
-The entry point is the `main` function.
-This is the most basic Gloin program you can write.
+The later hello-world program requires SPEC-022/SPEC-023; the core entry-point
+example above has no imports:
 
 ```gloin
-import "@std"
+import "@std";
 
 def main() -> i32 {
     std.println("Hello World!");
@@ -44,10 +335,10 @@ def main() -> i32 {
 
 ### Constants
 
-Constants are declared with the `const` keyword. They are immutable and must be initialized at declaration.
+Constants are declared with `def const`. They are immutable and must be initialized at declaration.
 
 ```gloin
-    const PI: f64 = 3.14159;
+    def const PI: f64 = 3.14159;
     std.println(PI); // Prints 3.14159
 ```
 
@@ -68,7 +359,7 @@ Gloin supports three types of imports:
 ##### Standard Library `@std`
 
 ```gloin
-import "@std"
+import "@std";
 
 def main() -> i32 {
     std.println("Hello World");           // Print with newline
@@ -86,13 +377,13 @@ def main() -> i32 {
 
 ```gloin
 // utils.gloin
-def calculate(x: i32, y: i32) -> i32 {
+def pub calculate(x: i32, y: i32) -> i32 {
     return x * y + 10;
 }
 
 // main.gloin
-import "@std"
-import "./utils"
+import "@std";
+import "./utils";
 
 def main() -> i32 {
     def result: i32 = utils.calculate(5, 3);
@@ -105,9 +396,9 @@ def main() -> i32 {
 ##### External Packages (#package)
 
 ```gloin
-import "@std"
-import "#math"      // External package
-import "#http"      // Another external package
+import "@std";
+import "#math";      // External package
+import "#http";      // Another external package
 
 def main() -> i32 {
     def sqrt_val: i32 = math.sqrt(16);
@@ -118,35 +409,42 @@ def main() -> i32 {
 
 ### Pointers, References and Memory Management
 
-Gloin supports pointers and references in the same way as C or C++ does.
-You can modify the value pointed to by a pointer or reference. You can also create a new pointer or reference to the same value.
+Gloin supports pointers and references in the same way as C or C++ does, with some key differences for safety and clarity.
 
-Gloin does not have garbage collection and expects you to manage memory manually, to make the process less cumbersome, it provides you with a `defer` statement.
-The `defer` statement will be executed when the current function returns, similarily to how `defer` works in Go or Zig. 
-An important note is that the `defer` wokrs in LIFO order, so that the last defered function is executed first.
+#### Pointers (`*T` vs `&T`)
+
+- `*T`: A raw, nullable pointer. Equivalent to `T*` in C. It can be null and requires explicit checks or unsafe blocks to dereference (in future versions).
+- `&T`: A non-nullable reference. It is guaranteed to point to a valid object. It cannot be null.
+
+`self` in struct methods is always a pointer.
+
+#### Memory Management
+
+Gloin does not have garbage collection and expects you to manage memory manually. To assist with this, it provides:
+
+1.  **Arena Allocation**: The preferred way to manage memory for request lifecycles or temporary objects.
+2.  **`defer` statement**: Executed when the current function returns, in LIFO order (Last-In-First-Out).
 
 ```gloin
 def main() -> i32 {
-    def x: *SomeX = get_some_x();
-    defer x.free();
-    
-    def y: &SomeY = x.get_some_y();
-    defer y.free();
+    // Arena allocation example (conceptual)
+    def arena: Arena = Arena::new();
+    defer arena.free(); // Frees everything allocated in this arena
+
+    def x: *SomeX = arena.alloc(SomeX);
     
     return 0;
 }
-// The defered functions will be executed in LIFO order
-// y.free() -> x.free() -> exit(0)
 ```
 
 Example of pointer usage:
 
 ```gloin
-import "@std"
+import "@std";
 
 def main() -> i32 {
     def mut value: i32 = 42;
-    def ptr: *i32 = &value;  // Get address of value
+    def ptr: &i32 = &value;  // Get address of value as non-nullable reference
     
     std.print("Value: ");
     std.println(std.to_string(value));
@@ -163,24 +461,81 @@ def main() -> i32 {
 }
 ```
 
-### Structs and Enums
+### Strings
 
-Gloin supports structs and enums. Structs are similar to Go structs, except that they have methods declared in the same scope and their visibility is private by default.
-To make a method public, you must add the `pub` keyword before the method definition. The `priv` keyword can be used to make a method private, but since it's the default visibility, it's not necessary to write it.
+The `string` type in Gloin is a fat pointer consisting of a pointer to the character data and a length.
 
 ```gloin
-import "@std"
+// Conceptual representation, not a built-in type declaration.
+def struct StringLayout {
+    def ptr: *u8,
+    def len: usize,
+}
+```
+
+This means passing strings by value is cheap (two words), and slicing is efficient.
+
+### Structs and Enums
+
+Gloin supports structs and enums. Structs are similar to Go structs, except that they have methods declared in the same scope.
+
+#### Method Lowering (Syntactic Sugar)
+
+Methods defined inside a struct are purely syntactic sugar. They are lowered to global functions with the struct instance passed as a pointer in the first argument.
+
+```gloin
+def struct Foo {
+    def x: int,
+    
+    // Instance method
+    def bar(self: *Foo) -> int {
+        return 1; 
+    }
+}
+```
+
+Is exactly equivalent to:
+
+```gloin
+def struct Foo {
+    def x: int
+}
+
+// Lowered global function
+// Naming convention: StructName_MethodName
+def Foo_bar(self: *Foo) -> int {
+    return 1;
+}
+```
+
+When you call a method:
+```gloin
+def f: Foo = ...;
+f.bar();
+```
+
+It is compiled as:
+```gloin
+Foo_bar(&f);
+```
+
+Accessing `self.x` inside the method is simply accessing the field of the pointer passed as the first argument.
+
+To make a method public, you must place `pub` immediately after `def`. The `priv` keyword can be used to make a method private, but since it's the default visibility, it's not necessary to write it.
+
+```gloin
+import "@std";
 
 def struct Person {
     def pub name: string,
     def pub age: i32,
     
-    pub def greet(self) -> void {
+    def pub greet(self: *Person) -> void {
         std.print("Hello, I'm ");
         std.println(self.name);
     }
     
-    pub def is_adult(self) -> bool {
+    def pub is_adult(self: *Person) -> bool {
         return self.age >= 18;
     }
 }
@@ -203,10 +558,10 @@ def main() -> i32 {
 
 ### Functions
 
-Functions are declared with the `def` keyword. They can have parameters and must return values.
+Functions are declared with the `def` keyword. Every parameter and return type is explicit; a `void` function returns no value.
 
 ```gloin
-import "@std"
+import "@std";
 
 // Function with parameters and return value
 def add(a: i32, b: i32) -> i32 {
@@ -233,7 +588,7 @@ def main() -> i32 {
 Gloin supports control flow statements like `if`, `unless`, `while`, and `for` loops.
 
 ```gloin
-import "@std"
+import "@std";
 
 def main() -> i32 {
     def x: i32 = 10;
@@ -283,8 +638,8 @@ Key Concepts
 Example: Async Network Fetch
 
 ```gloin
-import "@std"
-import "#http"
+import "@std";
+import "#http";
 // Define the async function
 def deferred fetch_config(url: string) -> Deferred<Result<string, AppError>> {
     println("Fetching from {}...", url);
@@ -325,18 +680,18 @@ Key Concepts
 Example: Parallel Computation
 
 ```gloin
-import "@std"
+import "@std";
 
-struct MathEngine {
+def struct MathEngine {
     def factor: f32,
     def static new(f: f32) -> MathEngine {
         return MathEngine{ factor: f };
     }
 
     // A method marked as spawnable
-    def spawnable compute_heavy_pi(self, iterations: i32) -> f32 {
+    def spawnable compute_heavy_pi(self: *MathEngine, iterations: i32) -> f32 {
         def mut result: f32 = 0.0;
-        for i: i32 in 0..iterations {
+        for def i: i32 in 0..iterations {
             result = result + (self.factor * 3.14159);
         }
         
@@ -376,7 +731,12 @@ def main() -> i32 {
 | **Result Handling** | `join()` or `force_join()` | `join()` |
 
 
-### Zero-cost bit-field and `packed` keyword
+### Packed bitfield design (unresolved: SPEC-037/SPEC-038)
+
+The examples below preserve open layout proposals: omitted backing storage,
+implicit offsets, and mixed endian spellings are not approved alternatives.
+SPEC-037/SPEC-038 must replace them with one consistent contract and byte-exact
+examples before implementation acceptance.
 
 Networking protocols often pack multiple flags into a single byte. C bit-fields are notoriously non-portable and implementation-defined. 
 Gloin can solve this by being explicit about bit-positioning.
@@ -392,18 +752,47 @@ def packed struct Flags {
 }
 ```
 
-By defining the exact bit-offset, the compiler can generate perfect AND/OR/SHIFT sequences. 
-Because the struct is packed, there is zero padding, making it safe to cast directly from a network buffer.
+Explicit offsets are intended to lower to masks and shifts. Packing alone does
+not establish safe access to a network buffer; alignment, bounds, and pointer
+rules must also be defined and checked.
+
+### Bit Indexing and Endianness
+
+Bit indexing in `packed` structs is strictly tied to the endianness of the backing storage type.
+
+- **Little Endian (`u32`, `le_u32`)**: Bit 0 is the Least Significant Bit (LSB).
+  - Example: `def flags: u4 at 0` occupies the lowest 4 bits of the word.
+  - Usage: Standard x86/ARM local processing.
+
+- **Big Endian (`be_u32`)**: Bit 0 is the Most Significant Bit (MSB).
+  - Example: `def flags: u4 at 0` occupies the highest 4 bits of the word.
+  - Usage: Network protocols (TCP/IP), file formats.
+
+This ensures that "Bit 0" always corresponds to the "first bit" as defined by the protocol or architecture being modeled, avoiding common portability pitfalls.
+
+```gloin
+// Network Protocol (Big Endian): Bit 0 is MSB
+def packed struct(be_u32) NetworkHeader {
+    def version: u4 at 0, // Top 4 bits (31-28)
+    def ihl: u4 at 4,     // Next 4 bits (27-24)
+}
+
+// Hardware Register (Little Endian): Bit 0 is LSB
+def packed struct(le_u32) DeviceReg {
+    def enable: bit at 0, // Bottom bit (0)
+    def mode: u2 at 1,    // Bits 1-2
+}
+```
 
 #### `packed` keyword
 
-The `packed` keyword tells the compiler not to add padding for alignment, ensuring the memory layout matches the TCP/IP spec exactly.
-Sometimes you often need to map a struct directly onto a sequence of bits from a packet. 
-In C, this is messy with bitmasks. In Gloin, we can use the def keyword with explicit bit-widths.
+The intended purpose of `packed` is to control padding and bit layout; matching
+a protocol requires the complete layout rules and byte-level verification.
+It is mandatory to specify the storage container (backing integer type) for the packed struct to define the "Word" size for bit-manipulation operations.
 
 ```gloin
-// A 20-byte IPv4 Header definition
-def packed struct IPv4Header {
+// A 20-byte IPv4 Header definition backed by u32 words
+def packed struct(u32) IPv4Header {
     def version: u4,           // 4 bits
     def ihl: u4,               // 4 bits
     def dscp: u6,              // 6 bits
@@ -413,3 +802,5 @@ def packed struct IPv4Header {
     // ... rest of the fields
 }
 ```
+
+The storage type (e.g., `u32`) dictates how the compiler generates shift and mask instructions.
