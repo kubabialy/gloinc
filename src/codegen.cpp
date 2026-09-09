@@ -1,10 +1,12 @@
 #include "codegen.h"
+#include "mlir/IR/Diagnostics.h"
 #include <iostream>
 
 // using namespace mlir; // Removed to avoid conflict with gloin::Type
 // using namespace gloin;
 
-CodeGen::CodeGen(mlir::MLIRContext &ctx) : context(ctx), builder(&ctx) {
+CodeGen::CodeGen(mlir::MLIRContext &ctx, std::shared_ptr<Diagnostics> diagnostics)
+    : context(ctx), builder(&ctx), diagnostics_(std::move(diagnostics)) {
 
     // Load necessary dialects
     context.getOrLoadDialect<gloin::GloinDialect>();
@@ -153,7 +155,7 @@ void CodeGen::emit_deferred() {
     for (auto it = current_function_defers.rbegin(); it != current_function_defers.rend(); ++it) {
         const auto *stmt = *it;
         if (stmt->call) {
-            gen_expression(stmt->call.get());
+            gen_expression(stmt->call.get(), true);
         }
     }
 }
@@ -165,31 +167,58 @@ void CodeGen::declare(const std::string &name, mlir::Value value, bool is_addres
 }
 
 mlir::ModuleOp CodeGen::generate(const std::vector<std::unique_ptr<Statement>> &program) {
-    // Set insertion point to end of module body
-    if (theModule.getBody()) {
-        builder.setInsertionPointToEnd(theModule.getBody());
-    } else {
-        // Should exist, but ensure
-        mlir::Block *block = new mlir::Block();
-        theModule.getBodyRegion().push_back(block);
-        builder.setInsertionPointToEnd(block);
+    if (generated) {
+        diagnostics_->error(DiagnosticStage::Codegen, current_span,
+                            "CodeGen instances generate one module");
+        return {};
     }
-
-    for (const auto &stmt : program) {
-        if (auto *func_def = dynamic_cast<const FunctionDefinition *>(stmt.get())) {
-            gen_statement(stmt.get());
-        } else if (auto *struct_def = dynamic_cast<const StructDefinition *>(stmt.get())) {
-            gen_statement(stmt.get());
-        } else if (auto *import_stmt = dynamic_cast<const ImportStatement *>(stmt.get())) {
+    generated = true;
+    if (diagnostics_->has_errors()) {
+        theModule.erase();
+        theModule = {};
+        return {};
+    }
+    mlir::ScopedDiagnosticHandler handler(&context, [&](mlir::Diagnostic &diagnostic) {
+        if (diagnostic.getSeverity() == mlir::DiagnosticSeverity::Error)
+            diagnostics_->error(DiagnosticStage::Codegen, current_span, diagnostic.str());
+        return mlir::success();
+    });
+    try {
+        builder.setInsertionPointToEnd(theModule.getBody());
+        for (const auto &stmt : program) {
+            DiagnosticScope source(current_span, stmt ? stmt->span : SourceSpan{});
+            if (!dynamic_cast<const FunctionDefinition *>(stmt.get()) &&
+                !dynamic_cast<const StructDefinition *>(stmt.get()) &&
+                !dynamic_cast<const ImportStatement *>(stmt.get()))
+                fail("Unsupported top-level statement in code generation");
             gen_statement(stmt.get());
         }
+        if (!diagnostics_->has_errors())
+            return theModule;
+    } catch (const GenerationFailure &) {
+        // A failed module must never reach lowering or execution.
     }
-    return theModule;
+    theModule.erase();
+    theModule = {};
+    return {};
+}
+
+[[noreturn]] void CodeGen::fail(const std::string &message) {
+    diagnostics_->error(DiagnosticStage::Codegen, current_span, message);
+    throw GenerationFailure{};
+}
+
+mlir::Location CodeGen::location() {
+    if (!current_span.source)
+        return builder.getUnknownLoc();
+    auto [line, column] = current_span.source->line_column(current_span.begin);
+    return mlir::FileLineColLoc::get(&context, current_span.source->name, line, column);
 }
 
 void CodeGen::gen_statement(const Statement *stmt) {
+    DiagnosticScope source(current_span, stmt ? stmt->span : SourceSpan{});
     if (!stmt)
-        return;
+        fail("Missing statement in code generation");
 
     if (auto *func_def = dynamic_cast<const FunctionDefinition *>(stmt)) {
         current_function_defers.clear();
@@ -211,8 +240,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
         }
 
         auto funcType = builder.getFunctionType(argTypes, resultTypes);
-        auto funcOp = builder.create<mlir::func::FuncOp>(builder.getUnknownLoc(),
-                                                         func_def->name->value, funcType);
+        auto funcOp =
+            builder.create<mlir::func::FuncOp>(location(), func_def->name->value, funcType);
 
         // Register function in table
         function_table[func_def->name->value] = {funcOp, func_def};
@@ -247,17 +276,17 @@ void CodeGen::gen_statement(const Statement *stmt) {
             } else if (!isEmpty && !currentBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
                 // Reachable (or entry) but unterminated.
                 if (funcOp.getFunctionType().getNumResults() == 0) {
-                    builder.create<mlir::func::ReturnOp>(builder.getUnknownLoc());
+                    builder.create<mlir::func::ReturnOp>(location());
                 } else {
-                    builder.create<mlir::LLVM::UnreachableOp>(builder.getUnknownLoc());
+                    builder.create<mlir::LLVM::UnreachableOp>(location());
                 }
             } else if (isEmpty) {
                 // Empty but reachable (e.g. fallthrough from previous block or entry block of empty
                 // function)
                 if (funcOp.getFunctionType().getNumResults() == 0) {
-                    builder.create<mlir::func::ReturnOp>(builder.getUnknownLoc());
+                    builder.create<mlir::func::ReturnOp>(location());
                 } else {
-                    builder.create<mlir::LLVM::UnreachableOp>(builder.getUnknownLoc());
+                    builder.create<mlir::LLVM::UnreachableOp>(location());
                 }
             }
         }
@@ -287,7 +316,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
                 if (typeName == name + "*") {
                     fieldType = mlir::LLVM::LLVMPointerType::get(&context);
                 } else {
-                    fieldType = builder.getI32Type();
+                    fail("Unsupported field type: " + typeName);
                 }
             }
             elementTypes.push_back(fieldType);
@@ -297,7 +326,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
         }
 
         if (mlir::failed(structType.setBody(elementTypes, struct_def->is_packed))) {
-            std::cerr << "Failed to set body for struct " << name << std::endl;
+            fail(diagnostic_text("Failed to set body for struct ", name, '\n'));
         }
 
         // Method Generation
@@ -328,8 +357,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
             }
 
             auto funcType = builder.getFunctionType(methodArgTypes, resultTypes);
-            auto funcOp =
-                builder.create<mlir::func::FuncOp>(builder.getUnknownLoc(), mangledName, funcType);
+            auto funcOp = builder.create<mlir::func::FuncOp>(location(), mangledName, funcType);
 
             // Register method in table (key: StructName_MethodName)
             // Note: AST nodes are unique_ptr, so we store the raw pointer.
@@ -364,7 +392,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
 
             if (entryBlock->empty() ||
                 !entryBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
-                builder.create<mlir::func::ReturnOp>(builder.getUnknownLoc());
+                builder.create<mlir::func::ReturnOp>(location());
             }
 
             leave_scope();
@@ -383,20 +411,19 @@ void CodeGen::gen_statement(const Statement *stmt) {
         }
 
         if (var_decl->is_mutable) {
-            auto one = builder.create<mlir::LLVM::ConstantOp>(
-                builder.getUnknownLoc(), builder.getI64Type(), builder.getI64IntegerAttr(1));
+            auto one = builder.create<mlir::LLVM::ConstantOp>(location(), builder.getI64Type(),
+                                                              builder.getI64IntegerAttr(1));
             auto alloca = builder.create<mlir::LLVM::AllocaOp>(
-                builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context), type, one, 0);
+                location(), mlir::LLVM::LLVMPointerType::get(&context), type, one, 0);
             if (initVal) {
-                builder.create<mlir::LLVM::StoreOp>(builder.getUnknownLoc(), initVal, alloca);
+                builder.create<mlir::LLVM::StoreOp>(location(), initVal, alloca);
             }
             declare(name, alloca, true, type, var_decl->type ? var_decl->type->value : "");
         } else {
             if (initVal) {
                 declare(name, initVal, false, type, var_decl->type ? var_decl->type->value : "");
             } else {
-                // Immutable var without initializer? Error or undefined?
-                // For now, ignore or create undefined?
+                fail("Uninitialized immutable binding in code generation");
             }
         }
 
@@ -404,10 +431,10 @@ void CodeGen::gen_statement(const Statement *stmt) {
         if (return_stmt->return_value) {
             auto val = gen_expression(return_stmt->return_value.get());
             emit_deferred();
-            builder.create<mlir::func::ReturnOp>(builder.getUnknownLoc(), val);
+            builder.create<mlir::func::ReturnOp>(location(), val);
         } else {
             emit_deferred();
-            builder.create<mlir::func::ReturnOp>(builder.getUnknownLoc());
+            builder.create<mlir::func::ReturnOp>(location());
         }
 
     } else if (auto *block = dynamic_cast<const BlockStatement *>(stmt)) {
@@ -433,18 +460,18 @@ void CodeGen::gen_statement(const Statement *stmt) {
         region->getBlocks().insertAfter(elseBlock->getIterator(), mergeBlock);
 
         auto cond = gen_expression(if_stmt->condition.get());
-        if (!cond)
-            return; // Error
+        if (!cond || !cond.getType().isInteger(1))
+            fail("If condition must be bool");
 
-        builder.create<mlir::cf::CondBranchOp>(builder.getUnknownLoc(), cond, thenBlock,
-                                               mlir::ValueRange{}, elseBlock, mlir::ValueRange{});
+        builder.create<mlir::cf::CondBranchOp>(location(), cond, thenBlock, mlir::ValueRange{},
+                                               elseBlock, mlir::ValueRange{});
 
         // Then Block
         builder.setInsertionPointToStart(thenBlock);
         gen_statement(if_stmt->consequence.get());
         // If not terminated (e.g. by return), branch to merge
         if (thenBlock->empty() || !thenBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
-            builder.create<mlir::cf::BranchOp>(builder.getUnknownLoc(), mergeBlock);
+            builder.create<mlir::cf::BranchOp>(location(), mergeBlock);
         }
 
         // Else Block
@@ -453,7 +480,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
             gen_statement(if_stmt->alternative.get());
         }
         if (elseBlock->empty() || !elseBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
-            builder.create<mlir::cf::BranchOp>(builder.getUnknownLoc(), mergeBlock);
+            builder.create<mlir::cf::BranchOp>(location(), mergeBlock);
         }
 
         // Continue after merge
@@ -472,47 +499,58 @@ void CodeGen::gen_statement(const Statement *stmt) {
         region->getBlocks().insertAfter(condBlock->getIterator(), bodyBlock);
         region->getBlocks().insertAfter(bodyBlock->getIterator(), endBlock);
 
-        builder.create<mlir::cf::BranchOp>(builder.getUnknownLoc(), condBlock);
+        builder.create<mlir::cf::BranchOp>(location(), condBlock);
 
         // Condition Block
         builder.setInsertionPointToStart(condBlock);
         auto cond = gen_expression(while_stmt->condition.get());
-        builder.create<mlir::cf::CondBranchOp>(builder.getUnknownLoc(), cond, bodyBlock,
-                                               mlir::ValueRange{}, endBlock, mlir::ValueRange{});
+        if (!cond.getType().isInteger(1))
+            fail("While condition must be bool");
+        builder.create<mlir::cf::CondBranchOp>(location(), cond, bodyBlock, mlir::ValueRange{},
+                                               endBlock, mlir::ValueRange{});
 
         // Body Block
         builder.setInsertionPointToStart(bodyBlock);
         gen_statement(while_stmt->body.get());
         // If not terminated, branch back to condition
         if (bodyBlock->empty() || !bodyBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
-            builder.create<mlir::cf::BranchOp>(builder.getUnknownLoc(), condBlock);
+            builder.create<mlir::cf::BranchOp>(location(), condBlock);
         }
 
         // End Block
         builder.setInsertionPointToStart(endBlock);
 
     } else if (auto *expr_stmt = dynamic_cast<const ExpressionStatement *>(stmt)) {
-        gen_expression(expr_stmt->expression.get());
+        gen_expression(expr_stmt->expression.get(), true);
 
     } else if (auto *import_stmt = dynamic_cast<const ImportStatement *>(stmt)) {
         handle_import(import_stmt->path);
     } else if (auto *defer_stmt = dynamic_cast<const DeferStatement *>(stmt)) {
         current_function_defers.push_back(defer_stmt);
+    } else {
+        fail("Unsupported statement in code generation");
     }
 }
 
-mlir::Value CodeGen::gen_expression(const Expression *expr) {
+mlir::Value CodeGen::gen_expression(const Expression *expr, bool allow_void) {
+    DiagnosticScope source(current_span, expr ? expr->span : SourceSpan{});
+    if (!expr)
+        fail("Missing expression in code generation");
+    auto value = gen_expression_impl(expr);
+    if (!value && !allow_void)
+        fail("A void call cannot be used as a value");
+    return value;
+}
+
+mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     if (auto *int_lit = dynamic_cast<const IntegerLiteral *>(expr)) {
-        return builder.create<mlir::arith::ConstantIntOp>(builder.getUnknownLoc(), int_lit->value,
-                                                          32);
+        return builder.create<mlir::arith::ConstantIntOp>(location(), int_lit->value, 32);
     } else if (auto *float_lit = dynamic_cast<const FloatLiteral *>(expr)) {
         auto floatType = builder.getF32Type();
         auto floatAttr = builder.getFloatAttr(floatType, float_lit->value);
-        return builder.create<mlir::arith::ConstantOp>(builder.getUnknownLoc(), floatType,
-                                                       floatAttr);
+        return builder.create<mlir::arith::ConstantOp>(location(), floatType, floatAttr);
     } else if (auto *bool_lit = dynamic_cast<const BooleanLiteral *>(expr)) {
-        return builder.create<mlir::arith::ConstantIntOp>(builder.getUnknownLoc(),
-                                                          bool_lit->value ? 1 : 0, 1);
+        return builder.create<mlir::arith::ConstantIntOp>(location(), bool_lit->value ? 1 : 0, 1);
     } else if (auto *str_lit = dynamic_cast<const StringLiteral *>(expr)) {
         std::string strVal = str_lit->value;
         auto strType = mlir::LLVM::LLVMArrayType::get(builder.getI8Type(), strVal.size() + 1);
@@ -524,30 +562,28 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
             mlir::OpBuilder::InsertionGuard guard(builder);
             builder.setInsertionPointToStart(theModule.getBody());
             globalStr = builder.create<mlir::LLVM::GlobalOp>(
-                builder.getUnknownLoc(), strType,
+                location(), strType,
                 /*isConstant=*/true, mlir::LLVM::Linkage::Internal, globalName,
                 builder.getStringAttr(strVal + "\0"));
         }
 
-        auto globalPtr =
-            builder.create<mlir::LLVM::AddressOfOp>(builder.getUnknownLoc(), globalStr);
+        auto globalPtr = builder.create<mlir::LLVM::AddressOfOp>(location(), globalStr);
 
         auto stringStructType = type_table["String"];
-        auto undef = builder.create<mlir::LLVM::UndefOp>(builder.getUnknownLoc(), stringStructType);
+        auto undef = builder.create<mlir::LLVM::UndefOp>(location(), stringStructType);
 
-        auto zero = builder.create<mlir::LLVM::ConstantOp>(
-            builder.getUnknownLoc(), builder.getI64Type(), builder.getI64IntegerAttr(0));
+        auto zero = builder.create<mlir::LLVM::ConstantOp>(location(), builder.getI64Type(),
+                                                           builder.getI64IntegerAttr(0));
         auto gep = builder.create<mlir::LLVM::GEPOp>(
-            builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context), strType, globalPtr,
+            location(), mlir::LLVM::LLVMPointerType::get(&context), strType, globalPtr,
             mlir::ValueRange{zero, zero});
 
-        auto tmp1 = builder.create<mlir::LLVM::InsertValueOp>(builder.getUnknownLoc(), undef, gep,
+        auto tmp1 = builder.create<mlir::LLVM::InsertValueOp>(location(), undef, gep,
                                                               llvm::ArrayRef<int64_t>{0});
 
-        auto lenVal =
-            builder.create<mlir::LLVM::ConstantOp>(builder.getUnknownLoc(), builder.getI64Type(),
-                                                   builder.getI64IntegerAttr(strVal.size()));
-        auto res = builder.create<mlir::LLVM::InsertValueOp>(builder.getUnknownLoc(), tmp1, lenVal,
+        auto lenVal = builder.create<mlir::LLVM::ConstantOp>(
+            location(), builder.getI64Type(), builder.getI64IntegerAttr(strVal.size()));
+        auto res = builder.create<mlir::LLVM::InsertValueOp>(location(), tmp1, lenVal,
                                                              llvm::ArrayRef<int64_t>{1});
 
         return res;
@@ -555,27 +591,26 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
         if (array_lit->elements.empty()) {
             // Handle empty array? Maybe array<0 x i8>?
             // For now assume non-empty or handle via type inference if possible.
-            return nullptr;
+            fail("Unsupported expression or unresolved value in code generation");
         }
 
         auto firstElem = gen_expression(array_lit->elements[0].get());
         if (!firstElem)
-            return nullptr;
+            fail("Unsupported expression or unresolved value in code generation");
 
         mlir::Type elemType = firstElem.getType();
         auto arrayType = mlir::LLVM::LLVMArrayType::get(elemType, array_lit->elements.size());
 
-        mlir::Value currentArray =
-            builder.create<mlir::LLVM::UndefOp>(builder.getUnknownLoc(), arrayType);
+        mlir::Value currentArray = builder.create<mlir::LLVM::UndefOp>(location(), arrayType);
 
         // Insert first element
         currentArray = builder.create<mlir::LLVM::InsertValueOp>(
-            builder.getUnknownLoc(), currentArray, firstElem, llvm::ArrayRef<int64_t>{0});
+            location(), currentArray, firstElem, llvm::ArrayRef<int64_t>{0});
 
         for (size_t i = 1; i < array_lit->elements.size(); ++i) {
             auto elem = gen_expression(array_lit->elements[i].get());
             if (!elem)
-                return nullptr;
+                fail("Unsupported expression or unresolved value in code generation");
 
             // Simple type check/cast
             if (elem.getType() != elemType) {
@@ -583,7 +618,7 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
             }
 
             currentArray = builder.create<mlir::LLVM::InsertValueOp>(
-                builder.getUnknownLoc(), currentArray, elem, llvm::ArrayRef<int64_t>{(int64_t)i});
+                location(), currentArray, elem, llvm::ArrayRef<int64_t>{(int64_t)i});
         }
 
         return currentArray;
@@ -591,9 +626,8 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
         if (prefix->op == "*") {
             auto ptr = gen_expression(prefix->right.get());
             if (!ptr)
-                return nullptr;
-            return builder.create<mlir::LLVM::LoadOp>(builder.getUnknownLoc(), builder.getI32Type(),
-                                                      ptr);
+                fail("Unsupported expression or unresolved value in code generation");
+            return builder.create<mlir::LLVM::LoadOp>(location(), builder.getI32Type(), ptr);
         } else if (prefix->op == "&") {
             return gen_address(prefix->right.get());
         }
@@ -602,21 +636,20 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
         if (sym.value) {
             if (sym.is_address) {
                 if (llvm::isa<mlir::LLVM::LLVMPointerType>(sym.value.getType())) {
-                    return builder.create<mlir::LLVM::LoadOp>(builder.getUnknownLoc(), sym.type,
-                                                              sym.value);
+                    return builder.create<mlir::LLVM::LoadOp>(location(), sym.type, sym.value);
                 }
-                return builder.create<mlir::memref::LoadOp>(builder.getUnknownLoc(), sym.value);
+                return builder.create<mlir::memref::LoadOp>(location(), sym.value);
             } else {
                 return sym.value;
             }
         }
-        return nullptr;
+        fail("Unsupported expression or unresolved value in code generation");
     } else if (auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
         // Try to get address of the member if possible (e.g. if base is addressable)
         auto addr = gen_address(expr);
         if (addr) {
             auto type = get_expression_type(expr);
-            return builder.create<mlir::LLVM::LoadOp>(builder.getUnknownLoc(), type, addr);
+            return builder.create<mlir::LLVM::LoadOp>(location(), type, addr);
         }
 
         // If base is NOT addressable (e.g. value type struct in register/SSA value),
@@ -636,77 +669,76 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
 
                     int index = struct_field_indices[structName][ident->value];
                     return builder.create<mlir::LLVM::ExtractValueOp>(
-                        builder.getUnknownLoc(), baseVal, llvm::ArrayRef<int64_t>{index});
+                        location(), baseVal, llvm::ArrayRef<int64_t>{index});
                 }
             }
         }
 
-        return nullptr;
+        fail("Unsupported expression or unresolved value in code generation");
     } else if (auto *bin = dynamic_cast<const InfixExpression *>(expr)) {
         auto left = gen_expression(bin->left.get());
         auto right = gen_expression(bin->right.get());
 
         if (!left || !right)
-            return nullptr;
+            fail("Unsupported expression or unresolved value in code generation");
 
         // Simple type checking/promotion for binary ops
         if (left.getType() != right.getType()) {
             if (left.getType().isInteger(32) && right.getType().isInteger(64)) {
-                left = builder.create<mlir::arith::ExtSIOp>(builder.getUnknownLoc(),
-                                                            builder.getI64Type(), left);
+                left = builder.create<mlir::arith::ExtSIOp>(location(), builder.getI64Type(), left);
             } else if (left.getType().isInteger(64) && right.getType().isInteger(32)) {
-                right = builder.create<mlir::arith::ExtSIOp>(builder.getUnknownLoc(),
-                                                             builder.getI64Type(), right);
+                right =
+                    builder.create<mlir::arith::ExtSIOp>(location(), builder.getI64Type(), right);
             }
             // Add more cases as needed (float, etc)
         }
 
         if (bin->op == "+")
-            return builder.create<mlir::arith::AddIOp>(builder.getUnknownLoc(), left, right);
+            return builder.create<mlir::arith::AddIOp>(location(), left, right);
         if (bin->op == "-")
-            return builder.create<mlir::arith::SubIOp>(builder.getUnknownLoc(), left, right);
+            return builder.create<mlir::arith::SubIOp>(location(), left, right);
         if (bin->op == "*")
-            return builder.create<mlir::arith::MulIOp>(builder.getUnknownLoc(), left, right);
+            return builder.create<mlir::arith::MulIOp>(location(), left, right);
         if (bin->op == "/")
-            return builder.create<mlir::arith::DivSIOp>(builder.getUnknownLoc(), left, right);
+            return builder.create<mlir::arith::DivSIOp>(location(), left, right);
         if (bin->op == "==")
-            return builder.create<mlir::arith::CmpIOp>(builder.getUnknownLoc(),
-                                                       mlir::arith::CmpIPredicate::eq, left, right);
+            return builder.create<mlir::arith::CmpIOp>(location(), mlir::arith::CmpIPredicate::eq,
+                                                       left, right);
         if (bin->op == "<")
-            return builder.create<mlir::arith::CmpIOp>(
-                builder.getUnknownLoc(), mlir::arith::CmpIPredicate::slt, left, right);
+            return builder.create<mlir::arith::CmpIOp>(location(), mlir::arith::CmpIPredicate::slt,
+                                                       left, right);
         if (bin->op == ">")
-            return builder.create<mlir::arith::CmpIOp>(
-                builder.getUnknownLoc(), mlir::arith::CmpIPredicate::sgt, left, right);
+            return builder.create<mlir::arith::CmpIOp>(location(), mlir::arith::CmpIPredicate::sgt,
+                                                       left, right);
     } else if (auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
         auto right = gen_expression(assign->right.get());
         auto lhsAddr = gen_address(assign->left.get());
         if (lhsAddr) {
             if (llvm::isa<mlir::LLVM::LLVMPointerType>(lhsAddr.getType())) {
-                builder.create<mlir::LLVM::StoreOp>(builder.getUnknownLoc(), right, lhsAddr);
+                builder.create<mlir::LLVM::StoreOp>(location(), right, lhsAddr);
             } else {
-                builder.create<mlir::memref::StoreOp>(builder.getUnknownLoc(), right, lhsAddr);
+                builder.create<mlir::memref::StoreOp>(location(), right, lhsAddr);
             }
             return right;
         }
     } else if (auto *struct_lit = dynamic_cast<const StructLiteral *>(expr)) {
         std::string structName = struct_lit->name->value;
         if (!type_table.count(structName))
-            return nullptr;
+            fail("Unsupported expression or unresolved value in code generation");
 
         mlir::Type type = type_table[structName];
-        auto undef = builder.create<mlir::LLVM::UndefOp>(builder.getUnknownLoc(), type);
+        auto undef = builder.create<mlir::LLVM::UndefOp>(location(), type);
         mlir::Value current = undef;
 
         for (const auto &field : struct_lit->fields) {
             std::string fieldName = field.first;
             auto val = gen_expression(field.second.get());
             if (!val)
-                return nullptr;
+                fail("Unsupported expression or unresolved value in code generation");
 
             int index = struct_field_indices[structName][fieldName];
-            current = builder.create<mlir::LLVM::InsertValueOp>(
-                builder.getUnknownLoc(), current, val, llvm::ArrayRef<int64_t>{index});
+            current = builder.create<mlir::LLVM::InsertValueOp>(location(), current, val,
+                                                                llvm::ArrayRef<int64_t>{index});
         }
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
@@ -726,12 +758,11 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
                     auto val = gen_expression(member->left.get());
                     if (val) {
                         auto one = builder.create<mlir::LLVM::ConstantOp>(
-                            builder.getUnknownLoc(), builder.getI64Type(),
-                            builder.getI64IntegerAttr(1));
+                            location(), builder.getI64Type(), builder.getI64IntegerAttr(1));
                         auto alloca = builder.create<mlir::LLVM::AllocaOp>(
-                            builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context),
-                            val.getType(), one, 0);
-                        builder.create<mlir::LLVM::StoreOp>(builder.getUnknownLoc(), val, alloca);
+                            location(), mlir::LLVM::LLVMPointerType::get(&context), val.getType(),
+                            one, 0);
+                        builder.create<mlir::LLVM::StoreOp>(location(), val, alloca);
                         selfArg = alloca;
                     }
                 }
@@ -755,8 +786,8 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
             if (auto *id = dynamic_cast<const Identifier *>(call->function.get())) {
                 funcName = id->value;
             } else {
-                std::cerr << "Indirect calls not supported yet\n";
-                return nullptr;
+                fail(diagnostic_text("Indirect calls not supported yet\n"));
+                fail("Unsupported expression or unresolved value in code generation");
             }
         }
 
@@ -768,7 +799,7 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
         for (const auto &arg : call->arguments) {
             auto val = gen_expression(arg.get());
             if (!val)
-                return nullptr;
+                fail("Unsupported expression or unresolved value in code generation");
             args.push_back(val);
         }
 
@@ -785,15 +816,14 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
                 auto deferredType = gloin::GloinDeferredType::get(&context, returnType);
 
                 auto callOp = builder.create<gloin::AsyncCallOp>(
-                    builder.getUnknownLoc(), deferredType,
-                    mlir::FlatSymbolRefAttr::get(&context, funcName), args);
+                    location(), deferredType, mlir::FlatSymbolRefAttr::get(&context, funcName),
+                    args);
                 return callOp.getHandle();
             } else {
-                auto callOp =
-                    builder.create<mlir::func::CallOp>(builder.getUnknownLoc(), funcOp, args);
+                auto callOp = builder.create<mlir::func::CallOp>(location(), funcOp, args);
                 if (callOp.getNumResults() > 0)
                     return callOp.getResult(0);
-                return nullptr;
+                return {}; // Resolved void call.
             }
         } else {
             // Check for LLVM intrinsics or runtime functions declared in module but not in
@@ -806,26 +836,20 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
                         mlir::Type actual = args[i].getType();
                         if (expected != actual) {
                             if (actual.isInteger(32) && expected.isInteger(64)) {
-                                args[i] = builder.create<mlir::LLVM::SExtOp>(
-                                    builder.getUnknownLoc(), expected, args[i]);
+                                args[i] = builder.create<mlir::LLVM::SExtOp>(location(), expected,
+                                                                             args[i]);
                             }
                         }
                     }
                 }
 
-                auto callOp =
-                    builder.create<mlir::LLVM::CallOp>(builder.getUnknownLoc(), funcOp, args);
+                auto callOp = builder.create<mlir::LLVM::CallOp>(location(), funcOp, args);
                 if (callOp.getNumResults() > 0)
                     return callOp.getResult();
-                return nullptr;
+                return {}; // Resolved void runtime call.
             }
 
-            auto callOp = builder.create<mlir::func::CallOp>(
-                builder.getUnknownLoc(), mlir::FlatSymbolRefAttr::get(&context, funcName),
-                mlir::TypeRange{}, args);
-            if (callOp.getNumResults() > 0)
-                return callOp.getResult(0);
-            return nullptr;
+            fail("Unknown function: " + funcName);
         }
     } else if (auto *spawn = dynamic_cast<const SpawnExpression *>(expr)) {
         if (auto *call = dynamic_cast<const CallExpression *>(spawn->call.get())) {
@@ -833,7 +857,7 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
             if (auto *id = dynamic_cast<const Identifier *>(call->function.get())) {
                 funcName = id->value;
             } else {
-                return nullptr;
+                fail("Unsupported expression or unresolved value in code generation");
             }
 
             // Simplification: Assume single pointer argument for now
@@ -844,40 +868,37 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
             if (call->arguments.empty()) {
                 // Pass null
                 argVal = builder.create<mlir::LLVM::ZeroOp>(
-                    builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context));
+                    location(), mlir::LLVM::LLVMPointerType::get(&context));
             } else if (call->arguments.size() == 1) {
                 argVal = gen_expression(call->arguments[0].get());
                 if (!argVal)
-                    return nullptr;
+                    fail("Unsupported expression or unresolved value in code generation");
 
                 // Cast to void* if needed
                 if (!llvm::isa<mlir::LLVM::LLVMPointerType>(argVal.getType())) {
                     // Try to inttoptr if integer
                     if (argVal.getType().isInteger(64)) {
                         argVal = builder.create<mlir::LLVM::IntToPtrOp>(
-                            builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context),
-                            argVal);
+                            location(), mlir::LLVM::LLVMPointerType::get(&context), argVal);
                     } else if (argVal.getType().isInteger(32)) {
-                        auto ext = builder.create<mlir::LLVM::ZExtOp>(builder.getUnknownLoc(),
+                        auto ext = builder.create<mlir::LLVM::ZExtOp>(location(),
                                                                       builder.getI64Type(), argVal);
                         argVal = builder.create<mlir::LLVM::IntToPtrOp>(
-                            builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context),
+                            location(), mlir::LLVM::LLVMPointerType::get(&context),
                             mlir::ValueRange{ext.getResult()});
                     } else {
                         // Fallback: bitcast or error
                         // For now, assume pointer compatible
                         argVal = builder.create<mlir::LLVM::BitcastOp>(
-                            builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context),
-                            argVal);
+                            location(), mlir::LLVM::LLVMPointerType::get(&context), argVal);
                     }
                 } else {
                     argVal = builder.create<mlir::LLVM::BitcastOp>(
-                        builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context),
-                        argVal);
+                        location(), mlir::LLVM::LLVMPointerType::get(&context), argVal);
                 }
             } else {
-                std::cerr << "Spawn only supports 0 or 1 argument currently\n";
-                return nullptr;
+                fail(diagnostic_text("Spawn only supports 0 or 1 argument currently\n"));
+                fail("Unsupported expression or unresolved value in code generation");
             }
 
             // Get function pointer
@@ -886,8 +907,8 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
                 // Try LLVM func
                 auto llvmFunc = theModule.lookupSymbol<mlir::LLVM::LLVMFuncOp>(funcName);
                 if (!llvmFunc) {
-                    std::cerr << "Function " << funcName << " not found for spawn\n";
-                    return nullptr;
+                    fail(diagnostic_text("Function ", funcName, " not found for spawn\n"));
+                    fail("Unsupported expression or unresolved value in code generation");
                 }
                 // We need a pointer to this function.
                 // AddressOfOp works on GlobalOp or FuncOp if we use LLVM dialect.
@@ -899,15 +920,14 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
                 // If it's a standard FuncOp, we might need a wrapper or ensure it's converted.
                 // For now, let's assume we can get the address.
 
-                auto funcPtr =
-                    builder.create<mlir::LLVM::AddressOfOp>(builder.getUnknownLoc(), llvmFunc);
+                auto funcPtr = builder.create<mlir::LLVM::AddressOfOp>(location(), llvmFunc);
 
                 auto voidFuncPtr = builder.create<mlir::LLVM::BitcastOp>(
-                    builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context), funcPtr);
+                    location(), mlir::LLVM::LLVMPointerType::get(&context), funcPtr);
 
                 auto spawnFunc = theModule.lookupSymbol<mlir::LLVM::LLVMFuncOp>("gloin_spawn_task");
                 auto callOp = builder.create<mlir::LLVM::CallOp>(
-                    builder.getUnknownLoc(), spawnFunc, mlir::ValueRange{voidFuncPtr, argVal});
+                    location(), spawnFunc, mlir::ValueRange{voidFuncPtr, argVal});
 
                 return callOp.getResult();
             }
@@ -923,31 +943,30 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
 
             // To take address of FuncOp, we usually need `mlir::func::ConstantOp`.
             auto funcConst = builder.create<mlir::func::ConstantOp>(
-                builder.getUnknownLoc(), funcOp.getFunctionType(),
+                location(), funcOp.getFunctionType(),
                 mlir::FlatSymbolRefAttr::get(&context, funcName));
 
             // This returns a value of function type. We need to cast this to void*.
             // We use UnrealizedConversionCastOp to bridge the gap until lowering.
             auto cast = builder.create<mlir::UnrealizedConversionCastOp>(
-                builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context),
-                funcConst.getResult());
+                location(), mlir::LLVM::LLVMPointerType::get(&context), funcConst.getResult());
 
             auto spawnFunc = theModule.lookupSymbol<mlir::LLVM::LLVMFuncOp>("gloin_spawn_task");
 
             // gloin_spawn_task expects (void* func, void* arg)
             auto callOp = builder.create<mlir::LLVM::CallOp>(
-                builder.getUnknownLoc(), spawnFunc, mlir::ValueRange{cast.getResult(0), argVal});
+                location(), spawnFunc, mlir::ValueRange{cast.getResult(0), argVal});
 
             return callOp.getResult();
         }
     } else if (auto *awaitExpr = dynamic_cast<const AwaitExpression *>(expr)) {
         auto handle = gen_expression(awaitExpr->expr.get());
         if (!handle)
-            return nullptr;
+            fail("Unsupported expression or unresolved value in code generation");
 
         auto awaitFunc = theModule.lookupSymbol<mlir::LLVM::LLVMFuncOp>("gloin_await_task");
-        auto callOp = builder.create<mlir::LLVM::CallOp>(builder.getUnknownLoc(), awaitFunc,
-                                                         mlir::ValueRange{handle});
+        auto callOp =
+            builder.create<mlir::LLVM::CallOp>(location(), awaitFunc, mlir::ValueRange{handle});
 
         auto resPtr = callOp.getResult();
 
@@ -957,18 +976,16 @@ mlir::Value CodeGen::gen_expression(const Expression *expr) {
         // If it's an integer, we cast ptr -> int -> trunc.
 
         auto intType = builder.getI64Type(); // void* is 64-bit usually
-        auto ptrToInt =
-            builder.create<mlir::LLVM::PtrToIntOp>(builder.getUnknownLoc(), intType, resPtr);
+        auto ptrToInt = builder.create<mlir::LLVM::PtrToIntOp>(location(), intType, resPtr);
 
         // Truncate to i32 if needed (assuming i32 return for test case)
         auto i32Type = builder.getI32Type();
-        auto trunc =
-            builder.create<mlir::LLVM::TruncOp>(builder.getUnknownLoc(), i32Type, ptrToInt);
+        auto trunc = builder.create<mlir::LLVM::TruncOp>(location(), i32Type, ptrToInt);
 
         return trunc;
     }
 
-    return nullptr;
+    fail("Unsupported expression or unresolved value in code generation");
 }
 
 mlir::Type CodeGen::get_expression_type(const Expression *expr) {
@@ -1054,8 +1071,8 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
                         int index = struct_field_indices[structName][ident->value];
                         auto structType = type_table[structName];
                         return builder.create<mlir::LLVM::GEPOp>(
-                            builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context),
-                            structType, baseAddr, llvm::ArrayRef<mlir::LLVM::GEPArg>{0, index});
+                            location(), mlir::LLVM::LLVMPointerType::get(&context), structType,
+                            baseAddr, llvm::ArrayRef<mlir::LLVM::GEPArg>{0, index});
                     }
                 }
             }
@@ -1068,8 +1085,8 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
             int index = struct_field_indices[structName][ident->value];
 
             return builder.create<mlir::LLVM::GEPOp>(
-                builder.getUnknownLoc(), mlir::LLVM::LLVMPointerType::get(&context), structType,
-                baseAddr, llvm::ArrayRef<mlir::LLVM::GEPArg>{0, index});
+                location(), mlir::LLVM::LLVMPointerType::get(&context), structType, baseAddr,
+                llvm::ArrayRef<mlir::LLVM::GEPArg>{0, index});
         }
     } else if (auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
         if (prefix->op == "*") {
@@ -1080,13 +1097,11 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
 }
 
 void CodeGen::handle_import(const std::string &import_path) {
-    if (import_path.find("@std/") == 0) {
-        handle_std_import(import_path.substr(5));
-    }
+    fail("Import lowering is not implemented: " + import_path);
 }
 
 void CodeGen::handle_std_import(const std::string &module_name) {
-    // stub
+    fail("Standard module lowering is not implemented: " + module_name);
 }
 
 CodeGen::SymbolInfo CodeGen::lookup(const std::string &name) {
@@ -1160,7 +1175,7 @@ mlir::Type CodeGen::resolve_type(const std::string &type_name) {
         if (base_name == "Deferred" && type_args.size() == 1) {
             mlir::Type valueType = resolve_type(type_args[0]);
             if (!valueType)
-                return nullptr;
+                fail("Unknown or unsupported type: " + type_name);
             return gloin::GloinDeferredType::get(&context, valueType);
         }
 
@@ -1176,8 +1191,8 @@ mlir::Type CodeGen::resolve_type(const std::string &type_name) {
             const auto *def = generic_struct_defs[base_name];
 
             if (def->generic_params.size() != type_args.size()) {
-                std::cerr << "Generic arg count mismatch for " << base_name << "\n";
-                return nullptr;
+                fail(diagnostic_text("Generic arg count mismatch for ", base_name, "\n"));
+                fail("Unknown or unsupported type: " + type_name);
             }
 
             // Create concrete struct type
@@ -1206,9 +1221,9 @@ mlir::Type CodeGen::resolve_type(const std::string &type_name) {
 
                 mlir::Type fieldType = resolve_type(fieldTypeName);
                 if (!fieldType) {
-                    std::cerr << "Failed to resolve field type " << fieldTypeName
-                              << " in generic instantiation\n";
-                    return nullptr;
+                    fail(diagnostic_text("Failed to resolve field type ", fieldTypeName,
+                                         " in generic instantiation\n"));
+                    fail("Unknown or unsupported type: " + type_name);
                 }
 
                 fieldTypes.push_back(fieldType);
@@ -1217,13 +1232,13 @@ mlir::Type CodeGen::resolve_type(const std::string &type_name) {
             }
 
             if (mlir::failed(structType.setBody(fieldTypes, def->is_packed))) {
-                std::cerr << "Failed to set body for generic struct " << type_name << "\n";
-                return nullptr;
+                fail(diagnostic_text("Failed to set body for generic struct ", type_name, "\n"));
+                fail("Unknown or unsupported type: " + type_name);
             }
 
             return structType;
         }
     }
 
-    return nullptr;
+    fail("Unknown or unsupported type: " + type_name);
 }

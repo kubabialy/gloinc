@@ -23,7 +23,9 @@
 
 class CodeGen {
   public:
-    CodeGen(mlir::MLIRContext &context);
+    CodeGen(mlir::MLIRContext &context,
+            std::shared_ptr<Diagnostics> diagnostics = std::make_shared<Diagnostics>());
+    std::shared_ptr<Diagnostics> diagnostics() const { return diagnostics_; }
 
     mlir::ModuleOp generate(const std::vector<std::unique_ptr<Statement>> &program);
     void dump();
@@ -32,6 +34,12 @@ class CodeGen {
     mlir::MLIRContext &context;
     mlir::OpBuilder builder;
     mlir::ModuleOp theModule;
+    std::shared_ptr<Diagnostics> diagnostics_;
+    SourceSpan current_span;
+    bool generated = false;
+    struct GenerationFailure {};
+    [[noreturn]] void fail(const std::string &message);
+    mlir::Location location();
 
     // Symbol table for variables
     struct SymbolInfo {
@@ -77,7 +85,8 @@ class CodeGen {
 
     // Visitation methods
     void gen_statement(const Statement *stmt);
-    mlir::Value gen_expression(const Expression *expr);
+    mlir::Value gen_expression(const Expression *expr, bool allow_void = false);
+    mlir::Value gen_expression_impl(const Expression *expr);
     mlir::Value gen_address(const Expression *expr);
     mlir::Type get_expression_type(const Expression *expr);
 
@@ -98,7 +107,6 @@ class CodeGen {
     // Specific handlers
     void gen_function(const std::string &name, const std::vector<std::string> &args,
                       const Statement *body);
-
 };
 
 #endif // CODEGEN_H

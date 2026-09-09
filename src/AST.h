@@ -9,6 +9,7 @@
 
 // 1. Base Node
 struct Node {
+    SourceSpan span;
     virtual ~Node() = default;
     virtual std::string to_string() const = 0;
 };

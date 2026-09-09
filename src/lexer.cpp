@@ -7,6 +7,21 @@
 #include <vector>
 
 GloinToken Lexer::next_token() {
+    auto token = next_token_impl();
+    size_t begin = source->line_starts.at(token.line_number - 1) + token.column - 1;
+    token.span = {source, begin, static_cast<size_t>(position)};
+    if (token.type == GLOIN_TOKEN_UNKNOWN) {
+        diagnostics_->error(DiagnosticStage::Lexing, token.span, "Invalid or unterminated token");
+    } else if (token.type == GLOIN_TOKEN_EOF && static_cast<size_t>(position) < src.size()) {
+        token.type = GLOIN_TOKEN_UNKNOWN;
+        token.span.end = token.span.begin + 1;
+        diagnostics_->error(DiagnosticStage::Lexing, token.span, "NUL byte in source");
+        advance();
+    }
+    return token;
+}
+
+GloinToken Lexer::next_token_impl() {
     GloinToken token;
     token.line_number = line;
     token.column = column;
@@ -65,6 +80,9 @@ GloinToken Lexer::next_token() {
         }
 
         switch (current_char) {
+            case '\n':
+                advance();
+                return {"\n", start_line, GLOIN_TOKEN_NEWLINE, start_column};
             case '(':
                 advance();
                 return {{"(", 1}, start_line, GLOIN_TOKEN_LPAREN, start_column};

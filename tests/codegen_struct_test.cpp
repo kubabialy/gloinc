@@ -23,7 +23,8 @@ TEST(CodeGenStructTest, GenerateStructAndMemberAccess) {
     Lexer lexer(source);
     GloinParser parser(lexer);
     auto program = parser.parse_program();
-    
+    ASSERT_FALSE(parser.has_error());
+
     // Sema pass (essential for type checking, though CodeGen builds its own table for now)
     Sema sema;
     sema.check_program(program);
@@ -77,7 +78,8 @@ TEST(CodeGenStructTest, PackedStruct) {
     Lexer lexer(source);
     GloinParser parser(lexer);
     auto program = parser.parse_program();
-    
+    ASSERT_FALSE(parser.has_error());
+
     Sema sema;
     sema.check_program(program);
 

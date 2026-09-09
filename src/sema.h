@@ -116,7 +116,7 @@ struct DeferredType : public Type {
 struct Symbol {
     std::string name;
     std::shared_ptr<Type> type;
-    bool is_mutable;
+    bool is_mutable = false;
     // Potentially location info etc.
 };
 
@@ -137,10 +137,11 @@ public:
 
 class Sema {
 public:
-    Sema();
+    explicit Sema(std::shared_ptr<Diagnostics> diagnostics = std::make_shared<Diagnostics>());
+    std::shared_ptr<Diagnostics> diagnostics() const { return diagnostics_; }
     
     // Main entry point
-    void check_program(const std::vector<std::unique_ptr<Statement>>& program);
+    bool check_program(const std::vector<std::unique_ptr<Statement>>& program);
     
     // Visit methods
     void check_statement(const Statement* stmt);
@@ -148,6 +149,8 @@ public:
     
 private:
     std::shared_ptr<Scope> current_scope;
+    std::shared_ptr<Diagnostics> diagnostics_;
+    SourceSpan current_span;
     
     void enter_scope();
     void leave_scope();
@@ -164,7 +167,7 @@ private:
     bool has_errors = false;
     std::vector<std::string> errors;
 public:
-    bool has_error() const { return has_errors; }
+    bool has_error() const { return has_errors || diagnostics_->has_errors(); }
     const std::vector<std::string>& get_errors() const { return errors; }
 };
 

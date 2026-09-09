@@ -8,7 +8,10 @@ protected:
         Lexer l(input);
         GloinParser p(l);
         auto program = p.parse_program();
-        
+        std::ostringstream parse_errors;
+        p.diagnostics()->render(parse_errors);
+        ASSERT_FALSE(p.has_error()) << parse_errors.str();
+
         Sema sema;
         sema.check_program(program);
         

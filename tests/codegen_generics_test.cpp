@@ -10,6 +10,12 @@ std::string compile_to_mlir_string_generics(const std::string &code) {
     Lexer lexer(code);
     GloinParser parser(lexer);
     auto ast = parser.parse_program();
+    if (parser.has_error()) {
+        std::ostringstream errors;
+        parser.diagnostics()->render(errors);
+        ADD_FAILURE() << errors.str();
+        return {};
+    }
 
     mlir::MLIRContext context;
     context.getOrLoadDialect<mlir::func::FuncDialect>();
@@ -18,11 +24,17 @@ std::string compile_to_mlir_string_generics(const std::string &code) {
     context.getOrLoadDialect<mlir::arith::ArithDialect>();
 
     CodeGen codegen(context);
-    auto module = codegen.generate(ast);
+    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate(ast));
+    if (!module) {
+        std::ostringstream errors;
+        codegen.diagnostics()->render(errors);
+        ADD_FAILURE() << errors.str();
+        return {};
+    }
 
     std::string output;
     llvm::raw_string_ostream os(output);
-    module.print(os);
+    module->print(os);
     return output;
 }
 

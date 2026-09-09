@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-007.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-008.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -63,9 +63,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** SPEC.md provides canonical examples and an explicit first release feature list. Implementation-only syntax is either documented as an extension or scheduled for rejection; deferred work stays on this checklist.
   **Decisions:** [the core contract](SPEC.md#first-release-contract-spec-006) selects a JIT-only scalar release on Apple Silicon macOS. Declarations use `def`, constants use `def const`, visibility immediately follows `def`, annotations and statement semicolons are mandatory, identifiers are ASCII in valid UTF-8 source, `int` aliases `i32`, `usize` aliases the target pointer-width unsigned type, and only `string` is the built-in text spelling. Implementation and negative acceptance cases remain in the tasks below; the decision itself does not repair their tests.
 
-- [ ] **SPEC-007 — Introduce source-aware diagnostics and stop on errors.**
+- [x] **SPEC-007 — Introduce source-aware diagnostics and stop on errors.**
   Preserve source file/span information through tokens and AST nodes. Give parsing, semantic checking, and code generation explicit success/failure results. Route every error through the same diagnostic mechanism; unsupported AST nodes must fail explicitly.
   **Done when:** malformed input, unknown constructs, and non-boolean conditions report a useful location, set failure status, and prevent later compilation stages. No error is only printed to stderr while compilation reports success.
+  **Verified:** tokens and AST nodes own source spans; shared diagnostics render file/line/byte-column locations. Checked parsing discards partial programs, semantic checking returns failure for every reported error, and codegen discards failed modules. `compile_source` gates the three stages; E2E tests use it. All 15 diagnostic regressions pass. Grammar/type completeness and lowering/JIT/CLI integration remain their subsequent tasks; see [the API contract](docs/diagnostics.md).
 
 - [ ] **SPEC-008 — Repair lexer behavior against the agreed vocabulary.**
   Fix newline/comment handling, multi-character operators, and keyword recognition. Resolve existing `in`, range, `=>`, `spawn`, and `await` test expectations against the spec/extension decisions. Validate malformed numeric/string/character tokens and preserve accurate source positions.
@@ -277,6 +278,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-004 | 2026-09-08 | [CMakeLists.txt](CMakeLists.txt) includes all generic tests, discovers external tools, rejects omitted suite files, and assigns 30-second CTest timeouts. [external_runner.cpp](tests/support/external_runner.cpp) runs tools without a shell in per-invocation temporary directories, enforces child timeouts, checks both statuses, preserves stderr, and separates errors from strict i32 results. Eight harness regressions and five E2E tests pass in parallel. The former lit checks are maintained in [codegen_test.cpp](tests/codegen_test.cpp). Source definitions and CTest discovery match at **112 tests**; serial/parallel full suites both report **98 passes, 14 failures, no crashes**, including the newly exposed missing spawn operation. Full inventory and failure task IDs are in [tests/README.md](tests/README.md). |
 | SPEC-005 | 2026-09-08 | [Compiler CI](.github/workflows/ci.yml) builds both test modes on hosted macOS 15 arm64 and publishes full logs, environment, inventory, and JUnit reports even when tests fail. [install-llvm.sh](scripts/install-llvm.sh) pins LLVM/MLIR 21.1.6 and the required Z3 4.15.4 ABI using checked historical formulas and bottles. [Run 34242653935](https://github.com/kubabialy/gloinc/actions/runs/34242653935), at `ddcc705de5910e30ee0ac4dd949251d5915cdaf5`, passed both clean builds; downloaded serial/parallel reports each confirm **98/112 pass, 14 fail, no crashes or skipped tests**. [README.md](README.md), [toolchain requirements](docs/toolchain.md), [example status](examples/README.md), [phase notes](examples/PHASE2_PROGRESS.md), and [OpenCode.md](OpenCode.md) replace unsupported readiness/coverage claims with measured status. Verification follows. |
 | SPEC-006 | 2026-09-08 | [SPEC.md](SPEC.md) defines the scalar JIT release on Apple Silicon macOS, required types/features, declaration/modifier/type/terminator/UTF-8 rules, three complete core programs, and eleven expected-error fragments. Later designs are separated from the core, spelling contradictions in examples are corrected, and unsupported implementation syntax maps to explicit rejection tasks. Native output and later features remain open; SPEC-013b retains the deferred 128-bit extension. [README.md](README.md) and this checklist agree on SPEC-021 acceptance followed by SPEC-046 release validation. Documentation consistency checks pass; compiler code and test expectations are unchanged. |
+| SPEC-007 | 2026-09-09 | [diagnostics.h](src/diagnostics.h) preserves owned source spans and structured errors. [compiler.cpp](src/compiler.cpp) stops parse/check/generate at the first failed stage and owns successful modules; parser/Sema/codegen no longer print errors while returning success. [diagnostics_test.cpp](tests/diagnostics_test.cpp) adds **15 passing regressions**; the five external E2E tests use the guarded API. Fresh Debug build succeeds. Full serial/parallel suites both report **114/127 passes, 13 failures, no crashes or skipped tests**. Four old newline-related failures pass; three previously hidden failures are now visible and mapped in [tests/README.md](tests/README.md). The branch fixture now correctly uses `mut`, with a negative regression for immutable assignment. |
 
 ### SPEC-001 verification
 
@@ -488,3 +490,50 @@ remains SPEC-005's 98 passes and 14 failures; the new canonical programs become
 execution/diagnostic acceptance fixtures under SPEC-021 as their implementation
 tasks are completed. Packed-layout and concurrency API ambiguities remain
 explicitly conceptual until SPEC-037/SPEC-038 and SPEC-040 resolve them.
+
+
+### SPEC-007 verification
+
+A fresh build used the established Apple Silicon toolchain (AppleClang 16,
+LLVM/MLIR 21.1.6, CMake 4.2.1) and the pinned GoogleTest source cache:
+
+```sh
+cmake -S . -B /private/tmp/gloinc-spec007-build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
+cmake --build /private/tmp/gloinc-spec007-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec007-build -R '^DiagnosticsTest\.' --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec007-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec007-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec007-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec007-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec007-build --show-only=json-v1
+# Build and diagnostic regressions exit 0. Each full suite exits 8.
+git diff --check
+```
+
+Both JUnit reports contain **127 tests, 114 passes, 13 failures, zero skipped or
+disabled tests, and no crashes**. Failure names match between serial and parallel
+runs. All 15 diagnostic, four dialect, five E2E, eight harness, and four generic
+IR-string tests pass. The complete inventory and changed failure classifications
+are recorded in [tests/README.md](tests/README.md).
+
+The diagnostic cases cover token/AST ownership after lexer/parser destruction,
+exact byte spans, CRLF filename/line/column rendering, unknown/unterminated/NUL
+tokens, malformed and truncated declarations/blocks/calls, missing terminators,
+out-of-range numeric conversion failures, and partial-AST disposal. They also
+verify that parser errors never reach Sema, semantic errors never reach codegen,
+unsupported statements/expressions cannot disappear, codegen failures return no
+module, void calls are distinguished from missing expression values, and generated
+operations retain source locations. Errors are collected without implicit stderr
+output; client rendering is explicit.
+
+Newline token handling was necessary to support located multiline diagnostics;
+it resolves two lexer and two struct-parser failures without claiming SPEC-008
+or SPEC-009 complete. The now-visible arena, obsolete async-fixture, and array
+failures remain open under SPEC-028, SPEC-009/SPEC-040, and SPEC-035. No language
+failure was disabled or marked as expected success. Full typed-program enforcement,
+complete grammar/semantic validation, IR verification/lowering, JIT execution, and
+the file-reading CLI remain SPEC-008 through SPEC-020 as applicable.

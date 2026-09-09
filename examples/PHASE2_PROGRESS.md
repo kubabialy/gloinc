@@ -6,7 +6,8 @@ specification-coverage percentages have been withdrawn.
 
 The audit and SPEC-001 through SPEC-004 established fresh builds, consistent
 LLVM/MLIR linkage, a 112-case test inventory, and a checked external-tool harness.
-Serial and parallel runs have 98 passes and 14 failures. The CLI remains a lexer
+Those runs had 98 passes and 14 failures; current results are in
+[the test inventory](../tests/README.md). The CLI remains a lexer
 demonstration, and the JIT smoke test fails.
 
 | Earlier item | Current tracking |

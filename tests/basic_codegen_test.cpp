@@ -11,18 +11,30 @@ std::string compile_to_mlir_string_basic(const std::string& code) {
     Lexer lexer(code);
     GloinParser parser(lexer);
     auto ast = parser.parse_program();
-    
+    if (parser.has_error()) {
+        std::ostringstream errors;
+        parser.diagnostics()->render(errors);
+        ADD_FAILURE() << errors.str();
+        return {};
+    }
+
     mlir::MLIRContext context;
     context.getOrLoadDialect<mlir::func::FuncDialect>();
     context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
     context.getOrLoadDialect<gloin::GloinDialect>();
     
     CodeGen codegen(context);
-    auto module = codegen.generate(ast);
-    
+    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate(ast));
+    if (!module) {
+        std::ostringstream errors;
+        codegen.diagnostics()->render(errors);
+        ADD_FAILURE() << errors.str();
+        return {};
+    }
+
     std::string output;
     llvm::raw_string_ostream os(output);
-    module.print(os);
+    module->print(os);
     return output;
 }
 
@@ -69,7 +81,7 @@ TEST(BasicCodeGenTest, HandlesFloatTypes) {
 TEST(BasicCodeGenTest, HandlesControlFlow) {
     std::string code = R"(
         def main() -> i32 {
-            def x: i32 = 10;
+            def mut x: i32 = 10;
             if x > 5 {
                 x = 100;
             } else {
@@ -78,7 +90,7 @@ TEST(BasicCodeGenTest, HandlesControlFlow) {
             return x;
         }
     )";
-    
+
     std::string mlir = compile_to_mlir_string_basic(code);
     EXPECT_TRUE(mlir.find("cf.cond_br") != std::string::npos);
     EXPECT_TRUE(mlir.find("cf.br") != std::string::npos);

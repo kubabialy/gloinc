@@ -1,4 +1,4 @@
-#include "../src/codegen.h"
+#include "../src/compiler.h"
 #include "../src/lexer.h"
 #include "../src/parser.h"
 #include "../src/sema.h"
@@ -9,21 +9,14 @@
 
 namespace {
 llvm::Expected<int> run_code(const std::string &code) {
-    Lexer lexer(code);
-    GloinParser parser(lexer);
-    auto ast = parser.parse_program();
-    Sema sema;
-    sema.check_program(ast);
-    if (sema.has_error()) {
-        std::string errors;
-        for (const auto &error : sema.get_errors())
-            errors += error + "\n";
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), "Sema failed: %s",
-                                       errors.c_str());
-    }
     mlir::MLIRContext context;
-    CodeGen codegen(context);
-    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate(ast));
+    auto result = compile_source(code, "e2e.gloin", context);
+    if (!result.success()) {
+        std::ostringstream errors;
+        result.diagnostics->render(errors);
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), "%s", errors.str().c_str());
+    }
+    auto &module = result.module;
     if (!module || mlir::failed(mlir::verify(*module)))
         return llvm::createStringError(llvm::inconvertibleErrorCode(), "Invalid generated module");
     std::string source;

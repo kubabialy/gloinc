@@ -79,6 +79,7 @@ target_compile_features(gloin_frontend PUBLIC cxx_std_23)
 
 add_library(gloin_backend STATIC
     src/codegen.cpp
+    src/compiler.cpp
     src/dialect/GloinDialect.cpp
     src/jit_runner.cpp
 )
@@ -135,6 +136,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
 
     add_executable(gloinc_test
         tests/lexer_test.cpp
+        tests/diagnostics_test.cpp
         tests/parser_test.cpp
         tests/sema_test.cpp
         tests/mlir_test.cpp

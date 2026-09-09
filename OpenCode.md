@@ -45,3 +45,8 @@ status; unsupported constructs must not silently become successful output.
 Resolve language decisions in SPEC.md and scope implementation to its checklist
 task. Diagnostic, type, lowering, and runtime paths remain incomplete until their
 acceptance criteria are met.
+
+Use `compile_source` for the parse/check/generate path. Check its success status
+before accessing its module; render structured diagnostics at the client boundary.
+Stage-isolated tests must check parser and codegen failures explicitly. Source
+ownership and stage API contracts are in [docs/diagnostics.md](docs/diagnostics.md).

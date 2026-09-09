@@ -2,6 +2,14 @@
 #include "../src/sema.h"
 #include "../src/parser.h" // For AST building helper if needed, or manual AST construction
 
+namespace {
+std::string render_errors(const Sema &sema) {
+    std::ostringstream output;
+    sema.diagnostics()->render(output);
+    return output.str();
+}
+} // namespace
+
 TEST(SemaTest, UndefinedVariable) {
     Sema sema;
     
@@ -12,11 +20,11 @@ TEST(SemaTest, UndefinedVariable) {
     auto stmt = std::make_unique<ExpressionStatement>(std::make_unique<Identifier>("x"));
     program.push_back(std::move(stmt));
     
-    testing::internal::CaptureStderr();
+    // Diagnostics are collected without writing to stderr.
     sema.check_program(program);
-    std::string output = testing::internal::GetCapturedStderr();
+    std::string output = render_errors(sema);
     
-    EXPECT_NE(output.find("Error: Undefined variable 'x'"), std::string::npos);
+    EXPECT_NE(output.find("error: Undefined variable 'x'"), std::string::npos);
 }
 
 TEST(SemaTest, DefinedVariable) {
@@ -39,9 +47,9 @@ TEST(SemaTest, DefinedVariable) {
     auto use = std::make_unique<ExpressionStatement>(std::make_unique<Identifier>("x"));
     program.push_back(std::move(use));
     
-    testing::internal::CaptureStderr();
+    // Diagnostics are collected without writing to stderr.
     sema.check_program(program);
-    std::string output = testing::internal::GetCapturedStderr();
+    std::string output = render_errors(sema);
     
     EXPECT_EQ(output, ""); // No error expected
 }
@@ -59,11 +67,11 @@ TEST(SemaTest, TypeMismatchInDeclaration) {
         std::make_unique<StringLiteral>("hello")
     ));
     
-    testing::internal::CaptureStderr();
+    // Diagnostics are collected without writing to stderr.
     sema.check_program(program);
-    std::string output = testing::internal::GetCapturedStderr();
+    std::string output = render_errors(sema);
     
-    EXPECT_NE(output.find("Error: Type mismatch in variable declaration"), std::string::npos);
+    EXPECT_NE(output.find("error: Type mismatch in variable declaration"), std::string::npos);
 }
 
 TEST(SemaTest, ImmutableAssignment) {
@@ -87,11 +95,11 @@ TEST(SemaTest, ImmutableAssignment) {
         )
     ));
     
-    testing::internal::CaptureStderr();
+    // Diagnostics are collected without writing to stderr.
     sema.check_program(program);
-    std::string output = testing::internal::GetCapturedStderr();
+    std::string output = render_errors(sema);
     
-    EXPECT_NE(output.find("Error: Cannot assign to immutable variable 'x'"), std::string::npos);
+    EXPECT_NE(output.find("error: Cannot assign to immutable variable 'x'"), std::string::npos);
 }
 
 TEST(SemaTest, MutableAssignment) {
@@ -115,9 +123,9 @@ TEST(SemaTest, MutableAssignment) {
         )
     ));
     
-    testing::internal::CaptureStderr();
+    // Diagnostics are collected without writing to stderr.
     sema.check_program(program);
-    std::string output = testing::internal::GetCapturedStderr();
+    std::string output = render_errors(sema);
     
     EXPECT_EQ(output, ""); // No error
 }
@@ -138,16 +146,16 @@ TEST(SemaTest, BuiltinTypes) {
         // Actually, if we don't provide initializer, the current sema implementation might error?
         // Let's check sema.cpp again: 
         // if (decl->initializer) { ... }
-        // if (!var_type) { Error: Cannot infer type ... }
+        // if (!var_type) { error: Cannot infer type ... }
         
         // So we MUST provide initializer OR explicit type.
         // If explicit type is provided: var_type = resolve_type_from_string(...)
-        // If !var_type -> Error: Unknown type.
-        // Then if !var_type (which it won't be if resolved) -> Error: Cannot infer.
+        // If !var_type -> error: Unknown type.
+        // Then if !var_type (which it won't be if resolved) -> error: Cannot infer.
         
         // So providing explicit type is enough, UNLESS `var_type` is null.
         // So we can just provide explicit type and NO initializer?
-        // Wait, line 88: if (!var_type) { Error: Cannot infer ... }
+        // Wait, line 88: if (!var_type) { error: Cannot infer ... }
         // If we provide explicit type, var_type is set. So we pass that check.
         // So we don't need initializer.
         
@@ -159,9 +167,9 @@ TEST(SemaTest, BuiltinTypes) {
             nullptr // No initializer
         ));
 
-        testing::internal::CaptureStderr();
+        // Diagnostics are collected without writing to stderr.
         sema.check_program(program);
-        std::string output = testing::internal::GetCapturedStderr();
+        std::string output = render_errors(sema);
         
         EXPECT_EQ(output, "") << "Failed for type: " << type_name;
     }
@@ -200,9 +208,9 @@ TEST(SemaTest, StructDefinitionAndAccess) {
         )
     ));
 
-    testing::internal::CaptureStderr();
+    // Diagnostics are collected without writing to stderr.
     sema.check_program(program);
-    std::string output = testing::internal::GetCapturedStderr();
+    std::string output = render_errors(sema);
     
     EXPECT_EQ(output, "");
 }
@@ -238,11 +246,11 @@ TEST(SemaTest, InvalidStructAccess) {
         )
     ));
 
-    testing::internal::CaptureStderr();
+    // Diagnostics are collected without writing to stderr.
     sema.check_program(program);
-    std::string output = testing::internal::GetCapturedStderr();
+    std::string output = render_errors(sema);
     
-    EXPECT_NE(output.find("Error: Struct 'Point' has no field 'z'"), std::string::npos);
+    EXPECT_NE(output.find("error: Struct 'Point' has no field 'z'"), std::string::npos);
 }
 TEST(SemaTest, PackedStructBackingType) {
     Sema sema;
@@ -272,9 +280,9 @@ TEST(SemaTest, PackedStructBackingType) {
         nullptr // missing backing
     ));
 
-    testing::internal::CaptureStderr();
+    // Diagnostics are collected without writing to stderr.
     sema.check_program(program);
-    std::string output = testing::internal::GetCapturedStderr();
+    std::string output = render_errors(sema);
     
-    EXPECT_NE(output.find("Error: Packed struct 'Header2' must specify a backing integer type"), std::string::npos);
+    EXPECT_NE(output.find("error: Packed struct 'Header2' must specify a backing integer type"), std::string::npos);
 }

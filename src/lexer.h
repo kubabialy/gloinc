@@ -1,5 +1,6 @@
 #ifndef GLOINC_LEXER_H
 #define GLOINC_LEXER_H
+#include "diagnostics.h"
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -128,27 +129,37 @@ struct GloinToken {
     int64_t line_number;
     GloinTokenType type;
     int column;
+    SourceSpan span;
 };
 
 class Lexer {
 public:
-    explicit Lexer(std::string src) : src(std::move(src)) {
-        this->position = 0;
-        this->current_char = this->src.empty() ? '\0' : this->src[position];
-        this->line = 1;
-        this->column = 1;
+    explicit Lexer(std::string text, std::string filename = "<input>",
+                   std::shared_ptr<Diagnostics> diagnostics = std::make_shared<Diagnostics>())
+        : source(std::make_shared<SourceFile>(std::move(filename), std::move(text))),
+          diagnostics_(std::move(diagnostics)), src(source->text) {
+        position = 0;
+        current_char = src.empty() ? '\0' : src[0];
+        line = 1;
+        column = 1;
     }
+
+    std::shared_ptr<Diagnostics> diagnostics() const { return diagnostics_; }
+    std::shared_ptr<const SourceFile> source_file() const { return source; }
 
     [[nodiscard]] GloinToken next_token();
     
     [[nodiscard]] std::vector<GloinToken> tokenize();
 
 private:
+    std::shared_ptr<const SourceFile> source;
+    std::shared_ptr<Diagnostics> diagnostics_;
     int position;
     int current_char;
     int line;
     int column;
-    std::string src;
+    const std::string &src;
+    GloinToken next_token_impl();
 
     void skip_whitespace();
 

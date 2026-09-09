@@ -15,11 +15,14 @@ It cannot yet compile or run the programs under `examples/`.
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | External execution tests | Five small integer/arithmetic/variable/if/while programs pass through the test harness and external MLIR tools. |
-| Full test suite | 112 tests discovered; serial/parallel runs both have 98 passes, 14 failures, no crashes. |
-| Parsing and semantic analysis | Partial; lexer, struct-parser, and asynchronous-type failures remain. |
+| Full test suite | 127 tests discovered; local serial/parallel runs both have 114 passes, 13 failures, no crashes. |
+| Parsing and semantic analysis | Structured source diagnostics and stage failure propagation work; vocabulary, grammar, and type checking remain partial. |
 | Generics | Four IR-string checks pass; generic execution is not established. |
 | JIT | Smoke test fails on missing builtin LLVM translation registration. |
 | CLI, imports, for-loops, concurrency | Incomplete: SPEC-017, SPEC-020, SPEC-023/029/030, SPEC-040/041. |
+
+[Compiler diagnostics](docs/diagnostics.md) now connect parsing, checking, and high-level
+codegen through `compile_source`; the CLI connection remains SPEC-020.
 
 Test pass counts are not specification-coverage percentages. The compiler is not
 ready for production use. Detailed failure names and task IDs are in
@@ -88,5 +91,5 @@ Compiler build outputs are not restored from a cache.
 
 [The verified SPEC-005 run](https://github.com/kubabialy/gloinc/actions/runs/34242653935)
 built both configurations and published the complete reports. Both test runs
-matched the local baseline: 98 passes and the same 14 failures out of 112 tests,
+matched the then-current SPEC-005 baseline: 98 passes and the same 14 failures out of 112 tests,
 with no crashes or skipped tests. The run is red because those failures remain.

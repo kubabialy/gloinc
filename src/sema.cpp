@@ -31,7 +31,7 @@ std::shared_ptr<Type> Scope::resolve_type(const std::string& name) {
     return nullptr;
 }
 
-Sema::Sema() {
+Sema::Sema(std::shared_ptr<Diagnostics> diagnostics) : diagnostics_(std::move(diagnostics)) {
     current_scope = std::make_shared<Scope>();
     
     // Define built-in types
@@ -64,7 +64,7 @@ std::shared_ptr<Type> Sema::get_builtin_type(const std::string& name) {
 void Sema::log_error(const std::string& msg) {
     errors.push_back(msg);
     has_errors = true;
-    std::cerr << msg; // Keep printing to stderr for now as well
+    diagnostics_->error(DiagnosticStage::Semantic, current_span, msg);
 }
 
 std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string& name) {
@@ -93,13 +93,22 @@ void Sema::leave_scope() {
     }
 }
 
-void Sema::check_program(const std::vector<std::unique_ptr<Statement>>& program) {
+bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program) {
+    if (diagnostics_->has_errors())
+        return false;
+    current_scope = std::make_shared<Scope>();
     for (const auto& stmt : program) {
         check_statement(stmt.get());
     }
+    return !has_error();
 }
 
 void Sema::check_statement(const Statement* stmt) {
+    DiagnosticScope location(current_span, stmt ? stmt->span : SourceSpan{});
+    if (!stmt) {
+        log_error("Missing statement");
+        return;
+    }
     if (const auto* decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
         // Resolve variable type
         std::shared_ptr<Type> var_type = nullptr;
@@ -152,8 +161,7 @@ void Sema::check_statement(const Statement* stmt) {
         auto ret_type = resolve_type_from_string(func_def->return_type->value);
         if (!ret_type) {
              log_error("Error: Unknown return type '" + func_def->return_type->value + "'\n");
-             // Fallback to void?
-             ret_type = get_builtin_type("void"); 
+             return;
         }
 
         if (func_def->is_deferred) {
@@ -168,7 +176,7 @@ void Sema::check_statement(const Statement* stmt) {
              auto param_type = resolve_type_from_string(param.type->value);
              if (!param_type) {
                  log_error("Error: Unknown parameter type '" + param.type->value + "'\n");
-                 param_type = get_builtin_type("void"); // fallback
+                 return;
              }
              param_types.push_back(param_type);
         }
@@ -208,7 +216,8 @@ void Sema::check_statement(const Statement* stmt) {
     } else if (const auto* if_stmt = dynamic_cast<const IfStatement*>(stmt)) {
         auto cond_type = check_expression(if_stmt->condition.get());
         if (cond_type && !cond_type->equals(*get_builtin_type("bool"))) {
-             std::cerr << "Error: If condition must be bool\n";
+            DiagnosticScope condition_location(current_span, if_stmt->condition->span);
+            log_error("If condition must be bool");
         }
         check_statement(if_stmt->consequence.get());
         if (if_stmt->alternative) {
@@ -217,7 +226,8 @@ void Sema::check_statement(const Statement* stmt) {
     } else if (const auto* while_stmt = dynamic_cast<const WhileStatement*>(stmt)) {
         auto cond_type = check_expression(while_stmt->condition.get());
         if (cond_type && !cond_type->equals(*get_builtin_type("bool"))) {
-             std::cerr << "Error: While condition must be bool\n";
+            DiagnosticScope condition_location(current_span, while_stmt->condition->span);
+            log_error("While condition must be bool");
         }
         check_statement(while_stmt->body.get());
     } else if (const auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
@@ -228,12 +238,14 @@ void Sema::check_statement(const Statement* stmt) {
         // Check backing type for packed structs
         if (struct_def->is_packed) {
             if (!struct_def->backing_type) {
-                std::cerr << "Error: Packed struct '" << struct_def->name->value << "' must specify a backing integer type\n";
+                log_error(diagnostic_text("Error: Packed struct '", struct_def->name->value,
+                                          "' must specify a backing integer type\n"));
             } else {
                 // Verify backing type is valid integer
                 // For now just checking it's a known type
                 if (!resolve_type_from_string(struct_def->backing_type->value)) {
-                     std::cerr << "Error: Unknown backing type '" << struct_def->backing_type->value << "'\n";
+                    log_error(diagnostic_text("Error: Unknown backing type '",
+                                              struct_def->backing_type->value, "'\n"));
                 }
             }
         }
@@ -243,15 +255,17 @@ void Sema::check_statement(const Statement* stmt) {
             if (field.type) {
                 field_type = resolve_type_from_string(field.type->value);
                 if (!field_type) {
-                     std::cerr << "Error: Unknown type '" << field.type->value << "' in struct field '" << field.name->value << "'\n";
-                     // Continue?
+                    log_error(diagnostic_text("Error: Unknown type '", field.type->value,
+                                              "' in struct field '", field.name->value, "'\n"));
+                    // Continue?
                 }
             } else {
                  // Implicit type not supported yet for fields? Or bitfields?
-                 if (struct_def->is_packed) {
+                 {
                      // Assume bitfield or similar?
                      // For now just error
-                     std::cerr << "Error: Field '" << field.name->value << "' missing type\n";
+                     log_error(
+                         diagnostic_text("Error: Field '", field.name->value, "' missing type\n"));
                  }
             }
             
@@ -260,39 +274,22 @@ void Sema::check_statement(const Statement* stmt) {
         
         auto struct_type = std::make_shared<StructType>(struct_def->name->value, fields, struct_def->is_packed);
         current_scope->define_type(struct_def->name->value, struct_type);
-        
-        // TODO: Handle methods. 
-        // We should register them as functions but with modified names?
-        // Or keep them in StructType?
-        // The spec says they are syntactic sugar for functions with self pointer.
-        // So we should probably check them as functions.
-        
-        for (const auto& method : struct_def->methods) {
-            // Check method body, etc.
-            // We need to inject 'self' into method scope.
-            
-            // For now, just recursive check?
-            // But verify signature.
-            // Method signature: def name(self, ...)
-            
-            // We need to construct a FunctionDefinition for the method that includes 'self' with correct type.
-            // But the parser already parsed it.
-            // If parser handled 'self' keyword as I implemented, we have a parameter named 'self' with type 'Self' or implicit.
-            
-            // We need to resolve 'Self' to this struct type.
-            // So we might need to introduce a type alias 'Self' -> struct_type in the scope of method.
-            
-            // Also, we should probably register the method name in a way that it doesn't conflict?
-            // User said: Foo::bar -> foo_bar(foo: *Foo)
-            
-            // Ideally we register "StructName_MethodName" in the global scope (or current scope).
-            
-            // Let's defer method checking implementation details for a moment and focus on StructType definition.
+
+        for (const auto &method : struct_def->methods) {
+            DiagnosticScope method_location(current_span, method->span);
+            log_error("Struct method checking is not implemented (SPEC-026)");
         }
+    } else {
+        log_error("Unsupported statement in semantic analysis");
     }
 }
 
 std::shared_ptr<Type> Sema::check_expression(const Expression* expr) {
+    DiagnosticScope location(current_span, expr ? expr->span : SourceSpan{});
+    if (!expr) {
+        log_error("Missing expression");
+        return nullptr;
+    }
     if (const auto* ident = dynamic_cast<const Identifier*>(expr)) {
         Symbol* sym = current_scope->resolve(ident->value);
         if (!sym) {
@@ -420,6 +417,7 @@ std::shared_ptr<Type> Sema::check_expression(const Expression* expr) {
          log_error("Error: 'await' applied to non-deferred type '" + inner_type->to_string() + "'\n");
          return nullptr;
     }
-    
+
+    log_error("Unsupported expression in semantic analysis");
     return nullptr;
 }
