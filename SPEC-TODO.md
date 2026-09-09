@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-008.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-009.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -68,10 +68,11 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** malformed input, unknown constructs, and non-boolean conditions report a useful location, set failure status, and prevent later compilation stages. No error is only printed to stderr while compilation reports success.
   **Verified:** tokens and AST nodes own source spans; shared diagnostics render file/line/byte-column locations. Checked parsing discards partial programs, semantic checking returns failure for every reported error, and codegen discards failed modules. `compile_source` gates the three stages; E2E tests use it. All 15 diagnostic regressions pass. Grammar/type completeness and lowering/JIT/CLI integration remain their subsequent tasks; see [the API contract](docs/diagnostics.md).
 
-- [ ] **SPEC-008 — Repair lexer behavior against the agreed vocabulary.**
+- [x] **SPEC-008 — Repair lexer behavior against the agreed vocabulary.**
   Fix newline/comment handling, multi-character operators, and keyword recognition. Resolve existing `in`, range, `=>`, `spawn`, and `await` test expectations against the spec/extension decisions. Validate malformed numeric/string/character tokens and preserve accurate source positions.
   **Done when:** supported vocabulary has correct tokens and positions; unsupported vocabulary has deliberate behavior; the seven audited lexer failures are resolved without silently accepting obsolete syntax.
   **SPEC-006 contract:** validate UTF-8 without locale-dependent identifier classification; reject BOM/NUL/non-ASCII identifiers, reserve the documented later/legacy vocabulary, and treat LF/CRLF as trivia with correct line accounting. Newline tokens in lexer tests may remain internal trivia; neither comments nor newlines imply semicolons. Reserved `in`, `..`, and `=>` must not swallow adjacent tokens, even though their syntax is unsupported in the core.
+  **Verified:** all 34 lexer tests pass, including all seven originally audited failures. The scanner validates the entire UTF-8 source, malformed literal spellings, operator boundaries, and byte positions. Quoted literals have separate tokens from type keywords; reserved `spawn`/`await` expressions fail explicitly in parsing. All 18 diagnostic tests pass. Full serial/parallel suites agree on 137/145 passes and eight remaining failures; sanitizer probes find no memory/undefined-behavior errors. Literal spelling rules are recorded in [SPEC.md](SPEC.md#lexical-literal-forms-spec-008); grammar, numeric conversion, and string execution remain their later tasks.
 
 - [ ] **SPEC-009 — Make parsing complete and deterministic.**
   Standardize token consumption, require closing delimiters, and make error recovery always advance. Fix identifier conditions such as `if b { ... }`, operator precedence, and multiline struct/function parsing. Cover [parser.cpp](src/parser.cpp) with complete-program cases.
@@ -279,6 +280,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-005 | 2026-09-08 | [Compiler CI](.github/workflows/ci.yml) builds both test modes on hosted macOS 15 arm64 and publishes full logs, environment, inventory, and JUnit reports even when tests fail. [install-llvm.sh](scripts/install-llvm.sh) pins LLVM/MLIR 21.1.6 and the required Z3 4.15.4 ABI using checked historical formulas and bottles. [Run 34242653935](https://github.com/kubabialy/gloinc/actions/runs/34242653935), at `ddcc705de5910e30ee0ac4dd949251d5915cdaf5`, passed both clean builds; downloaded serial/parallel reports each confirm **98/112 pass, 14 fail, no crashes or skipped tests**. [README.md](README.md), [toolchain requirements](docs/toolchain.md), [example status](examples/README.md), [phase notes](examples/PHASE2_PROGRESS.md), and [OpenCode.md](OpenCode.md) replace unsupported readiness/coverage claims with measured status. Verification follows. |
 | SPEC-006 | 2026-09-08 | [SPEC.md](SPEC.md) defines the scalar JIT release on Apple Silicon macOS, required types/features, declaration/modifier/type/terminator/UTF-8 rules, three complete core programs, and eleven expected-error fragments. Later designs are separated from the core, spelling contradictions in examples are corrected, and unsupported implementation syntax maps to explicit rejection tasks. Native output and later features remain open; SPEC-013b retains the deferred 128-bit extension. [README.md](README.md) and this checklist agree on SPEC-021 acceptance followed by SPEC-046 release validation. Documentation consistency checks pass; compiler code and test expectations are unchanged. |
 | SPEC-007 | 2026-09-09 | [diagnostics.h](src/diagnostics.h) preserves owned source spans and structured errors. [compiler.cpp](src/compiler.cpp) stops parse/check/generate at the first failed stage and owns successful modules; parser/Sema/codegen no longer print errors while returning success. [diagnostics_test.cpp](tests/diagnostics_test.cpp) adds **15 passing regressions**; the five external E2E tests use the guarded API. Fresh Debug build succeeds. Full serial/parallel suites both report **114/127 passes, 13 failures, no crashes or skipped tests**. Four old newline-related failures pass; three previously hidden failures are now visible and mapped in [tests/README.md](tests/README.md). The branch fixture now correctly uses `mut`, with a negative regression for immutable assignment. |
+| SPEC-008 | 2026-09-09 | [lexer.cpp](src/lexer.cpp) uses bounded byte scanning with whole-source UTF-8 validation, exact operator boundaries, reserved keywords, distinct type/literal tokens, and malformed-literal errors. [SPEC.md](SPEC.md#lexical-literal-forms-spec-008) fixes the lexical grammar. Minimal parser changes reject legacy expressions and prevent literals/other keywords from substituting for types. All **34 lexer and 18 diagnostic tests pass**, resolving all seven audited lexer failures without enabling obsolete syntax. Debug rebuild succeeds; full serial/parallel runs both report **137/145 passes, eight failures, no crashes or skipped tests**. Source definitions match discovery and all timeouts remain 30 seconds. ASan/UBSan probes pass for 75,536 inputs. |
 
 ### SPEC-001 verification
 
@@ -537,3 +539,46 @@ failures remain open under SPEC-028, SPEC-009/SPEC-040, and SPEC-035. No languag
 failure was disabled or marked as expected success. Full typed-program enforcement,
 complete grammar/semantic validation, IR verification/lowering, JIT execution, and
 the file-reading CLI remain SPEC-008 through SPEC-020 as applicable.
+
+### SPEC-008 verification
+
+Rebuilt the SPEC-007 Debug directory with the same AppleClang 16 and LLVM/MLIR
+21.1.6 toolchain. This was an incremental build, not another clean-build claim.
+
+```sh
+cmake --build /private/tmp/gloinc-spec007-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec007-build \
+  -R '^(LexerTest|DiagnosticsTest)\.' --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec007-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec008-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec007-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec008-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec007-build --show-only=json-v1
+# Build and all 52 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **145 tests, 137 passes, eight failures, and no
+crashes or skips**. The failure names are identical and listed with task IDs in
+[tests/README.md](tests/README.md). All source test definitions match discovery,
+without duplicates; every test retains its 30-second timeout. All five E2E,
+eight external harness, four dialect, and four generic IR-string tests pass.
+
+The 15 new lexer cases cover token/position boundaries, repeated EOF, malformed
+numbers/quotes/escapes, Unicode scalar and encoding rules, reserved vocabulary,
+type/literal separation, and progress for every byte value. Three new pipeline
+cases verify that legacy syntax cannot become accepted through token recognition,
+invalid encoding in trailing comments blocks compilation, and literals or
+non-type keywords cannot parse as type annotations.
+
+An additional temporary standalone scanner probe was built with `/usr/bin/clang++`
+and `-std=c++23 -fsanitize=address,undefined -fno-omit-frame-pointer`. It checked
+all 65,536 two-byte inputs plus 10,000 deterministic random byte strings (seed
+8008, lengths 0–256). All 75,536 inputs reached EOF with monotone bounded token
+spans and valid diagnostic spans; neither sanitizer reported an error. This
+probe checks scanner safety, not complete language acceptance.
+
+SPEC-007 had already repaired two audited lexer failures through newline handling;
+SPEC-008 resolves the other five. Existing feature failures stay visible. Numeric
+value/range conversion remains SPEC-013, complete parsing remains SPEC-009,
+and string decoding/storage/execution remains SPEC-022.

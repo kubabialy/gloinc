@@ -6,12 +6,12 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-007, source definitions and CTest discovery both contain **127 tests**:
+At SPEC-008, source definitions and CTest discovery both contain **145 tests**:
 
 | Suite | Tests |
 | --- | ---: |
-| LexerTest | 19 |
-| DiagnosticsTest | 15 |
+| LexerTest | 34 |
+| DiagnosticsTest | 18 |
 | ParserTest | 29 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
@@ -56,15 +56,27 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-007 both produce
-**114 passes, 13 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-008 both produce
+**137 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+
+## Lexical contract checks
+
+All 34 lexer tests pass, including the seven failures from the original audit.
+They cover reserved words versus identifier prefixes, operators adjacent to operands,
+LF/CRLF and comment positions, repeated EOF, malformed numbers and quoted literals,
+escape spelling, Unicode scalars, invalid UTF-8 in tokens and comments, BOM/NUL,
+unsupported trivia, and progress with bounded spans for every byte value.
+The literal grammar and reserved-token policy are defined in
+[SPEC.md](../SPEC.md#lexical-literal-forms-spec-008). Token recognition does not
+establish parsing, type support, numeric conversion, or string execution.
 
 ## Source diagnostics and pipeline checks
 
-The 15 diagnostic regressions cover owned token/AST source spans, CRLF locations,
+The 18 diagnostic regressions cover owned token/AST source spans, CRLF locations,
 malformed/unterminated input, partial-AST rejection, semantic failure propagation,
 non-boolean conditions, unsupported nodes, codegen failure/module disposal,
-void-call value checking, explicit rendering, and generated MLIR locations.
+void-call value checking, explicit rendering, generated MLIR locations, reserved
+syntax rejection, encoding errors in trailing comments, and type/literal separation.
 [The diagnostic API](../docs/diagnostics.md) documents the stage contracts.
 E2E tests use `compile_source` so a failed stage cannot reach external execution.
 Stage-isolated codegen tests check parser/module status before inspecting IR;
@@ -101,7 +113,6 @@ parent test remains subject to CTest's 30-second limit.
 
 | Tests | Follow-up |
 | --- | --- |
-| `LexerTest.HandlesKeywords`, `HandlesOperatorsAndPunctuation`, `HandlesInKeyword`, `HandlesRangeOperator`, `HandlesRangeInContext` | SPEC-008 |
 | `AsyncTest.SpawnGeneration`, `SemaAsyncTest.AsyncTypes` | SPEC-009, SPEC-040, SPEC-041 |
 | `AsyncTest.DeferredFunctionGeneration` | SPEC-009/SPEC-040: fixture uses obsolete `let` and an omitted return annotation; parser errors were previously ignored. |
 | `CodeGenTest.GenerateSpawn` | SPEC-040, SPEC-041: restored lit assertion finds no spawn operation |
@@ -110,12 +121,15 @@ parent test remains subject to CTest's 30-second limit.
 | `ArrayStringTest.HandlesArrayLiterals` | SPEC-035: `[i32; 3]` type resolution is unsupported; a null type was previously tolerated. |
 | `JitRunnerTest.SmokeTest` | SPEC-019: missing builtin LLVM translation interface |
 
-Compared with SPEC-005's 98/112 baseline, newline handling now makes
+SPEC-007's newline handling made
 `LexerTest.HandlesComments`, `LexerTest.TrackLineNumbers`,
 `ParserTest.ParseStructDefinition`, and `ParserTest.ParsePackedStruct` pass.
 Three formerly passing cases now expose failures: arena construction, the invalid
 async fixture, and array type resolution. None were disabled or converted into
 expected successes. `BasicCodeGenTest.HandlesControlFlow` now explicitly declares
 its assigned variable `mut`, as required by SPEC-006; a new diagnostic regression
-checks that the original immutable assignment fails. The 15 new regressions
-account for the remaining increase in passing tests.
+checks that the original immutable assignment fails. SPEC-007 added 15 passing
+regressions. SPEC-008 adds another 18 and resolves the five remaining lexer
+failures, moving the full suite from 114/127 to 137/145 passes. Legacy `spawn`
+and `await` expressions now fail explicitly in parsing; their feature tests
+remain failing until the corresponding language tasks are completed.

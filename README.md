@@ -15,8 +15,9 @@ It cannot yet compile or run the programs under `examples/`.
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | External execution tests | Five small integer/arithmetic/variable/if/while programs pass through the test harness and external MLIR tools. |
-| Full test suite | 127 tests discovered; local serial/parallel runs both have 114 passes, 13 failures, no crashes. |
-| Parsing and semantic analysis | Structured source diagnostics and stage failure propagation work; vocabulary, grammar, and type checking remain partial. |
+| Full test suite | 145 tests discovered; local serial/parallel runs both have 137 passes, 8 failures, no crashes. |
+| Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
+| Parsing and semantic analysis | Structured source diagnostics and stage failure propagation work; grammar and type checking remain partial. |
 | Generics | Four IR-string checks pass; generic execution is not established. |
 | JIT | Smoke test fails on missing builtin LLVM translation registration. |
 | CLI, imports, for-loops, concurrency | Incomplete: SPEC-017, SPEC-020, SPEC-023/029/030, SPEC-040/041. |

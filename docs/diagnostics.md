@@ -50,10 +50,16 @@ runtime declarations use unknown locations. MLIR errors emitted during
 code generation join the same diagnostic collection. Complete IR verification
 and the lowering/JIT diagnostic paths remain SPEC-018/SPEC-019.
 
+SPEC-008 validates UTF-8 across the entire source, including comments and text
+after a parsing error. Invalid encoding, NUL, BOM, non-ASCII identifiers, and
+malformed literals report lexical errors with byte spans. Reserved words have
+dedicated tokens; legacy `spawn`/`await` expressions fail explicitly in parsing.
+Type keywords and quoted literals cannot substitute for each other.
+
 This establishes failure propagation for the checks currently implemented; it
-does not complete the language checker. Reserved vocabulary, UTF-8 validation,
-parser grammar/precedence, resolved type identities, return checking, and other
-semantic rules remain in their subsequent tasks. Newline token handling and
+does not complete the language checker. Parser grammar/precedence, resolved type
+identities, return checking, and other semantic rules remain in their subsequent
+tasks. Newline token handling and
 missing-delimiter/terminator checks were repaired here because reliable source
 locations and rejection of partial parses depend on them. Parser failures stop
 at the first diagnostic; multi-error recovery remains SPEC-009.

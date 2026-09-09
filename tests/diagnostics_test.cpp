@@ -213,3 +213,49 @@ TEST(DiagnosticsTest, GeneratedExpressionUsesItsOwnSourceLocation) {
     EXPECT_EQ(loc.getLine(), 2u);
     EXPECT_EQ(loc.getColumn(), 12u);
 }
+
+TEST(DiagnosticsTest, ReservedLegacyTokensDoNotActivateParserExtensions) {
+    mlir::MLIRContext context;
+    for (std::string expression :
+         {"spawn work()", "await work()", "fn", "match", "'a'", "string"}) {
+        auto result = compile_source("def main() -> i32 { return " + expression + "; }",
+                                     "reserved.gloin", context);
+        EXPECT_FALSE(result.success()) << expression;
+        EXPECT_EQ(result.failed_stage, DiagnosticStage::Parsing) << expression;
+        EXPECT_FALSE(result.module);
+    }
+    for (std::string text :
+         {"def main() -> i32 { return 0..10; }", "def main() -> i32 { return 0=>10; }",
+          "def in: i32 = 0;", "def _: i32 = 0;"}) {
+        auto result = compile_source(text, "reserved.gloin", context);
+        EXPECT_FALSE(result.success()) << text;
+        EXPECT_EQ(result.failed_stage, DiagnosticStage::Parsing) << text;
+    }
+}
+
+TEST(DiagnosticsTest, EncodingErrorsInTrailingCommentsPreventCompilation) {
+    mlir::MLIRContext context;
+    for (const auto &suffix : {std::string("\xff"), std::string(1, '\0')}) {
+        auto result = compile_source("def main() -> i32 { return 0; } //" + suffix,
+                                     "encoding.gloin", context);
+        EXPECT_FALSE(result.success());
+        EXPECT_EQ(result.failed_stage, DiagnosticStage::Lexing);
+        EXPECT_FALSE(result.module);
+    }
+}
+
+TEST(DiagnosticsTest, LiteralAndKeywordTokensCannotSubstituteForTypes) {
+    for (std::string type : {"true", "return", "spawn", "\"i32\"", "'i'"}) {
+        GloinParser parser(Lexer("def x: " + type + ";", "types.gloin"));
+        EXPECT_FALSE(parser.parse_checked_program().success) << type;
+    }
+    GloinParser parser(Lexer("def x: int; def y: usize; def s: string;", "types.gloin"));
+    auto result = parser.parse_checked_program();
+    ASSERT_TRUE(result.success);
+    ASSERT_EQ(result.program.size(), 3u);
+    for (size_t i = 0; i < result.program.size(); ++i) {
+        auto *decl = dynamic_cast<VariableDeclaration *>(result.program[i].get());
+        ASSERT_NE(decl, nullptr);
+        EXPECT_EQ(decl->type->value, (std::vector<std::string>{"int", "usize", "string"})[i]);
+    }
+}

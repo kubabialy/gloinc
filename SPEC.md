@@ -77,6 +77,39 @@ are also reserved; using them as syntax or names must not succeed accidentally.
 Endian-qualified and custom-width integer type spellings are reserved for the
 later layout tasks. Unknown type names must never default to `i32`.
 
+### Lexical literal forms (SPEC-008)
+
+The lexer recognizes decimal integers `[0-9]+`, hexadecimal integers
+`0[xX][0-9A-Fa-f]+`, and binary integers `0[bB][01]+`. A decimal floating
+literal has either a decimal point with digits on both sides, an exponent, or
+both: `1.25`, `1e3`, and `2.5E-2`. An exponent is `[eE][+-]?[0-9]+`. Signs
+outside exponents are separate operators. Leading/trailing decimal points,
+hexadecimal floats, digit separators, and numeric type suffixes are not accepted.
+Malformed forms such as `0x`, `0b102`, `123abc`, and `1e+` are lexical errors,
+not valid numeric prefixes followed by unrelated names. Width/range checks and
+numeric conversion remain SPEC-013; the lexer preserves the original spelling.
+`0..10` is three tokens, including the reserved range operator.
+
+Quoted strings are single-line UTF-8 text. The recognized escapes are `\n`,
+`\r`, `\t`, `\0`, `\\`, `\"`, and `\'`; other escapes and unescaped ASCII control
+characters are errors. A character token uses single quotes and contains exactly
+one Unicode scalar or one of those escapes. Well-formed character tokens are
+still rejected by the core parser, as character expressions are outside the
+release scope. An unterminated quote is an error; lexing resumes at its newline
+or EOF. Quoted token payloads preserve escape spelling without their delimiters;
+source spans include the delimiters. Escape decoding, string storage, and the
+meaning of escaped NUL remain SPEC-022. The `string`/`char` type keywords have
+different token kinds from quoted string/character literals.
+
+Reserved words and punctuation receive deliberate tokens even when the feature
+is unsupported. Recognizing `spawn`, `await`, `in`, `..`, or `=>` does not enable
+legacy syntax: unsupported uses must produce a parser diagnostic. `int` and
+`usize` are type keywords; alias resolution remains SPEC-010/SPEC-013. Signed
+and unsigned integer width spellings, including `i4`, `u20`, `be_u4`, `le_i20`,
+`u16_be`, and `i32_le`, are reserved type names. Their tokenization approves
+neither an integer width nor an endian layout; SPEC-037 through SPEC-039 own
+those decisions. A word such as `integer` or `spawn_value` remains an identifier.
+
 ### Declarations, modifiers, and explicit types
 
 Every independent declaration starts with `def`, including constants and

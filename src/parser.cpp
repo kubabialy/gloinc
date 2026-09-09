@@ -141,7 +141,7 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         return located_node<BooleanLiteral>(true);
     case GLOIN_TOKEN_FALSE:
         return located_node<BooleanLiteral>(false);
-    case GLOIN_TOKEN_STRING:
+    case GLOIN_TOKEN_STRING_LITERAL:
         return located_node<StringLiteral>(std::string(current_token.literal));
     case GLOIN_TOKEN_LBRACKET: {
         // Array Literal: [expr, expr, ...]
@@ -226,7 +226,7 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
                         current_token.type == GLOIN_TOKEN_FLOAT ||
                         current_token.type == GLOIN_TOKEN_TRUE ||
                         current_token.type == GLOIN_TOKEN_FALSE ||
-                        current_token.type == GLOIN_TOKEN_STRING) {
+                        current_token.type == GLOIN_TOKEN_STRING_LITERAL) {
                         advance_token();
                     }
                 }
@@ -253,8 +253,6 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         return ident;
     }
 
-    case GLOIN_TOKEN_SPAWN: // Fallthrough
-
     case GLOIN_TOKEN_RUN: {
         // run expression (usually a function call)
         GloinTokenType op = current_token.type;
@@ -265,15 +263,11 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         auto right = parse_expression(60);
         return std::make_unique<SpawnExpression>(op, std::move(right));
     }
-    case GLOIN_TOKEN_AWAIT: {
-        advance_token();
-        // Await has similar precedence to spawn, or maybe tighter?
-        // await spawn x -> await (spawn x)
-        // spawn await x -> spawn (await x)
-        // Let's stick with 60 for now.
-        auto right = parse_expression(60);
-        return std::make_unique<AwaitExpression>(std::move(right));
-    }
+    case GLOIN_TOKEN_SPAWN:
+    case GLOIN_TOKEN_AWAIT:
+        fail("Reserved legacy syntax is not supported: " + std::string(current_token.literal));
+    case GLOIN_TOKEN_CHAR:
+        fail("Character literals are not supported in the core language");
 
     case GLOIN_TOKEN_MINUS:
     case GLOIN_TOKEN_NOT:
@@ -351,9 +345,7 @@ std::unique_ptr<Expression> GloinParser::parse_infix_impl(std::unique_ptr<Expres
 
         if (is_generic_start) {
             bool looks_like_type = false;
-            if (next_token.type >= GLOIN_TOKEN_BOOL && next_token.type <= GLOIN_TOKEN_LE_U128)
-                looks_like_type = true;
-            if (next_token.type == GLOIN_TOKEN_STRING || next_token.type == GLOIN_TOKEN_VOID)
+            if (is_type_token(next_token.type))
                 looks_like_type = true;
             if (next_token.type == GLOIN_TOKEN_IDENTIFIER) {
                 if (isupper(next_token.literal[0]))
@@ -464,7 +456,7 @@ std::unique_ptr<Expression> GloinParser::parse_infix_impl(std::unique_ptr<Expres
                                     current_token.type == GLOIN_TOKEN_FLOAT ||
                                     current_token.type == GLOIN_TOKEN_TRUE ||
                                     current_token.type == GLOIN_TOKEN_FALSE ||
-                                    current_token.type == GLOIN_TOKEN_STRING) {
+                                    current_token.type == GLOIN_TOKEN_STRING_LITERAL) {
                                     advance_token();
                                 }
                             }
@@ -786,11 +778,7 @@ std::unique_ptr<Identifier> GloinParser::parse_type_impl() {
 
     // Base type
     if (current_token.type == GLOIN_TOKEN_IDENTIFIER ||
-        (current_token.type >= GLOIN_TOKEN_BOOL && current_token.type <= GLOIN_TOKEN_LE_U128) ||
-        current_token.type == GLOIN_TOKEN_STRING || current_token.type == GLOIN_TOKEN_VOID ||
-        current_token.type == GLOIN_TOKEN_CUSTOM_WIDTH_INT ||
-        current_token.type == GLOIN_TOKEN_BIT ||
-        current_token.type == GLOIN_TOKEN_DEFERRED) { // Added DEFERRED
+        is_type_token(current_token.type)) {
 
         type_str += std::string(current_token.literal);
         advance_token();
@@ -1160,7 +1148,7 @@ std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool is_pac
     if (is_packed && current_token.type == GLOIN_TOKEN_LPAREN) {
         advance_token(); // Eat '('
         if (current_token.type == GLOIN_TOKEN_IDENTIFIER ||
-            (current_token.type >= GLOIN_TOKEN_BOOL && current_token.type <= GLOIN_TOKEN_LE_U128)) {
+            is_type_token(current_token.type)) {
             backing_type = located_node<Identifier>(std::string(current_token.literal));
             advance_token();
         } else {
@@ -1296,7 +1284,7 @@ std::unique_ptr<ImportStatement> GloinParser::parse_import_statement_impl() {
     // Current token is 'import'
     advance_token();
 
-    if (current_token.type != GLOIN_TOKEN_STRING) {
+    if (current_token.type != GLOIN_TOKEN_STRING_LITERAL) {
         fail(diagnostic_text("Expected string literal after import", '\n'));
     }
 

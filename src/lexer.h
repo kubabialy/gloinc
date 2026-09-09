@@ -3,6 +3,7 @@
 #include "diagnostics.h"
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 enum GloinTokenType {
@@ -23,19 +24,22 @@ enum GloinTokenType {
     GLOIN_TOKEN_CONST,
     GLOIN_TOKEN_RETURN,
     GLOIN_TOKEN_BOOL,
-    GLOIN_TOKEN_I8, // 8-bit signed integer
-    GLOIN_TOKEN_I16, // 16-bit signed integer
-    GLOIN_TOKEN_I32, // 32-bit signed integer
-    GLOIN_TOKEN_I64, // 64-bit signed integer
+    GLOIN_TOKEN_I8,   // 8-bit signed integer
+    GLOIN_TOKEN_I16,  // 16-bit signed integer
+    GLOIN_TOKEN_I32,  // 32-bit signed integer
+    GLOIN_TOKEN_I64,  // 64-bit signed integer
     GLOIN_TOKEN_I128, // 128-bit signed integer
-    GLOIN_TOKEN_U8, // 8-bit unsigned integer
-    GLOIN_TOKEN_U16, // 16-bit unsigned integer
-    GLOIN_TOKEN_U32, // 32-bit unsigned integer
-    GLOIN_TOKEN_U64, // 64-bit unsigned integer
+    GLOIN_TOKEN_U8,   // 8-bit unsigned integer
+    GLOIN_TOKEN_U16,  // 16-bit unsigned integer
+    GLOIN_TOKEN_U32,  // 32-bit unsigned integer
+    GLOIN_TOKEN_U64,  // 64-bit unsigned integer
     GLOIN_TOKEN_U128, // 128-bit unsigned integer
-    GLOIN_TOKEN_F32, // 32-bit float
-    GLOIN_TOKEN_F64, // 64-bit float
+    GLOIN_TOKEN_F32,  // 32-bit float
+    GLOIN_TOKEN_F64,  // 64-bit float
     GLOIN_TOKEN_F128, // 128-bit float
+    GLOIN_TOKEN_INT,
+    GLOIN_TOKEN_USIZE,
+    GLOIN_TOKEN_CHAR_TYPE,
     GLOIN_TOKEN_VOID,
     GLOIN_TOKEN_TRUE,
     GLOIN_TOKEN_FALSE,
@@ -62,13 +66,30 @@ enum GloinTokenType {
     GLOIN_TOKEN_KEYWORD_AT,
     GLOIN_TOKEN_CUSTOM_WIDTH_INT, // u4, u5, etc.
     // Big Endian Types
-    GLOIN_TOKEN_BE_I8, GLOIN_TOKEN_BE_I16, GLOIN_TOKEN_BE_I32, GLOIN_TOKEN_BE_I64, GLOIN_TOKEN_BE_I128,
-    GLOIN_TOKEN_BE_U8, GLOIN_TOKEN_BE_U16, GLOIN_TOKEN_BE_U32, GLOIN_TOKEN_BE_U64, GLOIN_TOKEN_BE_U128,
+    GLOIN_TOKEN_BE_I8,
+    GLOIN_TOKEN_BE_I16,
+    GLOIN_TOKEN_BE_I32,
+    GLOIN_TOKEN_BE_I64,
+    GLOIN_TOKEN_BE_I128,
+    GLOIN_TOKEN_BE_U8,
+    GLOIN_TOKEN_BE_U16,
+    GLOIN_TOKEN_BE_U32,
+    GLOIN_TOKEN_BE_U64,
+    GLOIN_TOKEN_BE_U128,
     // Little Endian Types
-    GLOIN_TOKEN_LE_I8, GLOIN_TOKEN_LE_I16, GLOIN_TOKEN_LE_I32, GLOIN_TOKEN_LE_I64, GLOIN_TOKEN_LE_I128,
-    GLOIN_TOKEN_LE_U8, GLOIN_TOKEN_LE_U16, GLOIN_TOKEN_LE_U32, GLOIN_TOKEN_LE_U64, GLOIN_TOKEN_LE_U128,
+    GLOIN_TOKEN_LE_I8,
+    GLOIN_TOKEN_LE_I16,
+    GLOIN_TOKEN_LE_I32,
+    GLOIN_TOKEN_LE_I64,
+    GLOIN_TOKEN_LE_I128,
+    GLOIN_TOKEN_LE_U8,
+    GLOIN_TOKEN_LE_U16,
+    GLOIN_TOKEN_LE_U32,
+    GLOIN_TOKEN_LE_U64,
+    GLOIN_TOKEN_LE_U128,
     GLOIN_TOKEN_IDENTIFIER,
-    GLOIN_TOKEN_STRING,
+    GLOIN_TOKEN_STRING, // Type keyword; quoted text uses STRING_LITERAL.
+    GLOIN_TOKEN_STRING_LITERAL,
     GLOIN_TOKEN_CHAR,
     GLOIN_TOKEN_NUMBER,
     GLOIN_TOKEN_FLOAT,
@@ -85,41 +106,41 @@ enum GloinTokenType {
     GLOIN_TOKEN_ARROW,
     GLOIN_TOKEN_DOUBLE_ARROW,
     GLOIN_TOKEN_DOT,
-    GLOIN_TOKEN_AT, // @
-    GLOIN_TOKEN_HASH, // #
-    GLOIN_TOKEN_QUOTE, // "
-    GLOIN_TOKEN_COMMA, // ,
-    GLOIN_TOKEN_PLUS, // +
-    GLOIN_TOKEN_MINUS, // -
-    GLOIN_TOKEN_MULTIPLY, // *
-    GLOIN_TOKEN_DIVIDE, // /
-    GLOIN_TOKEN_COMMENT, // NEW: // comments
-    GLOIN_TOKEN_EQ, // ==
-    GLOIN_TOKEN_NE, // !=
-    GLOIN_TOKEN_NOT, // !
-    GLOIN_TOKEN_LT, // <
-    GLOIN_TOKEN_GT, // >
-    GLOIN_TOKEN_LE, // <=
-    GLOIN_TOKEN_GE, // >=
-    GLOIN_TOKEN_AMPERSAND, // & (address-of)
-    GLOIN_TOKEN_PIPE, // |
-    GLOIN_TOKEN_CARET, // ^
-    GLOIN_TOKEN_TILDE, // ~
-    GLOIN_TOKEN_PERCENT, // %
-    GLOIN_TOKEN_QUESTION, // ?
-    GLOIN_TOKEN_AND, // &&
-    GLOIN_TOKEN_OR, // ||
-    GLOIN_TOKEN_SHL, // <<
-    GLOIN_TOKEN_SHR, // >>
-    GLOIN_TOKEN_PLUS_ASSIGN, // +=
-    GLOIN_TOKEN_MINUS_ASSIGN, // -=
+    GLOIN_TOKEN_AT,              // @
+    GLOIN_TOKEN_HASH,            // #
+    GLOIN_TOKEN_QUOTE,           // "
+    GLOIN_TOKEN_COMMA,           // ,
+    GLOIN_TOKEN_PLUS,            // +
+    GLOIN_TOKEN_MINUS,           // -
+    GLOIN_TOKEN_MULTIPLY,        // *
+    GLOIN_TOKEN_DIVIDE,          // /
+    GLOIN_TOKEN_COMMENT,         // NEW: // comments
+    GLOIN_TOKEN_EQ,              // ==
+    GLOIN_TOKEN_NE,              // !=
+    GLOIN_TOKEN_NOT,             // !
+    GLOIN_TOKEN_LT,              // <
+    GLOIN_TOKEN_GT,              // >
+    GLOIN_TOKEN_LE,              // <=
+    GLOIN_TOKEN_GE,              // >=
+    GLOIN_TOKEN_AMPERSAND,       // & (address-of)
+    GLOIN_TOKEN_PIPE,            // |
+    GLOIN_TOKEN_CARET,           // ^
+    GLOIN_TOKEN_TILDE,           // ~
+    GLOIN_TOKEN_PERCENT,         // %
+    GLOIN_TOKEN_QUESTION,        // ?
+    GLOIN_TOKEN_AND,             // &&
+    GLOIN_TOKEN_OR,              // ||
+    GLOIN_TOKEN_SHL,             // <<
+    GLOIN_TOKEN_SHR,             // >>
+    GLOIN_TOKEN_PLUS_ASSIGN,     // +=
+    GLOIN_TOKEN_MINUS_ASSIGN,    // -=
     GLOIN_TOKEN_MULTIPLY_ASSIGN, // *=
-    GLOIN_TOKEN_DIVIDE_ASSIGN, // /=
-    GLOIN_TOKEN_MODULO_ASSIGN, // %=
-    GLOIN_TOKEN_AND_ASSIGN, // &=
-    GLOIN_TOKEN_OR_ASSIGN, // |=
-    GLOIN_TOKEN_XOR_ASSIGN, // ^=
-    GLOIN_TOKEN_UNDERSCORE, // _
+    GLOIN_TOKEN_DIVIDE_ASSIGN,   // /=
+    GLOIN_TOKEN_MODULO_ASSIGN,   // %=
+    GLOIN_TOKEN_AND_ASSIGN,      // &=
+    GLOIN_TOKEN_OR_ASSIGN,       // |=
+    GLOIN_TOKEN_XOR_ASSIGN,      // ^=
+    GLOIN_TOKEN_UNDERSCORE,      // _
     GLOIN_TOKEN_NEWLINE,
     GLOIN_TOKEN_UNKNOWN
 };
@@ -133,56 +154,34 @@ struct GloinToken {
 };
 
 class Lexer {
-public:
+  public:
     explicit Lexer(std::string text, std::string filename = "<input>",
-                   std::shared_ptr<Diagnostics> diagnostics = std::make_shared<Diagnostics>())
-        : source(std::make_shared<SourceFile>(std::move(filename), std::move(text))),
-          diagnostics_(std::move(diagnostics)), src(source->text) {
-        position = 0;
-        current_char = src.empty() ? '\0' : src[0];
-        line = 1;
-        column = 1;
-    }
+                   std::shared_ptr<Diagnostics> diagnostics = std::make_shared<Diagnostics>());
 
     std::shared_ptr<Diagnostics> diagnostics() const { return diagnostics_; }
     std::shared_ptr<const SourceFile> source_file() const { return source; }
 
     [[nodiscard]] GloinToken next_token();
-    
+
     [[nodiscard]] std::vector<GloinToken> tokenize();
 
-private:
+  private:
     std::shared_ptr<const SourceFile> source;
     std::shared_ptr<Diagnostics> diagnostics_;
-    int position;
-    int current_char;
-    int line;
-    int column;
+    size_t position = 0;
     const std::string &src;
-    GloinToken next_token_impl();
-
-    void skip_whitespace();
-
-    void skip_comment();
-
-    char peek_token();
-
-    void advance();
-
-    GloinToken read_string(int start_line, int start_column);
-
-    std::string_view read_char();
-
-    std::string_view read_number();
-
-    std::string_view read_float();
-
-    std::string_view read_identifier();
-
-    [[nodiscard]] std::string_view capture_view(int start_pos) const;
+    std::vector<size_t> invalid_source_offsets;
+    bool source_error_in(size_t start, size_t end) const;
+    GloinToken token(GloinTokenType type, size_t start, size_t literal_start, size_t literal_end);
+    GloinToken invalid(size_t start, const std::string &message);
+    GloinToken read_number();
+    GloinToken read_quoted(char quote);
 };
 
 void print_debug_token(const GloinToken &token);
+
+bool is_type_token(GloinTokenType type);
+std::string token_type_to_string(GloinTokenType type);
 
 GloinTokenType get_keyword_type(std::string_view identifier);
 #endif // GLOINC_LEXER_H
