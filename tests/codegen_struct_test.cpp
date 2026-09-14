@@ -21,7 +21,7 @@ TEST(CodeGenStructTest, GenerateStructAndMemberAccess) {
     )";
 
     Lexer lexer(source);
-    GloinParser parser(lexer);
+    GloinParser parser(lexer, ParseMode::SyntaxOnly);
     auto program = parser.parse_program();
     ASSERT_FALSE(parser.has_error());
 
@@ -76,7 +76,7 @@ TEST(CodeGenStructTest, PackedStruct) {
     )";
     
     Lexer lexer(source);
-    GloinParser parser(lexer);
+    GloinParser parser(lexer, ParseMode::SyntaxOnly);
     auto program = parser.parse_program();
     ASSERT_FALSE(parser.has_error());
 

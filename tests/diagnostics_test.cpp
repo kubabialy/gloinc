@@ -14,10 +14,8 @@ TEST(DiagnosticsTest, TokensOwnSourceAndTrackByteSpans) {
 }
 
 TEST(DiagnosticsTest, AstOwnsSourceAfterParserDestruction) {
-    auto parsed = GloinParser(Lexer("def x: i32 = 7;", "ast.gloin")).parse_checked_program();
-    ASSERT_TRUE(parsed.success);
-    ASSERT_EQ(parsed.program.size(), 1u);
-    auto *decl = dynamic_cast<VariableDeclaration *>(parsed.program[0].get());
+    auto parsed = GloinParser(Lexer("def x: i32 = 7;", "ast.gloin")).parse_statement();
+    auto *decl = dynamic_cast<VariableDeclaration *>(parsed.get());
     ASSERT_NE(decl, nullptr);
     EXPECT_EQ(decl->span.begin, 0u);
     EXPECT_EQ(decl->span.end, 15u);
@@ -32,10 +30,10 @@ TEST(DiagnosticsTest, AstOwnsSourceAfterParserDestruction) {
 
 TEST(DiagnosticsTest, MalformedProgramsNeverReturnPartialAst) {
     for (const auto &text :
-         {"def good: i32 = 1; def broken: i32 = ;", "def main() -> i32 { return 0;",
-          "def main(a: i32", "def main() -> i32 { return f(1; }", "def struct Broken {",
-          "def main() -> i32 { return 0 }", "def main() -> void { foo() }", "import \"@std\"",
-          "def x: i32 = 999999999999999999999999999999;"}) {
+         {"def good() -> void {} def broken() -> void { def x: i32 = ; }",
+          "def main() -> i32 { return 0;", "def main(a: i32", "def main() -> i32 { return f(1; }",
+          "def struct Broken {", "def main() -> i32 { return 0 }", "def main() -> void { foo() }",
+          "import \"@std\"", "def x: i32 = 999999999999999999999999999999;"}) {
         GloinParser parser(Lexer(text, "broken.gloin"));
         auto result = parser.parse_checked_program();
         EXPECT_FALSE(result.success) << text;
@@ -59,7 +57,8 @@ TEST(DiagnosticsTest, LexicalFailureStopsBeforeSemanticChecking) {
 
 TEST(DiagnosticsTest, ParseFailureStopsBeforeSemanticChecking) {
     mlir::MLIRContext context;
-    auto result = compile_source("def x: i32 = missing; def y: i32 = ;", "parse.gloin", context);
+    auto result = compile_source("def main() -> void { def x: i32 = missing; def y: i32 = ; }",
+                                 "parse.gloin", context);
     EXPECT_FALSE(result.success());
     EXPECT_FALSE(result.module);
     ASSERT_EQ(result.failed_stage, DiagnosticStage::Parsing);
@@ -107,7 +106,10 @@ TEST(DiagnosticsTest, UnsupportedStatementsCannotDisappear) {
         auto result = compile_source(text, "unsupported.gloin", context);
         EXPECT_FALSE(result.success()) << text;
         EXPECT_FALSE(result.module);
-        EXPECT_EQ(result.failed_stage, DiagnosticStage::Semantic) << text;
+        EXPECT_EQ(result.failed_stage, std::string(text).starts_with("import")
+                                           ? DiagnosticStage::Parsing
+                                           : DiagnosticStage::Semantic)
+            << text;
     }
 }
 
@@ -249,13 +251,51 @@ TEST(DiagnosticsTest, LiteralAndKeywordTokensCannotSubstituteForTypes) {
         GloinParser parser(Lexer("def x: " + type + ";", "types.gloin"));
         EXPECT_FALSE(parser.parse_checked_program().success) << type;
     }
-    GloinParser parser(Lexer("def x: int; def y: usize; def s: string;", "types.gloin"));
+    GloinParser parser(
+        Lexer("def main() -> void { def x: int; def y: usize; def s: string; }", "types.gloin"));
     auto result = parser.parse_checked_program();
     ASSERT_TRUE(result.success);
-    ASSERT_EQ(result.program.size(), 3u);
-    for (size_t i = 0; i < result.program.size(); ++i) {
-        auto *decl = dynamic_cast<VariableDeclaration *>(result.program[i].get());
+    ASSERT_EQ(result.program.size(), 1u);
+    auto *function = dynamic_cast<FunctionDefinition *>(result.program[0].get());
+    ASSERT_NE(function, nullptr);
+    ASSERT_EQ(function->body->statements.size(), 3u);
+    for (size_t i = 0; i < function->body->statements.size(); ++i) {
+        auto *decl = dynamic_cast<VariableDeclaration *>(function->body->statements[i].get());
         ASSERT_NE(decl, nullptr);
         EXPECT_EQ(decl->type->value, (std::vector<std::string>{"int", "usize", "string"})[i]);
     }
+}
+
+TEST(DiagnosticsTest, CorePipelineRejectsDeferredSyntaxBeforeChecking) {
+    mlir::MLIRContext context;
+    for (const std::string source :
+         {"def struct X { def x: i32 } def main() -> i32 { return 0; }",
+          "def main() -> i32 { def x: string = \"text\"; return 0; }",
+          "def main() -> i32 { defer work(); return 0; }",
+          "def main() -> i32 { def x: *i32; return 0; }", "def main() -> i32 { return x = 1; }"}) {
+        auto result = compile_source(source, "core.gloin", context);
+        EXPECT_FALSE(result.success()) << source;
+        EXPECT_FALSE(result.module);
+        EXPECT_EQ(result.failed_stage, DiagnosticStage::Parsing);
+    }
+}
+
+TEST(DiagnosticsTest, ConstantsCannotSilentlyBecomeRuntimeBindings) {
+    const std::string source = "def main() -> i32 { def const X: i32 = 1; return X; }";
+    mlir::MLIRContext context;
+    auto result = compile_source(source, "constant.gloin", context);
+    EXPECT_FALSE(result.success());
+    EXPECT_FALSE(result.module);
+    EXPECT_EQ(result.failed_stage, DiagnosticStage::Semantic);
+    ASSERT_FALSE(result.diagnostics->all().empty());
+    EXPECT_EQ(result.diagnostics->all().front().message,
+              "Constant evaluation is not implemented (SPEC-012)");
+    GloinParser parser{Lexer(source)};
+    auto parsed = parser.parse_checked_program();
+    ASSERT_TRUE(parsed.success);
+    CodeGen codegen(context);
+    EXPECT_FALSE(codegen.generate(parsed.program));
+    ASSERT_FALSE(codegen.diagnostics()->all().empty());
+    EXPECT_EQ(codegen.diagnostics()->all().front().message,
+              "Constant evaluation is not implemented (SPEC-012)");
 }

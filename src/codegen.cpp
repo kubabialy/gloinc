@@ -399,6 +399,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
         }
 
     } else if (auto *var_decl = dynamic_cast<const VariableDeclaration *>(stmt)) {
+        if (var_decl->is_const)
+            fail("Constant evaluation is not implemented (SPEC-012)");
         std::string name = var_decl->name->value;
         mlir::Type type = builder.getI32Type();
         if (var_decl->type) {

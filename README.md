@@ -14,16 +14,19 @@ It cannot yet compile or run the programs under `examples/`.
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
-| External execution tests | Five small integer/arithmetic/variable/if/while programs pass through the test harness and external MLIR tools. |
-| Full test suite | 145 tests discovered; local serial/parallel runs both have 137 passes, 8 failures, no crashes. |
+| External execution tests | Six programs pass through the test harness and external MLIR tools, including multiline calls and an identifier condition. |
+| Full test suite | 168 tests discovered; local serial/parallel runs both have 160 passes, 8 failures, no crashes. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
-| Parsing and semantic analysis | Structured source diagnostics and stage failure propagation work; grammar and type checking remain partial. |
+| Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
+| Semantic analysis | Structured diagnostics and stage failure propagation work; resolved types, constant evaluation, scope and return checking remain incomplete. |
 | Generics | Four IR-string checks pass; generic execution is not established. |
 | JIT | Smoke test fails on missing builtin LLVM translation registration. |
 | CLI, imports, for-loops, concurrency | Incomplete: SPEC-017, SPEC-020, SPEC-023/029/030, SPEC-040/041. |
 
 [Compiler diagnostics](docs/diagnostics.md) now connect parsing, checking, and high-level
 codegen through `compile_source`; the CLI connection remains SPEC-020.
+[The parser contract](docs/parser.md) distinguishes core compilation from
+syntax-only tests of deferred features.
 
 Test pass counts are not specification-coverage percentages. The compiler is not
 ready for production use. Detailed failure names and task IDs are in

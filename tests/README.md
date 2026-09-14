@@ -6,13 +6,13 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-008, source definitions and CTest discovery both contain **145 tests**:
+At SPEC-009, source definitions and CTest discovery both contain **168 tests**:
 
 | Suite | Tests |
 | --- | ---: |
 | LexerTest | 34 |
-| DiagnosticsTest | 18 |
-| ParserTest | 29 |
+| DiagnosticsTest | 20 |
+| ParserTest | 49 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -27,7 +27,7 @@ At SPEC-008, source definitions and CTest discovery both contain **145 tests**:
 | ArrayStringTest | 2 |
 | UnlessTest | 1 |
 | JitRunnerTest | 1 |
-| E2ETest | 5 |
+| E2ETest | 6 |
 | ExternalRunnerTest | 8 |
 
 The four generic tests are now included without changing their assertions. Their
@@ -56,8 +56,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-008 both produce
-**137 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-009 both produce
+**160 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -70,15 +70,34 @@ The literal grammar and reserved-token policy are defined in
 [SPEC.md](../SPEC.md#lexical-literal-forms-spec-008). Token recognition does not
 establish parsing, type support, numeric conversion, or string execution.
 
+## Parser contract checks
+
+All 49 parser tests pass. Twenty new cases cover complete canonical programs,
+identifier conditions, precedence/associativity, newline trivia at every token
+boundary, strict lists, mandatory annotations, modifier order, declaration scopes,
+statement-only assignment, complete loop headers, malformed/truncated input,
+source spans, excessive nesting, and deferred syntax composition.
+
+`ParseMode::Core` is the default used by `compile_source`. Stage-isolated tests
+of later features explicitly select `ParseMode::SyntaxOnly`; this does not grant
+those features language support. Both modes reject obsolete modifiers, untyped
+receivers, malformed lists, and legacy `spawn`/`await`. The method fixture now
+uses `def pub greet(self: *Person)`, and the generic pair fixture includes its
+missing field comma. Existing feature assertions remain intact. The standalone
+`unless` fixture now uses the statement API and checks its condition/body and EOF.
+[The parser contract](../docs/parser.md) documents consumption and failure rules.
+
 ## Source diagnostics and pipeline checks
 
-The 18 diagnostic regressions cover owned token/AST source spans, CRLF locations,
+The 20 diagnostic regressions cover owned token/AST source spans, CRLF locations,
 malformed/unterminated input, partial-AST rejection, semantic failure propagation,
 non-boolean conditions, unsupported nodes, codegen failure/module disposal,
 void-call value checking, explicit rendering, generated MLIR locations, reserved
-syntax rejection, encoding errors in trailing comments, and type/literal separation.
+syntax rejection, encoding errors in trailing comments, type/literal separation,
+core rejection of deferred syntax, and explicit failure of unevaluated constants.
 [The diagnostic API](../docs/diagnostics.md) documents the stage contracts.
 E2E tests use `compile_source` so a failed stage cannot reach external execution.
+The sixth E2E case executes a multiline call inside `if enabled` and returns 42.
 Stage-isolated codegen tests check parser/module status before inspecting IR;
 they continue to expose incomplete features rather than hiding errors.
 
@@ -113,8 +132,8 @@ parent test remains subject to CTest's 30-second limit.
 
 | Tests | Follow-up |
 | --- | --- |
-| `AsyncTest.SpawnGeneration`, `SemaAsyncTest.AsyncTypes` | SPEC-009, SPEC-040, SPEC-041 |
-| `AsyncTest.DeferredFunctionGeneration` | SPEC-009/SPEC-040: fixture uses obsolete `let` and an omitted return annotation; parser errors were previously ignored. |
+| `AsyncTest.SpawnGeneration`, `SemaAsyncTest.AsyncTypes` | SPEC-040/SPEC-041: legacy syntax is rejected; concurrency contract, canonical fixtures, and runtime remain open. |
+| `AsyncTest.DeferredFunctionGeneration` | SPEC-040: fixture uses obsolete `let` and an omitted return annotation; replace against the deferred-call contract when defined. |
 | `CodeGenTest.GenerateSpawn` | SPEC-040, SPEC-041: restored lit assertion finds no spawn operation |
 | `ArenaTest.ArenaAllocation` | SPEC-028: `Arena::new` is unresolved; codegen previously emitted an unchecked call. |
 | `ArrayStringTest.HandlesStringLiterals` | SPEC-022 |
@@ -133,3 +152,8 @@ regressions. SPEC-008 adds another 18 and resolves the five remaining lexer
 failures, moving the full suite from 114/127 to 137/145 passes. Legacy `spawn`
 and `await` expressions now fail explicitly in parsing; their feature tests
 remain failing until the corresponding language tasks are completed.
+
+SPEC-009 adds 23 passing regressions (20 parser, two diagnostic, one E2E), moving
+the suite to 160/168 passes with exactly the same eight failures as SPEC-008.
+Constants now parse but are deliberately rejected in Sema/codegen until SPEC-012
+implements their evaluation; the new metadata cannot silently imply execution.

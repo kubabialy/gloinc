@@ -88,3 +88,22 @@ TEST(E2ETest, ControlFlowLoop) {
     )";
     expect_result(run_code(code), 10);
 }
+
+TEST(E2ETest, MultilineIdentifierConditionAndCalls) {
+    std::string code = R"(
+        def value(
+        ) -> i32 { return 42; }
+        def main() -> i32 {
+            def enabled: bool = true;
+            if enabled
+            {
+                return value
+                (
+                );
+            } else {
+                return 0;
+            }
+        }
+    )";
+    expect_result(run_code(code), 42);
+}

@@ -10,7 +10,8 @@
 #include <memory>
 #include <stdexcept>
 
-enum Precedence { LOWEST = 1, EQUALS, LESSGREATER, SUM, PRODUCT, PREFIX, CALL };
+// SyntaxOnly retains deferred grammar for stage-isolated tests. compile_source uses Core.
+enum class ParseMode { Core, SyntaxOnly };
 
 struct ParseResult {
     std::vector<std::unique_ptr<Statement>> program;
@@ -24,8 +25,9 @@ class GloinParser {
     ParseResult parse_checked_program();
     bool has_error() const { return diagnostics()->has_errors(); }
     std::shared_ptr<Diagnostics> diagnostics() const { return lexer.diagnostics(); }
-    explicit GloinParser(Lexer l);
-    std::unique_ptr<Expression> parse_expression(int min_biding_power);
+    explicit GloinParser(Lexer l, ParseMode mode = ParseMode::Core);
+    bool at_end() const { return current_token.type == GLOIN_TOKEN_EOF; }
+    std::unique_ptr<Expression> parse_expression(int min_binding_power);
 
     // Statement parsing
     std::unique_ptr<Statement> parse_statement();
@@ -48,12 +50,17 @@ class GloinParser {
 
   private:
     Lexer lexer;
+    ParseMode mode;
+    std::vector<GloinToken> tokens;
+    size_t cursor = 0;
+    size_t block_depth = 0;
+    bool allow_struct_literal = true;
+    bool in_method = false;
     std::vector<std::string> parse_generic_params();
 
     GloinToken current_token{};
     GloinToken next_token{}; // peeked, not consumed
     size_t consumed_end = 0;
-    size_t node_end = 0;
     size_t parse_depth = 0;
     std::unique_ptr<Expression> parse_expression_impl(int min_binding_power);
     std::unique_ptr<Expression> parse_prefix_impl();
@@ -80,7 +87,6 @@ class GloinParser {
     template <typename T, typename... Args> std::unique_ptr<T> located_node(Args &&...args) {
         auto node = std::make_unique<T>(std::forward<Args>(args)...);
         node->span = current_token.span;
-        node_end = std::max(node_end, node->span.end);
         return node;
     }
 
@@ -93,11 +99,12 @@ class GloinParser {
             ~DepthGuard() { --depth; }
         } guard(parse_depth);
         try {
+            if (parse_depth > 512)
+                fail("Parser nesting limit exceeded");
             auto node = parse();
             if (!node)
                 fail("Expected a syntax node");
-            node->span = {start.source, start.begin, std::max({start.end, consumed_end, node_end})};
-            node_end = std::max(node_end, node->span.end);
+            node->span = {start.source, start.begin, std::max(start.end, consumed_end)};
             return node;
         } catch (const ParseFailure &) {
             if (parse_depth > 1)
@@ -119,9 +126,16 @@ class GloinParser {
     }
 
     void advance_token();
+    bool accept(GloinTokenType type);
+    void expect(GloinTokenType type, const std::string &message);
+    void require_extended(const std::string &feature);
+    std::unique_ptr<Identifier> parse_name(bool receiver = false);
+    std::unique_ptr<Expression> parse_assignment();
+    std::unique_ptr<Expression> parse_condition();
+    bool generic_literal_ahead() const;
+    void consume_type_close();
 
     static int get_binding_power(GloinTokenType type);
-    // std::unique_ptr<Expression> parse_expression(int min_biding_power); // Moved to public
     std::unique_ptr<Expression> parse_prefix();
     std::unique_ptr<Expression> parse_infix(std::unique_ptr<Expression> left);
     std::vector<std::unique_ptr<Expression>>

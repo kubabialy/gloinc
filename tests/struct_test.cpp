@@ -9,14 +9,14 @@ TEST(ParserTest, ParseStructDefinition) {
             def pub name: string,
             def age: i32,
             
-            pub def greet(self) -> void {
+            def pub greet(self: *Person) -> void {
                 return;
             }
         }
     )";
     
     Lexer lexer(input);
-    GloinParser parser(lexer);
+    GloinParser parser(lexer, ParseMode::SyntaxOnly);
     
     auto stmt = parser.parse_statement();
     ASSERT_NE(stmt, nullptr);
@@ -44,7 +44,7 @@ TEST(ParserTest, ParsePackedStruct) {
     )";
     
     Lexer lexer(input);
-    GloinParser parser(lexer);
+    GloinParser parser(lexer, ParseMode::SyntaxOnly);
     
     auto stmt = parser.parse_statement();
     auto* structDef = dynamic_cast<StructDefinition*>(stmt.get());

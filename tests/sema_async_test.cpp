@@ -6,7 +6,7 @@ class SemaAsyncTest : public ::testing::Test {
 protected:
     void Check(const std::string& input, bool expect_error, const std::string& error_substr = "") {
         Lexer l(input);
-        GloinParser p(l);
+        GloinParser p(l, ParseMode::SyntaxOnly);
         auto program = p.parse_program();
         std::ostringstream parse_errors;
         p.diagnostics()->render(parse_errors);

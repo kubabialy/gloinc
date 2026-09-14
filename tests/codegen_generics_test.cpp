@@ -8,7 +8,7 @@
 
 std::string compile_to_mlir_string_generics(const std::string &code) {
     Lexer lexer(code);
-    GloinParser parser(lexer);
+    GloinParser parser(lexer, ParseMode::SyntaxOnly);
     auto ast = parser.parse_program();
     if (parser.has_error()) {
         std::ostringstream errors;
@@ -95,7 +95,7 @@ TEST(CodeGenGenericsTest, InstantiatesNestedGenerics) {
 TEST(CodeGenGenericsTest, InstantiatesMultiParamGenerics) {
     std::string code = R"(
         def struct Pair<K, V> {
-            def first: K
+            def first: K,
             def second: V
         }
 

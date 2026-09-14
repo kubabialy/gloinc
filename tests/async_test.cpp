@@ -18,7 +18,7 @@ std::string compile_to_mlir_string(const std::string& code) {
     // }
 
     Lexer lexer(code);
-    GloinParser parser(lexer);
+    GloinParser parser(lexer, ParseMode::SyntaxOnly);
     auto ast = parser.parse_program();
     if (parser.has_error()) {
         std::ostringstream errors;

@@ -110,6 +110,10 @@ void Sema::check_statement(const Statement* stmt) {
         return;
     }
     if (const auto* decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+        if (decl->is_const) {
+            log_error("Constant evaluation is not implemented (SPEC-012)");
+            return;
+        }
         // Resolve variable type
         std::shared_ptr<Type> var_type = nullptr;
         if (decl->type) {

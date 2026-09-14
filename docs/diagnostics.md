@@ -56,13 +56,16 @@ malformed literals report lexical errors with byte spans. Reserved words have
 dedicated tokens; legacy `spawn`/`await` expressions fail explicitly in parsing.
 Type keywords and quoted literals cannot substitute for each other.
 
-This establishes failure propagation for the checks currently implemented; it
-does not complete the language checker. Parser grammar/precedence, resolved type
-identities, return checking, and other semantic rules remain in their subsequent
-tasks. Newline token handling and
-missing-delimiter/terminator checks were repaired here because reliable source
-locations and rejection of partial parses depend on them. Parser failures stop
-at the first diagnostic; multi-error recovery remains SPEC-009.
+SPEC-009 establishes consistent token consumption, core grammar/precedence, and
+strict delimiters, annotations, and modifier order. [The parser contract](parser.md)
+describes the default core mode and the explicit syntax-only API for deferred
+stage tests. Parsing uses a terminal first-error policy: it discards the complete
+program and never retries a failed token. Multi-error recovery is not implemented;
+excessive recursive nesting reports a diagnostic.
+
+This does not complete the language checker. Resolved type identities, return
+checking, constant evaluation, and other semantic rules remain in their subsequent
+tasks. Newly parsed constants fail explicitly in Sema/codegen pending SPEC-012.
 
 The external E2E harness now uses `compile_source` before verification and tool
 execution. Stage-isolated codegen tests intentionally bypass semantic checking,

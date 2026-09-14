@@ -240,6 +240,8 @@ struct ReturnStatement : public Statement {
 };
 
 struct VariableDeclaration : public Statement {
+    bool is_const = false;
+    bool is_public = false;
     bool is_mutable;
     std::unique_ptr<Identifier> name;
     std::unique_ptr<Identifier> type; // Simplified type for now
@@ -250,7 +252,8 @@ struct VariableDeclaration : public Statement {
         
     std::string to_string() const override {
         std::stringstream ss;
-        ss << "def " << (is_mutable ? "mut " : "") << name->to_string();
+        ss << "def " << (is_public ? "pub " : "") << (is_const ? "const " : "")
+           << (is_mutable ? "mut " : "") << name->to_string();
         if (type) {
             ss << ": " << type->to_string();
         }
@@ -375,6 +378,8 @@ struct Parameter {
 };
 
 struct FunctionDefinition : public Statement {
+    bool is_public = false;
+    bool is_static = false;
     std::unique_ptr<Identifier> name;
     std::vector<Parameter> parameters;
     std::unique_ptr<Identifier> return_type;
@@ -393,7 +398,8 @@ struct FunctionDefinition : public Statement {
         
     std::string to_string() const override {
         std::stringstream ss;
-        ss << "def " << (is_spawnable ? "spawnable " : "") << (is_deferred ? "deferred " : "") << name->to_string() << "(";
+        ss << "def " << (is_public ? "pub " : "") << (is_static ? "static " : "")
+           << (is_spawnable ? "spawnable " : "") << (is_deferred ? "deferred " : "") << name->to_string() << "(";
         for (size_t i = 0; i < parameters.size(); ++i) {
             ss << parameters[i].name->to_string() << ": " << parameters[i].type->to_string();
             if (i < parameters.size() - 1) ss << ", ";
@@ -404,6 +410,7 @@ struct FunctionDefinition : public Statement {
 };
 
 struct StructField {
+    bool is_mutable = false;
     bool is_public;
     std::unique_ptr<Identifier> name;
     std::unique_ptr<Identifier> type;
@@ -414,6 +421,7 @@ struct StructField {
 };
 
 struct StructDefinition : public Statement {
+    bool is_public = false;
     std::unique_ptr<Identifier> name;
     std::vector<StructField> fields;
     std::vector<std::unique_ptr<FunctionDefinition>> methods;
@@ -430,13 +438,14 @@ struct StructDefinition : public Statement {
         
     std::string to_string() const override {
         std::stringstream ss;
-        ss << "def " << (is_packed ? "packed " : "") << "struct";
+        ss << "def " << (is_public ? "pub " : "") << (is_packed ? "packed " : "") << "struct";
         if (backing_type) {
             ss << "(" << backing_type->to_string() << ")";
         }
         ss << " " << name->to_string() << " { ";
         for (const auto& field : fields) {
-            ss << (field.is_public ? "pub " : "") << "def " << field.name->to_string() << ": " << field.type->to_string();
+            ss << "def " << (field.is_public ? "pub " : "") << (field.is_mutable ? "mut " : "")
+               << field.name->to_string() << ": " << field.type->to_string();
             if (field.offset != -1) {
                 ss << " at " << field.offset;
             }

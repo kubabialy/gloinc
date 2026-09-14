@@ -203,6 +203,41 @@ loop-variable scope. Range-loop syntax remains deferred under SPEC-036.
 Assignment is a statement (also allowed in a loop update), not a value-producing
 expression: chained assignments and assignments inside conditions are rejected.
 
+### Expression grouping (SPEC-009)
+
+The core parser uses the following precedence, from weakest to strongest:
+
+| Operators | Grouping |
+| --- | --- |
+| `\|\|` | Left associative |
+| `&&` | Left associative |
+| `==`, `!=` | Left associative |
+| `<`, `<=`, `>`, `>=` | Left associative |
+| `+`, `-` | Left associative |
+| `*`, `/`, `%` | Left associative |
+| Prefix `-`, `!` | Nest from right to left |
+| Function call `(...)` | Left associative |
+
+Parentheses override this order. For example, `-f(1) * 2` groups as
+`(-f(1)) * 2`, and `a - b - c` as `(a - b) - c`. Comparison chains are
+ordinary grouped binary expressions, not mathematical chained comparisons;
+SPEC-013/SPEC-015 check whether the resulting operand types are compatible.
+Identifier capitalization never changes expression grammar.
+
+Assignment is excluded from this table. Its left side must be an assignable
+form, and its right side is an expression that cannot contain another assignment.
+Mutability, scope, and type compatibility are subsequent semantic checks.
+The complete C-style loop header specified above is accepted; decisions about
+omitted components remain SPEC-017 and omissions currently receive a diagnostic.
+
+Deferred syntax tests may construct member/index expressions and struct literals,
+but this does not admit them into the core. In that syntax, postfix member/index
+operations have the same precedence as calls. An unparenthesized condition or
+loop update always gives its following brace to the control-flow body. Generic
+struct-literal recognition requires type arguments followed by a literal brace,
+without any capitalization heuristic; generic language acceptance remains
+SPEC-031/SPEC-032.
+
 ### Canonical core examples
 
 A complete typed program with a forward call and a constant returns `42`:
