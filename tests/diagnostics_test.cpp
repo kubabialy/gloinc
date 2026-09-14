@@ -137,7 +137,7 @@ TEST(DiagnosticsTest, UnknownAstNodesFailInBothVisitors) {
     EXPECT_FALSE(sema.check_program(program));
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    EXPECT_FALSE(codegen.generate(program));
+    EXPECT_FALSE(codegen.generate_unchecked_for_testing(program));
     EXPECT_TRUE(codegen.diagnostics()->has_errors());
     Sema expression_sema;
     UnknownExpression unknown;
@@ -179,7 +179,7 @@ TEST(DiagnosticsTest, CodegenRejectsUnaddressableAssignmentsAndUnknownExpression
         auto parsed = parser.parse_checked_program();
         ASSERT_TRUE(parsed.success) << text;
         CodeGen codegen(context);
-        EXPECT_FALSE(codegen.generate(parsed.program)) << text;
+        EXPECT_FALSE(codegen.generate_unchecked_for_testing(parsed.program)) << text;
         ASSERT_TRUE(codegen.diagnostics()->has_errors());
         EXPECT_EQ(codegen.diagnostics()->all().front().span.source->name, "direct.gloin");
     }
@@ -195,7 +195,7 @@ TEST(DiagnosticsTest, VoidCallsAreAllowedOnlyAsStatements) {
     auto parsed = parser.parse_checked_program();
     ASSERT_TRUE(parsed.success);
     CodeGen codegen(context);
-    EXPECT_FALSE(codegen.generate(parsed.program));
+    EXPECT_FALSE(codegen.generate_unchecked_for_testing(parsed.program));
     ASSERT_TRUE(codegen.diagnostics()->has_errors());
     EXPECT_EQ(codegen.diagnostics()->all().front().message,
               "A void call cannot be used as a value");
@@ -294,7 +294,7 @@ TEST(DiagnosticsTest, ConstantsCannotSilentlyBecomeRuntimeBindings) {
     auto parsed = parser.parse_checked_program();
     ASSERT_TRUE(parsed.success);
     CodeGen codegen(context);
-    EXPECT_FALSE(codegen.generate(parsed.program));
+    EXPECT_FALSE(codegen.generate_unchecked_for_testing(parsed.program));
     ASSERT_FALSE(codegen.diagnostics()->all().empty());
     EXPECT_EQ(codegen.diagnostics()->all().front().message,
               "Constant evaluation is not implemented (SPEC-012)");

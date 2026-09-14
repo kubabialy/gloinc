@@ -19,7 +19,9 @@ CodeGen::CodeGen(mlir::MLIRContext &ctx, std::shared_ptr<Diagnostics> diagnostic
 
     theModule = mlir::ModuleOp::create(builder.getUnknownLoc());
     current_scope = std::make_shared<GenScope>();
+}
 
+void CodeGen::initialize_unchecked_types() {
     // Initialize basic types
     type_table["i32"] = builder.getI32Type();
     type_table["i64"] = builder.getI64Type();
@@ -166,7 +168,7 @@ void CodeGen::declare(const std::string &name, mlir::Value value, bool is_addres
     current_scope->values[name] = info;
 }
 
-mlir::ModuleOp CodeGen::generate(const std::vector<std::unique_ptr<Statement>> &program) {
+mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statement>> &program) {
     if (generated) {
         diagnostics_->error(DiagnosticStage::Codegen, current_span,
                             "CodeGen instances generate one module");
@@ -184,6 +186,8 @@ mlir::ModuleOp CodeGen::generate(const std::vector<std::unique_ptr<Statement>> &
         return mlir::success();
     });
     try {
+        if (!checked_data)
+            initialize_unchecked_types();
         builder.setInsertionPointToEnd(theModule.getBody());
         for (const auto &stmt : program) {
             DiagnosticScope source(current_span, stmt ? stmt->span : SourceSpan{});
@@ -193,8 +197,10 @@ mlir::ModuleOp CodeGen::generate(const std::vector<std::unique_ptr<Statement>> &
                 fail("Unsupported top-level statement in code generation");
             gen_statement(stmt.get());
         }
-        if (!diagnostics_->has_errors())
+        if (!diagnostics_->has_errors()) {
+            module_transferred = true;
             return theModule;
+        }
     } catch (const GenerationFailure &) {
         // A failed module must never reach lowering or execution.
     }
@@ -221,17 +227,21 @@ void CodeGen::gen_statement(const Statement *stmt) {
         fail("Missing statement in code generation");
 
     if (auto *func_def = dynamic_cast<const FunctionDefinition *>(stmt)) {
+        if (checked_data)
+            checked_return_type = checked_data->symbols[checked_binding(func_def->name.get())].type;
         current_function_defers.clear();
         std::vector<mlir::Type> argTypes;
         std::vector<std::string> argNames;
         for (const auto &param : func_def->parameters) {
-            argTypes.push_back(resolve_type(param.type->value));
+            argTypes.push_back(checked_data ? checked_type(param.type.get())
+                                            : resolve_type(param.type->value));
             argNames.push_back(param.name->value);
         }
 
         mlir::Type retType = builder.getNoneType();
         if (func_def->return_type) {
-            retType = resolve_type(func_def->return_type->value);
+            retType = checked_data ? checked_type(func_def->return_type.get())
+                                   : resolve_type(func_def->return_type->value);
         }
 
         std::vector<mlir::Type> resultTypes;
@@ -244,7 +254,10 @@ void CodeGen::gen_statement(const Statement *stmt) {
             builder.create<mlir::func::FuncOp>(location(), func_def->name->value, funcType);
 
         // Register function in table
-        function_table[func_def->name->value] = {funcOp, func_def};
+        if (checked_data)
+            checked_functions[checked_binding(func_def->name.get())] = funcOp;
+        else
+            function_table[func_def->name->value] = {funcOp, func_def};
 
         if (!func_def->body)
             return;
@@ -257,7 +270,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
 
         for (size_t i = 0; i < argNames.size(); ++i) {
             auto argVal = entryBlock->getArgument(i);
-            declare(argNames[i], argVal, false, argTypes[i], func_def->parameters[i].type->value);
+            declare_binding(func_def->parameters[i].name.get(), argVal, false, argTypes[i],
+                            func_def->parameters[i].type->value);
         }
 
         gen_statement(func_def->body.get());
@@ -404,7 +418,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
         std::string name = var_decl->name->value;
         mlir::Type type = builder.getI32Type();
         if (var_decl->type) {
-            type = resolve_type(var_decl->type->value);
+            type = checked_data ? checked_type(var_decl->type.get())
+                                : resolve_type(var_decl->type->value);
         }
 
         mlir::Value initVal;
@@ -420,10 +435,12 @@ void CodeGen::gen_statement(const Statement *stmt) {
             if (initVal) {
                 builder.create<mlir::LLVM::StoreOp>(location(), initVal, alloca);
             }
-            declare(name, alloca, true, type, var_decl->type ? var_decl->type->value : "");
+            declare_binding(var_decl->name.get(), alloca, true, type,
+                            var_decl->type ? var_decl->type->value : "");
         } else {
             if (initVal) {
-                declare(name, initVal, false, type, var_decl->type ? var_decl->type->value : "");
+                declare_binding(var_decl->name.get(), initVal, false, type,
+                                var_decl->type ? var_decl->type->value : "");
             } else {
                 fail("Uninitialized immutable binding in code generation");
             }
@@ -432,9 +449,24 @@ void CodeGen::gen_statement(const Statement *stmt) {
     } else if (auto *return_stmt = dynamic_cast<const ReturnStatement *>(stmt)) {
         if (return_stmt->return_value) {
             auto val = gen_expression(return_stmt->return_value.get());
+            if (checked_data) {
+                auto function =
+                    llvm::dyn_cast<mlir::func::FuncOp>(builder.getBlock()->getParentOp());
+                if (checked_data->types.at(return_stmt->return_value.get()) !=
+                        checked_return_type ||
+                    !function || function.getFunctionType().getNumResults() != 1 ||
+                    function.getFunctionType().getResult(0) != val.getType())
+                    fail("Return value disagrees with the checked function signature (SPEC-014)");
+            }
             emit_deferred();
             builder.create<mlir::func::ReturnOp>(location(), val);
         } else {
+            if (checked_data) {
+                auto function =
+                    llvm::dyn_cast<mlir::func::FuncOp>(builder.getBlock()->getParentOp());
+                if (!function || function.getFunctionType().getNumResults() != 0)
+                    fail("Missing value for checked return signature (SPEC-014)");
+            }
             emit_deferred();
             builder.create<mlir::func::ReturnOp>(location());
         }
@@ -539,6 +571,12 @@ mlir::Value CodeGen::gen_expression(const Expression *expr, bool allow_void) {
     if (!expr)
         fail("Missing expression in code generation");
     auto value = gen_expression_impl(expr);
+    if (checked_data) {
+        auto expected = checked_type(expr);
+        if ((value && value.getType() != expected) ||
+            (!value && !llvm::isa<mlir::NoneType>(expected)))
+            fail("Generated value disagrees with its checked type");
+    }
     if (!value && !allow_void)
         fail("A void call cannot be used as a value");
     return value;
@@ -546,9 +584,11 @@ mlir::Value CodeGen::gen_expression(const Expression *expr, bool allow_void) {
 
 mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     if (auto *int_lit = dynamic_cast<const IntegerLiteral *>(expr)) {
-        return builder.create<mlir::arith::ConstantIntOp>(location(), int_lit->value, 32);
+        unsigned bits =
+            checked_data ? llvm::cast<mlir::IntegerType>(checked_type(expr)).getWidth() : 32;
+        return builder.create<mlir::arith::ConstantIntOp>(location(), int_lit->value, bits);
     } else if (auto *float_lit = dynamic_cast<const FloatLiteral *>(expr)) {
-        auto floatType = builder.getF32Type();
+        auto floatType = checked_data ? checked_type(expr) : builder.getF32Type();
         auto floatAttr = builder.getFloatAttr(floatType, float_lit->value);
         return builder.create<mlir::arith::ConstantOp>(location(), floatType, floatAttr);
     } else if (auto *bool_lit = dynamic_cast<const BooleanLiteral *>(expr)) {
@@ -634,7 +674,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return gen_address(prefix->right.get());
         }
     } else if (auto *ident = dynamic_cast<const Identifier *>(expr)) {
-        auto sym = lookup(ident->value);
+        auto sym = lookup_binding(ident);
         if (sym.value) {
             if (sym.is_address) {
                 if (llvm::isa<mlir::LLVM::LLVMPointerType>(sym.value.getType())) {
@@ -685,6 +725,8 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             fail("Unsupported expression or unresolved value in code generation");
 
         // Simple type checking/promotion for binary ops
+        if (checked_data && left.getType() != right.getType())
+            fail("Checked binary operands have different types");
         if (left.getType() != right.getType()) {
             if (left.getType().isInteger(32) && right.getType().isInteger(64)) {
                 left = builder.create<mlir::arith::ExtSIOp>(location(), builder.getI64Type(), left);
@@ -695,6 +737,15 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             // Add more cases as needed (float, etc)
         }
 
+        if (checked_data) {
+            auto source_type = checked_data->types.at(bin->left.get());
+            const auto &info = core_type_info(source_type);
+            if (!info.is_integer && source_type != CoreType::Bool)
+                fail("Floating operators are not implemented (SPEC-015)");
+            if (info.is_integer && !info.is_signed &&
+                (bin->op == "/" || bin->op == "<" || bin->op == ">"))
+                fail("Unsigned division/comparison is not implemented (SPEC-015)");
+        }
         if (bin->op == "+")
             return builder.create<mlir::arith::AddIOp>(location(), left, right);
         if (bin->op == "-")
@@ -744,6 +795,19 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
+        if (checked_data) {
+            auto *callee = dynamic_cast<const Identifier *>(call->function.get());
+            if (!callee)
+                fail("Checked call has no direct callee");
+            auto found = checked_functions.find(checked_binding(callee));
+            if (found == checked_functions.end())
+                fail("Checked function has not been emitted");
+            std::vector<mlir::Value> args;
+            for (const auto &arg : call->arguments)
+                args.push_back(gen_expression(arg.get()));
+            auto call_op = builder.create<mlir::func::CallOp>(location(), found->second, args);
+            return call_op.getNumResults() ? call_op.getResult(0) : mlir::Value{};
+        }
         std::string funcName;
         mlir::Value selfArg = nullptr;
 
@@ -991,6 +1055,8 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
 }
 
 mlir::Type CodeGen::get_expression_type(const Expression *expr) {
+    if (checked_data)
+        return checked_type(expr);
     if (auto *ident = dynamic_cast<const Identifier *>(expr)) {
         return lookup(ident->value).type;
     }
@@ -1032,13 +1098,12 @@ mlir::Type CodeGen::get_expression_type(const Expression *expr) {
         }
     }
 
-    // ... more types
-    return builder.getI32Type();
+    fail("Unknown expression type in code generation");
 }
 
 mlir::Value CodeGen::gen_address(const Expression *expr) {
     if (auto *ident = dynamic_cast<const Identifier *>(expr)) {
-        auto sym = lookup(ident->value);
+        auto sym = lookup_binding(ident);
         if (sym.value && sym.is_address)
             return sym.value;
     } else if (auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
@@ -1061,7 +1126,7 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
         if (llvm::isa<mlir::LLVM::LLVMPointerType>(baseExprType)) {
             std::string sourceTypeName;
             if (auto *ident = dynamic_cast<const Identifier *>(member_access->left.get())) {
-                auto sym = lookup(ident->value);
+                auto sym = lookup_binding(ident);
                 sourceTypeName = sym.source_type;
             }
 
@@ -1107,6 +1172,8 @@ void CodeGen::handle_std_import(const std::string &module_name) {
 }
 
 CodeGen::SymbolInfo CodeGen::lookup(const std::string &name) {
+    if (checked_data)
+        fail("Unchecked name lookup reached checked codegen");
     auto scope = current_scope;
     while (scope) {
         if (scope->values.count(name)) {
@@ -1118,6 +1185,8 @@ CodeGen::SymbolInfo CodeGen::lookup(const std::string &name) {
 }
 
 mlir::Type CodeGen::resolve_type(const std::string &type_name) {
+    if (checked_data)
+        fail("Unchecked type resolution reached checked codegen");
     if (type_table.count(type_name)) {
         return type_table[type_name];
     }
@@ -1243,4 +1312,69 @@ mlir::Type CodeGen::resolve_type(const std::string &type_name) {
     }
 
     fail("Unknown or unsupported type: " + type_name);
+}
+
+CodeGen::~CodeGen() {
+    if (theModule && !module_transferred)
+        theModule.erase();
+}
+
+mlir::OwningOpRef<mlir::ModuleOp> CodeGen::generate(const CheckedProgram &program) {
+    checked_data = &program.data;
+    auto result = generate_impl(program.program);
+    checked_data = nullptr;
+    checked_values.clear();
+    checked_functions.clear();
+    return mlir::OwningOpRef<mlir::ModuleOp>(result);
+}
+
+mlir::ModuleOp
+CodeGen::generate_unchecked_for_testing(const std::vector<std::unique_ptr<Statement>> &program) {
+    return generate_impl(program);
+}
+
+mlir::Type CodeGen::lower_type(CoreType type) {
+    const auto &info = core_type_info(type);
+    if (type == CoreType::Void)
+        return builder.getNoneType();
+    if (type == CoreType::F32)
+        return builder.getF32Type();
+    if (type == CoreType::F64)
+        return builder.getF64Type();
+    return builder.getIntegerType(info.bits);
+}
+
+mlir::Type CodeGen::checked_type(const Node *node) {
+    auto found = checked_data->types.find(node);
+    if (found == checked_data->types.end())
+        fail("Missing checked type");
+    return lower_type(found->second);
+}
+
+SymbolId CodeGen::checked_binding(const Identifier *name) {
+    auto found = checked_data->bindings.find(name);
+    if (found == checked_data->bindings.end() || found->second >= checked_data->symbols.size())
+        fail("Missing checked declaration binding");
+    return found->second;
+}
+
+void CodeGen::declare_binding(const Identifier *name, mlir::Value value, bool address,
+                              mlir::Type type, const std::string &source_type) {
+    if (!checked_data) {
+        declare(name->value, value, address, type, source_type);
+        return;
+    }
+    auto id = checked_binding(name);
+    if (lower_type(checked_data->symbols[id].type) != type || (!address && value.getType() != type))
+        fail("Generated binding disagrees with its checked type");
+    checked_values[id] = {value, address, type, source_type};
+}
+
+CodeGen::SymbolInfo CodeGen::lookup_binding(const Identifier *name) {
+    if (!checked_data)
+        return lookup(name->value);
+    auto found = checked_values.find(checked_binding(name));
+    if (found == checked_values.end())
+        fail("Checked binding has no generated value");
+    return found->second;
 }

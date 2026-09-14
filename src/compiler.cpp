@@ -12,12 +12,13 @@ CompilationResult compile_source(std::string text, std::string filename,
         return {{}, diagnostics, diagnostics->all().front().stage};
 
     Sema sema(diagnostics);
-    if (!sema.check_program(parsed.program))
+    auto checked = sema.check_for_codegen(std::move(parsed.program));
+    if (!checked)
         return {{}, diagnostics, DiagnosticStage::Semantic};
 
     CodeGen codegen(context, diagnostics);
-    auto module = codegen.generate(parsed.program);
+    auto module = codegen.generate(*checked);
     if (!module)
         return {{}, diagnostics, DiagnosticStage::Codegen};
-    return {mlir::OwningOpRef<mlir::ModuleOp>(module), diagnostics, std::nullopt};
+    return {std::move(module), diagnostics, std::nullopt};
 }

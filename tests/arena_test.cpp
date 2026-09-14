@@ -67,7 +67,7 @@ TEST(ArenaTest, ArenaAllocation) {
     
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
+    auto module = codegen.generate_unchecked_for_testing(program);
     
     ASSERT_TRUE(module != nullptr);
     module.dump();

@@ -6,12 +6,13 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-009, source definitions and CTest discovery both contain **168 tests**:
+At SPEC-010, source definitions and CTest discovery both contain **182 tests**:
 
 | Suite | Tests |
 | --- | ---: |
 | LexerTest | 34 |
 | DiagnosticsTest | 20 |
+| CheckedProgramTest | 13 |
 | ParserTest | 49 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
@@ -27,7 +28,7 @@ At SPEC-009, source definitions and CTest discovery both contain **168 tests**:
 | ArrayStringTest | 2 |
 | UnlessTest | 1 |
 | JitRunnerTest | 1 |
-| E2ETest | 6 |
+| E2ETest | 7 |
 | ExternalRunnerTest | 8 |
 
 The four generic tests are now included without changing their assertions. Their
@@ -56,8 +57,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-009 both produce
-**160 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-010 both produce
+**174 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -100,6 +101,22 @@ E2E tests use `compile_source` so a failed stage cannot reach external execution
 The sixth E2E case executes a multiline call inside `if enabled` and returns 42.
 Stage-isolated codegen tests check parser/module status before inspecting IR;
 they continue to expose incomplete features rather than hiding errors.
+
+## Checked program contract
+
+All 13 checked-program tests pass. They verify every core scalar's semantic
+identity and MLIR signature/storage type, aliases, signedness, unknown/deferred
+type rejection in all annotation positions, `void` restrictions, declaration IDs,
+call resolution, ownership after frontend/codegen destruction, duplicate and
+unresolved declaration failures, target rejection, independent compiler runs,
+and guards for unfinished operators and return checking. Compile-time assertions
+prove that raw ASTs cannot call `CodeGen::generate` and clients cannot construct a
+`CheckedProgram`. [The contract](../docs/checked-program.md) documents the limits.
+
+Existing stage-isolated backend tests now use the explicit
+`generate_unchecked_for_testing` entry; their feature assertions and failures are
+preserved. All seven E2E tests use checked generation. The seventh executes an
+`int` alias and nested shadowing, confirming the outer binding still returns 42.
 
 ## External execution
 
@@ -157,3 +174,8 @@ SPEC-009 adds 23 passing regressions (20 parser, two diagnostic, one E2E), movin
 the suite to 160/168 passes with exactly the same eight failures as SPEC-008.
 Constants now parse but are deliberately rejected in Sema/codegen until SPEC-012
 implements their evaluation; the new metadata cannot silently imply execution.
+
+SPEC-010 adds 14 passing regressions (13 checked-program tests and one E2E),
+moving the suite to 174/182 passes with the same eight failures. Primitive storage
+agreement does not claim complete numeric conversions, operators, or return-path
+checking; those remain SPEC-013 through SPEC-015.

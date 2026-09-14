@@ -26,7 +26,7 @@ TEST(CodeGenSpecTest, GenerateStringLiteral) {
     
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
+    auto module = codegen.generate_unchecked_for_testing(program);
     
     ASSERT_TRUE(module != nullptr);
     module.dump();
@@ -72,7 +72,7 @@ TEST(CodeGenSpecTest, GeneratePointerOps) {
     
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
+    auto module = codegen.generate_unchecked_for_testing(program);
     
     ASSERT_TRUE(module != nullptr);
     module.dump();

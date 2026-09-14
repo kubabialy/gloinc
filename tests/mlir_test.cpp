@@ -14,7 +14,7 @@ TEST(MLIRSetup, ContextCreation) {
 TEST(MLIRSetup, AllCompilerDialects) {
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate({}));
+    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate_unchecked_for_testing({}));
 
     // Exercise the compiler's actual registration path. Mixing MLIR archives with
     // libMLIR previously crashed when these dialects loaded in the same context.

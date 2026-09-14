@@ -31,7 +31,7 @@ TEST(CodeGenStructTest, GenerateStructAndMemberAccess) {
 
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
+    auto module = codegen.generate_unchecked_for_testing(program);
 
     module.dump();
 
@@ -85,7 +85,7 @@ TEST(CodeGenStructTest, PackedStruct) {
 
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
+    auto module = codegen.generate_unchecked_for_testing(program);
     
     std::string output;
     llvm::raw_string_ostream os(output);

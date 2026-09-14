@@ -60,7 +60,7 @@ TEST(CodeGenTest, GenerateComplexFunction) {
     
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
+    auto module = codegen.generate_unchecked_for_testing(program);
     
     ASSERT_TRUE(module != nullptr);
     module.dump();
@@ -117,7 +117,7 @@ TEST(CodeGenTest, GenerateWhileLoop) {
     
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
+    auto module = codegen.generate_unchecked_for_testing(program);
     
     ASSERT_TRUE(module != nullptr);
     module.dump();
@@ -152,7 +152,7 @@ TEST(CodeGenTest, GenerateImmutableVariable) {
     
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
+    auto module = codegen.generate_unchecked_for_testing(program);
     
     ASSERT_TRUE(module != nullptr);
     module.dump();
@@ -204,7 +204,7 @@ TEST(CodeGenTest, GenerateFunctionCall) {
     
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    auto module = codegen.generate(program);
+    auto module = codegen.generate_unchecked_for_testing(program);
     
     ASSERT_TRUE(module != nullptr);
     module.dump();
@@ -255,7 +255,7 @@ TEST(CodeGenTest, GenerateSpawn) {
     
     mlir::MLIRContext context;
     CodeGen codegen(context);
-    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate(program));
+    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate_unchecked_for_testing(program));
     ASSERT_TRUE(module);
     ASSERT_TRUE(mlir::succeeded(mlir::verify(*module)));
 

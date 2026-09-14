@@ -24,7 +24,7 @@ std::string compile_to_mlir_string_basic(const std::string& code) {
     context.getOrLoadDialect<gloin::GloinDialect>();
     
     CodeGen codegen(context);
-    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate(ast));
+    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate_unchecked_for_testing(ast));
     if (!module) {
         std::ostringstream errors;
         codegen.diagnostics()->render(errors);

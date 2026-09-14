@@ -4,8 +4,9 @@
 requires a successful complete parse before invoking Sema. A source file may
 contain functions and constants. Runtime globals, nested functions, executable
 file-scope statements, and deferred syntax receive parsing diagnostics.
-Type identities and unsupported scalar types are resolved in SPEC-010/SPEC-013;
-parsing a type name does not establish type support.
+Sema's checked-program path resolves core type identities and rejects unsupported
+scalar types under SPEC-010; numeric compatibility/conversions remain SPEC-013.
+Parsing a type name does not establish type support.
 
 Core parsing enforces explicit binding/parameter/return annotations, modifier
 order, mandatory statement semicolons, braced control-flow bodies, and comma

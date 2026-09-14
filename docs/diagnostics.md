@@ -36,14 +36,18 @@ The existing stage APIs remain available for focused tests:
   `has_error()` and `diagnostics()` expose the cause. The older `parse_program()`
   convenience method also discards partial output, but callers must inspect its
   diagnostic status rather than interpreting an empty vector as success.
-- `Sema::check_program()` returns `bool`. All detected semantic errors contribute
-  to that result, including non-boolean conditions, invalid struct declarations,
-  and unsupported nodes. `get_errors()` remains a compatibility message view.
-- `CodeGen::generate()` returns a null module on failure and destroys any partial
-  module. A successful raw module is owned by the caller; `compile_source`
-  immediately wraps it in `mlir::OwningOpRef`. A CodeGen instance generates one
-  module. Unsupported nodes/operators, unknown functions/types, and value uses
-  of void calls fail explicitly. Resolved void calls remain valid statements.
+- `Sema::check_for_codegen(std::move(ast))` consumes the AST and returns an owned
+  `CheckedProgram` only on success. It retains resolved core types and declaration
+  IDs. The legacy `check_program()` boolean and visitor APIs remain for stage tests;
+  they cannot be passed as evidence of checking to normal codegen.
+- `CodeGen::generate(checked_program)` returns an owned module on success and
+  destroys partial modules on failure. The explicit `generate_unchecked_for_testing`
+  entry retains the caller-owned raw-module API for deferred stage experiments.
+  A CodeGen instance generates one module. Unsupported nodes/operators, unknown
+  functions/types, and value uses of void calls fail explicitly.
+
+[The checked-program contract](checked-program.md) defines AST, semantic-data,
+module, and context ownership and the limits of the implemented checks.
 
 Generated source operations use MLIR file/line/column locations. Synthetic
 runtime declarations use unknown locations. MLIR errors emitted during
@@ -63,9 +67,10 @@ stage tests. Parsing uses a terminal first-error policy: it discards the complet
 program and never retries a failed token. Multi-error recovery is not implemented;
 excessive recursive nesting reports a diagnostic.
 
-This does not complete the language checker. Resolved type identities, return
-checking, constant evaluation, and other semantic rules remain in their subsequent
-tasks. Newly parsed constants fail explicitly in Sema/codegen pending SPEC-012.
+SPEC-010 resolves core type and declaration identities once for codegen. This does
+not complete the language checker: declaration collection, return analysis,
+constant evaluation, and other semantic rules remain in their subsequent tasks.
+Newly parsed constants fail explicitly in Sema/codegen pending SPEC-012.
 
 The external E2E harness now uses `compile_source` before verification and tool
 execution. Stage-isolated codegen tests intentionally bypass semantic checking,

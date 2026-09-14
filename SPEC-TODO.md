@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-010.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-011.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -80,9 +80,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **SPEC-006 contract:** enforce canonical modifier order, explicit annotations, required statement semicolons, comma-separated lists, and the statement-only assignment rule. Reject bare `const`, `pub def`, `fn`, omitted return types, and other unsupported syntax listed in SPEC.md; preserve later feature implementation tasks rather than counting a rejection as implementation.
   **Verified:** every parser consumes its complete construct, including multiline expressions and calls. Identifier conditions cannot consume body braces; precedence no longer depends on capitalization. Core mode enforces annotations, modifiers, scopes, delimiters, and statement-only assignment. Parsing stops on its first error and discards the whole program; obsolete recovery loops are removed and excessive nesting fails explicitly. All 49 parser, 20 diagnostic, and six E2E tests pass. Fresh Debug build succeeds; serial/parallel suites agree on 160/168 passes with the same eight remaining failures. Constants/visibility retain AST metadata; constant evaluation remains explicitly unsupported pending SPEC-012. [The parser contract](docs/parser.md) documents core versus syntax-only stage tests and the first-error policy.
 
-- [ ] **SPEC-010 — Establish one resolved type/symbol contract for codegen.**
+- [x] **SPEC-010 — Establish one resolved type/symbol contract for codegen.**
   Choose a typed AST, semantic side tables, or another explicit checked-program representation. Resolve types and declarations once and make codegen consume that information. Define ownership of AST, semantic data, MLIR context, and modules.
   **Done when:** semantic checking and codegen agree on primitive types and symbol identities, unknown types never default to i32, and codegen cannot accidentally process an unchecked program through the normal compiler path.
+  **Verified:** Sema exclusively constructs an owned `CheckedProgram` containing the AST, canonical core types, declaration IDs, and reference bindings. Normal `CodeGen::generate` requires that object and returns an owned module; raw AST experiments use `generate_unchecked_for_testing`. Signatures, storage, references, and calls consume semantic data, with guards against legacy type/name resolution. Aliases resolve in Sema, unknown/deferred annotations fail, and signedness remains distinct from MLIR storage. Ownership and remaining semantic limits are documented in [docs/checked-program.md](docs/checked-program.md). All 13 contract tests and seven E2E tests pass; serial/parallel suites both report 174/182 passes and the same eight known failures. Declaration collection, constants, contextual literals, and full return/operator semantics remain SPEC-011 through SPEC-015.
 
 ## 3. Make core language semantics and code generation reliable
 
@@ -283,6 +284,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-007 | 2026-09-09 | [diagnostics.h](src/diagnostics.h) preserves owned source spans and structured errors. [compiler.cpp](src/compiler.cpp) stops parse/check/generate at the first failed stage and owns successful modules; parser/Sema/codegen no longer print errors while returning success. [diagnostics_test.cpp](tests/diagnostics_test.cpp) adds **15 passing regressions**; the five external E2E tests use the guarded API. Fresh Debug build succeeds. Full serial/parallel suites both report **114/127 passes, 13 failures, no crashes or skipped tests**. Four old newline-related failures pass; three previously hidden failures are now visible and mapped in [tests/README.md](tests/README.md). The branch fixture now correctly uses `mut`, with a negative regression for immutable assignment. |
 | SPEC-008 | 2026-09-09 | [lexer.cpp](src/lexer.cpp) uses bounded byte scanning with whole-source UTF-8 validation, exact operator boundaries, reserved keywords, distinct type/literal tokens, and malformed-literal errors. [SPEC.md](SPEC.md#lexical-literal-forms-spec-008) fixes the lexical grammar. Minimal parser changes reject legacy expressions and prevent literals/other keywords from substituting for types. All **34 lexer and 18 diagnostic tests pass**, resolving all seven audited lexer failures without enabling obsolete syntax. Debug rebuild succeeds; full serial/parallel runs both report **137/145 passes, eight failures, no crashes or skipped tests**. Source definitions match discovery and all timeouts remain 30 seconds. ASan/UBSan probes pass for 75,536 inputs. |
 | SPEC-009 | 2026-09-14 | [parser.cpp](src/parser.cpp) consistently consumes constructs, separates core compilation from deferred syntax tests, fixes precedence and identifier conditions, and requires explicit annotations, canonical modifiers, delimiters, and statement-only assignments. [AST.h](src/AST.h) retains constant/visibility/member metadata; Sema/codegen explicitly reject unevaluated constants pending SPEC-012. First-error parsing discards complete programs and bounds recursive nesting. Fresh Debug build succeeds. All **49 parser, 20 diagnostic, and six E2E tests pass**; serial/parallel suites both report **160/168 passes, the same eight failures as SPEC-008, and no crashes/skips**. Source definitions match discovery and every timeout is 30 seconds. ASan/UBSan checks pass for 20,980 parser probes. The canonical method/field fixture corrections preserve their feature assertions; see [docs/parser.md](docs/parser.md). |
+| SPEC-010 | 2026-09-14 | [checked_program.h](src/checked_program.h) owns the AST and semantic tables with canonical scalar types and stable declaration IDs. Sema is the only constructor; normal codegen accepts only checked programs and produces owned modules. Compile-time API restrictions and **13 passing contract tests** cover primitive signatures/storage, aliases, signedness, annotation errors, ID-based references/calls, ownership, independent runs, targets, and explicit guards for unfinished semantics. Existing backend experiments use the explicit unchecked test entry without weakening assertions. Incremental Debug build succeeds; full serial/parallel runs both report **174/182 passes, the same eight failures as SPEC-009, and no crashes/skips**. All seven E2E tests pass, including aliases and nested shadowing returning 42. [docs/checked-program.md](docs/checked-program.md) defines ownership, API use, and remaining scope. |
 
 ### SPEC-001 verification
 
@@ -649,3 +651,54 @@ Constant evaluation, resolved types/symbols, complete numeric/operator semantics
 return checking, loop scope/omitted headers, lowering, and JIT remain their listed
 subsequent tasks. Parsing the canonical examples is not a claim that they all
 execute yet.
+
+
+### SPEC-010 verification
+
+Rebuilt the SPEC-009 Debug directory using the established AppleClang 16 and
+LLVM/MLIR 21.1.6 toolchain. CMake reconfigured to include the new maintained
+`checked_program_test.cpp` suite. This was an incremental build.
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec010-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec010-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+# Build exits 0; full suites exit 8 for the unchanged known failures.
+git diff --check
+```
+
+Both JUnit reports contain **182 tests, 174 passes, eight failures, and no crashes
+or skipped tests**. Their failure names match SPEC-009 exactly. Source definitions
+match discovery without duplicates; every test has a 30-second timeout. All 13
+checked-program, 20 diagnostic, 49 parser, seven E2E, four dialect, eight harness,
+and four generic IR-string tests pass. Formatter checks pass for the changed
+implementation and new test files.
+
+The contract tests verify scalar storage widths and function signatures with MLIR
+verification, canonical aliases, signedness/bool identity, unsupported types in
+every annotation position, void restrictions, distinct IDs for shadowed names,
+resolved calls, and AST/semantic/module ownership after their producer objects
+are destroyed. They also check duplicate/unresolved failures, unsupported target
+widths, independence across runs, and failure instead of incorrectly typed
+float/unsigned operations or return signatures. Compile-time assertions reject
+raw AST use of normal `generate`, direct construction, and copying of a checked
+program. The new E2E test returns 42 through aliases and a shadowed local.
+
+The scalar registry belongs to the frontend; codegen lowers canonical IDs rather
+than resolving source type strings. The checked backend uses declaration IDs and
+rejects legacy string/name lookup. Its normal module no longer receives unused
+experimental runtime declarations. Old stage tests retain their feature assertions
+through `generate_unchecked_for_testing`; this bypass is absent from the compiler
+pipeline. Unknown expression types no longer receive the old i32 fallback.
+
+This task establishes the contract, not complete language validation. The checker
+still processes functions in declaration order; SPEC-011 collects declarations and
+settles complete scope rules. Constants, definite initialization, contextual
+numeric literals, return-path analysis, and supported operator semantics remain
+SPEC-012 through SPEC-015. Explicit codegen guards prevent unfinished float,
+unsigned-ordering/division, and return-type behavior from producing the wrong
+operations; they do not mark those later tasks complete. Full IR verification,
+lowering, and JIT remain SPEC-018/SPEC-019.

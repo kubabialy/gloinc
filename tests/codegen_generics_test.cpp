@@ -24,7 +24,7 @@ std::string compile_to_mlir_string_generics(const std::string &code) {
     context.getOrLoadDialect<mlir::arith::ArithDialect>();
 
     CodeGen codegen(context);
-    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate(ast));
+    mlir::OwningOpRef<mlir::ModuleOp> module(codegen.generate_unchecked_for_testing(ast));
     if (!module) {
         std::ostringstream errors;
         codegen.diagnostics()->render(errors);

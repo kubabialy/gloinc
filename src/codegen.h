@@ -27,7 +27,13 @@ class CodeGen {
             std::shared_ptr<Diagnostics> diagnostics = std::make_shared<Diagnostics>());
     std::shared_ptr<Diagnostics> diagnostics() const { return diagnostics_; }
 
-    mlir::ModuleOp generate(const std::vector<std::unique_ptr<Statement>> &program);
+    mlir::OwningOpRef<mlir::ModuleOp> generate(const CheckedProgram &program);
+    // Stage-isolated experiments only; never used by compile_source.
+    mlir::ModuleOp
+    generate_unchecked_for_testing(const std::vector<std::unique_ptr<Statement>> &program);
+    ~CodeGen();
+    CodeGen(const CodeGen &) = delete;
+    CodeGen &operator=(const CodeGen &) = delete;
     void dump();
 
   private:
@@ -37,6 +43,14 @@ class CodeGen {
     std::shared_ptr<Diagnostics> diagnostics_;
     SourceSpan current_span;
     bool generated = false;
+    bool module_transferred = false;
+    const SemanticData *checked_data = nullptr;
+    CoreType checked_return_type = CoreType::Void;
+    mlir::ModuleOp generate_impl(const std::vector<std::unique_ptr<Statement>> &program);
+    void initialize_unchecked_types();
+    mlir::Type lower_type(CoreType type);
+    mlir::Type checked_type(const Node *node);
+    SymbolId checked_binding(const Identifier *name);
     struct GenerationFailure {};
     [[noreturn]] void fail(const std::string &message);
     mlir::Location location();
@@ -55,6 +69,11 @@ class CodeGen {
         std::shared_ptr<GenScope> parent;
     };
     std::shared_ptr<GenScope> current_scope;
+    std::map<SymbolId, SymbolInfo> checked_values;
+    std::map<SymbolId, mlir::func::FuncOp> checked_functions;
+    void declare_binding(const Identifier *name, mlir::Value value, bool address, mlir::Type type,
+                         const std::string &source_type);
+    SymbolInfo lookup_binding(const Identifier *name);
 
     struct FunctionInfo {
         mlir::func::FuncOp funcOp;

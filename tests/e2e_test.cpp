@@ -107,3 +107,14 @@ TEST(E2ETest, MultilineIdentifierConditionAndCalls) {
     )";
     expect_result(run_code(code), 42);
 }
+
+TEST(E2ETest, CheckedAliasesAndShadowedBindings) {
+    expect_result(run_code(R"(
+        def keep(x: int) -> i32 {
+            { def mut x: i32 = 7; x = 9; }
+            return x;
+        }
+        def main() -> int { return keep(42); }
+    )"),
+                  42);
+}

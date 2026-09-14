@@ -48,5 +48,8 @@ acceptance criteria are met.
 
 Use `compile_source` for the parse/check/generate path. Check its success status
 before accessing its module; render structured diagnostics at the client boundary.
+Normal codegen requires `CheckedProgram` from `Sema::check_for_codegen`; never use
+`generate_unchecked_for_testing` in the compiler pipeline. Ownership and semantic
+boundaries are documented in [docs/checked-program.md](docs/checked-program.md).
 Stage-isolated tests must check parser and codegen failures explicitly. Source
 ownership and stage API contracts are in [docs/diagnostics.md](docs/diagnostics.md).

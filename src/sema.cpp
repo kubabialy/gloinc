@@ -1,11 +1,9 @@
 #include "sema.h"
 #include <iostream>
 
-void Scope::define(const std::string& name, Symbol symbol) {
-    symbols[name] = symbol;
-}
+void Scope::define(const std::string &name, Symbol symbol) { symbols[name] = symbol; }
 
-Symbol* Scope::resolve(const std::string& name) {
+Symbol *Scope::resolve(const std::string &name) {
     auto it = symbols.find(name);
     if (it != symbols.end()) {
         return &it->second;
@@ -16,11 +14,9 @@ Symbol* Scope::resolve(const std::string& name) {
     return nullptr;
 }
 
-void Scope::define_type(const std::string& name, std::shared_ptr<Type> type) {
-    types[name] = type;
-}
+void Scope::define_type(const std::string &name, std::shared_ptr<Type> type) { types[name] = type; }
 
-std::shared_ptr<Type> Scope::resolve_type(const std::string& name) {
+std::shared_ptr<Type> Scope::resolve_type(const std::string &name) {
     auto it = types.find(name);
     if (it != types.end()) {
         return it->second;
@@ -33,27 +29,21 @@ std::shared_ptr<Type> Scope::resolve_type(const std::string& name) {
 
 Sema::Sema(std::shared_ptr<Diagnostics> diagnostics) : diagnostics_(std::move(diagnostics)) {
     current_scope = std::make_shared<Scope>();
-    
-    // Define built-in types
-    builtin_types["i8"] = std::make_shared<PrimitiveType>("i8");
-    builtin_types["i16"] = std::make_shared<PrimitiveType>("i16");
-    builtin_types["i32"] = std::make_shared<PrimitiveType>("i32");
-    builtin_types["i64"] = std::make_shared<PrimitiveType>("i64");
-    
-    builtin_types["u8"] = std::make_shared<PrimitiveType>("u8");
-    builtin_types["u16"] = std::make_shared<PrimitiveType>("u16");
-    builtin_types["u32"] = std::make_shared<PrimitiveType>("u32");
-    builtin_types["u64"] = std::make_shared<PrimitiveType>("u64");
 
-    builtin_types["f32"] = std::make_shared<PrimitiveType>("f32");
-    builtin_types["f64"] = std::make_shared<PrimitiveType>("f64");
-
-    builtin_types["bool"] = std::make_shared<PrimitiveType>("bool");
+    for (const auto &type : core_types) {
+        if (type.id == CoreType::Void)
+            builtin_types[std::string(type.name)] = std::make_shared<VoidType>();
+        else
+            builtin_types[std::string(type.name)] =
+                std::make_shared<PrimitiveType>(std::string(type.name));
+    }
+    builtin_types["int"] = builtin_types["i32"];
+    builtin_types["usize"] = builtin_types["u64"];
+    // Available only to the legacy stage checker, never to check_for_codegen.
     builtin_types["string"] = std::make_shared<PrimitiveType>("string");
-    builtin_types["void"] = std::make_shared<VoidType>();
 }
 
-std::shared_ptr<Type> Sema::get_builtin_type(const std::string& name) {
+std::shared_ptr<Type> Sema::get_builtin_type(const std::string &name) {
     auto it = builtin_types.find(name);
     if (it != builtin_types.end()) {
         return it->second;
@@ -61,13 +51,17 @@ std::shared_ptr<Type> Sema::get_builtin_type(const std::string& name) {
     return nullptr;
 }
 
-void Sema::log_error(const std::string& msg) {
+void Sema::log_error(const std::string &msg) {
     errors.push_back(msg);
     has_errors = true;
     diagnostics_->error(DiagnosticStage::Semantic, current_span, msg);
 }
 
-std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string& name) {
+std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
+    if (recording) {
+        auto core = resolve_core_type(name, recording->target);
+        return core ? get_builtin_type(std::string(core_type_info(*core).name)) : nullptr;
+    }
     // Check for generics: Deferred<T>, Result<T, E>, Spawn<T>
     if (name.find("Deferred<") == 0 && name.back() == '>') {
         std::string inner_name = name.substr(9, name.length() - 10);
@@ -83,9 +77,7 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string& name) {
     return current_scope->resolve_type(name);
 }
 
-void Sema::enter_scope() {
-    current_scope = std::make_shared<Scope>(current_scope);
-}
+void Sema::enter_scope() { current_scope = std::make_shared<Scope>(current_scope); }
 
 void Sema::leave_scope() {
     if (current_scope->parent) {
@@ -97,33 +89,44 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     if (diagnostics_->has_errors())
         return false;
     current_scope = std::make_shared<Scope>();
-    for (const auto& stmt : program) {
+    for (const auto &stmt : program) {
+        if (recording && !dynamic_cast<const FunctionDefinition *>(stmt.get()) &&
+            !(dynamic_cast<const VariableDeclaration *>(stmt.get()) &&
+              static_cast<const VariableDeclaration *>(stmt.get())->is_const)) {
+            DiagnosticScope location(current_span, stmt ? stmt->span : SourceSpan{});
+            log_error("Only functions and constants are allowed in a checked core program");
+            continue;
+        }
         check_statement(stmt.get());
     }
     return !has_error();
 }
 
-void Sema::check_statement(const Statement* stmt) {
+void Sema::check_statement(const Statement *stmt) {
     DiagnosticScope location(current_span, stmt ? stmt->span : SourceSpan{});
     if (!stmt) {
         log_error("Missing statement");
         return;
     }
-    if (const auto* decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+    if (const auto *decl = dynamic_cast<const VariableDeclaration *>(stmt)) {
         if (decl->is_const) {
             log_error("Constant evaluation is not implemented (SPEC-012)");
+            return;
+        }
+        if (!decl->name || (recording && !decl->type)) {
+            log_error("Binding requires a name and explicit type");
             return;
         }
         // Resolve variable type
         std::shared_ptr<Type> var_type = nullptr;
         if (decl->type) {
-             var_type = resolve_type_from_string(decl->type->value);
-             if (!var_type) {
-                 log_error("Error: Unknown type '" + decl->type->value + "'\n");
-                 return;
-             }
+            var_type = resolve_annotation(decl->type.get());
+            if (!var_type) {
+                log_error("Error: Unknown type '" + decl->type->value + "'\n");
+                return;
+            }
         }
-        
+
         // Check initializer
         if (decl->initializer) {
             auto init_type = check_expression(decl->initializer.get());
@@ -131,8 +134,9 @@ void Sema::check_statement(const Statement* stmt) {
                 if (var_type) {
                     // Type mismatch check
                     if (!var_type->equals(*init_type)) {
-                        log_error("Error: Type mismatch in variable declaration. Expected " 
-                                  + var_type->to_string() + " but got " + init_type->to_string() + "\n");
+                        log_error("Error: Type mismatch in variable declaration. Expected " +
+                                  var_type->to_string() + " but got " + init_type->to_string() +
+                                  "\n");
                     }
                 } else {
                     // Inference
@@ -140,84 +144,98 @@ void Sema::check_statement(const Statement* stmt) {
                 }
             }
         }
-        
+
         if (!var_type) {
             log_error("Error: Cannot infer type for variable '" + decl->name->value + "'\n");
             return; // Or fallback to error type
         }
-        
+
         // Define variable in scope
         Symbol sym;
         sym.name = decl->name->value;
         sym.is_mutable = decl->is_mutable;
         sym.type = var_type;
-        
-        current_scope->define(decl->name->value, sym);
-        
-    } else if (const auto* block = dynamic_cast<const BlockStatement*>(stmt)) {
+
+        define_symbol(decl->name.get(), sym, SymbolKind::Variable);
+
+    } else if (const auto *block = dynamic_cast<const BlockStatement *>(stmt)) {
         enter_scope();
-        for (const auto& s : block->statements) {
+        for (const auto &s : block->statements) {
             check_statement(s.get());
         }
         leave_scope();
-    } else if (const auto* func_def = dynamic_cast<const FunctionDefinition*>(stmt)) {
+    } else if (const auto *func_def = dynamic_cast<const FunctionDefinition *>(stmt)) {
         // Resolve return type
-        auto ret_type = resolve_type_from_string(func_def->return_type->value);
+        if (!func_def->name || !func_def->return_type || !func_def->body) {
+            log_error("Incomplete function declaration");
+            return;
+        }
+        if (recording && (func_def->is_deferred || func_def->is_spawnable ||
+                          !func_def->generic_params.empty())) {
+            log_error("Unsupported function in checked core program");
+            return;
+        }
+        auto ret_type = resolve_annotation(func_def->return_type.get(), true);
         if (!ret_type) {
-             log_error("Error: Unknown return type '" + func_def->return_type->value + "'\n");
-             return;
+            log_error("Error: Unknown return type '" + func_def->return_type->value + "'\n");
+            return;
         }
 
         if (func_def->is_deferred) {
-             if (!dynamic_cast<DeferredType*>(ret_type.get())) {
-                 log_error("Error: Deferred function '" + func_def->name->value + "' must return Deferred<T>\n");
-             }
+            if (!dynamic_cast<DeferredType *>(ret_type.get())) {
+                log_error("Error: Deferred function '" + func_def->name->value +
+                          "' must return Deferred<T>\n");
+            }
         }
-        
+
         // Resolve parameter types
         std::vector<std::shared_ptr<Type>> param_types;
-        for (const auto& param : func_def->parameters) {
-             auto param_type = resolve_type_from_string(param.type->value);
-             if (!param_type) {
-                 log_error("Error: Unknown parameter type '" + param.type->value + "'\n");
-                 return;
-             }
-             param_types.push_back(param_type);
+        for (const auto &param : func_def->parameters) {
+            if (!param.name || !param.type) {
+                log_error("Incomplete parameter declaration");
+                return;
+            }
+            auto param_type = resolve_annotation(param.type.get());
+            if (!param_type) {
+                log_error("Error: Unknown parameter type '" + param.type->value + "'\n");
+                return;
+            }
+            param_types.push_back(param_type);
         }
 
         // Construct FunctionType
         auto func_type = std::make_shared<FunctionType>(ret_type, param_types);
-        
+
         // Register function symbol
         Symbol sym;
         sym.name = func_def->name->value;
         sym.is_mutable = false;
         sym.type = func_type;
-        current_scope->define(func_def->name->value, sym);
-        
+        define_symbol(func_def->name.get(), sym, SymbolKind::Function);
+
         // Check body
         enter_scope();
         // Register parameters in local scope
         for (size_t i = 0; i < func_def->parameters.size(); ++i) {
-             Symbol param_sym;
-             param_sym.name = func_def->parameters[i].name->value;
-             param_sym.type = param_types[i];
-             current_scope->define(func_def->parameters[i].name->value, param_sym);
+            Symbol param_sym;
+            param_sym.name = func_def->parameters[i].name->value;
+            param_sym.type = param_types[i];
+            define_symbol(func_def->parameters[i].name.get(), param_sym, SymbolKind::Parameter);
         }
-        
-        if (const auto* block = dynamic_cast<const BlockStatement*>(func_def->body.get())) {
-             for (const auto& s : block->statements) {
-                 check_statement(s.get());
-             }
+
+        if (const auto *block = dynamic_cast<const BlockStatement *>(func_def->body.get())) {
+            for (const auto &s : block->statements) {
+                check_statement(s.get());
+            }
         }
         leave_scope();
-        
-    } else if (const auto* ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+
+    } else if (const auto *ret = dynamic_cast<const ReturnStatement *>(stmt)) {
         if (ret->return_value) {
             check_expression(ret->return_value.get());
             // TODO: Check against function return type
         }
-    } else if (const auto* if_stmt = dynamic_cast<const IfStatement*>(stmt)) {
+    } else if (const auto *if_stmt = dynamic_cast<const IfStatement *>(stmt)) {
         auto cond_type = check_expression(if_stmt->condition.get());
         if (cond_type && !cond_type->equals(*get_builtin_type("bool"))) {
             DiagnosticScope condition_location(current_span, if_stmt->condition->span);
@@ -227,18 +245,22 @@ void Sema::check_statement(const Statement* stmt) {
         if (if_stmt->alternative) {
             check_statement(if_stmt->alternative.get());
         }
-    } else if (const auto* while_stmt = dynamic_cast<const WhileStatement*>(stmt)) {
+    } else if (const auto *while_stmt = dynamic_cast<const WhileStatement *>(stmt)) {
         auto cond_type = check_expression(while_stmt->condition.get());
         if (cond_type && !cond_type->equals(*get_builtin_type("bool"))) {
             DiagnosticScope condition_location(current_span, while_stmt->condition->span);
             log_error("While condition must be bool");
         }
         check_statement(while_stmt->body.get());
-    } else if (const auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+    } else if (const auto *expr_stmt = dynamic_cast<const ExpressionStatement *>(stmt)) {
         check_expression(expr_stmt->expression.get());
-    } else if (const auto* struct_def = dynamic_cast<const StructDefinition*>(stmt)) {
+    } else if (const auto *struct_def = dynamic_cast<const StructDefinition *>(stmt)) {
+        if (recording) {
+            log_error("Structs are not supported in checked core programs");
+            return;
+        }
         std::vector<StructType::Field> fields;
-        
+
         // Check backing type for packed structs
         if (struct_def->is_packed) {
             if (!struct_def->backing_type) {
@@ -254,7 +276,7 @@ void Sema::check_statement(const Statement* stmt) {
             }
         }
 
-        for (const auto& field : struct_def->fields) {
+        for (const auto &field : struct_def->fields) {
             std::shared_ptr<Type> field_type = nullptr;
             if (field.type) {
                 field_type = resolve_type_from_string(field.type->value);
@@ -264,19 +286,20 @@ void Sema::check_statement(const Statement* stmt) {
                     // Continue?
                 }
             } else {
-                 // Implicit type not supported yet for fields? Or bitfields?
-                 {
-                     // Assume bitfield or similar?
-                     // For now just error
-                     log_error(
-                         diagnostic_text("Error: Field '", field.name->value, "' missing type\n"));
-                 }
+                // Implicit type not supported yet for fields? Or bitfields?
+                {
+                    // Assume bitfield or similar?
+                    // For now just error
+                    log_error(
+                        diagnostic_text("Error: Field '", field.name->value, "' missing type\n"));
+                }
             }
-            
+
             fields.push_back({field.name->value, field_type, field.is_public});
         }
-        
-        auto struct_type = std::make_shared<StructType>(struct_def->name->value, fields, struct_def->is_packed);
+
+        auto struct_type =
+            std::make_shared<StructType>(struct_def->name->value, fields, struct_def->is_packed);
         current_scope->define_type(struct_def->name->value, struct_type);
 
         for (const auto &method : struct_def->methods) {
@@ -288,140 +311,244 @@ void Sema::check_statement(const Statement* stmt) {
     }
 }
 
-std::shared_ptr<Type> Sema::check_expression(const Expression* expr) {
+std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
     DiagnosticScope location(current_span, expr ? expr->span : SourceSpan{});
     if (!expr) {
         log_error("Missing expression");
         return nullptr;
     }
-    if (const auto* ident = dynamic_cast<const Identifier*>(expr)) {
-        Symbol* sym = current_scope->resolve(ident->value);
+    if (const auto *ident = dynamic_cast<const Identifier *>(expr)) {
+        Symbol *sym = current_scope->resolve(ident->value);
         if (!sym) {
             log_error("Error: Undefined variable '" + ident->value + "'\n");
             return nullptr;
         }
+        if (recording)
+            recording->bindings[ident] = sym->id;
         return sym->type;
-    } else if (const auto* int_lit = dynamic_cast<const IntegerLiteral*>(expr)) {
+    } else if (const auto *int_lit = dynamic_cast<const IntegerLiteral *>(expr)) {
         return get_builtin_type("i32"); // Default integer type
-    } else if (const auto* bool_lit = dynamic_cast<const BooleanLiteral*>(expr)) {
+    } else if (dynamic_cast<const FloatLiteral *>(expr)) {
+        return get_builtin_type("f32");
+    } else if (const auto *bool_lit = dynamic_cast<const BooleanLiteral *>(expr)) {
         return get_builtin_type("bool");
-    } else if (const auto* str_lit = dynamic_cast<const StringLiteral*>(expr)) {
+    } else if (const auto *str_lit = dynamic_cast<const StringLiteral *>(expr)) {
         return get_builtin_type("string");
-    } else if (const auto* bin = dynamic_cast<const InfixExpression*>(expr)) {
+    } else if (const auto *bin = dynamic_cast<const InfixExpression *>(expr)) {
         auto left_type = check_expression(bin->left.get());
         auto right_type = check_expression(bin->right.get());
-        
-        if (!left_type || !right_type) return nullptr;
-        
+
+        if (!left_type || !right_type)
+            return nullptr;
+
         if (!left_type->equals(*right_type)) {
-             log_error("Error: Type mismatch in binary expression. Left: " 
-                       + left_type->to_string() + ", Right: " + right_type->to_string() + "\n");
-             return nullptr;
+            log_error("Error: Type mismatch in binary expression. Left: " + left_type->to_string() +
+                      ", Right: " + right_type->to_string() + "\n");
+            return nullptr;
         }
-        
+
         // Return type depends on operator
-        if (bin->op == "==" || bin->op == "!=" || bin->op == "<" || bin->op == ">") {
+        if (bin->op == "==" || bin->op == "!=" || bin->op == "<" || bin->op == ">" ||
+            bin->op == "<=" || bin->op == ">=") {
             return get_builtin_type("bool");
         }
         return left_type; // For arithmetic
-        
-    } else if (const auto* assign = dynamic_cast<const AssignmentExpression*>(expr)) {
+
+    } else if (const auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
         // Left must be lvalue (identifier for now)
         // And must be mutable
         auto left_type = check_expression(assign->left.get());
         auto right_type = check_expression(assign->right.get());
-        
-        if (const auto* ident = dynamic_cast<const Identifier*>(assign->left.get())) {
-             Symbol* sym = current_scope->resolve(ident->value);
-             if (sym && !sym->is_mutable) {
-                 log_error("Error: Cannot assign to immutable variable '" + ident->value + "'\n");
-             }
+
+        if (const auto *ident = dynamic_cast<const Identifier *>(assign->left.get())) {
+            Symbol *sym = current_scope->resolve(ident->value);
+            if (sym && !sym->is_mutable) {
+                log_error("Error: Cannot assign to immutable variable '" + ident->value + "'\n");
+            }
         }
-        
+
         if (left_type && right_type && !left_type->equals(*right_type)) {
             log_error("Error: Type mismatch in assignment\n");
         }
-        
+
         return left_type;
-        
-    } else if (const auto* member_access = dynamic_cast<const MemberAccessExpression*>(expr)) {
+
+    } else if (const auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
         auto obj_type = check_expression(member_access->left.get());
-        if (!obj_type) return nullptr;
-        
+        if (!obj_type)
+            return nullptr;
+
         // Ensure member is an identifier
-        const auto* member_ident = dynamic_cast<const Identifier*>(member_access->member.get());
+        const auto *member_ident = dynamic_cast<const Identifier *>(member_access->member.get());
         if (!member_ident) {
-             log_error("Error: Member access must use an identifier\n");
-             return nullptr;
+            log_error("Error: Member access must use an identifier\n");
+            return nullptr;
         }
 
-        if (const auto* struct_type = dynamic_cast<const StructType*>(obj_type.get())) {
-             const auto* field = struct_type->get_field(member_ident->value);
-             if (field) {
-                 return field->type;
-             }
-             
-             log_error("Error: Struct '" + struct_type->name + "' has no field '" + member_ident->value + "'\n");
-             return nullptr;
+        if (const auto *struct_type = dynamic_cast<const StructType *>(obj_type.get())) {
+            const auto *field = struct_type->get_field(member_ident->value);
+            if (field) {
+                return field->type;
+            }
+
+            log_error("Error: Struct '" + struct_type->name + "' has no field '" +
+                      member_ident->value + "'\n");
+            return nullptr;
         }
-        
-        log_error("Error: Accessing member '" + member_ident->value + "' on non-struct type '" + obj_type->to_string() + "'\n");
+
+        log_error("Error: Accessing member '" + member_ident->value + "' on non-struct type '" +
+                  obj_type->to_string() + "'\n");
         return nullptr;
-        
-    } else if (const auto* call = dynamic_cast<const CallExpression*>(expr)) {
-        auto func_expr_type = check_expression(call->function.get());
-        if (!func_expr_type) return nullptr;
 
-        const auto* func_type = dynamic_cast<const FunctionType*>(func_expr_type.get());
+    } else if (const auto *call = dynamic_cast<const CallExpression *>(expr)) {
+        bool previous_callee = resolving_callee;
+        resolving_callee = true;
+        auto func_expr_type = check_expression(call->function.get());
+        resolving_callee = previous_callee;
+        if (!func_expr_type)
+            return nullptr;
+
+        const auto *func_type = dynamic_cast<const FunctionType *>(func_expr_type.get());
         if (!func_type) {
-             log_error("Error: Expression is not callable (type: " + func_expr_type->to_string() + ")\n");
-             return nullptr;
+            log_error("Error: Expression is not callable (type: " + func_expr_type->to_string() +
+                      ")\n");
+            return nullptr;
         }
 
         if (call->arguments.size() != func_type->param_types.size()) {
-             log_error("Error: Incorrect number of arguments. Expected " + std::to_string(func_type->param_types.size()) 
-                       + ", got " + std::to_string(call->arguments.size()) + "\n");
-             return nullptr;
+            log_error("Error: Incorrect number of arguments. Expected " +
+                      std::to_string(func_type->param_types.size()) + ", got " +
+                      std::to_string(call->arguments.size()) + "\n");
+            return nullptr;
         }
 
         for (size_t i = 0; i < call->arguments.size(); ++i) {
-             auto arg_type = check_expression(call->arguments[i].get());
-             if (!arg_type) return nullptr;
-             
-             if (!arg_type->equals(*func_type->param_types[i])) {
-                 log_error("Error: Argument " + std::to_string(i+1) + " type mismatch. Expected " 
-                           + func_type->param_types[i]->to_string() + ", got " + arg_type->to_string() + "\n");
-                 return nullptr;
-             }
+            auto arg_type = check_expression(call->arguments[i].get());
+            if (!arg_type)
+                return nullptr;
+
+            if (!arg_type->equals(*func_type->param_types[i])) {
+                log_error("Error: Argument " + std::to_string(i + 1) + " type mismatch. Expected " +
+                          func_type->param_types[i]->to_string() + ", got " +
+                          arg_type->to_string() + "\n");
+                return nullptr;
+            }
         }
-        
-        return func_type->return_type; 
-    } else if (const auto* spawn = dynamic_cast<const SpawnExpression*>(expr)) {
+
+        return func_type->return_type;
+    } else if (const auto *spawn = dynamic_cast<const SpawnExpression *>(expr)) {
         // Check inner call
-        const auto* call = dynamic_cast<const CallExpression*>(spawn->call.get());
+        const auto *call = dynamic_cast<const CallExpression *>(spawn->call.get());
         if (!call) {
-             log_error("Error: 'spawn' must be applied to a function call\n");
-             return nullptr;
+            log_error("Error: 'spawn' must be applied to a function call\n");
+            return nullptr;
         }
-        
-        auto ret_type = check_expression(spawn->call.get()); 
+
+        auto ret_type = check_expression(spawn->call.get());
         if (ret_type) {
-             return std::make_shared<DeferredType>(ret_type);
+            return std::make_shared<DeferredType>(ret_type);
         }
         return nullptr;
-        
-    } else if (const auto* await_expr = dynamic_cast<const AwaitExpression*>(expr)) {
-         auto inner_type = check_expression(await_expr->expr.get());
-         if (!inner_type) return nullptr;
-         
-         if (const auto* deferred = dynamic_cast<const DeferredType*>(inner_type.get())) {
-             return deferred->value_type;
-         }
-         
-         log_error("Error: 'await' applied to non-deferred type '" + inner_type->to_string() + "'\n");
-         return nullptr;
+
+    } else if (const auto *await_expr = dynamic_cast<const AwaitExpression *>(expr)) {
+        auto inner_type = check_expression(await_expr->expr.get());
+        if (!inner_type)
+            return nullptr;
+
+        if (const auto *deferred = dynamic_cast<const DeferredType *>(inner_type.get())) {
+            return deferred->value_type;
+        }
+
+        log_error("Error: 'await' applied to non-deferred type '" + inner_type->to_string() +
+                  "'\n");
+        return nullptr;
     }
 
     log_error("Unsupported expression in semantic analysis");
     return nullptr;
+}
+
+std::unique_ptr<CheckedProgram>
+Sema::check_for_codegen(std::vector<std::unique_ptr<Statement>> program, TargetInfo target) {
+    if (has_error())
+        return nullptr;
+    if (target.pointer_bits != 64) {
+        log_error("Only the 64-bit Apple Silicon target is supported");
+        return nullptr;
+    }
+    recording.emplace();
+    recording->target = target;
+    if (!check_program(program)) {
+        recording.reset();
+        return nullptr;
+    }
+    auto data = std::move(*recording);
+    recording.reset();
+    return std::unique_ptr<CheckedProgram>(new CheckedProgram(std::move(program), std::move(data)));
+}
+
+std::shared_ptr<Type> Sema::resolve_annotation(const Identifier *annotation, bool allow_void) {
+    if (!annotation) {
+        log_error("Missing type annotation");
+        return nullptr;
+    }
+    auto type = resolve_type_from_string(annotation->value);
+    if (recording) {
+        DiagnosticScope location(current_span, annotation->span);
+        auto core = resolve_core_type(annotation->value, recording->target);
+        if (!core) {
+            log_error("Unknown or unsupported core type '" + annotation->value + "'");
+            return nullptr;
+        }
+        if (*core == CoreType::Void && !allow_void) {
+            log_error("void is only allowed as a function return type");
+            return nullptr;
+        }
+        recording->types[annotation] = *core;
+    }
+    return type;
+}
+
+void Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind) {
+    if (recording) {
+        if (current_scope->symbols.contains(name->value)) {
+            DiagnosticScope location(current_span, name->span);
+            log_error("Duplicate declaration '" + name->value + "'");
+            return;
+        }
+        auto value_type = symbol.type;
+        std::vector<CoreType> parameters;
+        if (auto *function = dynamic_cast<FunctionType *>(value_type.get())) {
+            for (auto &param : function->param_types)
+                parameters.push_back(
+                    resolve_core_type(param->to_string(), recording->target).value());
+            value_type = function->return_type;
+        }
+        auto core = resolve_core_type(value_type->to_string(), recording->target);
+        if (!core) {
+            log_error("Unsupported symbol type");
+            return;
+        }
+        symbol.id = recording->symbols.size();
+        recording->symbols.push_back({symbol.id, name->value, kind, *core, std::move(parameters),
+                                      symbol.is_mutable, name->span});
+        recording->bindings[name] = symbol.id;
+    }
+    current_scope->define(name->value, std::move(symbol));
+}
+
+std::shared_ptr<Type> Sema::check_expression(const Expression *expression) {
+    auto type = check_expression_impl(expression);
+    if (recording && type) {
+        DiagnosticScope location(current_span, expression->span);
+        if (dynamic_cast<FunctionType *>(type.get())) {
+            if (!resolving_callee)
+                log_error("Function values are not supported in the core language");
+        } else if (auto core = resolve_core_type(type->to_string(), recording->target)) {
+            recording->types[expression] = *core;
+        } else {
+            log_error("Unsupported expression type in checked core program");
+        }
+    }
+    return type;
 }
