@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-012, maintained source definitions and CTest discovery both contain **222 tests**:
+At SPEC-013, maintained source definitions and CTest discovery both contain **239 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -16,6 +16,7 @@ At SPEC-012, maintained source definitions and CTest discovery both contain **22
 | ParserTest | 49 |
 | ScopeTest | 11 |
 | VariablesTest | 17 |
+| NumericTest | 12 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -30,7 +31,7 @@ At SPEC-012, maintained source definitions and CTest discovery both contain **22
 | ArrayStringTest | 2 |
 | UnlessTest | 1 |
 | JitRunnerTest | 1 |
-| E2ETest | 19 |
+| E2ETest | 24 |
 | ExternalRunnerTest | 8 |
 
 The four generic tests are now included without changing their assertions. Their
@@ -59,8 +60,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-012 both produce
-**214 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-013 both produce
+**231 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -117,7 +118,7 @@ prove that raw ASTs cannot call `CodeGen::generate` and clients cannot construct
 
 Existing stage-isolated backend tests now use the explicit
 `generate_unchecked_for_testing` entry; their feature assertions and failures are
-preserved. All nineteen E2E tests use checked generation. The seventh executes an
+preserved. All 24 E2E cases use checked generation. The seventh executes an
 `int` alias and nested shadowing, confirming the outer binding still returns 42.
 
 ## External execution
@@ -235,3 +236,36 @@ rejects a runtime call inside a constant initializer, preserving its protection
 against silently treating constants as runtime bindings. The unchecked backend
 still rejects constants. Contextual numeric typing, full return/control-flow
 validation, and runtime operator behavior remain their subsequent tasks.
+
+
+## Numeric literals and conversions (SPEC-013)
+
+All 12 `NumericTest` cases pass. They cover preserved parser spellings, exact
+integer minima/maxima and adjacent failures at every width, all bases, full u64,
+full-consumption validation through the AST API, declaration/store/call/return
+context, typed operands on either side, nested literal arithmetic, default
+literal types, unsupported casts and typed conversions, float range/subnormals,
+and checked constant arithmetic for every integer width and both float widths.
+Integer boundary cases inspect emitted values and verify modules for both runtime
+locals and constants. Negative cases fail before codegen and retain source spans.
+
+The float-bit test executes eight fixtures, including binary32 and binary64 ties,
+just-above-tie decimals, smallest subnormals, and negative zero. Each source
+function is compiled through `compile_source`. A test-only MLIR adapter compares
+the returned bit pattern and returns 42 through the existing external runner.
+This observes exact floating results without claiming Gloin runtime floating
+comparisons or cast syntax, which remain unsupported.
+
+Five new E2E cases execute all integer base forms, contextual narrow/wide values,
+signed minima, full u64 values, width-correct constant arithmetic, and f64
+constant range/precision. Every new invocation returns 42. Together these add
+17 passing tests, bringing both full suites to **231/239 passes** with the same
+eight known failures.
+
+Existing synthetic AST fixtures now construct numeric nodes from spellings.
+The i64 constant fixture is accepted under contextual typing; the invalid i8
+floating initializer still fails, with a category diagnostic. The floating
+remainder fixture now uses f32 so its assertion still tests the unsupported
+operator rather than an incompatible annotation. Assertions for deferred
+features remain intact. Runtime operator semantics, return-path checking, and
+full control-flow validation remain SPEC-014 through SPEC-017 as applicable.

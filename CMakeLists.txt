@@ -73,10 +73,15 @@ add_library(gloin_frontend STATIC
     src/lexer.cpp
     src/parser.cpp
     src/sema.cpp
+    src/numeric.cpp
+    src/sema_numeric.cpp
     src/sema_constants.cpp
 )
 target_include_directories(gloin_frontend PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(gloin_frontend PUBLIC cxx_std_23)
+# Frontend numeric values use LLVM APInt/APFloat, with the same shared LLVM as the backend.
+target_include_directories(gloin_frontend SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
+target_link_libraries(gloin_frontend PUBLIC LLVM)
 
 add_library(gloin_backend STATIC
     src/codegen.cpp
@@ -140,6 +145,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/diagnostics_test.cpp
         tests/checked_program_test.cpp
         tests/parser_test.cpp
+        tests/numeric_test.cpp
         tests/variables_test.cpp
         tests/scope_test.cpp
         tests/sema_test.cpp

@@ -1,7 +1,4 @@
 #include "sema.h"
-#include <cmath>
-#include <limits>
-#include <type_traits>
 
 void Sema::check_constant(const VariableDeclaration *declaration) {
     DiagnosticScope location(current_span, declaration->span);
@@ -23,7 +20,8 @@ void Sema::check_constant(const VariableDeclaration *declaration) {
     auto errors_before = diagnostics_->all().size();
     bool previous = checking_constant;
     checking_constant = true;
-    auto initializer_type = check_expression(declaration->initializer.get());
+    auto initializer_type = check_expression(declaration->initializer.get(),
+                                             resolve_core_type(declared_type->to_string()));
     checking_constant = previous;
     if (!initializer_type || diagnostics_->all().size() != errors_before)
         return;
@@ -43,22 +41,6 @@ void Sema::check_constant(const VariableDeclaration *declaration) {
 }
 
 std::shared_ptr<Type> Sema::check_constant_expression(const Expression *expression) {
-    if (const auto *integer = dynamic_cast<const IntegerLiteral *>(expression)) {
-        if (integer->value < std::numeric_limits<int32_t>::min() ||
-            integer->value > std::numeric_limits<int32_t>::max()) {
-            log_error("Integer constant is out of range for i32 (contextual literals: SPEC-013)");
-            return nullptr;
-        }
-        return get_builtin_type("i32");
-    }
-    if (const auto *floating = dynamic_cast<const FloatLiteral *>(expression)) {
-        if (!std::isfinite(floating->value) ||
-            std::abs(floating->value) > std::numeric_limits<float>::max()) {
-            log_error("Floating constant is out of range for f32");
-            return nullptr;
-        }
-        return get_builtin_type("f32");
-    }
     if (dynamic_cast<const BooleanLiteral *>(expression))
         return get_builtin_type("bool");
     if (const auto *identifier = dynamic_cast<const Identifier *>(expression)) {
@@ -76,19 +58,18 @@ std::shared_ptr<Type> Sema::check_constant_expression(const Expression *expressi
         return symbol->type;
     }
     if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expression)) {
-        auto operand = check_expression(prefix->right.get());
+        auto operand = check_expression(prefix->right.get(), expected_type);
         if (!operand)
             return nullptr;
-        auto name = operand->to_string();
-        if ((prefix->op == "!" && name == "bool") ||
-            (prefix->op == "-" && (name == "i32" || name == "f32")))
+        auto core = resolve_core_type(operand->to_string()).value();
+        const auto &info = core_type_info(core);
+        if ((prefix->op == "!" && core == CoreType::Bool) || (prefix->op == "-" && info.is_signed))
             return operand;
         log_error("Invalid unary operator in constant expression");
         return nullptr;
     }
     if (const auto *binary = dynamic_cast<const InfixExpression *>(expression)) {
-        auto left = check_expression(binary->left.get());
-        auto right = check_expression(binary->right.get());
+        auto [left, right] = check_binary_operands(binary);
         if (!left || !right)
             return nullptr;
         if (!left->equals(*right)) {
@@ -96,14 +77,15 @@ std::shared_ptr<Type> Sema::check_constant_expression(const Expression *expressi
             return nullptr;
         }
         const auto &op = binary->op;
-        auto name = left->to_string();
-        bool boolean = name == "bool";
-        bool numeric = name == "i32" || name == "f32";
+        auto core = resolve_core_type(left->to_string()).value();
+        const auto &info = core_type_info(core);
+        bool boolean = core == CoreType::Bool;
+        bool numeric = info.is_integer || core == CoreType::F32 || core == CoreType::F64;
         if (op == "==" || op == "!=" || (boolean && (op == "&&" || op == "||")) ||
             (numeric && (op == "<" || op == ">" || op == "<=" || op == ">=")))
             return get_builtin_type("bool");
         if ((numeric && (op == "+" || op == "-" || op == "*" || op == "/")) ||
-            (name == "i32" && op == "%"))
+            (info.is_integer && op == "%"))
             return left;
         log_error("Invalid binary operator in constant expression");
         return nullptr;
@@ -115,40 +97,28 @@ std::shared_ptr<Type> Sema::check_constant_expression(const Expression *expressi
 std::optional<ConstantValue> Sema::evaluate_constant(const Expression *expression) {
     DiagnosticScope location(current_span, expression->span);
     auto type = recording->types.at(expression);
-    if (const auto *integer = dynamic_cast<const IntegerLiteral *>(expression))
-        return ConstantValue{type, integer->value};
-    if (const auto *floating = dynamic_cast<const FloatLiteral *>(expression))
-        return ConstantValue{type, static_cast<double>(static_cast<float>(floating->value))};
+    if (auto found = recording->literals.find(expression); found != recording->literals.end())
+        return found->second;
     if (const auto *boolean = dynamic_cast<const BooleanLiteral *>(expression))
         return ConstantValue{type, boolean->value};
     if (const auto *identifier = dynamic_cast<const Identifier *>(expression))
         return recording->constants.at(recording->bindings.at(identifier));
-
-    auto integer_result = [&](int64_t value) -> std::optional<ConstantValue> {
-        if (value < std::numeric_limits<int32_t>::min() ||
-            value > std::numeric_limits<int32_t>::max()) {
-            log_error("Integer overflow in constant expression");
-            return std::nullopt;
-        }
-        return ConstantValue{type, value};
-    };
-    auto float_result = [&](double value) -> std::optional<ConstantValue> {
-        float rounded = static_cast<float>(value);
-        if (!std::isfinite(rounded)) {
-            log_error("Non-finite result in constant expression");
-            return std::nullopt;
-        }
-        return ConstantValue{type, static_cast<double>(rounded)};
-    };
     if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expression)) {
         auto operand = evaluate_constant(prefix->right.get());
         if (!operand)
             return std::nullopt;
         if (prefix->op == "!")
             return ConstantValue{type, !std::get<bool>(operand->value)};
-        if (type == CoreType::F32)
-            return float_result(-std::get<double>(operand->value));
-        return integer_result(-std::get<int64_t>(operand->value));
+        if (auto *floating = std::get_if<llvm::APFloat>(&operand->value)) {
+            floating->changeSign();
+            return operand;
+        }
+        auto value = std::get<llvm::APInt>(operand->value);
+        if (value.isMinSignedValue()) {
+            log_error("Integer overflow in constant expression");
+            return std::nullopt;
+        }
+        return ConstantValue{type, -value};
     }
     const auto *binary = dynamic_cast<const InfixExpression *>(expression);
     if (!binary) {
@@ -176,60 +146,85 @@ std::optional<ConstantValue> Sema::evaluate_constant(const Expression *expressio
             return ConstantValue{type, a && b};
         if (op == "||")
             return ConstantValue{type, a || b};
-    } else {
-        // All supported integer operands are i32. Widening to i64 makes every
-        // intermediate arithmetic operation safe before the explicit range check.
-        auto numeric = [&](auto a, auto b) -> std::optional<ConstantValue> {
-            if (op == "==")
-                return ConstantValue{type, a == b};
-            if (op == "!=")
-                return ConstantValue{type, a != b};
-            if (op == "<")
-                return ConstantValue{type, a < b};
-            if (op == ">")
-                return ConstantValue{type, a > b};
-            if (op == "<=")
-                return ConstantValue{type, a <= b};
-            if (op == ">=")
-                return ConstantValue{type, a >= b};
-            if ((op == "/" || op == "%") && b == 0) {
-                log_error("Division or remainder by zero in constant expression");
-                return std::nullopt;
-            }
-            if constexpr (std::is_integral_v<decltype(a)>) {
-                if (op == "+")
-                    return integer_result(a + b);
-                if (op == "-")
-                    return integer_result(a - b);
-                if (op == "*")
-                    return integer_result(a * b);
-                if (op == "/")
-                    return integer_result(a / b);
-                if (op == "%") {
-                    // The quotient must be representable even when the remainder is zero.
-                    if (!integer_result(a / b))
-                        return std::nullopt;
-                    return integer_result(a % b);
-                }
-            } else {
-                if (op == "+")
-                    return float_result(a + b);
-                if (op == "-")
-                    return float_result(a - b);
-                if (op == "*")
-                    return float_result(a * b);
-                if (op == "/")
-                    return float_result(a / b);
-            }
+    } else if (core_type_info(left->type).is_integer) {
+        auto a = std::get<llvm::APInt>(left->value), b = std::get<llvm::APInt>(right->value);
+        bool signed_type = core_type_info(left->type).is_signed;
+        bool less = signed_type ? a.slt(b) : a.ult(b);
+        bool greater = signed_type ? a.sgt(b) : a.ugt(b);
+        if (op == "==")
+            return ConstantValue{type, a == b};
+        if (op == "!=")
+            return ConstantValue{type, a != b};
+        if (op == "<")
+            return ConstantValue{type, less};
+        if (op == ">")
+            return ConstantValue{type, greater};
+        if (op == "<=")
+            return ConstantValue{type, !greater};
+        if (op == ">=")
+            return ConstantValue{type, !less};
+        if ((op == "/" || op == "%") && b.isZero()) {
+            log_error("Division or remainder by zero in constant expression");
             return std::nullopt;
-        };
-        auto result =
-            left->type == CoreType::F32
-                ? numeric(static_cast<float>(std::get<double>(left->value)),
-                          static_cast<float>(std::get<double>(right->value)))
-                : numeric(std::get<int64_t>(left->value), std::get<int64_t>(right->value));
-        if (result || diagnostics_->has_errors())
-            return result;
+        }
+        bool overflow = false;
+        llvm::APInt result(a.getBitWidth(), 0);
+        if (op == "+")
+            result = signed_type ? a.sadd_ov(b, overflow) : a.uadd_ov(b, overflow);
+        else if (op == "-")
+            result = signed_type ? a.ssub_ov(b, overflow) : a.usub_ov(b, overflow);
+        else if (op == "*")
+            result = signed_type ? a.smul_ov(b, overflow) : a.umul_ov(b, overflow);
+        else if (op == "/")
+            result = signed_type ? a.sdiv_ov(b, overflow) : a.udiv(b);
+        else if (op == "%") {
+            overflow = signed_type && a.isMinSignedValue() && b.isAllOnes();
+            if (!overflow)
+                result = signed_type ? a.srem(b) : a.urem(b);
+        } else {
+            log_error("Unsupported constant operation");
+            return std::nullopt;
+        }
+        if (overflow) {
+            log_error("Integer overflow in constant expression");
+            return std::nullopt;
+        }
+        return ConstantValue{type, std::move(result)};
+    } else {
+        auto a = std::get<llvm::APFloat>(left->value), b = std::get<llvm::APFloat>(right->value);
+        if (op == "==")
+            return ConstantValue{type, a == b};
+        if (op == "!=")
+            return ConstantValue{type, a != b};
+        if (op == "<")
+            return ConstantValue{type, a < b};
+        if (op == ">")
+            return ConstantValue{type, a > b};
+        if (op == "<=")
+            return ConstantValue{type, a <= b};
+        if (op == ">=")
+            return ConstantValue{type, a >= b};
+        if (op == "/" && b.isZero()) {
+            log_error("Division or remainder by zero in constant expression");
+            return std::nullopt;
+        }
+        if (op == "+")
+            a.add(b, llvm::APFloat::rmNearestTiesToEven);
+        else if (op == "-")
+            a.subtract(b, llvm::APFloat::rmNearestTiesToEven);
+        else if (op == "*")
+            a.multiply(b, llvm::APFloat::rmNearestTiesToEven);
+        else if (op == "/")
+            a.divide(b, llvm::APFloat::rmNearestTiesToEven);
+        else {
+            log_error("Unsupported constant operation");
+            return std::nullopt;
+        }
+        if (!a.isFinite()) {
+            log_error("Non-finite result in constant expression");
+            return std::nullopt;
+        }
+        return ConstantValue{type, std::move(a)};
     }
     log_error("Unsupported constant operation");
     return std::nullopt;

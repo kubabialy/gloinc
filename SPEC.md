@@ -240,11 +240,59 @@ overflow and division/remainder by zero are compile-time errors. Dividing or
 reducing the signed minimum modulo `-1` is overflow. Floating
 operations round to their resolved width at each operation; non-finite results
 and division by zero are errors. Values, including negative zero, are retained
-in the checked program and materialized at uses by codegen. Until SPEC-013
-implements contextual literal typing and conversions, literal-based constants
-use the existing `i32`, `f32`, and `bool` types (including `int = i32`); other
-numeric annotations receive a type error rather than an implicit conversion.
+in the checked program and materialized at uses by codegen. SPEC-013 supplies
+contextual literal typing for all supported integer and floating widths.
 This does not settle runtime arithmetic failure behavior, which remains SPEC-015.
+
+### Numeric literals and conversions (SPEC-013)
+
+Integer literals denote mathematical magnitudes in decimal, hexadecimal (`0x`
+or `0X`), or binary (`0b` or `0B`), with the same meaning in every base. A leading
+zero does not imply octal. Parsing retains the complete spelling; semantic
+checking converts it only after choosing its type. Invalid suffixes and partially
+consumed spellings are errors. The supported integer types are signed/unsigned
+8, 16, 32, and 64 bits; `int = i32` and `usize = u64` on the selected target.
+128-bit types remain deferred under SPEC-013b.
+
+A declaration, constant, assignment target, function parameter, or return
+annotation provides context for otherwise untyped literals and literal-only
+arithmetic expressions. An already typed operand (a variable, constant, or call)
+anchors the operand type of its arithmetic expression, including when it is on
+the right. For example, `def x: i64 = 40; def y: i64 = 2 + x;` uses i64 operands.
+Different typed operands never promote each other: i32 plus i64 is an error.
+An outer expected type does not convert a typed operand. Comparisons choose
+operand context independently of their boolean result; logical operands remain
+boolean. Parentheses do not change these rules.
+
+Without a numeric context or typed operand, integer literals default to i32 and
+floating literals to f32. Integer spellings require an integer context; decimal
+floating spellings require f32 or f64. Use `1.0` to express a floating value,
+not `1`. Mixed integer/floating expressions and boolean/numeric conversions
+are errors. Declarations still require explicit annotations.
+
+The value of an integer literal must fit its selected type, without truncation
+or wrapping. A unary minus directly applied to a numeric literal forms a signed
+literal: `-128` fits i8 and `-9223372036854775808` fits i64, while their positive
+magnitudes do not. Negative integer literals cannot have an unsigned type,
+including `-0`. The full u64 range through `18446744073709551615` is supported.
+Out-of-range values in any base are errors even in otherwise unused code or
+constants. This rule concerns literals; runtime operator overflow remains
+SPEC-015. Constant arithmetic retains SPEC-012's checked-overflow behavior at
+its resolved width, including unsigned overflow and underflow.
+
+Decimal floats are converted directly to IEEE binary32 or binary64 using
+round-to-nearest, ties-to-even, without first rounding through a host double.
+Inexact finite rounding and representable subnormals are accepted. Overflow,
+non-finite values, and a nonzero literal rounding to zero are errors. Zero,
+including negative zero, is preserved. Constant floating arithmetic rounds at
+each operation to the same resolved width; finite underflow during arithmetic
+may round to zero, as distinct from loss of a nonzero literal at conversion.
+
+The first release has no numeric cast syntax. Function-like casts (`i32(x)`),
+`as` casts, implicit widening/narrowing of typed values, signedness conversion,
+and integer/float conversion are rejected. No cast silently truncates, wraps,
+saturates, or reinterprets bits. Explicit conversion facilities require a future
+specification decision; the fixed first-release feature list is unchanged.
 
 ### Built-in type spellings
 

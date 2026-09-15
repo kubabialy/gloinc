@@ -20,7 +20,7 @@ these API restrictions. `compile_source` uses this path exclusively.
 
 ## Types and declarations
 
-[checked_program.h](../src/checked_program.h) defines canonical `CoreType` IDs for
+[numeric.h](../src/numeric.h) defines canonical `CoreType` IDs for
 `void`, `bool`, signed/unsigned 8/16/32/64-bit integers, and `f32`/`f64`. The type
 descriptor records storage width, integer category, and signedness. `bool` has
 its own identity. MLIR stores signed and unsigned language integers in signless
@@ -87,16 +87,51 @@ Top-level constants are evaluated in source order after function collection and
 before bodies. Local constants obey lexical scope. The frontend evaluator in
 [sema_constants.cpp](../src/sema_constants.cpp) type checks pure expressions, then
 evaluates them with overflow/zero-divisor checks and boolean short-circuiting.
-The checked program owns folded values (`i32`, `f32`, or `bool` with current
-literal defaults) keyed by constant declaration ID. Floating values retain the
-rounded f32 value and signed zero. Codegen emits a constant at each use; it emits
+The checked program owns folded values of every supported scalar type keyed by
+constant declaration ID. Integer values use LLVM `APInt` at their resolved width;
+floating values use `APFloat` with binary32/binary64 semantics, preserving rounded
+values and signed zero. Codegen emits a constant at each use; it emits
 no initializer expression or runtime storage for a constant declaration.
 
 Runtime calls and runtime bindings are forbidden in constant expressions.
-Forward constant dependencies fail explicitly. Contextual literal types and
-conversions remain SPEC-013; complete runtime operator behavior remains SPEC-015.
+Forward constant dependencies fail explicitly. SPEC-013 provides contextual
+literal typing; complete runtime operator behavior remains SPEC-015.
 The normative rules are in
 [SPEC.md](../SPEC.md#variables-constants-and-initialization-spec-012).
+
+## Numeric values (SPEC-013)
+
+Numeric AST nodes own their spellings, with no host integer/double approximation.
+Sema supplies context from declarations, assignment targets, parameters, returns,
+and typed arithmetic operands. Typed operands determine the common operand type;
+they are never implicitly widened or narrowed. Literal-only arithmetic receives
+its enclosing numeric context. Unconstrained integers/floats default to i32/f32.
+Integer and floating spellings retain separate categories. The first release
+rejects numeric casts and conversions between already typed values.
+
+[numeric.cpp](../src/numeric.cpp) validates complete spellings and ranges before
+constructing resolved values. Integer magnitudes cover all of u64. A minus
+applied directly to a literal is checked as a signed literal, allowing the signed
+minimum without first forcing its positive magnitude into a signed type. The
+literal table records that combined expression; its magnitude child is syntax,
+not a separately generated positive value.
+
+Decimal floats convert directly to their selected IEEE format using nearest,
+ties-to-even rounding. Finite subnormals and inexact rounding are accepted;
+overflow and nonzero literals rounding to zero fail. Constant arithmetic uses
+APInt overflow checks and APFloat operations at the resolved width, preserving
+SPEC-012's arithmetic-error and short-circuit rules.
+
+The checked program owns a separate table of resolved literal values. Codegen
+emits these exact APInt/APFloat attributes and never reparses checked source or
+converts it through host numeric types. The explicit unchecked backend uses the
+same conversion helper with its historical default literal types; it does not
+establish contextual typing. The frontend links the already-required shared LLVM
+library for these value classes and still has no MLIR dependency.
+
+These rules are normative in
+[SPEC.md](../SPEC.md#numeric-literals-and-conversions-spec-013). General runtime
+unary/binary operator semantics and return-path checking remain later tasks.
 
 ## Ownership
 
@@ -124,9 +159,9 @@ feature assertions and known failures. Synthetic runtime declarations and legacy
 aggregate registries are initialized only on this unchecked path.
 
 This contract does not complete semantic checking. The `for` initializer scope
-and loop lowering remain SPEC-017. Literal defaults remain
-`i32`/`f32`; contextual typing, ranges, and conversions remain SPEC-013. Return-path
-analysis and entry-point validation remain SPEC-014. Codegen now rejects explicit
+and loop lowering remain SPEC-017. Context-free literal defaults are `i32`/`f32`;
+typed contexts select the other supported widths. Return-path analysis and
+entry-point validation remain SPEC-014. Codegen now rejects explicit
 return/signature mismatches, but that is not a replacement for return analysis.
 
 Runtime floating arithmetic and unsigned division/ordering are explicitly rejected by

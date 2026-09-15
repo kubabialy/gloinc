@@ -52,7 +52,7 @@ TEST(VariablesTest, InvalidTargetsFailBeforeCodegen) {
     auto *function = dynamic_cast<FunctionDefinition *>(parsed.program.front().get());
     auto *statement = dynamic_cast<ExpressionStatement *>(function->body->statements.back().get());
     auto *assignment = dynamic_cast<AssignmentExpression *>(statement->expression.get());
-    assignment->left = std::make_unique<IntegerLiteral>(1, "1");
+    assignment->left = std::make_unique<IntegerLiteral>("1");
     Sema sema;
     EXPECT_EQ(sema.check_for_codegen(std::move(parsed.program)), nullptr);
     EXPECT_TRUE(sema.has_error());
@@ -60,7 +60,7 @@ TEST(VariablesTest, InvalidTargetsFailBeforeCodegen) {
 
 TEST(VariablesTest, BindingTypesAreRequiredAndStoresMustMatch) {
     rejects("def f() -> void { def mut x = 1; }", "type", DiagnosticStage::Parsing);
-    rejects("def f() -> void { def mut n: i8 = 3.14; }", "Type mismatch in variable declaration");
+    rejects("def f() -> void { def mut n: i8 = 3.14; }", "Floating literal requires f32 or f64");
     rejects("def f() -> void { def mut n: i32; n = true; }", "Type mismatch in assignment");
     rejects("def f(x: u32) -> void { def mut n: i32 = x; }",
             "Type mismatch in variable declaration");
@@ -152,7 +152,7 @@ TEST(VariablesTest, ConstantsRequireTypesInitializersAndImmutability) {
     rejects("def const X = 1;", "type", DiagnosticStage::Parsing);
     rejects("def const mut X: i32 = 1;", "cannot be combined", DiagnosticStage::Parsing);
     rejects("def const X: i32 = true;", "Type mismatch in constant declaration");
-    rejects("def const X: i64 = 1;", "Type mismatch in constant declaration");
+    verifies("def const X: i64 = 1; def f() -> i64 { return X; }");
     rejects("def const X: i32 = 1; def f() -> void { X = 2; }",
             "Cannot assign to immutable variable 'X'");
     rejects("def f() -> void { def const X: i32 = 1; X = 2; }",
@@ -187,9 +187,9 @@ TEST(VariablesTest, ConstantDependenciesFollowLexicalOrderAndShareNamespace) {
 }
 
 TEST(VariablesTest, ConstantOperatorsRejectInvalidTypes) {
-    for (const std::string expression :
-         {"true + false", "1 && 2", "1.0 % 2.0", "!1", "-true", "1 + true"})
+    for (const std::string expression : {"true + false", "1 && 2", "!1", "-true", "1 + true"})
         rejects("def const X: i32 = " + expression + ";", "constant expression");
+    rejects("def const X: f32 = 1.0 % 2.0;", "Invalid binary operator in constant expression");
     verifies(
         "def const X: bool = !(1 < 2) || (3 >= 3 && true != false); def f() -> bool { return X; }");
 }

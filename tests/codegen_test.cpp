@@ -21,14 +21,14 @@ TEST(CodeGenTest, GenerateComplexFunction) {
         true, // mut
         std::make_unique<Identifier>("x"),
         std::make_unique<Identifier>("i32"),
-        std::make_unique<IntegerLiteral>(10, "10")
+        std::make_unique<IntegerLiteral>("10")
     ));
     
     // if x < 20 { x = x + 1; }
     auto cond = std::make_unique<InfixExpression>(
         std::make_unique<Identifier>("x"),
         "<",
-        std::make_unique<IntegerLiteral>(20, "20")
+        std::make_unique<IntegerLiteral>("20")
     );
     
     auto thenBlock = std::make_unique<BlockStatement>();
@@ -38,7 +38,7 @@ TEST(CodeGenTest, GenerateComplexFunction) {
             std::make_unique<InfixExpression>(
                 std::make_unique<Identifier>("x"),
                 "+",
-                std::make_unique<IntegerLiteral>(1, "1")
+                std::make_unique<IntegerLiteral>("1")
             )
         )
     ));
@@ -84,12 +84,12 @@ TEST(CodeGenTest, GenerateWhileLoop) {
         true, 
         std::make_unique<Identifier>("i"), 
         std::make_unique<Identifier>("i32"), 
-        std::make_unique<IntegerLiteral>(0, "0")
+        std::make_unique<IntegerLiteral>("0")
     ));
     
     // while i < 10 { i = i + 1; }
     auto cond = std::make_unique<InfixExpression>(
-        std::make_unique<Identifier>("i"), "<", std::make_unique<IntegerLiteral>(10, "10")
+        std::make_unique<Identifier>("i"), "<", std::make_unique<IntegerLiteral>("10")
     );
     
     auto loopBody = std::make_unique<BlockStatement>();
@@ -97,7 +97,7 @@ TEST(CodeGenTest, GenerateWhileLoop) {
         std::make_unique<AssignmentExpression>(
             std::make_unique<Identifier>("i"),
             std::make_unique<InfixExpression>(
-                std::make_unique<Identifier>("i"), "+", std::make_unique<IntegerLiteral>(1, "1")
+                std::make_unique<Identifier>("i"), "+", std::make_unique<IntegerLiteral>("1")
             )
         )
     ));
@@ -138,7 +138,7 @@ TEST(CodeGenTest, GenerateImmutableVariable) {
         false, 
         std::make_unique<Identifier>("x"), 
         std::make_unique<Identifier>("i32"), 
-        std::make_unique<IntegerLiteral>(42, "42")
+        std::make_unique<IntegerLiteral>("42")
     ));
     
     body->statements.push_back(std::make_unique<ReturnStatement>(std::make_unique<Identifier>("x")));
@@ -186,8 +186,8 @@ TEST(CodeGenTest, GenerateFunctionCall) {
     std::vector<Parameter> mainParams;
     auto mainBody = std::make_unique<BlockStatement>();
     std::vector<std::unique_ptr<Expression>> args;
-    args.push_back(std::make_unique<IntegerLiteral>(1, "1"));
-    args.push_back(std::make_unique<IntegerLiteral>(2, "2"));
+    args.push_back(std::make_unique<IntegerLiteral>("1"));
+    args.push_back(std::make_unique<IntegerLiteral>("2"));
     
     mainBody->statements.push_back(std::make_unique<ReturnStatement>(
         std::make_unique<CallExpression>(
@@ -239,7 +239,7 @@ TEST(CodeGenTest, GenerateSpawn) {
     
     // run worker(1)
     std::vector<std::unique_ptr<Expression>> args;
-    args.push_back(std::make_unique<IntegerLiteral>(1, "1"));
+    args.push_back(std::make_unique<IntegerLiteral>("1"));
     auto call = std::make_unique<CallExpression>(std::make_unique<Identifier>("worker"), std::move(args));
     auto spawn = std::make_unique<SpawnExpression>(GLOIN_TOKEN_RUN, std::move(call));
     

@@ -73,6 +73,10 @@ scope checking; return analysis and other semantic rules remain in their
 subsequent tasks. SPEC-012 adds definite initialization, typed stores, and
 compile-time constant evaluation. Invalid constant expressions, arithmetic
 failures, forbidden assignments, and uninitialized reads stop before codegen.
+SPEC-013 moves numeric conversion entirely into semantic checking. Literal range,
+underflow, and category errors retain the literal's source span, including unary
+minus for a signed literal. Well-formed oversized spellings parse successfully
+but cannot produce a checked program.
 
 The external E2E harness now uses `compile_source` before verification and tool
 execution. Stage-isolated codegen tests intentionally bypass semantic checking,

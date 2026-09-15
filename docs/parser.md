@@ -5,7 +5,8 @@ requires a successful complete parse before invoking Sema. A source file may
 contain functions and constants. Runtime globals, nested functions, executable
 file-scope statements, and deferred syntax receive parsing diagnostics.
 Sema's checked-program path resolves core type identities and rejects unsupported
-scalar types under SPEC-010; numeric compatibility/conversions remain SPEC-013.
+scalar types under SPEC-010; SPEC-013 checks contextual numeric literals and
+rejects unsupported conversions.
 Parsing a type name does not establish type support.
 
 Core parsing enforces explicit binding/parameter/return annotations, modifier
@@ -44,9 +45,11 @@ claiming that they form a complete source file. Fragment callers must inspect
 suffix helpers remain available for focused tests: variable/function helpers
 start after `def` and modifiers, while the struct helper starts at `struct`.
 
-Numeric spellings are retained in the AST. The current signed 64-bit/double
-conversion reports overflow instead of returning partial data; full unsigned,
-width, contextual typing, and range semantics remain SPEC-013.
+Numeric AST nodes retain the original spelling without converting to a host
+integer or double. Valid lexical spellings, including magnitudes larger than
+u64 and extreme decimal exponents, can parse successfully; Sema selects the
+language type and rejects out-of-range values before codegen. SPEC-013 defines
+full-consumption conversion, contextual types, and signed-literal rules.
 
 ## Deferred syntax tests
 

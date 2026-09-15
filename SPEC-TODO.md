@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-013.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-014.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -98,10 +98,11 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** `1 = 2`, immutable assignment, uninitialized reads, and `def mut n: i8 = 3.14` fail before codegen; valid mutable assignments execute correctly. Constants behave according to the agreed compile-time rules.
   **Verified:** [SPEC.md](SPEC.md#variables-constants-and-initialization-spec-012) defines typed stores, delayed immutable initialization, branch/loop rules, and pure constant expressions. Sema checks initialization by declaration ID and evaluates constants before codegen, with overflow/zero-divisor checks and short-circuiting. Constants have no runtime storage; delayed locals use resolved storage types. All 17 variable tests and 19 E2E tests pass. Serial/parallel suites agree on 214/222 passes and the same eight known failures. Contextual constant/literal types remain SPEC-013; the current constant types are i32/f32/bool. A loop-backedge prerequisite repair supports initialization inside nested branches; full control flow remains SPEC-016.
 
-- [ ] **SPEC-013 — Implement typed numeric literals and conversions.**
+- [x] **SPEC-013 — Implement typed numeric literals and conversions.**
   Parse decimal/hexadecimal/binary integers with full-consumption and range checks. Support the chosen signed/unsigned widths and floating types without forcing every literal to i32/f32. Define overflow, narrowing, explicit casts, and literal compatibility in SPEC.md.
   **Done when:** `0x2A` and `0b101010` mean 42; oversized literals fail rather than becoming zero; integer and float boundary tests agree across Sema and codegen; allocation and store widths match.
   **SPEC-006 scope:** signed/unsigned 8/16/32/64-bit integers and f32/f64, with exact `int = i32` and target-width `usize` aliases. Define contextual literal typing without inferring declaration types. The 128-bit extension is explicitly deferred under SPEC-013b; unsupported types cannot fall back to i32.
+  **Verified:** [The numeric contract](SPEC.md#numeric-literals-and-conversions-spec-013) defines contextual typing, exact-width ranges, direct IEEE rounding, defaults, and rejection of typed conversions/casts. Parsing retains numeric spellings; Sema resolves literals and constants to APInt/APFloat values consumed directly by codegen. All 12 numeric tests, 24 E2E cases, and eight float-bit execution probes pass. Serial/parallel suites agree on 231/239 passes with the same eight known failures. Runtime arithmetic semantics and complete return checking remain SPEC-014/SPEC-015; the first-release feature list is unchanged.
 
 - [ ] **SPEC-014 — Validate functions, calls, returns, and entry points.**
   Check argument count/types, parameter rules, return values, all reachable return paths, and `main`'s supported signature. Define implicit void return and unreachable-source behavior.
@@ -290,6 +291,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-010 | 2026-09-14 | [checked_program.h](src/checked_program.h) owns the AST and semantic tables with canonical scalar types and stable declaration IDs. Sema is the only constructor; normal codegen accepts only checked programs and produces owned modules. Compile-time API restrictions and **13 passing contract tests** cover primitive signatures/storage, aliases, signedness, annotation errors, ID-based references/calls, ownership, independent runs, targets, and explicit guards for unfinished semantics. Existing backend experiments use the explicit unchecked test entry without weakening assertions. Incremental Debug build succeeds; full serial/parallel runs both report **174/182 passes, the same eight failures as SPEC-009, and no crashes/skips**. All seven E2E tests pass, including aliases and nested shadowing returning 42. [docs/checked-program.md](docs/checked-program.md) defines ownership, API use, and remaining scope. |
 | SPEC-011 | 2026-09-15 | [sema.cpp](src/sema.cpp) collects core function signatures before bodies and [codegen.cpp](src/codegen.cpp) declares MLIR functions before body emission. The normative scope rules cover duplicates, shadowing, initializer visibility, and immutable parameters. All **11 scope tests and 12 E2E tests pass**, including forward calls, direct/mutual recursion, and nested scope restoration. Incremental Debug build succeeds; serial/parallel suites both report **190/198 passes, the same eight known failures, and no crashes/skips**. User-defined types, constants, and for-loop scope remain their deferred/subsequent tasks. |
 | SPEC-012 | 2026-09-15 | [sema.cpp](src/sema.cpp) validates targets, exact initializer/store types, and definite initialization with branch/loop state keyed by declaration ID. [sema_constants.cpp](src/sema_constants.cpp) evaluates pure, lexically ordered constants with checked arithmetic and boolean short-circuiting; codegen materializes folded values and supports delayed immutable storage. All **17 variable tests and 19 E2E tests pass**. Incremental Debug build succeeds; full serial/parallel runs both report **214/222 passes, the same eight known failures, and no crashes/skips**. The normative contract and checked-program documentation record the current i32/f32/bool constant boundary and later numeric/control-flow work. |
+| SPEC-013 | 2026-09-15 | [numeric.cpp](src/numeric.cpp) validates complete literal spellings and exact-width ranges; [sema_numeric.cpp](src/sema_numeric.cpp) supplies contextual types without converting typed operands. Numeric AST nodes preserve spelling; checked literals/constants own APInt/APFloat values emitted directly by codegen. All **12 numeric tests, 24 E2E cases, and eight exact float-bit probes pass**. Incremental Debug build succeeds; full serial/parallel suites report **231/239 passes, the same eight known failures, and no crashes/skips**. Frontend APInt/APFloat uses the existing shared LLVM library with consistent linkage. The spec defines cast rejection and preserves later runtime operator/return work. |
 
 ### SPEC-001 verification
 
@@ -814,3 +816,65 @@ SPEC-013 retains contextual numeric typing and conversions. Runtime arithmetic
 failure behavior, full return/unreachable-source analysis, aggregates, and
 for-loop scope remain their subsequent tasks. No later feature is counted as
 complete by this prerequisite work.
+
+
+### SPEC-013 verification
+
+Rebuilt the existing SPEC-009 Debug directory with AppleClang 16 and LLVM/MLIR
+21.1.6. CMake added the numeric conversion/context implementation and maintained
+numeric test suite. This was an incremental build.
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build \
+  -R '^(NumericTest|VariablesTest|DiagnosticsTest|ScopeTest|CheckedProgramTest|E2ETest)\.' \
+  --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec013-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec013-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+ninja -C /private/tmp/gloinc-spec009-build -t commands gloinc
+otool -L /private/tmp/gloinc-spec009-build/gloinc
+# Build and 97 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **239 tests, 231 passes, eight failures, and no crashes
+or skipped tests**. Failure names match SPEC-012 exactly. Maintained source names
+match discovery without duplicates; all test timeouts remain 30 seconds. Formatter
+checks pass for the new numeric files and formatted semantic, parser, backend,
+and test changes. Existing AST and stage-test formatting was preserved.
+
+Twelve new numeric tests verify every integer width's boundaries, signed minima,
+full u64, decimal/hex/binary equivalence, full consumption, preserved oversized
+parser spellings, contextual types across every supported position, typed operand
+anchors, default types, and explicit rejection of unsupported conversions/casts.
+Variable and constant boundary fixtures inspect exact IR values and verify
+storage/signature widths. Constant arithmetic now checks overflow/underflow at
+all integer widths and uses binary32/binary64 floating arithmetic.
+
+Eight external execution probes compare exact returned float bits using a
+test-only IR adapter. They cover ties-to-even, just-above-tie decimal values that
+would fail with intermediate host-double rounding, smallest subnormals, and
+negative zero in both formats. Each compiled source function passes through the
+checked pipeline; the adapter supplies observation operations without adding
+Gloin floating comparisons or cast syntax. Five new E2E cases execute numeric
+base forms, narrow/wide contexts, signed minima, full u64, resolved-width integer
+constants, and f64 precision/range. Every new execution returns 42.
+
+Numeric AST values no longer carry host integer/double approximations. The
+checked program owns resolved APInt/APFloat literals and constants; codegen
+consumes those values without reparsing. Frontend numerical support links the
+same shared LLVM library already used by the backend. The compiler link command
+contains one shared LLVM, shared MLIR/ExecutionEngine, and no overlapping LLVM
+component archives; dynamic dependencies agree.
+
+The spec decisions precede the implementation: literal-only expressions receive
+context; typed operands retain their types; context-free defaults remain i32/f32;
+integer and float categories stay separate. Floating literals permit finite
+rounding/subnormals but reject nonzero values rounding to zero. Cast syntax and
+typed widening/narrowing remain unsupported under the fixed first-release
+feature list. 128-bit types remain deferred under SPEC-013b. Runtime arithmetic
+failure behavior, general operators, full returns/entry points, and remaining
+control flow stay SPEC-014 through SPEC-017.

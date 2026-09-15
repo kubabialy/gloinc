@@ -20,10 +20,9 @@ struct Expression : public Node {
 };
 
 struct IntegerLiteral : public Expression {
-    int64_t value;
     std::string literal; // To keep the original text
     
-    IntegerLiteral(int64_t v, std::string l) : value(v), literal(std::move(l)) {}
+    explicit IntegerLiteral(std::string l) : literal(std::move(l)) {}
     
     std::string to_string() const override {
         return literal;
@@ -31,10 +30,9 @@ struct IntegerLiteral : public Expression {
 };
 
 struct FloatLiteral : public Expression {
-    double value;
     std::string literal;
     
-    FloatLiteral(double v, std::string l) : value(v), literal(std::move(l)) {}
+    explicit FloatLiteral(std::string l) : literal(std::move(l)) {}
     
     std::string to_string() const override {
         return literal;

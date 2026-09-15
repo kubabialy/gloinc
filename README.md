@@ -14,11 +14,11 @@ It cannot yet compile or run the programs under `examples/`.
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
-| External execution tests | Nineteen programs pass through external MLIR tools, including recursion, delayed initialization, branch/loop state, and folded constants. |
-| Full test suite | 222 tests discovered; local serial/parallel runs both have 214 passes, 8 failures, no crashes. |
+| External execution tests | 24 E2E cases plus eight exact float-bit probes pass through external MLIR tools, including full-width literals and constants. |
+| Full test suite | 239 tests discovered; local serial/parallel runs both have 231 passes, 8 failures, no crashes. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
-| Semantic analysis | Resolved types/scopes, typed stores, definite initialization, and pure constant evaluation are verified. Contextual numeric typing, return analysis, and for-loop scope remain open. |
+| Semantic analysis | Resolved types/scopes, definite initialization, contextual numeric literals, and constants at all scalar widths are verified. Full return/operator semantics and for-loop scope remain open. |
 | Generics | Four IR-string checks pass; generic execution is not established. |
 | JIT | Smoke test fails on missing builtin LLVM translation registration. |
 | CLI, imports, for-loops, concurrency | Incomplete: SPEC-017, SPEC-020, SPEC-023/029/030, SPEC-040/041. |
@@ -74,7 +74,8 @@ runs the lexer demo. Passing it a filename does not verify that program.
 
 ## Architecture and next milestones
 
-`gloin_frontend` contains the lexer, parser, AST interfaces, and semantic analysis.
+`gloin_frontend` contains the lexer, parser, AST interfaces, and semantic analysis;
+it uses shared LLVM for resolved integer and floating values.
 `gloin_backend` contains codegen, the Gloin dialect, and the JIT runner. Both
 executables link these libraries. Tests drive compiler stages directly;
 connecting them through a file-reading CLI remains SPEC-020.

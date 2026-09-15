@@ -120,26 +120,12 @@ bool GloinParser::generic_literal_ahead() const {
 std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
     switch (current_token.type) {
     case GLOIN_TOKEN_NUMBER: {
-        // Keep the spelling for checked width/sign conversion in SPEC-013.
-        std::string spelling(current_token.literal);
-        int base = 10;
-        size_t prefix = 0;
-        if (spelling.starts_with("0x") || spelling.starts_with("0X")) {
-            base = 16;
-            prefix = 2;
-        }
-        if (spelling.starts_with("0b") || spelling.starts_with("0B")) {
-            base = 2;
-            prefix = 2;
-        }
-        auto node = located_node<IntegerLiteral>(std::stoll(spelling.substr(prefix), nullptr, base),
-                                                 spelling);
+        auto node = located_node<IntegerLiteral>(std::string(current_token.literal));
         advance_token();
         return node;
     }
     case GLOIN_TOKEN_FLOAT: {
-        auto node = located_node<FloatLiteral>(std::stod(std::string(current_token.literal)),
-                                               std::string(current_token.literal));
+        auto node = located_node<FloatLiteral>(std::string(current_token.literal));
         advance_token();
         return node;
     }

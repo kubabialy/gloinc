@@ -612,14 +612,27 @@ mlir::Value CodeGen::gen_expression(const Expression *expr, bool allow_void) {
 }
 
 mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
+    if (checked_data) {
+        auto literal = checked_data->literals.find(expr);
+        if (literal != checked_data->literals.end())
+            return emit_constant(literal->second);
+    }
     if (auto *int_lit = dynamic_cast<const IntegerLiteral *>(expr)) {
-        unsigned bits =
-            checked_data ? llvm::cast<mlir::IntegerType>(checked_type(expr)).getWidth() : 32;
-        return builder.create<mlir::arith::ConstantIntOp>(location(), int_lit->value, bits);
+        if (checked_data)
+            fail("Missing checked integer literal");
+        std::string error;
+        auto value = parse_numeric_literal(int_lit->literal, false, CoreType::I32, false, error);
+        if (!value)
+            fail(error);
+        return emit_constant(*value);
     } else if (auto *float_lit = dynamic_cast<const FloatLiteral *>(expr)) {
-        auto floatType = checked_data ? checked_type(expr) : builder.getF32Type();
-        auto floatAttr = builder.getFloatAttr(floatType, float_lit->value);
-        return builder.create<mlir::arith::ConstantOp>(location(), floatType, floatAttr);
+        if (checked_data)
+            fail("Missing checked floating literal");
+        std::string error;
+        auto value = parse_numeric_literal(float_lit->literal, true, CoreType::F32, false, error);
+        if (!value)
+            fail(error);
+        return emit_constant(*value);
     } else if (auto *bool_lit = dynamic_cast<const BooleanLiteral *>(expr)) {
         return builder.create<mlir::arith::ConstantIntOp>(location(), bool_lit->value ? 1 : 0, 1);
     } else if (auto *str_lit = dynamic_cast<const StringLiteral *>(expr)) {
@@ -1415,11 +1428,11 @@ CodeGen::SymbolInfo CodeGen::lookup_binding(const Identifier *name) {
 
 mlir::Value CodeGen::emit_constant(const ConstantValue &constant) {
     auto type = lower_type(constant.type);
-    if (auto integer = std::get_if<int64_t>(&constant.value))
-        return builder.create<mlir::arith::ConstantIntOp>(location(), *integer,
-                                                          core_type_info(constant.type).bits);
+    if (auto integer = std::get_if<llvm::APInt>(&constant.value))
+        return builder.create<mlir::arith::ConstantOp>(location(), type,
+                                                       builder.getIntegerAttr(type, *integer));
     if (auto boolean = std::get_if<bool>(&constant.value))
         return builder.create<mlir::arith::ConstantIntOp>(location(), *boolean ? 1 : 0, 1);
     return builder.create<mlir::arith::ConstantOp>(
-        location(), type, builder.getFloatAttr(type, std::get<double>(constant.value)));
+        location(), type, builder.getFloatAttr(type, std::get<llvm::APFloat>(constant.value)));
 }

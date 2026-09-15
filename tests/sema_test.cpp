@@ -39,7 +39,7 @@ TEST(SemaTest, DefinedVariable) {
         false, 
         std::make_unique<Identifier>("x"), 
         std::make_unique<Identifier>("i32"), 
-        std::make_unique<IntegerLiteral>(10, "10")
+        std::make_unique<IntegerLiteral>("10")
     );
     program.push_back(std::move(decl));
     
@@ -85,13 +85,13 @@ TEST(SemaTest, ImmutableAssignment) {
         false, // Not mutable
         std::make_unique<Identifier>("x"), 
         std::make_unique<Identifier>("i32"), 
-        std::make_unique<IntegerLiteral>(10, "10")
+        std::make_unique<IntegerLiteral>("10")
     ));
     
     program.push_back(std::make_unique<ExpressionStatement>(
         std::make_unique<AssignmentExpression>(
             std::make_unique<Identifier>("x"),
-            std::make_unique<IntegerLiteral>(20, "20")
+            std::make_unique<IntegerLiteral>("20")
         )
     ));
     
@@ -113,13 +113,13 @@ TEST(SemaTest, MutableAssignment) {
         true, // Mutable
         std::make_unique<Identifier>("x"), 
         std::make_unique<Identifier>("i32"), 
-        std::make_unique<IntegerLiteral>(10, "10")
+        std::make_unique<IntegerLiteral>("10")
     ));
     
     program.push_back(std::make_unique<ExpressionStatement>(
         std::make_unique<AssignmentExpression>(
             std::make_unique<Identifier>("x"),
-            std::make_unique<IntegerLiteral>(20, "20")
+            std::make_unique<IntegerLiteral>("20")
         )
     ));
     

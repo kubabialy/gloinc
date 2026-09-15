@@ -289,3 +289,64 @@ TEST(E2ETest, ConstantNumericAndBooleanOperationsExecuteFoldedResults) {
     )"),
                   42);
 }
+
+TEST(E2ETest, IntegerLiteralBasesExecuteTheirValues) {
+    for (const std::string spelling : {"42", "042", "0x2A", "0X2a", "0b101010", "0B101010"})
+        expect_result(run_code("def main() -> i32 { return " + spelling + "; }"), 42);
+}
+
+TEST(E2ETest, ContextualIntegerWidthsAndSignedMinimumExecute) {
+    expect_result(run_code(R"(
+        def accept(x: i8) -> i8 { def mut copy: i8; copy = x; return copy; }
+        def wide(x: i64) -> i64 { return (1 + 1) + x; }
+        def main() -> i32 {
+            def value: i8 = -128;
+            if accept(-128) == value {
+                if wide(40) == 42 { return 42; } else { return 1; }
+            } else { return 2; }
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, FullU64AndI64LiteralRangesExecuteWithoutTruncation) {
+    expect_result(run_code(R"(
+        def full(x: usize) -> u64 { return x; }
+        def minimum() -> i64 { return -9223372036854775808; }
+        def main() -> i32 {
+            def mut maximum: u64 = 18446744073709551615;
+            maximum = 0xffffffffffffffff;
+            if full(18446744073709551615) == maximum {
+                if minimum() == -0x8000000000000000 { return 42; } else { return 1; }
+            } else { return 2; }
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, ConstantArithmeticUsesResolvedIntegerWidths) {
+    expect_result(run_code(R"(
+        def const BIG: u64 = 18446744073709551615;
+        def const HALF: u64 = BIG / 2;
+        def const MIN: i64 = -9223372036854775808;
+        def const NEXT: i64 = MIN + 1;
+        def const CHECK: bool = BIG > HALF && NEXT > MIN;
+        def const ANSWER: u8 = 6 * 7;
+        def main() -> i32 {
+            if CHECK { if ANSWER == 42 { return 42; } else { return 1; } }
+            else { return 2; }
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, F64ConstantRangeAndPrecisionAreRetained) {
+    expect_result(run_code(R"(
+        def const BIG: f64 = 1e300;
+        def const HALF: f64 = BIG / 2.0;
+        def const PRECISE: f64 = 16777216.0 + 1.0;
+        def const CHECK: bool = HALF > 1e299 && PRECISE == 16777217.0;
+        def main() -> i32 { if CHECK { return 42; } else { return 0; } }
+    )"),
+                  42);
+}

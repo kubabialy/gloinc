@@ -42,7 +42,7 @@ TEST(CodeGenSpecTest, GeneratePointerOps) {
         true, 
         std::make_unique<Identifier>("x"), 
         std::make_unique<Identifier>("i32"), 
-        std::make_unique<IntegerLiteral>(10, "10")
+        std::make_unique<IntegerLiteral>("10")
     ));
 
     // def ptr: *i32 = &x;

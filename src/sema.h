@@ -153,12 +153,19 @@ class Sema {
 
     // Visit methods
     void check_statement(const Statement *stmt);
-    std::shared_ptr<Type> check_expression(const Expression *expr);
+    std::shared_ptr<Type> check_expression(const Expression *expr,
+                                           std::optional<CoreType> expected = std::nullopt);
 
   private:
     std::optional<SemanticData> recording;
     bool resolving_callee = false;
     bool checking_constant = false;
+    std::optional<CoreType> expected_type;
+    std::optional<CoreType> current_return_type;
+    std::optional<CoreType> numeric_anchor(const Expression *expression);
+    std::shared_ptr<Type> check_numeric_literal(const Expression *expression);
+    std::pair<std::shared_ptr<Type>, std::shared_ptr<Type>>
+    check_binary_operands(const InfixExpression *expression);
     enum class Initialization { Uninitialized, Initialized, MaybeInitialized };
     using InitializationState = std::unordered_map<SymbolId, Initialization>;
     InitializationState initialization;

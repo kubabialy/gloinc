@@ -71,7 +71,7 @@ for timeouts, tool-path overrides, and failure classifications.
 
 | Target | Sources and dependencies |
 | --- | --- |
-| `gloin_frontend` | Static library containing lexer, parser, and semantic analysis; no MLIR dependency. |
+| `gloin_frontend` | Static library containing lexer, parser, and semantic analysis; links shared LLVM for APInt/APFloat numeric values, with no MLIR dependency. |
 | `gloin_backend` | Static library containing codegen, the Gloin dialect, and JIT; links the frontend and shared LLVM/MLIR libraries. |
 | `gloinc` | CLI entry point linked against `gloin_backend`. It remains a lexer demo until SPEC-020. |
 | `gloinc_test` | Test sources linked against the same backend and GoogleTest; present only with `BUILD_TESTING=ON`. |

@@ -217,7 +217,9 @@ void Sema::check_statement(const Statement *stmt) {
 
         // Check initializer
         if (decl->initializer) {
-            auto init_type = check_expression(decl->initializer.get());
+            auto init_type = check_expression(decl->initializer.get(),
+                                              var_type ? resolve_core_type(var_type->to_string())
+                                                       : std::nullopt);
             if (init_type) {
                 if (var_type) {
                     // Type mismatch check
@@ -271,6 +273,7 @@ void Sema::check_statement(const Statement *stmt) {
         // Each body starts with independent control-flow and initialization state.
         falls_through = true;
         loop_depth = 0;
+        current_return_type = resolve_core_type(func_type->return_type->to_string());
         enter_scope();
         // Register parameters in local scope
         for (size_t i = 0; i < func_def->parameters.size(); ++i) {
@@ -294,7 +297,7 @@ void Sema::check_statement(const Statement *stmt) {
 
     } else if (const auto *ret = dynamic_cast<const ReturnStatement *>(stmt)) {
         if (ret->return_value) {
-            check_expression(ret->return_value.get());
+            check_expression(ret->return_value.get(), current_return_type);
             // TODO: Check against function return type
         }
         falls_through = false;
@@ -410,17 +413,12 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
             }
         }
         return sym->type;
-    } else if (const auto *int_lit = dynamic_cast<const IntegerLiteral *>(expr)) {
-        return get_builtin_type("i32"); // Default integer type
-    } else if (dynamic_cast<const FloatLiteral *>(expr)) {
-        return get_builtin_type("f32");
     } else if (const auto *bool_lit = dynamic_cast<const BooleanLiteral *>(expr)) {
         return get_builtin_type("bool");
     } else if (const auto *str_lit = dynamic_cast<const StringLiteral *>(expr)) {
         return get_builtin_type("string");
     } else if (const auto *bin = dynamic_cast<const InfixExpression *>(expr)) {
-        auto left_type = check_expression(bin->left.get());
-        auto right_type = check_expression(bin->right.get());
+        auto [left_type, right_type] = check_binary_operands(bin);
 
         if (!left_type || !right_type)
             return nullptr;
@@ -469,7 +467,8 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         if (!writable)
             log_error("Cannot assign to immutable variable '" + ident->value + "'");
         // A target is a write, not a read. Check the RHS before changing its state.
-        auto right_type = check_expression(assign->right.get());
+        auto right_type =
+            check_expression(assign->right.get(), resolve_core_type(left_type->to_string()));
         if (left_type && right_type && !left_type->equals(*right_type)) {
             log_error("Error: Type mismatch in assignment\n");
         } else if (recording && writable && right_type) {
@@ -527,7 +526,9 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         }
 
         for (size_t i = 0; i < call->arguments.size(); ++i) {
-            auto arg_type = check_expression(call->arguments[i].get());
+            auto arg_type =
+                check_expression(call->arguments[i].get(),
+                                 resolve_core_type(func_type->param_types[i]->to_string()));
             if (!arg_type)
                 return nullptr;
 
@@ -648,8 +649,19 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
     return true;
 }
 
-std::shared_ptr<Type> Sema::check_expression(const Expression *expression) {
-    auto type = check_expression_impl(expression);
+std::shared_ptr<Type> Sema::check_expression(const Expression *expression,
+                                             std::optional<CoreType> expected) {
+    auto previous = expected_type;
+    expected_type = expected;
+    const auto *prefix = dynamic_cast<const PrefixExpression *>(expression);
+    bool numeric_literal = dynamic_cast<const IntegerLiteral *>(expression) ||
+                           dynamic_cast<const FloatLiteral *>(expression) ||
+                           (prefix && prefix->op == "-" &&
+                            (dynamic_cast<const IntegerLiteral *>(prefix->right.get()) ||
+                             dynamic_cast<const FloatLiteral *>(prefix->right.get())));
+    auto type =
+        numeric_literal ? check_numeric_literal(expression) : check_expression_impl(expression);
+    expected_type = previous;
     if (recording && type) {
         DiagnosticScope location(current_span, expression->span);
         if (dynamic_cast<FunctionType *>(type.get())) {
