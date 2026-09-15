@@ -197,7 +197,10 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
         }
         for (const auto &stmt : program) {
             DiagnosticScope source(current_span, stmt ? stmt->span : SourceSpan{});
-            if (!dynamic_cast<const FunctionDefinition *>(stmt.get()) &&
+            bool checked_constant = checked_data &&
+                                    dynamic_cast<const VariableDeclaration *>(stmt.get()) &&
+                                    static_cast<const VariableDeclaration *>(stmt.get())->is_const;
+            if (!checked_constant && !dynamic_cast<const FunctionDefinition *>(stmt.get()) &&
                 !dynamic_cast<const StructDefinition *>(stmt.get()) &&
                 !dynamic_cast<const ImportStatement *>(stmt.get()))
                 fail("Unsupported top-level statement in code generation");
@@ -424,8 +427,12 @@ void CodeGen::gen_statement(const Statement *stmt) {
         }
 
     } else if (auto *var_decl = dynamic_cast<const VariableDeclaration *>(stmt)) {
-        if (var_decl->is_const)
-            fail("Constant evaluation is not implemented (SPEC-012)");
+        if (var_decl->is_const) {
+            if (!checked_data ||
+                !checked_data->constants.contains(checked_binding(var_decl->name.get())))
+                fail("Constants require checked semantic evaluation");
+            return;
+        }
         std::string name = var_decl->name->value;
         mlir::Type type = builder.getI32Type();
         if (var_decl->type) {
@@ -438,7 +445,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
             initVal = gen_expression(var_decl->initializer.get());
         }
 
-        if (var_decl->is_mutable) {
+        if (var_decl->is_mutable || (checked_data && !var_decl->initializer)) {
             auto one = builder.create<mlir::LLVM::ConstantOp>(location(), builder.getI64Type(),
                                                               builder.getI64IntegerAttr(1));
             auto alloca = builder.create<mlir::LLVM::AllocaOp>(
@@ -566,7 +573,10 @@ void CodeGen::gen_statement(const Statement *stmt) {
         builder.setInsertionPointToStart(bodyBlock);
         gen_statement(while_stmt->body.get());
         // If not terminated, branch back to condition
-        if (bodyBlock->empty() || !bodyBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
+        auto *bodyEnd = builder.getBlock();
+        if (bodyEnd->empty() && bodyEnd->hasNoPredecessors()) {
+            bodyEnd->erase();
+        } else if (bodyEnd->empty() || !bodyEnd->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
             builder.create<mlir::cf::BranchOp>(location(), condBlock);
         }
 
@@ -693,6 +703,11 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return gen_address(prefix->right.get());
         }
     } else if (auto *ident = dynamic_cast<const Identifier *>(expr)) {
+        if (checked_data) {
+            auto found = checked_data->constants.find(checked_binding(ident));
+            if (found != checked_data->constants.end())
+                return emit_constant(found->second);
+        }
         auto sym = lookup_binding(ident);
         if (sym.value) {
             if (sym.is_address) {
@@ -1396,4 +1411,15 @@ CodeGen::SymbolInfo CodeGen::lookup_binding(const Identifier *name) {
     if (found == checked_values.end())
         fail("Checked binding has no generated value");
     return found->second;
+}
+
+mlir::Value CodeGen::emit_constant(const ConstantValue &constant) {
+    auto type = lower_type(constant.type);
+    if (auto integer = std::get_if<int64_t>(&constant.value))
+        return builder.create<mlir::arith::ConstantIntOp>(location(), *integer,
+                                                          core_type_info(constant.type).bits);
+    if (auto boolean = std::get_if<bool>(&constant.value))
+        return builder.create<mlir::arith::ConstantIntOp>(location(), *boolean ? 1 : 0, 1);
+    return builder.create<mlir::arith::ConstantOp>(
+        location(), type, builder.getFloatAttr(type, std::get<double>(constant.value)));
 }

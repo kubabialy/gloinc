@@ -194,3 +194,98 @@ TEST(E2ETest, SiblingAndLoopScopesKeepIndependentBindings) {
     )"),
                   42);
 }
+
+TEST(E2ETest, DelayedMutableAndImmutableInitialization) {
+    expect_result(run_code(R"(
+        def main() -> i32 {
+            def x: i32;
+            def mut y: i32;
+            x = 40;
+            y = x;
+            y = y + 2;
+            return y;
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, BranchesInitializeImmutableLocalsOncePerPath) {
+    expect_result(run_code(R"(
+        def choose(flag: bool) -> i32 {
+            def x: i32;
+            if flag { x = 20; } else { x = 22; }
+            return x;
+        }
+        def main() -> i32 { return choose(true) + choose(false); }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, ReturningBranchesDoNotRequireInitialization) {
+    expect_result(run_code(R"(
+        def choose(flag: bool) -> i32 {
+            def x: i32;
+            if flag { return 20; } else { x = 22; }
+            return x;
+        }
+        def main() -> i32 { return choose(true) + choose(false); }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, LoopLocalsInitializeFreshEachIteration) {
+    expect_result(run_code(R"(
+        def main() -> i32 {
+            def mut total: i32 = 0;
+            def mut i: i32 = 0;
+            while i < 3 {
+                def x: i32;
+                if i == 0 { x = 10; } else { x = 16; }
+                total = total + x;
+                i = i + 1;
+            }
+            return total;
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, GlobalAndLocalConstantsFoldWithLexicalShadowing) {
+    expect_result(run_code(R"(
+        def main() -> i32 {
+            def mut total: i32 = BASE;
+            {
+                def const BASE: i32 = BASE * 2;
+                total = total + BASE;
+            }
+            return total + BASE;
+        }
+        def const START: int = 10;
+        def const BASE: i32 = START + 1;
+    )"),
+                  44);
+}
+
+TEST(E2ETest, ConstantBooleanShortCircuitSkipsInvalidArithmetic) {
+    expect_result(run_code(R"(
+        def const SKIP: bool = false && (1 / 0 == 0);
+        def const TAKE: bool = true || (1 / 0 == 0);
+        def main() -> i32 {
+            if SKIP { return 1; }
+            if TAKE { return 42; } else { return 2; }
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, ConstantNumericAndBooleanOperationsExecuteFoldedResults) {
+    expect_result(run_code(R"(
+        def const FRACTION: f32 = (1.5 + 2.5) * 3.0 / 2.0;
+        def const VALID: bool = FRACTION == 6.0 && !(3 > 4) && (-7 % 3 == -1);
+        def const ANSWER: i32 = (100 / 5) + 22;
+        def main() -> i32 {
+            if VALID { return ANSWER; } else { return 0; }
+        }
+    )"),
+                  42);
+}

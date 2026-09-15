@@ -15,9 +15,10 @@ or loop update. [SPEC.md](../SPEC.md#expression-grouping-spec-009) defines opera
 precedence. The canonical core examples parse; their complete semantic and
 execution acceptance remains SPEC-021.
 
-`const` and visibility are preserved in the AST. Constant evaluation remains
-SPEC-012: both Sema and direct codegen reject a constant rather than treating it
-as an ordinary runtime binding. Private is the default; public/private metadata
+`const` and visibility are preserved in the AST. SPEC-012 evaluates pure
+constant expressions in Sema and gives codegen folded values. The unchecked
+backend rejects constants because it has no evaluated semantic data.
+Private is the default; public/private metadata
 does not impose cross-module access restrictions in the single-file core.
 
 ## Token consumption and failure

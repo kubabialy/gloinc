@@ -50,6 +50,7 @@ class CodeGen {
     mlir::ModuleOp generate_impl(const std::vector<std::unique_ptr<Statement>> &program);
     void initialize_unchecked_types();
     mlir::Type lower_type(CoreType type);
+    mlir::Value emit_constant(const ConstantValue &constant);
     mlir::Type checked_type(const Node *node);
     SymbolId checked_binding(const Identifier *name);
     struct GenerationFailure {};

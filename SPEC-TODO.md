@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-012.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-013.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -93,9 +93,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **SPEC-006 scope:** core types come from the predefined registry; user-defined type collection stays deferred with SPEC-024/SPEC-031 through SPEC-034. Constants remain SPEC-012 and `for` initializer scope remains SPEC-017.
   **Verified:** Sema collects core function signatures before bodies and codegen declares MLIR functions before emitting bodies. [The scope contract](SPEC.md#declaration-visibility-and-lexical-scopes-spec-011) defines forward/mutual recursion, duplicate rejection, nearest lexical lookup, initializer visibility, and immutable parameters. All 11 scope tests, 13 checked-program tests, and 12 E2E tests pass. Serial/parallel suites agree on 190/198 passes with the unchanged eight known failures. A small nested-branch continuation repair supports the recursion regression; full control-flow work remains SPEC-016.
 
-- [ ] **SPEC-012 — Enforce variables, constants, mutability, and initialization.**
+- [x] **SPEC-012 — Enforce variables, constants, mutability, and initialization.**
   Require declared types, require constant initializers, validate assignment targets, and enforce mutability. Add definite-initialization checks and reject invalid initializer/store types before lowering. Apply aggregate and pointer rules as those features arrive.
   **Done when:** `1 = 2`, immutable assignment, uninitialized reads, and `def mut n: i8 = 3.14` fail before codegen; valid mutable assignments execute correctly. Constants behave according to the agreed compile-time rules.
+  **Verified:** [SPEC.md](SPEC.md#variables-constants-and-initialization-spec-012) defines typed stores, delayed immutable initialization, branch/loop rules, and pure constant expressions. Sema checks initialization by declaration ID and evaluates constants before codegen, with overflow/zero-divisor checks and short-circuiting. Constants have no runtime storage; delayed locals use resolved storage types. All 17 variable tests and 19 E2E tests pass. Serial/parallel suites agree on 214/222 passes and the same eight known failures. Contextual constant/literal types remain SPEC-013; the current constant types are i32/f32/bool. A loop-backedge prerequisite repair supports initialization inside nested branches; full control flow remains SPEC-016.
 
 - [ ] **SPEC-013 — Implement typed numeric literals and conversions.**
   Parse decimal/hexadecimal/binary integers with full-consumption and range checks. Support the chosen signed/unsigned widths and floating types without forcing every literal to i32/f32. Define overflow, narrowing, explicit casts, and literal compatibility in SPEC.md.
@@ -288,6 +289,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-009 | 2026-09-14 | [parser.cpp](src/parser.cpp) consistently consumes constructs, separates core compilation from deferred syntax tests, fixes precedence and identifier conditions, and requires explicit annotations, canonical modifiers, delimiters, and statement-only assignments. [AST.h](src/AST.h) retains constant/visibility/member metadata; Sema/codegen explicitly reject unevaluated constants pending SPEC-012. First-error parsing discards complete programs and bounds recursive nesting. Fresh Debug build succeeds. All **49 parser, 20 diagnostic, and six E2E tests pass**; serial/parallel suites both report **160/168 passes, the same eight failures as SPEC-008, and no crashes/skips**. Source definitions match discovery and every timeout is 30 seconds. ASan/UBSan checks pass for 20,980 parser probes. The canonical method/field fixture corrections preserve their feature assertions; see [docs/parser.md](docs/parser.md). |
 | SPEC-010 | 2026-09-14 | [checked_program.h](src/checked_program.h) owns the AST and semantic tables with canonical scalar types and stable declaration IDs. Sema is the only constructor; normal codegen accepts only checked programs and produces owned modules. Compile-time API restrictions and **13 passing contract tests** cover primitive signatures/storage, aliases, signedness, annotation errors, ID-based references/calls, ownership, independent runs, targets, and explicit guards for unfinished semantics. Existing backend experiments use the explicit unchecked test entry without weakening assertions. Incremental Debug build succeeds; full serial/parallel runs both report **174/182 passes, the same eight failures as SPEC-009, and no crashes/skips**. All seven E2E tests pass, including aliases and nested shadowing returning 42. [docs/checked-program.md](docs/checked-program.md) defines ownership, API use, and remaining scope. |
 | SPEC-011 | 2026-09-15 | [sema.cpp](src/sema.cpp) collects core function signatures before bodies and [codegen.cpp](src/codegen.cpp) declares MLIR functions before body emission. The normative scope rules cover duplicates, shadowing, initializer visibility, and immutable parameters. All **11 scope tests and 12 E2E tests pass**, including forward calls, direct/mutual recursion, and nested scope restoration. Incremental Debug build succeeds; serial/parallel suites both report **190/198 passes, the same eight known failures, and no crashes/skips**. User-defined types, constants, and for-loop scope remain their deferred/subsequent tasks. |
+| SPEC-012 | 2026-09-15 | [sema.cpp](src/sema.cpp) validates targets, exact initializer/store types, and definite initialization with branch/loop state keyed by declaration ID. [sema_constants.cpp](src/sema_constants.cpp) evaluates pure, lexically ordered constants with checked arithmetic and boolean short-circuiting; codegen materializes folded values and supports delayed immutable storage. All **17 variable tests and 19 E2E tests pass**. Incremental Debug build succeeds; full serial/parallel runs both report **214/222 passes, the same eight known failures, and no crashes/skips**. The normative contract and checked-program documentation record the current i32/f32/bool constant boundary and later numeric/control-flow work. |
 
 ### SPEC-001 verification
 
@@ -755,3 +757,60 @@ with SPEC-024/SPEC-031 through SPEC-034. Constants, definite initialization,
 contextual literals, return analysis, and `for` initializer lifetime remain
 SPEC-012 through SPEC-017 as applicable. The legacy stage-only checker retains
 its experimental aggregate path; it does not certify core programs.
+
+
+### SPEC-012 verification
+
+Rebuilt the existing SPEC-009 Debug directory with AppleClang 16 and LLVM/MLIR
+21.1.6. CMake added the frontend constant evaluator and maintained variable test
+suite. Verification used an incremental build.
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build \
+  -R '^(VariablesTest|DiagnosticsTest|ScopeTest|CheckedProgramTest|E2ETest)\.' \
+  --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec012-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec012-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+# Build and all 80 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **222 tests, 214 passes, eight failures, and no crashes
+or skipped tests**. Failure names match SPEC-011 exactly. Maintained source
+names match CTest discovery without duplicates; all timeouts remain 30 seconds.
+Formatter checks pass for the changed C++ implementation/tests.
+
+The 17 new variable tests check malformed targets, explicit annotations,
+initializer/store compatibility (including signedness), uninitialized reads,
+delayed immutable assignment, returning and nested branch joins, conservative
+loop behavior, shadowed declarations, and verified storage for all core scalar
+types. Assignment targets do not read their old values; the right-hand value
+is checked before the target becomes initialized. Negative cases fail before
+codegen and retain source locations.
+
+Constant tests cover lexical dependencies and duplicate names, runtime
+binding/call rejection, operator type errors, integer overflow and zero
+divisors, short-circuiting, f32 rounding, negative zero, no runtime
+storage/arithmetic, and ownership/state isolation between compiler invocations.
+The existing diagnostic regression now uses a runtime call in a constant
+initializer; unchecked codegen continues to reject unevaluated constants.
+
+Seven new E2E programs verify generated IR, lower with external MLIR tools, and
+assert execution results: delayed initialization, initialization in both branch
+arms, a returning branch, loop-local initialization, global/local constants,
+short-circuited constant arithmetic, and folded numeric/boolean expressions.
+Six return 42; the constant-shadowing program returns 44. The loop-local case
+exposed a missing backedge after a nested branch. Codegen now inspects the
+final loop-body block and removes empty unreachable continuations; SPEC-016's
+full control-flow acceptance remains open.
+
+The constant subset and dependency/initialization rules were recorded in
+SPEC.md before implementation. Current literal-based constants use i32/f32/bool;
+SPEC-013 retains contextual numeric typing and conversions. Runtime arithmetic
+failure behavior, full return/unreachable-source analysis, aggregates, and
+for-loop scope remain their subsequent tasks. No later feature is counted as
+complete by this prerequisite work.

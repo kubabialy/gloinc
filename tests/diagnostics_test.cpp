@@ -281,7 +281,8 @@ TEST(DiagnosticsTest, CorePipelineRejectsDeferredSyntaxBeforeChecking) {
 }
 
 TEST(DiagnosticsTest, ConstantsCannotSilentlyBecomeRuntimeBindings) {
-    const std::string source = "def main() -> i32 { def const X: i32 = 1; return X; }";
+    const std::string source = "def runtime() -> i32 { return 1; } "
+                               "def main() -> i32 { def const X: i32 = runtime(); return X; }";
     mlir::MLIRContext context;
     auto result = compile_source(source, "constant.gloin", context);
     EXPECT_FALSE(result.success());
@@ -289,7 +290,7 @@ TEST(DiagnosticsTest, ConstantsCannotSilentlyBecomeRuntimeBindings) {
     EXPECT_EQ(result.failed_stage, DiagnosticStage::Semantic);
     ASSERT_FALSE(result.diagnostics->all().empty());
     EXPECT_EQ(result.diagnostics->all().front().message,
-              "Constant evaluation is not implemented (SPEC-012)");
+              "Expression is not permitted in a constant initializer");
     GloinParser parser{Lexer(source)};
     auto parsed = parser.parse_checked_program();
     ASSERT_TRUE(parsed.success);
@@ -297,5 +298,5 @@ TEST(DiagnosticsTest, ConstantsCannotSilentlyBecomeRuntimeBindings) {
     EXPECT_FALSE(codegen.generate_unchecked_for_testing(parsed.program));
     ASSERT_FALSE(codegen.diagnostics()->all().empty());
     EXPECT_EQ(codegen.diagnostics()->all().front().message,
-              "Constant evaluation is not implemented (SPEC-012)");
+              "Constants require checked semantic evaluation");
 }

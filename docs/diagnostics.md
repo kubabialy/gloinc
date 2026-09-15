@@ -69,9 +69,10 @@ excessive recursive nesting reports a diagnostic.
 
 SPEC-010 resolves core type and declaration identities once for codegen. This does
 not complete the language checker. SPEC-011 adds function collection and lexical
-scope checking; return analysis, constant evaluation, and other semantic rules
-remain in their subsequent tasks.
-Newly parsed constants fail explicitly in Sema/codegen pending SPEC-012.
+scope checking; return analysis and other semantic rules remain in their
+subsequent tasks. SPEC-012 adds definite initialization, typed stores, and
+compile-time constant evaluation. Invalid constant expressions, arithmetic
+failures, forbidden assignments, and uninitialized reads stop before codegen.
 
 The external E2E harness now uses `compile_source` before verification and tool
 execution. Stage-isolated codegen tests intentionally bypass semantic checking,

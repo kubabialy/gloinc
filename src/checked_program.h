@@ -5,6 +5,7 @@
 #include <array>
 #include <optional>
 #include <unordered_map>
+#include <variant>
 
 // Language identities retain signedness even though MLIR uses signless integer storage.
 enum class CoreType { Void, Bool, I8, I16, I32, I64, U8, U16, U32, U64, F32, F64 };
@@ -50,7 +51,11 @@ inline std::optional<CoreType> resolve_core_type(std::string_view name, TargetIn
 
 using SymbolId = size_t;
 inline constexpr SymbolId invalid_symbol = static_cast<SymbolId>(-1);
-enum class SymbolKind { Variable, Parameter, Function };
+enum class SymbolKind { Variable, Parameter, Function, Constant };
+struct ConstantValue {
+    CoreType type;
+    std::variant<int64_t, double, bool> value;
+};
 struct ResolvedSymbol {
     SymbolId id;
     std::string name;
@@ -62,6 +67,7 @@ struct ResolvedSymbol {
 };
 struct SemanticData {
     TargetInfo target;
+    std::unordered_map<SymbolId, ConstantValue> constants;
     std::unordered_map<const Node *, CoreType> types;
     std::unordered_map<const Identifier *, SymbolId> bindings;
     std::vector<ResolvedSymbol> symbols;

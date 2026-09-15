@@ -73,6 +73,7 @@ add_library(gloin_frontend STATIC
     src/lexer.cpp
     src/parser.cpp
     src/sema.cpp
+    src/sema_constants.cpp
 )
 target_include_directories(gloin_frontend PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(gloin_frontend PUBLIC cxx_std_23)
@@ -139,6 +140,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/diagnostics_test.cpp
         tests/checked_program_test.cpp
         tests/parser_test.cpp
+        tests/variables_test.cpp
         tests/scope_test.cpp
         tests/sema_test.cpp
         tests/mlir_test.cpp

@@ -155,10 +155,9 @@ methods must spell their receiver type, for example `self: *Person`; bare
 added when lowering an explicitly declared receiver.
 
 `def x: i32 = compute();` is an immutable runtime binding. In contrast,
-`def const LIMIT: i32 = 10;` requires a compile-time initializer. SPEC-012
-must specify and check the permitted constant-expression subset; runtime calls
-are not implicitly compile-time evaluable. Local bindings without an
-initializer may only be read after definite initialization (SPEC-012).
+`def const LIMIT: i32 = 10;` requires a compile-time initializer under the
+SPEC-012 rules below. Local bindings without an initializer may only be read
+after definite initialization.
 The core allows functions and constants at file scope; runtime global
 variables, nested functions, and user-defined type aliases are not in scope.
 
@@ -192,6 +191,60 @@ the file, independently of value lookup. Built-in names and aliases cannot be
 redeclared. User-defined types, their declaration collection, and recursive
 aggregate rules remain deferred to SPEC-024 and SPEC-031 through SPEC-034; core compilation
 rejects them explicitly.
+
+### Variables, constants, and initialization (SPEC-012)
+
+Every local binding has an explicit non-void type. An initializer or assignment
+must have exactly that type after type resolution; there is no implicit
+conversion of typed values. An assignment target must be a local variable name
+in the scalar core. Parameters, functions, and constants cannot be assigned.
+Assignment checks the right-hand value before marking the target initialized;
+`def mut x: i32; x = x + 1;` therefore reads an uninitialized variable.
+
+A local without an initializer has no value and cannot be read until every
+path reaching that read has initialized it. Mutable locals can be assigned
+repeatedly. An immutable local can be initialized by assignment only when it
+is uninitialized on every incoming path; it cannot be reassigned, including
+when an earlier assignment occurred on only one possible path. Assignment in
+both arms of an `if` can initialize an immutable local once on each path.
+A branch ending in `return` does not contribute to the state after the `if`.
+Conditions are checked conservatively: literal `true`/`false` do not remove
+paths from initialization analysis.
+
+A `while` may execute zero or multiple times. Its body cannot establish
+initialization after the loop. An immutable local declared outside a loop
+cannot receive its first assignment inside that loop; use a mutable local or
+declare the immutable local inside the body. Body-local declarations start
+fresh on each iteration. Scope shadowing preserves each declaration's own
+initialization state. Full unreachable-source/return-path rules remain SPEC-014.
+
+Constants require an initializer, are immutable, and have no runtime storage.
+Their expression subset consists of scalar literals, previously declared
+constants, parentheses, unary `-`/`!`, numeric `+ - * /` (integer `%`), numeric
+comparisons, scalar equality/inequality, and boolean `&&`/`||`. Operands must
+have compatible, identical types; boolean arithmetic and floating remainder
+are errors. Calls, runtime variables (including immutable ones), parameters,
+assignments, and aggregate/pointer expressions are not constant expressions.
+Both sides of a boolean expression are type checked, but `&&`/`||` evaluate
+their right operand only when needed.
+
+Top-level constants are evaluated in source order before function bodies;
+functions can use any top-level constant regardless of their position. A
+constant initializer can reference only earlier visible constants, so forward
+dependencies and self references without an outer binding are errors. Local
+constants obey the same lexical declaration order and shadowing rules as
+locals. Constants share the value namespace with functions and variables.
+
+Constant arithmetic must be representable in its resolved type. Integer
+overflow and division/remainder by zero are compile-time errors. Dividing or
+reducing the signed minimum modulo `-1` is overflow. Floating
+operations round to their resolved width at each operation; non-finite results
+and division by zero are errors. Values, including negative zero, are retained
+in the checked program and materialized at uses by codegen. Until SPEC-013
+implements contextual literal typing and conversions, literal-based constants
+use the existing `i32`, `f32`, and `bool` types (including `int = i32`); other
+numeric annotations receive a type error rather than an implicit conversion.
+This does not settle runtime arithmetic failure behavior, which remains SPEC-015.
 
 ### Built-in type spellings
 

@@ -68,6 +68,36 @@ type resolver or name lookup and fails on missing semantic data. It also checks
 that emitted value/storage types agree with semantic types. No missing type or
 unresolved expression becomes an `i32` fallback on this path.
 
+## Variables and constants
+
+SPEC-012 checks initializer/store types before codegen and distinguishes reads
+from assignment targets. Initialization state is keyed by declaration ID:
+uninitialized, initialized, or initialized on only some paths. An `if` merges
+only branches that reach its continuation. A `while` includes its zero-iteration
+path, and cannot initialize an outer immutable local because it may repeat.
+Leaving a lexical scope discards its local initialization state. Parameters start
+initialized; a delayed immutable local permits only its first assignment.
+
+Delayed locals use storage with their resolved type. An immutable local with an
+initializer can remain an SSA value. These choices do not grant mutability:
+semantic checking has already rejected every forbidden store or uninitialized
+read. Aggregate addressability and full control-flow validation remain later tasks.
+
+Top-level constants are evaluated in source order after function collection and
+before bodies. Local constants obey lexical scope. The frontend evaluator in
+[sema_constants.cpp](../src/sema_constants.cpp) type checks pure expressions, then
+evaluates them with overflow/zero-divisor checks and boolean short-circuiting.
+The checked program owns folded values (`i32`, `f32`, or `bool` with current
+literal defaults) keyed by constant declaration ID. Floating values retain the
+rounded f32 value and signed zero. Codegen emits a constant at each use; it emits
+no initializer expression or runtime storage for a constant declaration.
+
+Runtime calls and runtime bindings are forbidden in constant expressions.
+Forward constant dependencies fail explicitly. Contextual literal types and
+conversions remain SPEC-013; complete runtime operator behavior remains SPEC-015.
+The normative rules are in
+[SPEC.md](../SPEC.md#variables-constants-and-initialization-spec-012).
+
 ## Ownership
 
 The checked program owns its AST and semantic tables. AST addresses remain stable
@@ -93,14 +123,13 @@ bypass explicit; it is never used by `compile_source`. Tests retain their origin
 feature assertions and known failures. Synthetic runtime declarations and legacy
 aggregate registries are initialized only on this unchecked path.
 
-This contract does not complete semantic checking. Constants and definite
-initialization remain SPEC-012. The `for` initializer scope and loop lowering
-remain SPEC-017. Literal defaults remain
+This contract does not complete semantic checking. The `for` initializer scope
+and loop lowering remain SPEC-017. Literal defaults remain
 `i32`/`f32`; contextual typing, ranges, and conversions remain SPEC-013. Return-path
 analysis and entry-point validation remain SPEC-014. Codegen now rejects explicit
 return/signature mismatches, but that is not a replacement for return analysis.
 
-Floating arithmetic and unsigned division/ordering are explicitly rejected by
+Runtime floating arithmetic and unsigned division/ordering are explicitly rejected by
 checked codegen until SPEC-015 implements the correct operations; they cannot
 accidentally use integer or signed operations. Complete verification/lowering and
 JIT integration remain SPEC-018/SPEC-019. Aggregate and concurrency contracts stay

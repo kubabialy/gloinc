@@ -81,6 +81,8 @@ void Sema::enter_scope() { current_scope = std::make_shared<Scope>(current_scope
 
 void Sema::leave_scope() {
     if (current_scope->parent) {
+        for (const auto &[name, symbol] : current_scope->symbols)
+            initialization.erase(symbol.id);
         current_scope = current_scope->parent;
     }
 }
@@ -90,6 +92,9 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         return false;
     current_scope = std::make_shared<Scope>();
     collected_functions.clear();
+    initialization.clear();
+    falls_through = true;
+    loop_depth = 0;
     // Core types already exist in the registry. Collect every supported signature
     // before visiting any body, so bindings do not depend on declaration order.
     if (recording) {
@@ -99,13 +104,25 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
                     collected_functions.emplace(function, std::move(type));
             }
         }
+        // File constants are evaluated in lexical order before all bodies.
+        for (const auto &stmt : program) {
+            if (const auto *constant = dynamic_cast<const VariableDeclaration *>(stmt.get());
+                constant && constant->is_const)
+                check_constant(constant);
+        }
         if (has_error()) {
+            initialization.clear();
             collected_functions.clear();
             current_scope = std::make_shared<Scope>();
             return false;
         }
     }
     for (const auto &stmt : program) {
+        if (recording) {
+            if (const auto *constant = dynamic_cast<const VariableDeclaration *>(stmt.get());
+                constant && constant->is_const)
+                continue;
+        }
         if (recording && !dynamic_cast<const FunctionDefinition *>(stmt.get()) &&
             !(dynamic_cast<const VariableDeclaration *>(stmt.get()) &&
               static_cast<const VariableDeclaration *>(stmt.get())->is_const)) {
@@ -181,7 +198,7 @@ void Sema::check_statement(const Statement *stmt) {
     }
     if (const auto *decl = dynamic_cast<const VariableDeclaration *>(stmt)) {
         if (decl->is_const) {
-            log_error("Constant evaluation is not implemented (SPEC-012)");
+            check_constant(decl);
             return;
         }
         if (!decl->name || (recording && !decl->type)) {
@@ -227,7 +244,9 @@ void Sema::check_statement(const Statement *stmt) {
         sym.is_mutable = decl->is_mutable;
         sym.type = var_type;
 
-        define_symbol(decl->name.get(), sym, SymbolKind::Variable);
+        if (define_symbol(decl->name.get(), sym, SymbolKind::Variable) && recording)
+            initialization[recording->bindings.at(decl->name.get())] =
+                decl->initializer ? Initialization::Initialized : Initialization::Uninitialized;
 
     } else if (const auto *block = dynamic_cast<const BlockStatement *>(stmt)) {
         enter_scope();
@@ -249,7 +268,9 @@ void Sema::check_statement(const Statement *stmt) {
             if (!func_type)
                 return;
         }
-        // Check body
+        // Each body starts with independent control-flow and initialization state.
+        falls_through = true;
+        loop_depth = 0;
         enter_scope();
         // Register parameters in local scope
         for (size_t i = 0; i < func_def->parameters.size(); ++i) {
@@ -257,7 +278,11 @@ void Sema::check_statement(const Statement *stmt) {
             param_sym.name = func_def->parameters[i].name->value;
             param_sym.type = func_type->param_types[i];
             param_sym.is_mutable = false;
-            define_symbol(func_def->parameters[i].name.get(), param_sym, SymbolKind::Parameter);
+            if (define_symbol(func_def->parameters[i].name.get(), param_sym,
+                              SymbolKind::Parameter) &&
+                recording)
+                initialization[recording->bindings.at(func_def->parameters[i].name.get())] =
+                    Initialization::Initialized;
         }
 
         if (const auto *block = dynamic_cast<const BlockStatement *>(func_def->body.get())) {
@@ -272,23 +297,37 @@ void Sema::check_statement(const Statement *stmt) {
             check_expression(ret->return_value.get());
             // TODO: Check against function return type
         }
+        falls_through = false;
     } else if (const auto *if_stmt = dynamic_cast<const IfStatement *>(stmt)) {
         auto cond_type = check_expression(if_stmt->condition.get());
         if (cond_type && !cond_type->equals(*get_builtin_type("bool"))) {
             DiagnosticScope condition_location(current_span, if_stmt->condition->span);
             log_error("If condition must be bool");
         }
+        auto before = initialization;
+        bool before_reaches = falls_through;
         check_statement(if_stmt->consequence.get());
-        if (if_stmt->alternative) {
+        auto then_state = initialization;
+        bool then_reaches = falls_through;
+        initialization = before;
+        falls_through = before_reaches;
+        if (if_stmt->alternative)
             check_statement(if_stmt->alternative.get());
-        }
+        merge_initialization(before, then_state, then_reaches, initialization, falls_through);
     } else if (const auto *while_stmt = dynamic_cast<const WhileStatement *>(stmt)) {
         auto cond_type = check_expression(while_stmt->condition.get());
         if (cond_type && !cond_type->equals(*get_builtin_type("bool"))) {
             DiagnosticScope condition_location(current_span, while_stmt->condition->span);
             log_error("While condition must be bool");
         }
+        auto before = initialization;
+        bool before_reaches = falls_through;
+        ++loop_depth;
         check_statement(while_stmt->body.get());
+        --loop_depth;
+        // The body may execute zero times. Repeated immutable stores to an outer
+        // declaration are rejected at the assignment, even on the first iteration.
+        merge_initialization(before, before, before_reaches, initialization, falls_through);
     } else if (const auto *expr_stmt = dynamic_cast<const ExpressionStatement *>(stmt)) {
         check_expression(expr_stmt->expression.get());
     } else if (const auto *struct_def = dynamic_cast<const StructDefinition *>(stmt)) {
@@ -354,14 +393,22 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         log_error("Missing expression");
         return nullptr;
     }
+    if (checking_constant)
+        return check_constant_expression(expr);
     if (const auto *ident = dynamic_cast<const Identifier *>(expr)) {
         Symbol *sym = current_scope->resolve(ident->value);
         if (!sym) {
             log_error("Error: Undefined variable '" + ident->value + "'\n");
             return nullptr;
         }
-        if (recording)
+        if (recording) {
             recording->bindings[ident] = sym->id;
+            if ((sym->kind == SymbolKind::Variable || sym->kind == SymbolKind::Parameter) &&
+                initialization.at(sym->id) != Initialization::Initialized) {
+                log_error("Read of uninitialized variable '" + ident->value + "'");
+                return nullptr;
+            }
+        }
         return sym->type;
     } else if (const auto *int_lit = dynamic_cast<const IntegerLiteral *>(expr)) {
         return get_builtin_type("i32"); // Default integer type
@@ -392,22 +439,42 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         return left_type; // For arithmetic
 
     } else if (const auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
-        // Left must be lvalue (identifier for now)
-        // And must be mutable
-        auto left_type = check_expression(assign->left.get());
-        auto right_type = check_expression(assign->right.get());
-
-        if (const auto *ident = dynamic_cast<const Identifier *>(assign->left.get())) {
-            Symbol *sym = current_scope->resolve(ident->value);
-            if (sym && !sym->is_mutable) {
-                log_error("Error: Cannot assign to immutable variable '" + ident->value + "'\n");
-            }
+        const auto *ident = dynamic_cast<const Identifier *>(assign->left.get());
+        if (!ident) {
+            log_error("Assignment target must be a local variable name in the scalar core");
+            return nullptr;
         }
-
+        Symbol *symbol = current_scope->resolve(ident->value);
+        if (!symbol) {
+            DiagnosticScope target_location(current_span, ident->span);
+            log_error("Undefined variable '" + ident->value + "'");
+            return nullptr;
+        }
+        auto left_type = symbol->type;
+        bool writable = true;
+        if (recording) {
+            recording->bindings[ident] = symbol->id;
+            if (symbol->kind != SymbolKind::Variable) {
+                log_error("Cannot assign to immutable variable '" + ident->value + "'");
+                return nullptr;
+            }
+            recording->types[ident] = recording->symbols[symbol->id].type;
+            if (!symbol->is_mutable &&
+                (initialization.at(symbol->id) != Initialization::Uninitialized ||
+                 symbol->loop_depth < loop_depth))
+                writable = false;
+        } else {
+            writable = symbol->is_mutable;
+        }
+        if (!writable)
+            log_error("Cannot assign to immutable variable '" + ident->value + "'");
+        // A target is a write, not a read. Check the RHS before changing its state.
+        auto right_type = check_expression(assign->right.get());
         if (left_type && right_type && !left_type->equals(*right_type)) {
             log_error("Error: Type mismatch in assignment\n");
+        } else if (recording && writable && right_type) {
+            initialization[symbol->id] = Initialization::Initialized;
         }
-
         return left_type;
 
     } else if (const auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
@@ -547,6 +614,8 @@ std::shared_ptr<Type> Sema::resolve_annotation(const Identifier *annotation, boo
 }
 
 bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind) {
+    symbol.kind = kind;
+    symbol.loop_depth = loop_depth;
     DiagnosticScope location(current_span, name->span);
     if (current_scope->symbols.contains(name->value)) {
         log_error("Duplicate declaration '" + name->value + "'");
@@ -593,4 +662,22 @@ std::shared_ptr<Type> Sema::check_expression(const Expression *expression) {
         }
     }
     return type;
+}
+
+void Sema::merge_initialization(const InitializationState &before, const InitializationState &left,
+                                bool left_reaches, const InitializationState &right,
+                                bool right_reaches) {
+    InitializationState merged;
+    for (const auto &[id, state] : before) {
+        auto left_state = left.at(id);
+        auto right_state = right.at(id);
+        if (!left_reaches)
+            merged[id] = right_state;
+        else if (!right_reaches)
+            merged[id] = left_state;
+        else
+            merged[id] = left_state == right_state ? left_state : Initialization::MaybeInitialized;
+    }
+    initialization = std::move(merged);
+    falls_through = left_reaches || right_reaches;
 }

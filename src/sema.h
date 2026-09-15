@@ -121,7 +121,8 @@ struct Symbol {
     std::string name;
     std::shared_ptr<Type> type;
     bool is_mutable = false;
-    // Potentially location info etc.
+    SymbolKind kind = SymbolKind::Variable;
+    unsigned loop_depth = 0;
 };
 
 class Scope {
@@ -157,6 +158,18 @@ class Sema {
   private:
     std::optional<SemanticData> recording;
     bool resolving_callee = false;
+    bool checking_constant = false;
+    enum class Initialization { Uninitialized, Initialized, MaybeInitialized };
+    using InitializationState = std::unordered_map<SymbolId, Initialization>;
+    InitializationState initialization;
+    bool falls_through = true;
+    unsigned loop_depth = 0;
+    void check_constant(const VariableDeclaration *declaration);
+    std::shared_ptr<Type> check_constant_expression(const Expression *expression);
+    std::optional<ConstantValue> evaluate_constant(const Expression *expression);
+    void merge_initialization(const InitializationState &before, const InitializationState &left,
+                              bool left_reaches, const InitializationState &right,
+                              bool right_reaches);
     std::unordered_map<const FunctionDefinition *, std::shared_ptr<FunctionType>>
         collected_functions;
     std::shared_ptr<FunctionType> collect_function(const FunctionDefinition *function);
