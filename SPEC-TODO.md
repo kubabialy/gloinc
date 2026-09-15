@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-011.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-012.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -87,9 +87,11 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 
 ## 3. Make core language semantics and code generation reliable
 
-- [ ] **SPEC-011 — Resolve declarations and scopes before checking bodies.**
+- [x] **SPEC-011 — Resolve declarations and scopes before checking bodies.**
   Collect function/type declarations before use, define duplicate/shadowing rules, and check references with lexical scope. Initialize all symbol properties, including parameter mutability.
   **Done when:** forward calls and recursion work under the chosen rules; duplicate declarations and unresolved names fail consistently; bindings do not leak across scopes or compiler invocations.
+  **SPEC-006 scope:** core types come from the predefined registry; user-defined type collection stays deferred with SPEC-024/SPEC-031 through SPEC-034. Constants remain SPEC-012 and `for` initializer scope remains SPEC-017.
+  **Verified:** Sema collects core function signatures before bodies and codegen declares MLIR functions before emitting bodies. [The scope contract](SPEC.md#declaration-visibility-and-lexical-scopes-spec-011) defines forward/mutual recursion, duplicate rejection, nearest lexical lookup, initializer visibility, and immutable parameters. All 11 scope tests, 13 checked-program tests, and 12 E2E tests pass. Serial/parallel suites agree on 190/198 passes with the unchanged eight known failures. A small nested-branch continuation repair supports the recursion regression; full control-flow work remains SPEC-016.
 
 - [ ] **SPEC-012 — Enforce variables, constants, mutability, and initialization.**
   Require declared types, require constant initializers, validate assignment targets, and enforce mutability. Add definite-initialization checks and reject invalid initializer/store types before lowering. Apply aggregate and pointer rules as those features arrive.
@@ -285,6 +287,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-008 | 2026-09-09 | [lexer.cpp](src/lexer.cpp) uses bounded byte scanning with whole-source UTF-8 validation, exact operator boundaries, reserved keywords, distinct type/literal tokens, and malformed-literal errors. [SPEC.md](SPEC.md#lexical-literal-forms-spec-008) fixes the lexical grammar. Minimal parser changes reject legacy expressions and prevent literals/other keywords from substituting for types. All **34 lexer and 18 diagnostic tests pass**, resolving all seven audited lexer failures without enabling obsolete syntax. Debug rebuild succeeds; full serial/parallel runs both report **137/145 passes, eight failures, no crashes or skipped tests**. Source definitions match discovery and all timeouts remain 30 seconds. ASan/UBSan probes pass for 75,536 inputs. |
 | SPEC-009 | 2026-09-14 | [parser.cpp](src/parser.cpp) consistently consumes constructs, separates core compilation from deferred syntax tests, fixes precedence and identifier conditions, and requires explicit annotations, canonical modifiers, delimiters, and statement-only assignments. [AST.h](src/AST.h) retains constant/visibility/member metadata; Sema/codegen explicitly reject unevaluated constants pending SPEC-012. First-error parsing discards complete programs and bounds recursive nesting. Fresh Debug build succeeds. All **49 parser, 20 diagnostic, and six E2E tests pass**; serial/parallel suites both report **160/168 passes, the same eight failures as SPEC-008, and no crashes/skips**. Source definitions match discovery and every timeout is 30 seconds. ASan/UBSan checks pass for 20,980 parser probes. The canonical method/field fixture corrections preserve their feature assertions; see [docs/parser.md](docs/parser.md). |
 | SPEC-010 | 2026-09-14 | [checked_program.h](src/checked_program.h) owns the AST and semantic tables with canonical scalar types and stable declaration IDs. Sema is the only constructor; normal codegen accepts only checked programs and produces owned modules. Compile-time API restrictions and **13 passing contract tests** cover primitive signatures/storage, aliases, signedness, annotation errors, ID-based references/calls, ownership, independent runs, targets, and explicit guards for unfinished semantics. Existing backend experiments use the explicit unchecked test entry without weakening assertions. Incremental Debug build succeeds; full serial/parallel runs both report **174/182 passes, the same eight failures as SPEC-009, and no crashes/skips**. All seven E2E tests pass, including aliases and nested shadowing returning 42. [docs/checked-program.md](docs/checked-program.md) defines ownership, API use, and remaining scope. |
+| SPEC-011 | 2026-09-15 | [sema.cpp](src/sema.cpp) collects core function signatures before bodies and [codegen.cpp](src/codegen.cpp) declares MLIR functions before body emission. The normative scope rules cover duplicates, shadowing, initializer visibility, and immutable parameters. All **11 scope tests and 12 E2E tests pass**, including forward calls, direct/mutual recursion, and nested scope restoration. Incremental Debug build succeeds; serial/parallel suites both report **190/198 passes, the same eight known failures, and no crashes/skips**. User-defined types, constants, and for-loop scope remain their deferred/subsequent tasks. |
 
 ### SPEC-001 verification
 
@@ -702,3 +705,53 @@ SPEC-012 through SPEC-015. Explicit codegen guards prevent unfinished float,
 unsigned-ordering/division, and return-type behavior from producing the wrong
 operations; they do not mark those later tasks complete. Full IR verification,
 lowering, and JIT remain SPEC-018/SPEC-019.
+
+
+### SPEC-011 verification
+
+Rebuilt the existing SPEC-009 Debug directory with AppleClang 16 and LLVM/MLIR
+21.1.6. CMake reconfigured to include `tests/scope_test.cpp`. This was an
+incremental build, not a fresh-build or hosted-CI claim.
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build \
+  -R '^(ScopeTest|CheckedProgramTest|E2ETest)\.' --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec011-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec011-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+# Build and 36 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **198 tests, 190 passes, eight failures, and no crashes
+or skipped tests**. The failing names match SPEC-010 exactly and remain listed
+in [tests/README.md](tests/README.md). Maintained source definitions (excluding
+commented-out code) match CTest discovery without duplicates; all timeouts remain
+30 seconds. Formatter checks pass for the changed C++ implementation/tests.
+
+Eleven new scope tests check forward signatures with MLIR verification, forward
+argument errors, duplicate and shadowing rules, initializer lookup, isolation of
+block/branch/while/function locals, parameter mutability, collection errors before
+body checking, built-in name protection, and independent compiler invocations.
+Semantic-error cases return no module and retain source locations. Existing
+alias tests now use the function-first ID order without changing their type
+assertions; symbol IDs remain opaque and program-local.
+
+Five new E2E programs verify IR, lower through the external MLIR tools, and assert
+execution results. A forward call chain with a void call returns 42, direct
+recursion returns 21, mutual recursion returns 42, and initializer/shadowing and
+sibling/loop-scope programs return 42. The mutual-recursion test exposed a nested
+`if` continuation defect: codegen inspected branch-entry blocks instead of their
+final blocks. Branch completion now uses the final block and removes empty
+unreachable continuations, covering both nested then/else paths. This prerequisite
+repair does not complete SPEC-016's full control-flow contract.
+
+The selected core has no user-defined types to collect; its type registry is
+available before signatures. Aggregate declaration collection remains deferred
+with SPEC-024/SPEC-031 through SPEC-034. Constants, definite initialization,
+contextual literals, return analysis, and `for` initializer lifetime remain
+SPEC-012 through SPEC-017 as applicable. The legacy stage-only checker retains
+its experimental aggregate path; it does not certify core programs.

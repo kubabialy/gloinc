@@ -162,6 +162,37 @@ initializer may only be read after definite initialization (SPEC-012).
 The core allows functions and constants at file scope; runtime global
 variables, nested functions, and user-defined type aliases are not in scope.
 
+### Declaration visibility and lexical scopes (SPEC-011)
+
+All top-level function signatures are collected before any function body is
+checked. A function can call any function in the same file, including itself
+and functions declared later; mutual recursion is allowed. Visibility modifiers
+do not change lookup within a file. There is no function overloading: a repeated
+top-level name is an error even when its signature differs. Functions and
+constants share the file's value namespace; constant evaluation and its
+dependency rules remain SPEC-012.
+
+Parameters and the outermost function body share one lexical scope. Every
+nested block, including an `if` branch or `while` body, introduces a child scope.
+Two declarations with the same name in one scope are an error, including two
+parameters or a body-local binding that repeats a parameter. A child scope may
+shadow an outer binding or function. Lookup uses the nearest visible declaration;
+calling a local scalar that shadows a function is an error. Parameters are
+immutable, and shadowing does not change the outer declaration's mutability.
+
+Local bindings become visible after their initializer has been checked. An
+initializer such as `def x: i32 = x;` refers to an outer `x`, if one exists;
+otherwise it is an unresolved-name error. Local declarations are not hoisted.
+Leaving a block removes its bindings from lookup; sibling blocks and different
+functions do not share local bindings. Compilation invocations have independent
+declarations. C-style `for` initializer lifetime remains SPEC-017.
+
+Type annotations use the predefined core type registry, available throughout
+the file, independently of value lookup. Built-in names and aliases cannot be
+redeclared. User-defined types, their declaration collection, and recursive
+aggregate rules remain deferred to SPEC-024 and SPEC-031 through SPEC-034; core compilation
+rejects them explicitly.
+
 ### Built-in type spellings
 
 `int` is an exact alias of `i32`, independent of the host. `usize` is an exact

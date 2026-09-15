@@ -118,3 +118,79 @@ TEST(E2ETest, CheckedAliasesAndShadowedBindings) {
     )"),
                   42);
 }
+
+TEST(E2ETest, ForwardCallChain) {
+    expect_result(run_code(R"(
+        def main() -> i32 { ready(); return first(40); }
+        def first(x: int) -> i32 { return second(x) + 1; }
+        def ready() -> void {}
+        def second(x: i32) -> int { return x + 1; }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, DirectRecursion) {
+    expect_result(run_code(R"(
+        def main() -> i32 { return sum(6); }
+        def sum(n: i32) -> i32 {
+            if n == 0 { return 0; } else { return n + sum(n - 1); }
+        }
+    )"),
+                  21);
+}
+
+TEST(E2ETest, MutualRecursion) {
+    expect_result(run_code(R"(
+        def main() -> i32 { return score(10) + score(9); }
+        def score(n: i32) -> i32 {
+            if even(n) {
+                if odd(n - 1) { return 21; } else { return 1; }
+            } else {
+                if odd(n) { return 21; } else { return 2; }
+            }
+        }
+        def even(n: i32) -> bool {
+            if n == 0 { return true; } else { return odd(n - 1); }
+        }
+        def odd(n: i32) -> bool {
+            if n == 0 { return false; } else { return even(n - 1); }
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, ShadowInitializerUsesOuterBindingAndRestoresFunction) {
+    expect_result(run_code(R"(
+        def main() -> i32 {
+            def mut result: i32 = 0;
+            {
+                def answer: i32 = answer();
+                { def answer: i32 = answer + 1; result = answer; }
+                result = result + answer;
+            }
+            return result - answer() - 1;
+        }
+        def answer() -> i32 { return 42; }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, SiblingAndLoopScopesKeepIndependentBindings) {
+    expect_result(run_code(R"(
+        def main() -> i32 {
+            def mut result: i32 = 0;
+            def x: i32 = 30;
+            if true { def x: i32 = 5; result = x; }
+            else { def x: i32 = 99; result = x; }
+            { def x: i32 = 7; result = result + x; }
+            def mut count: i32 = 0;
+            while count < 2 {
+                def x: i32 = count;
+                result = result + x;
+                count = count + 1;
+            }
+            return result + x - 1;
+        }
+    )"),
+                  42);
+}

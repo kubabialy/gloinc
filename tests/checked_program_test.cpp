@@ -75,8 +75,8 @@ TEST(CheckedProgramTest, AliasesResolveBeforeCodegen) {
     ASSERT_NE(program, nullptr);
     EXPECT_EQ(program->symbols()[0].type, CoreType::I32);
     EXPECT_EQ(program->symbols()[0].parameters, std::vector<CoreType>{CoreType::I32});
-    EXPECT_EQ(program->symbols()[3].type, CoreType::U64);
-    EXPECT_EQ(program->symbols()[3].parameters, std::vector<CoreType>{CoreType::U64});
+    EXPECT_EQ(program->symbols()[1].type, CoreType::U64);
+    EXPECT_EQ(program->symbols()[1].parameters, std::vector<CoreType>{CoreType::U64});
     EXPECT_EQ(program->target().pointer_bits, 64u);
     mlir::MLIRContext context;
     CodeGen codegen(context);

@@ -46,6 +46,7 @@ class CodeGen {
     bool module_transferred = false;
     const SemanticData *checked_data = nullptr;
     CoreType checked_return_type = CoreType::Void;
+    mlir::func::FuncOp declare_function(const FunctionDefinition *function);
     mlir::ModuleOp generate_impl(const std::vector<std::unique_ptr<Statement>> &program);
     void initialize_unchecked_types();
     mlir::Type lower_type(CoreType type);

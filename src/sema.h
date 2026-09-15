@@ -157,9 +157,12 @@ class Sema {
   private:
     std::optional<SemanticData> recording;
     bool resolving_callee = false;
+    std::unordered_map<const FunctionDefinition *, std::shared_ptr<FunctionType>>
+        collected_functions;
+    std::shared_ptr<FunctionType> collect_function(const FunctionDefinition *function);
     std::shared_ptr<Type> check_expression_impl(const Expression *expr);
     std::shared_ptr<Type> resolve_annotation(const Identifier *annotation, bool allow_void = false);
-    void define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind);
+    bool define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind);
     std::shared_ptr<Scope> current_scope;
     std::shared_ptr<Diagnostics> diagnostics_;
     SourceSpan current_span;

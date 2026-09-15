@@ -68,8 +68,9 @@ program and never retries a failed token. Multi-error recovery is not implemente
 excessive recursive nesting reports a diagnostic.
 
 SPEC-010 resolves core type and declaration identities once for codegen. This does
-not complete the language checker: declaration collection, return analysis,
-constant evaluation, and other semantic rules remain in their subsequent tasks.
+not complete the language checker. SPEC-011 adds function collection and lexical
+scope checking; return analysis, constant evaluation, and other semantic rules
+remain in their subsequent tasks.
 Newly parsed constants fail explicitly in Sema/codegen pending SPEC-012.
 
 The external E2E harness now uses `compile_source` before verification and tool

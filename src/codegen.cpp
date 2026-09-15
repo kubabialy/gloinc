@@ -189,6 +189,12 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
         if (!checked_data)
             initialize_unchecked_types();
         builder.setInsertionPointToEnd(theModule.getBody());
+        if (checked_data) {
+            for (const auto &stmt : program) {
+                if (const auto *function = dynamic_cast<const FunctionDefinition *>(stmt.get()))
+                    declare_function(function);
+            }
+        }
         for (const auto &stmt : program) {
             DiagnosticScope source(current_span, stmt ? stmt->span : SourceSpan{});
             if (!dynamic_cast<const FunctionDefinition *>(stmt.get()) &&
@@ -221,6 +227,36 @@ mlir::Location CodeGen::location() {
     return mlir::FileLineColLoc::get(&context, current_span.source->name, line, column);
 }
 
+mlir::func::FuncOp CodeGen::declare_function(const FunctionDefinition *func_def) {
+    DiagnosticScope source(current_span, func_def->span);
+    std::vector<mlir::Type> argTypes;
+    for (const auto &param : func_def->parameters) {
+        argTypes.push_back(checked_data ? checked_type(param.type.get())
+                                        : resolve_type(param.type->value));
+    }
+
+    mlir::Type retType = builder.getNoneType();
+    if (func_def->return_type) {
+        retType = checked_data ? checked_type(func_def->return_type.get())
+                               : resolve_type(func_def->return_type->value);
+    }
+
+    std::vector<mlir::Type> resultTypes;
+    if (!llvm::isa<mlir::NoneType>(retType)) {
+        resultTypes.push_back(retType);
+    }
+
+    auto funcType = builder.getFunctionType(argTypes, resultTypes);
+    auto funcOp = builder.create<mlir::func::FuncOp>(location(), func_def->name->value, funcType);
+
+    // Register function in table
+    if (checked_data)
+        checked_functions[checked_binding(func_def->name.get())] = funcOp;
+    else
+        function_table[func_def->name->value] = {funcOp, func_def};
+    return funcOp;
+}
+
 void CodeGen::gen_statement(const Statement *stmt) {
     DiagnosticScope source(current_span, stmt ? stmt->span : SourceSpan{});
     if (!stmt)
@@ -230,34 +266,9 @@ void CodeGen::gen_statement(const Statement *stmt) {
         if (checked_data)
             checked_return_type = checked_data->symbols[checked_binding(func_def->name.get())].type;
         current_function_defers.clear();
-        std::vector<mlir::Type> argTypes;
-        std::vector<std::string> argNames;
-        for (const auto &param : func_def->parameters) {
-            argTypes.push_back(checked_data ? checked_type(param.type.get())
-                                            : resolve_type(param.type->value));
-            argNames.push_back(param.name->value);
-        }
-
-        mlir::Type retType = builder.getNoneType();
-        if (func_def->return_type) {
-            retType = checked_data ? checked_type(func_def->return_type.get())
-                                   : resolve_type(func_def->return_type->value);
-        }
-
-        std::vector<mlir::Type> resultTypes;
-        if (!llvm::isa<mlir::NoneType>(retType)) {
-            resultTypes.push_back(retType);
-        }
-
-        auto funcType = builder.getFunctionType(argTypes, resultTypes);
-        auto funcOp =
-            builder.create<mlir::func::FuncOp>(location(), func_def->name->value, funcType);
-
-        // Register function in table
-        if (checked_data)
-            checked_functions[checked_binding(func_def->name.get())] = funcOp;
-        else
-            function_table[func_def->name->value] = {funcOp, func_def};
+        auto funcOp = checked_data ? checked_functions.at(checked_binding(func_def->name.get()))
+                                   : declare_function(func_def);
+        auto argTypes = funcOp.getFunctionType().getInputs();
 
         if (!func_def->body)
             return;
@@ -268,7 +279,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
 
         enter_scope();
 
-        for (size_t i = 0; i < argNames.size(); ++i) {
+        for (size_t i = 0; i < func_def->parameters.size(); ++i) {
             auto argVal = entryBlock->getArgument(i);
             declare_binding(func_def->parameters[i].name.get(), argVal, false, argTypes[i],
                             func_def->parameters[i].type->value);
@@ -504,7 +515,12 @@ void CodeGen::gen_statement(const Statement *stmt) {
         builder.setInsertionPointToStart(thenBlock);
         gen_statement(if_stmt->consequence.get());
         // If not terminated (e.g. by return), branch to merge
-        if (thenBlock->empty() || !thenBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
+        auto *thenEnd = builder.getBlock();
+        // A nested if whose arms both return leaves an unused continuation.
+        // Do not connect that unreachable block to the enclosing merge.
+        if (thenEnd->empty() && thenEnd->hasNoPredecessors()) {
+            thenEnd->erase();
+        } else if (thenEnd->empty() || !thenEnd->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
             builder.create<mlir::cf::BranchOp>(location(), mergeBlock);
         }
 
@@ -513,7 +529,10 @@ void CodeGen::gen_statement(const Statement *stmt) {
         if (if_stmt->alternative) {
             gen_statement(if_stmt->alternative.get());
         }
-        if (elseBlock->empty() || !elseBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
+        auto *elseEnd = builder.getBlock();
+        if (elseEnd->empty() && elseEnd->hasNoPredecessors()) {
+            elseEnd->erase();
+        } else if (elseEnd->empty() || !elseEnd->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
             builder.create<mlir::cf::BranchOp>(location(), mergeBlock);
         }
 

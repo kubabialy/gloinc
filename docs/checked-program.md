@@ -41,6 +41,26 @@ mutability, and source span. Nested shadowing creates different IDs; a later
 codegen lookup cannot accidentally resolve the same spelling to another binding.
 Duplicate declarations in the same scope fail when constructing checked data.
 
+SPEC-011 collects all core function signatures before checking any body, then
+codegen declares all corresponding MLIR functions before emitting their bodies.
+Direct, forward, and mutually recursive calls therefore use the same resolved
+IDs. Function IDs are allocated first in source order; IDs are opaque and local
+to one program, not persistent indexes clients should infer from AST traversal.
+The predefined core types are available before collection. User-defined type
+collection remains deferred with aggregate support; core checking rejects it.
+
+Parameters share the function body's outer scope and are explicitly immutable.
+Nested blocks may shadow outer variables, parameters, and functions; duplicate
+names within one scope fail. Initializers resolve before their new binding
+enters scope. Branches and while bodies keep their own locals, and leaving a
+scope restores outer lookup. See the normative
+[scope rules](../SPEC.md#declaration-visibility-and-lexical-scopes-spec-011).
+
+Each checked run starts and ends with an empty scope and clears its temporary
+function collection. Successful reuse of Sema cannot retain declarations from
+an earlier program. Diagnostics are cumulative: after an error, create a fresh
+Sema/diagnostics pair; `compile_source` already does so for each invocation.
+
 Codegen maps canonical types to MLIR types and IDs to generated values/functions.
 Function signatures, parameter storage, local allocation/load types, references,
 and calls use those maps. Checked generation refuses to enter the legacy string
@@ -73,9 +93,9 @@ bypass explicit; it is never used by `compile_source`. Tests retain their origin
 feature assertions and known failures. Synthetic runtime declarations and legacy
 aggregate registries are initialized only on this unchecked path.
 
-This contract does not complete semantic checking. Function collection and full
-scope policy remain SPEC-011: calls still follow the existing declaration order.
-Constants and definite initialization remain SPEC-012. Literal defaults remain
+This contract does not complete semantic checking. Constants and definite
+initialization remain SPEC-012. The `for` initializer scope and loop lowering
+remain SPEC-017. Literal defaults remain
 `i32`/`f32`; contextual typing, ranges, and conversions remain SPEC-013. Return-path
 analysis and entry-point validation remain SPEC-014. Codegen now rejects explicit
 return/signature mismatches, but that is not a replacement for return analysis.

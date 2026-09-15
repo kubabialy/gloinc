@@ -89,6 +89,22 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     if (diagnostics_->has_errors())
         return false;
     current_scope = std::make_shared<Scope>();
+    collected_functions.clear();
+    // Core types already exist in the registry. Collect every supported signature
+    // before visiting any body, so bindings do not depend on declaration order.
+    if (recording) {
+        for (const auto &stmt : program) {
+            if (const auto *function = dynamic_cast<const FunctionDefinition *>(stmt.get())) {
+                if (auto type = collect_function(function))
+                    collected_functions.emplace(function, std::move(type));
+            }
+        }
+        if (has_error()) {
+            collected_functions.clear();
+            current_scope = std::make_shared<Scope>();
+            return false;
+        }
+    }
     for (const auto &stmt : program) {
         if (recording && !dynamic_cast<const FunctionDefinition *>(stmt.get()) &&
             !(dynamic_cast<const VariableDeclaration *>(stmt.get()) &&
@@ -99,7 +115,62 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         }
         check_statement(stmt.get());
     }
+    collected_functions.clear();
+    current_scope = std::make_shared<Scope>();
     return !has_error();
+}
+
+std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *func_def) {
+    DiagnosticScope location(current_span, func_def->span);
+    // Resolve return type
+    if (!func_def->name || !func_def->return_type || !func_def->body) {
+        log_error("Incomplete function declaration");
+        return nullptr;
+    }
+    if (recording &&
+        (func_def->is_deferred || func_def->is_spawnable || !func_def->generic_params.empty())) {
+        log_error("Unsupported function in checked core program");
+        return nullptr;
+    }
+    auto ret_type = resolve_annotation(func_def->return_type.get(), true);
+    if (!ret_type) {
+        log_error("Error: Unknown return type '" + func_def->return_type->value + "'\n");
+        return nullptr;
+    }
+
+    if (func_def->is_deferred) {
+        if (!dynamic_cast<DeferredType *>(ret_type.get())) {
+            log_error("Error: Deferred function '" + func_def->name->value +
+                      "' must return Deferred<T>\n");
+        }
+    }
+
+    // Resolve parameter types
+    std::vector<std::shared_ptr<Type>> param_types;
+    for (const auto &param : func_def->parameters) {
+        if (!param.name || !param.type) {
+            log_error("Incomplete parameter declaration");
+            return nullptr;
+        }
+        auto param_type = resolve_annotation(param.type.get());
+        if (!param_type) {
+            log_error("Error: Unknown parameter type '" + param.type->value + "'\n");
+            return nullptr;
+        }
+        param_types.push_back(param_type);
+    }
+
+    // Construct FunctionType
+    auto func_type = std::make_shared<FunctionType>(ret_type, param_types);
+
+    // Register function symbol
+    Symbol sym;
+    sym.name = func_def->name->value;
+    sym.is_mutable = false;
+    sym.type = func_type;
+    if (!define_symbol(func_def->name.get(), sym, SymbolKind::Function))
+        return nullptr;
+    return func_type;
 }
 
 void Sema::check_statement(const Statement *stmt) {
@@ -165,61 +236,27 @@ void Sema::check_statement(const Statement *stmt) {
         }
         leave_scope();
     } else if (const auto *func_def = dynamic_cast<const FunctionDefinition *>(stmt)) {
-        // Resolve return type
-        if (!func_def->name || !func_def->return_type || !func_def->body) {
-            log_error("Incomplete function declaration");
-            return;
-        }
-        if (recording && (func_def->is_deferred || func_def->is_spawnable ||
-                          !func_def->generic_params.empty())) {
-            log_error("Unsupported function in checked core program");
-            return;
-        }
-        auto ret_type = resolve_annotation(func_def->return_type.get(), true);
-        if (!ret_type) {
-            log_error("Error: Unknown return type '" + func_def->return_type->value + "'\n");
-            return;
-        }
-
-        if (func_def->is_deferred) {
-            if (!dynamic_cast<DeferredType *>(ret_type.get())) {
-                log_error("Error: Deferred function '" + func_def->name->value +
-                          "' must return Deferred<T>\n");
-            }
-        }
-
-        // Resolve parameter types
-        std::vector<std::shared_ptr<Type>> param_types;
-        for (const auto &param : func_def->parameters) {
-            if (!param.name || !param.type) {
-                log_error("Incomplete parameter declaration");
+        std::shared_ptr<FunctionType> func_type;
+        if (recording) {
+            auto found = collected_functions.find(func_def);
+            if (found == collected_functions.end()) {
+                log_error("Nested or uncollected function in checked core program");
                 return;
             }
-            auto param_type = resolve_annotation(param.type.get());
-            if (!param_type) {
-                log_error("Error: Unknown parameter type '" + param.type->value + "'\n");
+            func_type = found->second;
+        } else {
+            func_type = collect_function(func_def);
+            if (!func_type)
                 return;
-            }
-            param_types.push_back(param_type);
         }
-
-        // Construct FunctionType
-        auto func_type = std::make_shared<FunctionType>(ret_type, param_types);
-
-        // Register function symbol
-        Symbol sym;
-        sym.name = func_def->name->value;
-        sym.is_mutable = false;
-        sym.type = func_type;
-        define_symbol(func_def->name.get(), sym, SymbolKind::Function);
-
         // Check body
         enter_scope();
         // Register parameters in local scope
         for (size_t i = 0; i < func_def->parameters.size(); ++i) {
             Symbol param_sym;
             param_sym.name = func_def->parameters[i].name->value;
-            param_sym.type = param_types[i];
+            param_sym.type = func_type->param_types[i];
+            param_sym.is_mutable = false;
             define_symbol(func_def->parameters[i].name.get(), param_sym, SymbolKind::Parameter);
         }
 
@@ -509,13 +546,17 @@ std::shared_ptr<Type> Sema::resolve_annotation(const Identifier *annotation, boo
     return type;
 }
 
-void Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind) {
+bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind) {
+    DiagnosticScope location(current_span, name->span);
+    if (current_scope->symbols.contains(name->value)) {
+        log_error("Duplicate declaration '" + name->value + "'");
+        return false;
+    }
+    if (get_builtin_type(name->value)) {
+        log_error("Cannot redeclare built-in type '" + name->value + "'");
+        return false;
+    }
     if (recording) {
-        if (current_scope->symbols.contains(name->value)) {
-            DiagnosticScope location(current_span, name->span);
-            log_error("Duplicate declaration '" + name->value + "'");
-            return;
-        }
         auto value_type = symbol.type;
         std::vector<CoreType> parameters;
         if (auto *function = dynamic_cast<FunctionType *>(value_type.get())) {
@@ -527,7 +568,7 @@ void Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
         auto core = resolve_core_type(value_type->to_string(), recording->target);
         if (!core) {
             log_error("Unsupported symbol type");
-            return;
+            return false;
         }
         symbol.id = recording->symbols.size();
         recording->symbols.push_back({symbol.id, name->value, kind, *core, std::move(parameters),
@@ -535,6 +576,7 @@ void Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
         recording->bindings[name] = symbol.id;
     }
     current_scope->define(name->value, std::move(symbol));
+    return true;
 }
 
 std::shared_ptr<Type> Sema::check_expression(const Expression *expression) {
