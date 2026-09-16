@@ -14,11 +14,11 @@ It cannot yet compile or run the programs under `examples/`.
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
-| External execution tests | 24 E2E cases plus eight exact float-bit probes pass through external MLIR tools, including full-width literals and constants. |
-| Full test suite | 239 tests discovered; local serial/parallel runs both have 231 passes, 8 failures, no crashes. |
+| External execution tests | 29 E2E cases plus eight exact float-bit probes pass through external MLIR tools, including typed calls, nested returns, and full-width numeric values. |
+| Full test suite | 256 tests discovered; local serial/parallel runs both have 248 passes, 8 failures, no crashes. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
-| Semantic analysis | Resolved types/scopes, definite initialization, contextual numeric literals, and constants at all scalar widths are verified. Full return/operator semantics and for-loop scope remain open. |
+| Semantic analysis | Resolved types/scopes, initialization, numeric values, calls, return paths, and executable entry signatures are verified. Runtime operator semantics and for-loop scope remain open. |
 | Generics | Four IR-string checks pass; generic execution is not established. |
 | JIT | Smoke test fails on missing builtin LLVM translation registration. |
 | CLI, imports, for-loops, concurrency | Incomplete: SPEC-017, SPEC-020, SPEC-023/029/030, SPEC-040/041. |

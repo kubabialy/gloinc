@@ -3,8 +3,8 @@
 #include "parser.h"
 #include "sema.h"
 
-CompilationResult compile_source(std::string text, std::string filename,
-                                 mlir::MLIRContext &context) {
+CompilationResult compile_source(std::string text, std::string filename, mlir::MLIRContext &context,
+                                 CompilationMode mode) {
     auto diagnostics = std::make_shared<Diagnostics>();
     GloinParser parser(Lexer(std::move(text), std::move(filename), diagnostics));
     auto parsed = parser.parse_checked_program();
@@ -12,7 +12,7 @@ CompilationResult compile_source(std::string text, std::string filename,
         return {{}, diagnostics, diagnostics->all().front().stage};
 
     Sema sema(diagnostics);
-    auto checked = sema.check_for_codegen(std::move(parsed.program));
+    auto checked = sema.check_for_codegen(std::move(parsed.program), {}, mode);
     if (!checked)
         return {{}, diagnostics, DiagnosticStage::Semantic};
 

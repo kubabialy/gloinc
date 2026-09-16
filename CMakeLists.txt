@@ -146,6 +146,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/checked_program_test.cpp
         tests/parser_test.cpp
         tests/numeric_test.cpp
+        tests/functions_test.cpp
         tests/variables_test.cpp
         tests/scope_test.cpp
         tests/sema_test.cpp

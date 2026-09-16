@@ -216,7 +216,7 @@ initialization after the loop. An immutable local declared outside a loop
 cannot receive its first assignment inside that loop; use a mutable local or
 declare the immutable local inside the body. Body-local declarations start
 fresh on each iteration. Scope shadowing preserves each declaration's own
-initialization state. Full unreachable-source/return-path rules remain SPEC-014.
+initialization state. Return-path and unreachable-source rules are defined below.
 
 Constants require an initializer, are immutable, and have no runtime storage.
 Their expression subset consists of scalar literals, previously declared
@@ -243,6 +243,44 @@ and division by zero are errors. Values, including negative zero, are retained
 in the checked program and materialized at uses by codegen. SPEC-013 supplies
 contextual literal typing for all supported integer and floating widths.
 This does not settle runtime arithmetic failure behavior, which remains SPEC-015.
+
+### Functions, calls, returns, and entry points (SPEC-014)
+
+Core functions have explicitly typed, immutable scalar value parameters. Parameter
+names must be distinct and share the outermost body scope. Calls name a function
+through lexical lookup, supply exactly one argument per parameter, and match its
+canonical type (including signedness). Arguments evaluate once, left to right.
+Literal context and aliases follow SPEC-013; typed values are never implicitly
+converted. Direct, forward, and recursive calls use the collected signature.
+Function values, indirect calls, default arguments, and variadic parameters are
+unsupported. A non-void call's result may be discarded in an expression statement;
+a void call is allowed only as an expression statement, never as a value.
+
+`return value;` must match the enclosing non-void function's canonical result
+type. A void function permits `return;` and an implicit return when execution
+reaches the end of its body. It forbids `return value;`, including a void call.
+Non-void functions require a value at every return and cannot reach the end of
+their body. Returns outside functions are errors.
+
+Return analysis is structural and conservative: a return ends its path; a block
+continues only if its statements do; an `if` ends every path only when both arms
+exist and end every path. Conditions are not constant-folded for reachability,
+so `if true` still needs an alternative or a subsequent return. Loops are assumed
+to execute zero times, including `while true`; a return inside a loop alone does
+not satisfy a non-void function. Unconditional divergence is not inferred from
+calls. Statements following a structurally unconditional return (including a
+block or both arms of an `if`) are rejected as unreachable, even declarations or
+empty blocks. Both branches and loop bodies are checked regardless of constant
+conditions. General control-flow lowering and `unless`/`for` remain SPEC-016/017.
+
+Executable compilation requires exactly one file-scope function named `main`
+with no parameters and canonical return type `i32` (`int` is equivalent).
+Visibility does not change its entry-point role. Whenever a file-scope name
+`main` exists, module compilation also requires that signature; a constant named
+`main` is invalid. The compiler's module API permits helper-only source without
+`main`; explicit executable mode validates its presence before producing a
+checked program or IR. Calling `main` uses the same rules as any other function.
+Execution/CLI integration consumes this contract in SPEC-019/020.
 
 ### Numeric literals and conversions (SPEC-013)
 

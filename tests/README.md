@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-013, maintained source definitions and CTest discovery both contain **239 tests**:
+At SPEC-014, maintained source definitions and CTest discovery both contain **256 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -17,6 +17,7 @@ At SPEC-013, maintained source definitions and CTest discovery both contain **23
 | ScopeTest | 11 |
 | VariablesTest | 17 |
 | NumericTest | 12 |
+| FunctionsTest | 12 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -31,7 +32,7 @@ At SPEC-013, maintained source definitions and CTest discovery both contain **23
 | ArrayStringTest | 2 |
 | UnlessTest | 1 |
 | JitRunnerTest | 1 |
-| E2ETest | 24 |
+| E2ETest | 29 |
 | ExternalRunnerTest | 8 |
 
 The four generic tests are now included without changing their assertions. Their
@@ -60,8 +61,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-013 both produce
-**231 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-014 both produce
+**248 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -112,13 +113,13 @@ identity and MLIR signature/storage type, aliases, signedness, unknown/deferred
 type rejection in all annotation positions, `void` restrictions, declaration IDs,
 call resolution, ownership after frontend/codegen destruction, duplicate and
 unresolved declaration failures, target rejection, independent compiler runs,
-and guards for unfinished operators and return checking. Compile-time assertions
+return checking, and guards for unfinished operators. Compile-time assertions
 prove that raw ASTs cannot call `CodeGen::generate` and clients cannot construct a
 `CheckedProgram`. [The contract](../docs/checked-program.md) documents the limits.
 
 Existing stage-isolated backend tests now use the explicit
 `generate_unchecked_for_testing` entry; their feature assertions and failures are
-preserved. All 24 E2E cases use checked generation. The seventh executes an
+preserved. All 29 E2E cases use executable-mode checked generation. The seventh executes an
 `int` alias and nested shadowing, confirming the outer binding still returns 42.
 
 ## External execution
@@ -269,3 +270,32 @@ remainder fixture now uses f32 so its assertion still tests the unsupported
 operator rather than an incompatible annotation. Assertions for deferred
 features remain intact. Runtime operator semantics, return-path checking, and
 full control-flow validation remain SPEC-014 through SPEC-017 as applicable.
+
+
+## Functions, calls, returns, and entry points (SPEC-014)
+
+All 12 `FunctionsTest` cases pass. They cover canonical return types at every
+scalar width, missing values/fallthrough, nested branches, conservative loop
+analysis, bare/implicit void returns, void-call value rejection, unreachable
+source, direct call arity/types, parameter immutability and scope, and entry
+validation in module/executable modes. Tests inspect every scalar call ABI and
+verify that nested arguments are emitted once in left-to-right order. Invalid
+source fails before codegen and returns no module; top-level return is also
+rejected through the AST API. Reusing Sema does not retain the prior entry point.
+
+Five new E2E cases execute every arm of nested returning branches, implicit/early
+void returns and discarded results, loop returns with zero-iteration fallbacks,
+and nested calls with typed value parameters. Four return 42; a private `main`
+using the `int` alias returns -1. All 29 E2E cases now explicitly request
+`CompilationMode::Executable`, and existing forward/direct/mutual recursion
+continues to execute correctly. Helper-only and float-bit adapter compilation
+uses module mode; it does not bypass function checking.
+
+The existing return-signature guard fixtures now expect semantic errors.
+The codegen-failure diagnostic fixture declares a boolean helper result for its
+unsupported `!=` expression, so it still verifies codegen module disposal after
+passing Sema. Deferred feature assertions remain intact. Both full suites report
+**248/256 passes**, with the same eight failures and no crashes/skips. All 114
+focused function/numeric/variable/scope/diagnostic/checked-program/E2E tests pass.
+General runtime operators, control-flow lowering, `unless`/`for`, and JIT/CLI
+integration remain SPEC-015 through SPEC-020.

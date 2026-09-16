@@ -10,7 +10,7 @@
 namespace {
 llvm::Expected<int> run_code(const std::string &code) {
     mlir::MLIRContext context;
-    auto result = compile_source(code, "e2e.gloin", context);
+    auto result = compile_source(code, "e2e.gloin", context, CompilationMode::Executable);
     if (!result.success()) {
         std::ostringstream errors;
         result.diagnostics->render(errors);
@@ -39,6 +39,73 @@ TEST(E2ETest, ReturnInteger) {
         }
     )";
     expect_result(run_code(code), 42);
+}
+
+TEST(E2ETest, NestedReturnPathsExecuteEveryArm) {
+    expect_result(run_code(R"(
+        def choose(a: bool, b: bool) -> i32 {
+            if a {
+                if b { return 6; } else { return 10; }
+            } else {
+                if b { { return 12; } } else { return 14; }
+            }
+        }
+        def main() -> i32 {
+            return choose(true, true) + choose(true, false) +
+                   choose(false, true) + choose(false, false);
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, ImplicitAndEarlyVoidReturnsExecute) {
+    expect_result(run_code(R"(
+        def main() -> i32 {
+            empty(); work(true); work(false); all(true); all(false);
+            value();
+            return value();
+        }
+        def empty() -> void {}
+        def work(b: bool) -> void { if b { return; } empty(); }
+        def all(b: bool) -> void { if b { return; } else { return; } }
+        def value() -> i32 { return 42; }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, LoopReturnsAndFallbackBothExecute) {
+    expect_result(run_code(R"(
+        def pick(enabled: bool, arm: bool) -> i32 {
+            while enabled { if arm { return 10; } else { return 12; } }
+            return 20;
+        }
+        def main() -> i32 {
+            return pick(true, true) + pick(true, false) + pick(false, true);
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, NestedCallsPreserveValueParametersAndReturnTypes) {
+    expect_result(run_code(R"(
+        def main() -> int {
+            def mut x: i32 = 40;
+            def answer: i32 = add(copy(x), narrow(2), true);
+            x = 0;
+            return answer;
+        }
+        def copy(x: i32) -> i32 { def mut local: i32 = x; local = local + 1; return local; }
+        def narrow(x: u8) -> u8 { return x; }
+        def add(left: i32, right: u8, enabled: bool) -> i32 {
+            if enabled { if right == 2 { return left + 1; } return 0; }
+            return -1;
+        }
+    )"),
+                  42);
+}
+
+TEST(E2ETest, EntryAliasPreservesNegativeProgramResult) {
+    expect_result(run_code("def priv main() -> int { return -1; }"), -1);
 }
 
 TEST(E2ETest, SimpleArithmetic) {

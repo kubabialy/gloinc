@@ -8,6 +8,10 @@ A failed result never exposes a partial module. The caller's MLIR context must
 outlive the result. This is the API for the eventual file-reading CLI; lowering,
 JIT execution, and the CLI remain SPEC-018 through SPEC-020.
 
+The optional fourth argument is `CompilationMode::Module` by default; pass
+`CompilationMode::Executable` to require `main() -> i32` before generating IR.
+Module mode permits helper-only source but still rejects an invalid `main`.
+
 [diagnostics.h](../src/diagnostics.h) defines the shared error representation.
 Each diagnostic records its stage, message, and source span. Tokens and AST
 nodes retain shared ownership of an immutable source file; their spans use
@@ -69,8 +73,7 @@ excessive recursive nesting reports a diagnostic.
 
 SPEC-010 resolves core type and declaration identities once for codegen. This does
 not complete the language checker. SPEC-011 adds function collection and lexical
-scope checking; return analysis and other semantic rules remain in their
-subsequent tasks. SPEC-012 adds definite initialization, typed stores, and
+scope checking. SPEC-012 adds definite initialization, typed stores, and
 compile-time constant evaluation. Invalid constant expressions, arithmetic
 failures, forbidden assignments, and uninitialized reads stop before codegen.
 SPEC-013 moves numeric conversion entirely into semantic checking. Literal range,
@@ -78,7 +81,13 @@ underflow, and category errors retain the literal's source span, including unary
 minus for a signed literal. Well-formed oversized spellings parse successfully
 but cannot produce a checked program.
 
-The external E2E harness now uses `compile_source` before verification and tool
+SPEC-014 rejects missing/mismatched returns, invalid calls, void-call values,
+unreachable statements, and invalid entry signatures during semantic checking.
+The source parser rejects file-scope returns; hand-built ASTs are rejected by
+Sema. A missing executable entry is also a semantic error (empty ASTs have no
+source span). These errors never reach codegen or execution.
+
+The external E2E harness uses executable-mode `compile_source` before verification and tool
 execution. Stage-isolated codegen tests intentionally bypass semantic checking,
 but must check parser and codegen status. Such tests establish only the behavior
 of those stages, not end-to-end language support.

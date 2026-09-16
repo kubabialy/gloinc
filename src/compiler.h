@@ -1,6 +1,7 @@
 #ifndef GLOINC_COMPILER_H
 #define GLOINC_COMPILER_H
 
+#include "compilation_mode.h"
 #include "diagnostics.h"
 #include "mlir/IR/BuiltinOps.h"
 #include <optional>
@@ -15,7 +16,8 @@ struct CompilationResult {
 
 // Stops after the first failed stage. Lowering/execution and the file CLI remain
 // SPEC-018 through SPEC-020; this API produces the current high-level module.
-CompilationResult compile_source(std::string text, std::string filename,
-                                 mlir::MLIRContext &context);
+// Module mode permits helper-only source. Use Executable before running main.
+CompilationResult compile_source(std::string text, std::string filename, mlir::MLIRContext &context,
+                                 CompilationMode mode = CompilationMode::Module);
 
 #endif

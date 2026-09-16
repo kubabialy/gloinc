@@ -149,12 +149,14 @@ class Sema {
     bool check_program(const std::vector<std::unique_ptr<Statement>> &program);
     // Takes exclusive ownership. Only successful core checking can construct this result.
     std::unique_ptr<CheckedProgram>
-    check_for_codegen(std::vector<std::unique_ptr<Statement>> program, TargetInfo target = {});
+    check_for_codegen(std::vector<std::unique_ptr<Statement>> program, TargetInfo target = {},
+                      CompilationMode mode = CompilationMode::Module);
 
     // Visit methods
     void check_statement(const Statement *stmt);
     std::shared_ptr<Type> check_expression(const Expression *expr,
-                                           std::optional<CoreType> expected = std::nullopt);
+                                           std::optional<CoreType> expected = std::nullopt,
+                                           bool allow_void = false);
 
   private:
     std::optional<SemanticData> recording;

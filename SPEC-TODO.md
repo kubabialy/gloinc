@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-014.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-015.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -104,9 +104,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **SPEC-006 scope:** signed/unsigned 8/16/32/64-bit integers and f32/f64, with exact `int = i32` and target-width `usize` aliases. Define contextual literal typing without inferring declaration types. The 128-bit extension is explicitly deferred under SPEC-013b; unsupported types cannot fall back to i32.
   **Verified:** [The numeric contract](SPEC.md#numeric-literals-and-conversions-spec-013) defines contextual typing, exact-width ranges, direct IEEE rounding, defaults, and rejection of typed conversions/casts. Parsing retains numeric spellings; Sema resolves literals and constants to APInt/APFloat values consumed directly by codegen. All 12 numeric tests, 24 E2E cases, and eight float-bit execution probes pass. Serial/parallel suites agree on 231/239 passes with the same eight known failures. Runtime arithmetic semantics and complete return checking remain SPEC-014/SPEC-015; the first-release feature list is unchanged.
 
-- [ ] **SPEC-014 — Validate functions, calls, returns, and entry points.**
+- [x] **SPEC-014 — Validate functions, calls, returns, and entry points.**
   Check argument count/types, parameter rules, return values, all reachable return paths, and `main`'s supported signature. Define implicit void return and unreachable-source behavior.
   **Done when:** incorrect/missing returns, top-level returns, invalid calls, and invalid entry points fail; direct/forward/recursive calls return correct values; no unchecked return signature reaches execution.
+  **Verified:** [The function contract](SPEC.md#functions-calls-returns-and-entry-points-spec-014) defines exact call/return types, conservative return paths, implicit void returns, unreachable-source rejection, and module/executable entry rules. Sema rejects invalid returns and entry signatures before codegen; executable mode requires `main() -> i32`. All 12 function tests and 29 E2E cases pass. Serial/parallel suites agree on 248/256 passes with the same eight known failures. General operators, control-flow lowering, and execution/CLI integration remain SPEC-015 through SPEC-020.
 
 - [ ] **SPEC-015 — Implement the supported expression operators.**
   Align lexer/parser/Sema/codegen operator tables. Implement unary minus/not, arithmetic, comparisons, and boolean short-circuiting; choose signed, unsigned, and floating operations from resolved types. Specify division-by-zero, overflow, shifts, and evaluation order for the supported operator set.
@@ -115,7 +116,7 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 
 - [ ] **SPEC-016 — Correct nested if/while control flow.**
   Require boolean conditions and track the current insertion block after recursive generation. Stop emitting into terminated blocks and correctly terminate merge blocks and loop backedges.
-  **Done when:** nested branches, loops containing branches, early returns, empty bodies, and unreachable statements produce valid IR and correct execution without missing terminators or accidental fallthrough.
+  **Done when:** nested branches, loops containing branches, early returns, and empty bodies produce valid IR and correct execution without missing terminators or accidental fallthrough. Unreachable source remains rejected according to SPEC-014.
 
 - [ ] **SPEC-017 — Implement unless and C-style for loops.**
   Add semantic checking and lowering for both existing AST nodes. Define loop-variable scope and supported omitted components. Preserve the documented function-exit meaning of defer when defer support is completed.
@@ -292,6 +293,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-011 | 2026-09-15 | [sema.cpp](src/sema.cpp) collects core function signatures before bodies and [codegen.cpp](src/codegen.cpp) declares MLIR functions before body emission. The normative scope rules cover duplicates, shadowing, initializer visibility, and immutable parameters. All **11 scope tests and 12 E2E tests pass**, including forward calls, direct/mutual recursion, and nested scope restoration. Incremental Debug build succeeds; serial/parallel suites both report **190/198 passes, the same eight known failures, and no crashes/skips**. User-defined types, constants, and for-loop scope remain their deferred/subsequent tasks. |
 | SPEC-012 | 2026-09-15 | [sema.cpp](src/sema.cpp) validates targets, exact initializer/store types, and definite initialization with branch/loop state keyed by declaration ID. [sema_constants.cpp](src/sema_constants.cpp) evaluates pure, lexically ordered constants with checked arithmetic and boolean short-circuiting; codegen materializes folded values and supports delayed immutable storage. All **17 variable tests and 19 E2E tests pass**. Incremental Debug build succeeds; full serial/parallel runs both report **214/222 passes, the same eight known failures, and no crashes/skips**. The normative contract and checked-program documentation record the current i32/f32/bool constant boundary and later numeric/control-flow work. |
 | SPEC-013 | 2026-09-15 | [numeric.cpp](src/numeric.cpp) validates complete literal spellings and exact-width ranges; [sema_numeric.cpp](src/sema_numeric.cpp) supplies contextual types without converting typed operands. Numeric AST nodes preserve spelling; checked literals/constants own APInt/APFloat values emitted directly by codegen. All **12 numeric tests, 24 E2E cases, and eight exact float-bit probes pass**. Incremental Debug build succeeds; full serial/parallel suites report **231/239 passes, the same eight known failures, and no crashes/skips**. Frontend APInt/APFloat uses the existing shared LLVM library with consistent linkage. The spec defines cast rejection and preserves later runtime operator/return work. |
+| SPEC-014 | 2026-09-16 | [sema.cpp](src/sema.cpp) validates call/return types, conservative return paths, unreachable source, and entry signatures before constructing a checked program. Module/executable modes preserve helper-only compilation while requiring a validated `main() -> i32` for execution. Codegen defensively rejects checked non-void fallthrough. All **12 function tests, 29 E2E cases, and 114 focused tests pass**. Incremental Debug build succeeds; serial/parallel suites report **248/256 passes, the same eight known failures, and no crashes/skips**. Five new execution cases cover nested branches, void returns, loop fallbacks, typed calls, and a valid -1 result. |
 
 ### SPEC-001 verification
 
@@ -878,3 +880,54 @@ typed widening/narrowing remain unsupported under the fixed first-release
 feature list. 128-bit types remain deferred under SPEC-013b. Runtime arithmetic
 failure behavior, general operators, full returns/entry points, and remaining
 control flow stay SPEC-014 through SPEC-017.
+
+
+### SPEC-014 verification
+
+Run on Apple Silicon macOS with LLVM/MLIR 21.1.6 using the existing Debug build:
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build \
+  -R '^(FunctionsTest|NumericTest|VariablesTest|DiagnosticsTest|ScopeTest|CheckedProgramTest|E2ETest)\.' \
+  --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec014-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec014-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+# Build and 114 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **256 tests, 248 passes, eight failures, and no crashes
+or skipped tests**. The failure names match SPEC-013 exactly. Maintained source
+names match discovery with no duplicates and all timeouts remain 30 seconds.
+Formatter checks pass for the changed implementation and formatted test files;
+the diagnostic fixture received only a source-string correction.
+
+Twelve new function tests verify all scalar result types, exact signedness and
+widths, missing values/fallthrough, nested returning blocks/branches, conservative
+loop reachability, void return rules, forbidden void values, unreachable source,
+call arity/types/direct-name rules, parameter scope/immutability, and entry-point
+signatures. IR assertions verify scalar call/return signatures and once-only,
+left-to-right argument emission. Source failures retain locations and expose no
+module; empty executable input has no AST source span. Top-level returns fail
+through both the source parser and the AST checking API. Reused Sema instances
+cannot retain a prior entry point.
+
+Executable mode requires `main() -> i32` (including `int`); module mode permits
+helper-only input and validates any `main` that is present. All E2E invocations
+now request executable mode before generation/execution. Five new E2E programs
+exercise all nested returning arms, explicit/implicit void returns, discarded
+call results, loop returns with fallback paths, typed value parameters and nested
+calls. Four return 42; the entry-alias fixture returns -1 as a valid result.
+Existing direct/forward/mutual recursion and eight float-bit execution probes
+continue to pass.
+
+Return-signature fixtures now expect semantic rejection instead of codegen
+rejection. The codegen-disposal fixture uses a boolean-returning helper for its
+unsupported runtime `!=` expression, preserving its original stage-failure
+assertion. No later-feature tests were disabled or weakened. The spec fixes
+return/entry behavior before implementation and preserves SPEC-015 operators,
+SPEC-016/017 control flow, and SPEC-018 through SPEC-020 lowering/JIT/CLI work.

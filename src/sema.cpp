@@ -95,6 +95,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     initialization.clear();
     falls_through = true;
     loop_depth = 0;
+    current_return_type.reset();
     // Core types already exist in the registry. Collect every supported signature
     // before visiting any body, so bindings do not depend on declaration order.
     if (recording) {
@@ -109,6 +110,20 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
             if (const auto *constant = dynamic_cast<const VariableDeclaration *>(stmt.get());
                 constant && constant->is_const)
                 check_constant(constant);
+        }
+        auto *entry = current_scope->resolve("main");
+        if (entry) {
+            DiagnosticScope location(current_span, recording->symbols[entry->id].span);
+            auto *signature = dynamic_cast<FunctionType *>(entry->type.get());
+            if (!signature || !signature->param_types.empty() ||
+                !signature->return_type->equals(*get_builtin_type("i32")))
+                log_error("Entry point must be a function main() -> i32");
+            else
+                recording->entry_point = entry->id;
+        } else if (recording->mode == CompilationMode::Executable) {
+            DiagnosticScope location(current_span,
+                                     program.empty() ? SourceSpan{} : program.front()->span);
+            log_error("Executable requires an entry point main() -> i32");
         }
         if (has_error()) {
             initialization.clear();
@@ -194,6 +209,10 @@ void Sema::check_statement(const Statement *stmt) {
     DiagnosticScope location(current_span, stmt ? stmt->span : SourceSpan{});
     if (!stmt) {
         log_error("Missing statement");
+        return;
+    }
+    if (recording && !falls_through) {
+        log_error("Unreachable statement after an unconditional return");
         return;
     }
     if (const auto *decl = dynamic_cast<const VariableDeclaration *>(stmt)) {
@@ -293,12 +312,29 @@ void Sema::check_statement(const Statement *stmt) {
                 check_statement(s.get());
             }
         }
+        if (recording && current_return_type != CoreType::Void && falls_through)
+            log_error("Non-void function '" + func_def->name->value +
+                      "' can reach the end without returning a value");
         leave_scope();
+        current_return_type.reset();
+        falls_through = true;
 
     } else if (const auto *ret = dynamic_cast<const ReturnStatement *>(stmt)) {
+        if (recording && !current_return_type) {
+            log_error("Return is only allowed inside a function");
+            return;
+        }
         if (ret->return_value) {
-            check_expression(ret->return_value.get(), current_return_type);
-            // TODO: Check against function return type
+            if (recording && current_return_type == CoreType::Void)
+                log_error("Void function cannot return a value; use return;");
+            auto type = check_expression(ret->return_value.get(), current_return_type);
+            if (recording && type && current_return_type != CoreType::Void &&
+                resolve_core_type(type->to_string()) != current_return_type)
+                log_error("Return type mismatch. Expected " +
+                          std::string(core_type_info(*current_return_type).name) + ", got " +
+                          type->to_string());
+        } else if (recording && current_return_type != CoreType::Void) {
+            log_error("Non-void function must return a value");
         }
         falls_through = false;
     } else if (const auto *if_stmt = dynamic_cast<const IfStatement *>(stmt)) {
@@ -332,7 +368,7 @@ void Sema::check_statement(const Statement *stmt) {
         // declaration are rejected at the assignment, even on the first iteration.
         merge_initialization(before, before, before_reaches, initialization, falls_through);
     } else if (const auto *expr_stmt = dynamic_cast<const ExpressionStatement *>(stmt)) {
-        check_expression(expr_stmt->expression.get());
+        check_expression(expr_stmt->expression.get(), std::nullopt, true);
     } else if (const auto *struct_def = dynamic_cast<const StructDefinition *>(stmt)) {
         if (recording) {
             log_error("Structs are not supported in checked core programs");
@@ -504,6 +540,10 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         return nullptr;
 
     } else if (const auto *call = dynamic_cast<const CallExpression *>(expr)) {
+        if (recording && !dynamic_cast<const Identifier *>(call->function.get())) {
+            log_error("Core calls require a direct function name");
+            return nullptr;
+        }
         bool previous_callee = resolving_callee;
         resolving_callee = true;
         auto func_expr_type = check_expression(call->function.get());
@@ -574,7 +614,8 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
 }
 
 std::unique_ptr<CheckedProgram>
-Sema::check_for_codegen(std::vector<std::unique_ptr<Statement>> program, TargetInfo target) {
+Sema::check_for_codegen(std::vector<std::unique_ptr<Statement>> program, TargetInfo target,
+                        CompilationMode mode) {
     if (has_error())
         return nullptr;
     if (target.pointer_bits != 64) {
@@ -583,6 +624,7 @@ Sema::check_for_codegen(std::vector<std::unique_ptr<Statement>> program, TargetI
     }
     recording.emplace();
     recording->target = target;
+    recording->mode = mode;
     if (!check_program(program)) {
         recording.reset();
         return nullptr;
@@ -650,7 +692,7 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
 }
 
 std::shared_ptr<Type> Sema::check_expression(const Expression *expression,
-                                             std::optional<CoreType> expected) {
+                                             std::optional<CoreType> expected, bool allow_void) {
     auto previous = expected_type;
     expected_type = expected;
     const auto *prefix = dynamic_cast<const PrefixExpression *>(expression);
@@ -668,6 +710,10 @@ std::shared_ptr<Type> Sema::check_expression(const Expression *expression,
             if (!resolving_callee)
                 log_error("Function values are not supported in the core language");
         } else if (auto core = resolve_core_type(type->to_string(), recording->target)) {
+            if (*core == CoreType::Void && !allow_void) {
+                log_error("A void call cannot be used as a value");
+                return nullptr;
+            }
             recording->types[expression] = *core;
         } else {
             log_error("Unsupported expression type in checked core program");

@@ -2,6 +2,7 @@
 #define GLOINC_CHECKED_PROGRAM_H
 
 #include "AST.h"
+#include "compilation_mode.h"
 #include "numeric.h"
 #include <unordered_map>
 
@@ -19,6 +20,8 @@ struct ResolvedSymbol {
 };
 struct SemanticData {
     TargetInfo target;
+    CompilationMode mode = CompilationMode::Module;
+    std::optional<SymbolId> entry_point;
     std::unordered_map<SymbolId, ConstantValue> constants;
     std::unordered_map<const Expression *, ConstantValue> literals;
     std::unordered_map<const Node *, CoreType> types;
@@ -34,6 +37,8 @@ class CheckedProgram {
     CheckedProgram &operator=(const CheckedProgram &) = delete;
     const std::vector<ResolvedSymbol> &symbols() const { return data.symbols; }
     TargetInfo target() const { return data.target; }
+    CompilationMode mode() const { return data.mode; }
+    std::optional<SymbolId> entry_point() const { return data.entry_point; }
     size_t typed_node_count() const { return data.types.size(); }
     size_t bound_name_count() const { return data.bindings.size(); }
 

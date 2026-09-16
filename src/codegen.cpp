@@ -306,6 +306,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
                 if (funcOp.getFunctionType().getNumResults() == 0) {
                     builder.create<mlir::func::ReturnOp>(location());
                 } else {
+                    if (checked_data)
+                        fail("Checked non-void function reaches its end without returning");
                     builder.create<mlir::LLVM::UnreachableOp>(location());
                 }
             } else if (isEmpty) {
@@ -314,6 +316,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
                 if (funcOp.getFunctionType().getNumResults() == 0) {
                     builder.create<mlir::func::ReturnOp>(location());
                 } else {
+                    if (checked_data)
+                        fail("Checked non-void function reaches its end without returning");
                     builder.create<mlir::LLVM::UnreachableOp>(location());
                 }
             }

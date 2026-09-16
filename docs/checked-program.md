@@ -18,6 +18,14 @@ only when checking succeeds. It consumes the AST on success and failure.
 clients cannot construct a checked program themselves. Compile-time tests enforce
 these API restrictions. `compile_source` uses this path exclusively.
 
+Both APIs default to `CompilationMode::Module`, permitting source without `main`.
+Use `compile_source(text, filename, context, CompilationMode::Executable)` or
+`sema.check_for_codegen(std::move(ast), {}, CompilationMode::Executable)` when
+preparing an executable. Executable mode requires `main() -> i32`; both modes
+validate any file-scope `main` that is present. `CheckedProgram::mode()` records
+the requested mode and `entry_point()` exposes the validated function's symbol
+ID when present. Entry validation does not itself run or lower the module.
+
 ## Types and declarations
 
 [numeric.h](../src/numeric.h) defines canonical `CoreType` IDs for
@@ -67,6 +75,27 @@ and calls use those maps. Checked generation refuses to enter the legacy string
 type resolver or name lookup and fails on missing semantic data. It also checks
 that emitted value/storage types agree with semantic types. No missing type or
 unresolved expression becomes an `i32` fallback on this path.
+
+## Functions and returns
+
+SPEC-014 validates exact call arity and canonical argument/result types before
+creating a checked program. Calls resolve a direct function name; function
+values and indirect calls are unsupported. Void calls can appear as expression
+statements only. Non-void call results can be discarded.
+
+Every non-void function must return a matching value on all structurally reachable
+paths. Void functions allow bare returns and fallthrough, which codegen turns
+into a zero-result return. Both returning arms of an `if` end the enclosing
+path; loops retain a possible zero-iteration path even with a literal `true`
+condition. Sema rejects statements after an unconditional return and checks both
+branches regardless of constant conditions. These rules reuse definite
+initialization's branch reachability without adding constant-condition analysis.
+See the normative [function contract](../SPEC.md#functions-calls-returns-and-entry-points-spec-014).
+
+Codegen retains defensive return-signature checks and refuses a checked non-void
+function with reachable fallthrough. It no longer substitutes LLVM `unreachable`
+for such a missing return. Legacy unchecked stage experiments retain their
+existing behavior; they cannot produce a `CheckedProgram`.
 
 ## Variables and constants
 
@@ -131,7 +160,7 @@ library for these value classes and still has no MLIR dependency.
 
 These rules are normative in
 [SPEC.md](../SPEC.md#numeric-literals-and-conversions-spec-013). General runtime
-unary/binary operator semantics and return-path checking remain later tasks.
+unary/binary operator semantics remain SPEC-015.
 
 ## Ownership
 
@@ -160,9 +189,9 @@ aggregate registries are initialized only on this unchecked path.
 
 This contract does not complete semantic checking. The `for` initializer scope
 and loop lowering remain SPEC-017. Context-free literal defaults are `i32`/`f32`;
-typed contexts select the other supported widths. Return-path analysis and
-entry-point validation remain SPEC-014. Codegen now rejects explicit
-return/signature mismatches, but that is not a replacement for return analysis.
+typed contexts select the other supported widths. SPEC-014 establishes return-path
+analysis, unreachable-source rejection, and explicit executable entry validation.
+General control-flow lowering remains SPEC-016/017.
 
 Runtime floating arithmetic and unsigned division/ordering are explicitly rejected by
 checked codegen until SPEC-015 implements the correct operations; they cannot

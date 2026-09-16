@@ -243,13 +243,16 @@ TEST(CheckedProgramTest, IndependentRunsCannotReuseSemanticBindings) {
 
 TEST(CheckedProgramTest, UnimplementedContractsCannotEmitWrongTypedOperations) {
     mlir::MLIRContext context;
-    for (const std::string source :
-         {"def f(x: f64) -> f64 { return x + x; }", "def f(x: u64) -> u64 { return x / x; }",
-          "def f(x: u64) -> bool { return x < x; }", "def f(x: bool) -> i32 { return x; }",
-          "def f(x: i32) -> u32 { return x; }", "def f() -> i32 { return; }"}) {
+    for (const auto &[source, stage] : std::vector<std::pair<std::string, DiagnosticStage>>{
+             {"def f(x: f64) -> f64 { return x + x; }", DiagnosticStage::Codegen},
+             {"def f(x: u64) -> u64 { return x / x; }", DiagnosticStage::Codegen},
+             {"def f(x: u64) -> bool { return x < x; }", DiagnosticStage::Codegen},
+             {"def f(x: bool) -> i32 { return x; }", DiagnosticStage::Semantic},
+             {"def f(x: i32) -> u32 { return x; }", DiagnosticStage::Semantic},
+             {"def f() -> i32 { return; }", DiagnosticStage::Semantic}}) {
         auto result = compile_source(source, "pending.gloin", context);
         EXPECT_FALSE(result.success()) << source;
         EXPECT_FALSE(result.module);
-        EXPECT_EQ(result.failed_stage, DiagnosticStage::Codegen);
+        EXPECT_EQ(result.failed_stage, stage);
     }
 }

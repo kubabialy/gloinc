@@ -116,7 +116,7 @@ TEST(DiagnosticsTest, UnsupportedStatementsCannotDisappear) {
 TEST(DiagnosticsTest, CodegenFailureDiscardsThePartialModule) {
     mlir::MLIRContext context;
     auto result =
-        compile_source("def main() -> i32 {\n    return 1 != 2;\n}", "codegen.gloin", context);
+        compile_source("def comparison() -> bool {\n    return 1 != 2;\n}", "codegen.gloin", context);
     EXPECT_FALSE(result.success());
     EXPECT_FALSE(result.module);
     EXPECT_EQ(result.failed_stage, DiagnosticStage::Codegen);
