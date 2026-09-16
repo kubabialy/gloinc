@@ -242,7 +242,7 @@ operations round to their resolved width at each operation; non-finite results
 and division by zero are errors. Values, including negative zero, are retained
 in the checked program and materialized at uses by codegen. SPEC-013 supplies
 contextual literal typing for all supported integer and floating widths.
-This does not settle runtime arithmetic failure behavior, which remains SPEC-015.
+Runtime arithmetic follows the checked failure rules in SPEC-015 below.
 
 ### Functions, calls, returns, and entry points (SPEC-014)
 
@@ -314,8 +314,8 @@ literal: `-128` fits i8 and `-9223372036854775808` fits i64, while their positiv
 magnitudes do not. Negative integer literals cannot have an unsigned type,
 including `-0`. The full u64 range through `18446744073709551615` is supported.
 Out-of-range values in any base are errors even in otherwise unused code or
-constants. This rule concerns literals; runtime operator overflow remains
-SPEC-015. Constant arithmetic retains SPEC-012's checked-overflow behavior at
+constants. This rule concerns literals; runtime operator overflow follows
+SPEC-015 below. Constant arithmetic retains SPEC-012's checked-overflow behavior at
 its resolved width, including unsigned overflow and underflow.
 
 Decimal floats are converted directly to IEEE binary32 or binary64 using
@@ -372,6 +372,51 @@ and no semicolon after its update. SPEC-017 defines omitted components and
 loop-variable scope. Range-loop syntax remains deferred under SPEC-036.
 Assignment is a statement (also allowed in a loop update), not a value-producing
 expression: chained assignments and assignments inside conditions are rejected.
+
+### Expression operators and arithmetic failure (SPEC-015)
+
+Binary operands must have the same canonical type; aliases and literal contexts
+follow SPEC-013. No operator implicitly converts a typed operand.
+
+| Operators | Accepted operands | Result |
+| --- | --- | --- |
+| Prefix `-` | Signed integers, f32, f64 | Operand type |
+| Prefix `!` | bool | bool |
+| `+`, `-`, `*`, `/` | Matching integers or matching floats | Operand type |
+| `%` | Matching integers | Operand type |
+| `==`, `!=` | Matching scalar types, including bool | bool |
+| `<`, `<=`, `>`, `>=` | Matching numeric types | bool |
+| `&&`, `\|\|` | bool | bool |
+
+Operands evaluate once, left to right, including nested expressions and call
+arguments. `&&` evaluates its right operand only when the left is true; `||`
+evaluates it only when the left is false. Both operands must be well typed even
+when evaluation skips one. Boolean arithmetic/ordering, unsigned unary minus,
+floating remainder, unary plus, bitwise/shift/compound operators, and assignment
+expressions are errors. Prefix minus directly on a literal retains SPEC-013's
+signed-literal range rule, including the signed minimum.
+
+Integer addition, subtraction, multiplication, and negation must fit the declared
+width and signedness; overflow and unsigned underflow fail. Signed division
+truncates toward zero; remainder has the dividend's sign (or is zero). Unsigned
+division/remainder use unsigned magnitudes. Zero divisors fail. Signed minimum
+with divisor `-1` fails for both division and remainder, matching constants.
+There is no implicit wrapping, saturation, or undefined arithmetic behavior.
+
+Floating operations use IEEE binary32/binary64 with nearest/ties-even rounding
+at each operation, without reassociation or fused multiply-add. Finite subnormal
+results and underflow to signed zero are permitted. Division by either sign of
+zero and any non-finite arithmetic result fail; NaN/infinity are not produced by
+valid core programs. Comparisons use numerical ordering, including `-0.0 == 0.0`.
+Unary minus flips the sign, including zero. The selected execution environment
+must retain the default rounding mode and gradual underflow.
+
+Constant failures are semantic diagnostics. Runtime failures terminate execution
+via an explicit trap; they never become an integer program result, including
+`-1`. Dangerous integer division/remainder is guarded before the operation.
+The external runner reports a failed execution; in-process recovery and CLI
+presentation remain SPEC-019/020. Runtime expressions are not required to be
+constant-folded or rejected at compile time, even when written with literals.
 
 ### Expression grouping (SPEC-009)
 

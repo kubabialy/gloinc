@@ -115,13 +115,16 @@ TEST(DiagnosticsTest, UnsupportedStatementsCannotDisappear) {
 
 TEST(DiagnosticsTest, CodegenFailureDiscardsThePartialModule) {
     mlir::MLIRContext context;
-    auto result =
-        compile_source("def comparison() -> bool {\n    return 1 != 2;\n}", "codegen.gloin", context);
-    EXPECT_FALSE(result.success());
-    EXPECT_FALSE(result.module);
-    EXPECT_EQ(result.failed_stage, DiagnosticStage::Codegen);
-    ASSERT_FALSE(result.diagnostics->all().empty());
-    EXPECT_EQ(result.diagnostics->all().front().span.source->name, "codegen.gloin");
+    // Checked compilation now implements !=. Exercise partial-module disposal
+    // through the explicit legacy backend, where this operator is unsupported.
+    GloinParser parser(Lexer("def comparison() -> bool { return 1 != 2; }", "codegen.gloin"));
+    auto parsed = parser.parse_checked_program();
+    ASSERT_TRUE(parsed.success);
+    CodeGen codegen(context, parser.diagnostics());
+    EXPECT_FALSE(codegen.generate_unchecked_for_testing(parsed.program));
+    ASSERT_FALSE(codegen.diagnostics()->all().empty());
+    EXPECT_EQ(codegen.diagnostics()->all().front().stage, DiagnosticStage::Codegen);
+    EXPECT_EQ(codegen.diagnostics()->all().front().span.source->name, "codegen.gloin");
 }
 
 TEST(DiagnosticsTest, UnknownAstNodesFailInBothVisitors) {

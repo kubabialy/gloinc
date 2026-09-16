@@ -124,7 +124,7 @@ no initializer expression or runtime storage for a constant declaration.
 
 Runtime calls and runtime bindings are forbidden in constant expressions.
 Forward constant dependencies fail explicitly. SPEC-013 provides contextual
-literal typing; complete runtime operator behavior remains SPEC-015.
+literal typing; SPEC-015 supplies the matching runtime operator rules.
 The normative rules are in
 [SPEC.md](../SPEC.md#variables-constants-and-initialization-spec-012).
 
@@ -159,8 +159,37 @@ establish contextual typing. The frontend links the already-required shared LLVM
 library for these value classes and still has no MLIR dependency.
 
 These rules are normative in
-[SPEC.md](../SPEC.md#numeric-literals-and-conversions-spec-013). General runtime
-unary/binary operator semantics remain SPEC-015.
+[SPEC.md](../SPEC.md#numeric-literals-and-conversions-spec-013).
+
+## Expression operators
+
+SPEC-015 shares [operators.h](../src/operators.h) between constant and runtime
+semantic checking. It defines the accepted operand categories and result types;
+binary operands must also have identical canonical types. Unary minus preserves
+signed integer/float types, logical operators require bool, and comparisons
+produce bool. Unsupported categories/operators and nested assignment expressions
+fail before codegen, including through the AST API.
+
+[codegen_operators.cpp](../src/codegen_operators.cpp) selects signed/unsigned
+integer operations and native floating operations from semantic types. Integer
+addition/subtraction/multiplication use double-width intermediate values and a
+truncate/extend comparison to detect overflow. These internal widths do not add
+128-bit language types. Division/remainder guard zero divisors and signed
+minimum with -1 before executing. Negation checks signed overflow. Floating
+operations have no fast-math flags; finite bounds checks reject non-finite
+results, and division checks either sign of zero. Subnormals and arithmetic
+underflow to signed zero remain valid.
+
+Guards branch to an LLVM trap on failure. Failure is distinct from a program's
+i32 result; the external runner reports a failed child process. There is no
+in-process recovery API yet. `&&`/`||` use conditional branches and a boolean
+merge argument, so skipped operands are not emitted on the executed path.
+Operands and call arguments evaluate once, left to right. These expression
+continuations also work in existing branch/loop conditions and stores; general
+control-flow completion remains SPEC-016/017.
+
+The normative [operator contract](../SPEC.md#expression-operators-and-arithmetic-failure-spec-015)
+defines rounding, overflow, division/remainder signs, and unsupported operators.
 
 ## Ownership
 
@@ -193,9 +222,8 @@ typed contexts select the other supported widths. SPEC-014 establishes return-pa
 analysis, unreachable-source rejection, and explicit executable entry validation.
 General control-flow lowering remains SPEC-016/017.
 
-Runtime floating arithmetic and unsigned division/ordering are explicitly rejected by
-checked codegen until SPEC-015 implements the correct operations; they cannot
-accidentally use integer or signed operations. Complete verification/lowering and
+SPEC-015 implements checked scalar operators, including floating arithmetic and
+unsigned division/ordering. Complete verification/lowering and
 JIT integration remain SPEC-018/SPEC-019. Aggregate and concurrency contracts stay
 deferred. A checked object establishes resolved identities and the checks currently
 implemented, not full release readiness.

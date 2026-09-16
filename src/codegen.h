@@ -51,6 +51,12 @@ class CodeGen {
     void initialize_unchecked_types();
     mlir::Type lower_type(CoreType type);
     mlir::Value emit_constant(const ConstantValue &constant);
+    mlir::Value gen_checked_unary(const PrefixExpression *expression);
+    mlir::Value gen_checked_binary(const InfixExpression *expression);
+    mlir::Value gen_short_circuit(const InfixExpression *expression);
+    void require_runtime(mlir::Value condition);
+    mlir::Value checked_integer_arithmetic(std::string_view op, mlir::Value left, mlir::Value right,
+                                           CoreType type);
     mlir::Type checked_type(const Node *node);
     SymbolId checked_binding(const Identifier *name);
     struct GenerationFailure {};

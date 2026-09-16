@@ -156,7 +156,7 @@ class Sema {
     void check_statement(const Statement *stmt);
     std::shared_ptr<Type> check_expression(const Expression *expr,
                                            std::optional<CoreType> expected = std::nullopt,
-                                           bool allow_void = false);
+                                           bool statement_context = false);
 
   private:
     std::optional<SemanticData> recording;

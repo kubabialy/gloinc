@@ -87,6 +87,13 @@ The source parser rejects file-scope returns; hand-built ASTs are rejected by
 Sema. A missing executable entry is also a semantic error (empty ASTs have no
 source span). These errors never reach codegen or execution.
 
+SPEC-015 diagnoses invalid operator/type combinations and nested assignment
+expressions in Sema. Constant arithmetic failures remain semantic errors;
+runtime integer overflow, zero division/remainder, and non-finite floating
+results follow explicit trap paths. The external harness reports runner failure
+separately from returned i32 values. Intentional trap regressions check the
+runner's trap signal, excluding compiler/optimizer failures and timeouts.
+
 The external E2E harness uses executable-mode `compile_source` before verification and tool
 execution. Stage-isolated codegen tests intentionally bypass semantic checking,
 but must check parser and codegen status. Such tests establish only the behavior

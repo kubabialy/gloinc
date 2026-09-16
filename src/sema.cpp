@@ -1,4 +1,5 @@
 #include "sema.h"
+#include "operators.h"
 #include <iostream>
 
 void Scope::define(const std::string &name, Symbol symbol) { symbols[name] = symbol; }
@@ -453,6 +454,17 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         return get_builtin_type("bool");
     } else if (const auto *str_lit = dynamic_cast<const StringLiteral *>(expr)) {
         return get_builtin_type("string");
+    } else if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
+        auto operand = check_expression(prefix->right.get(), expected_type);
+        if (!operand)
+            return nullptr;
+        auto core = resolve_core_type(operand->to_string());
+        auto result = core ? unary_operator_type(prefix->op, *core) : std::nullopt;
+        if (!result) {
+            log_error("Invalid unary operator '" + prefix->op + "' for " + operand->to_string());
+            return nullptr;
+        }
+        return get_builtin_type(std::string(core_type_info(*result).name));
     } else if (const auto *bin = dynamic_cast<const InfixExpression *>(expr)) {
         auto [left_type, right_type] = check_binary_operands(bin);
 
@@ -465,12 +477,13 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
             return nullptr;
         }
 
-        // Return type depends on operator
-        if (bin->op == "==" || bin->op == "!=" || bin->op == "<" || bin->op == ">" ||
-            bin->op == "<=" || bin->op == ">=") {
-            return get_builtin_type("bool");
+        auto core = resolve_core_type(left_type->to_string());
+        auto result = core ? binary_operator_type(bin->op, *core) : std::nullopt;
+        if (!result) {
+            log_error("Invalid binary operator '" + bin->op + "' for " + left_type->to_string());
+            return nullptr;
         }
-        return left_type; // For arithmetic
+        return get_builtin_type(std::string(core_type_info(*result).name));
 
     } else if (const auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
         const auto *ident = dynamic_cast<const Identifier *>(assign->left.get());
@@ -692,7 +705,14 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
 }
 
 std::shared_ptr<Type> Sema::check_expression(const Expression *expression,
-                                             std::optional<CoreType> expected, bool allow_void) {
+                                             std::optional<CoreType> expected,
+                                             bool statement_context) {
+    if (recording && !checking_constant && !statement_context &&
+        dynamic_cast<const AssignmentExpression *>(expression)) {
+        DiagnosticScope location(current_span, expression->span);
+        log_error("Assignment is only allowed as a statement");
+        return nullptr;
+    }
     auto previous = expected_type;
     expected_type = expected;
     const auto *prefix = dynamic_cast<const PrefixExpression *>(expression);
@@ -710,7 +730,7 @@ std::shared_ptr<Type> Sema::check_expression(const Expression *expression,
             if (!resolving_callee)
                 log_error("Function values are not supported in the core language");
         } else if (auto core = resolve_core_type(type->to_string(), recording->target)) {
-            if (*core == CoreType::Void && !allow_void) {
+            if (*core == CoreType::Void && !statement_context) {
                 log_error("A void call cannot be used as a value");
                 return nullptr;
             }

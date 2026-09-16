@@ -282,7 +282,7 @@ TEST(NumericTest, FloatBitPatternsSurviveExternalExecution) {
                            "float.gloin", context);
         ASSERT_TRUE(result.success());
         // A test-only IR adapter observes exact returned bits without requiring
-        // Gloin's still-pending runtime floating comparisons (SPEC-015).
+        // exposing bitcasts as a Gloin language feature.
         mlir::OpBuilder builder(&context);
         builder.setInsertionPointToEnd(result.module->getBody());
         auto location = builder.getUnknownLoc();

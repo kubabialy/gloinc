@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-015.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-016.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -109,10 +109,11 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** incorrect/missing returns, top-level returns, invalid calls, and invalid entry points fail; direct/forward/recursive calls return correct values; no unchecked return signature reaches execution.
   **Verified:** [The function contract](SPEC.md#functions-calls-returns-and-entry-points-spec-014) defines exact call/return types, conservative return paths, implicit void returns, unreachable-source rejection, and module/executable entry rules. Sema rejects invalid returns and entry signatures before codegen; executable mode requires `main() -> i32`. All 12 function tests and 29 E2E cases pass. Serial/parallel suites agree on 248/256 passes with the same eight known failures. General operators, control-flow lowering, and execution/CLI integration remain SPEC-015 through SPEC-020.
 
-- [ ] **SPEC-015 — Implement the supported expression operators.**
+- [x] **SPEC-015 — Implement the supported expression operators.**
   Align lexer/parser/Sema/codegen operator tables. Implement unary minus/not, arithmetic, comparisons, and boolean short-circuiting; choose signed, unsigned, and floating operations from resolved types. Specify division-by-zero, overflow, shifts, and evaluation order for the supported operator set.
   **Done when:** negation and inequality do not crash; float addition uses floating arithmetic; unsigned comparisons/division are correct; short-circuit tests prove that skipped operands have no side effects. Unsupported operators fail explicitly.
   **SPEC-006 scope:** implement the operator list in SPEC.md, including integer `%`; reject compound assignment, bitwise/shift operators, unary `+`, floating remainder, and assignment expressions for this release. Define precedence, evaluation order, and numeric failure behavior before adding acceptance cases.
+  **Verified:** [The operator contract](SPEC.md#expression-operators-and-arithmetic-failure-spec-015) defines exact operand types, left-to-right evaluation, short-circuiting, checked arithmetic, and runtime traps. Shared semantic rules cover constants/runtime expressions; codegen selects signed/unsigned/float operations and guards failures. All 16 operator tests and 130 focused tests pass, including 103 operator executions (37 results and 66 expected traps). Serial/parallel suites agree on 264/272 passes with the same eight known failures. General control flow and lowering/JIT/CLI remain SPEC-016 through SPEC-020.
 
 - [ ] **SPEC-016 — Correct nested if/while control flow.**
   Require boolean conditions and track the current insertion block after recursive generation. Stop emitting into terminated blocks and correctly terminate merge blocks and loop backedges.
@@ -294,6 +295,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-012 | 2026-09-15 | [sema.cpp](src/sema.cpp) validates targets, exact initializer/store types, and definite initialization with branch/loop state keyed by declaration ID. [sema_constants.cpp](src/sema_constants.cpp) evaluates pure, lexically ordered constants with checked arithmetic and boolean short-circuiting; codegen materializes folded values and supports delayed immutable storage. All **17 variable tests and 19 E2E tests pass**. Incremental Debug build succeeds; full serial/parallel runs both report **214/222 passes, the same eight known failures, and no crashes/skips**. The normative contract and checked-program documentation record the current i32/f32/bool constant boundary and later numeric/control-flow work. |
 | SPEC-013 | 2026-09-15 | [numeric.cpp](src/numeric.cpp) validates complete literal spellings and exact-width ranges; [sema_numeric.cpp](src/sema_numeric.cpp) supplies contextual types without converting typed operands. Numeric AST nodes preserve spelling; checked literals/constants own APInt/APFloat values emitted directly by codegen. All **12 numeric tests, 24 E2E cases, and eight exact float-bit probes pass**. Incremental Debug build succeeds; full serial/parallel suites report **231/239 passes, the same eight known failures, and no crashes/skips**. Frontend APInt/APFloat uses the existing shared LLVM library with consistent linkage. The spec defines cast rejection and preserves later runtime operator/return work. |
 | SPEC-014 | 2026-09-16 | [sema.cpp](src/sema.cpp) validates call/return types, conservative return paths, unreachable source, and entry signatures before constructing a checked program. Module/executable modes preserve helper-only compilation while requiring a validated `main() -> i32` for execution. Codegen defensively rejects checked non-void fallthrough. All **12 function tests, 29 E2E cases, and 114 focused tests pass**. Incremental Debug build succeeds; serial/parallel suites report **248/256 passes, the same eight known failures, and no crashes/skips**. Five new execution cases cover nested branches, void returns, loop fallbacks, typed calls, and a valid -1 result. |
+| SPEC-015 | 2026-09-16 | [operators.h](src/operators.h) shares scalar operator rules between constant and runtime checking. [codegen_operators.cpp](src/codegen_operators.cpp) emits checked integer arithmetic, signed/unsigned division/remainder/comparisons, native float operations, logical negation, and short-circuit branches. All **16 operator tests and 130 focused tests pass**. The operator suite executes **37 successful results and 66 expected runtime traps**, including exact float bits and instrumented call-order/side-effect checks. Incremental Debug build succeeds; serial/parallel suites report **264/272 passes, the same eight known failures, and no test-process crashes/skips**. Runtime traps remain distinct from valid i32 results; in-process recovery/CLI integration remains SPEC-019/020. |
 
 ### SPEC-001 verification
 
@@ -931,3 +933,61 @@ unsupported runtime `!=` expression, preserving its original stage-failure
 assertion. No later-feature tests were disabled or weakened. The spec fixes
 return/entry behavior before implementation and preserves SPEC-015 operators,
 SPEC-016/017 control flow, and SPEC-018 through SPEC-020 lowering/JIT/CLI work.
+
+
+### SPEC-015 verification
+
+Run on Apple Silicon macOS with LLVM/MLIR 21.1.6 using the existing Debug build:
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 \
+  -R '^(OperatorsTest|FunctionsTest|NumericTest|VariablesTest|DiagnosticsTest|ScopeTest|CheckedProgramTest|E2ETest)\.' \
+  --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec015-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec015-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+# Build and 130 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **272 tests, 264 passes, eight failures, and no
+skipped tests or test-process crashes**. The failure names match SPEC-014 exactly.
+Maintained source names match discovery with no duplicates and all timeouts
+remain 30 seconds. Formatter checks pass for the changed implementation and
+formatted test files. The build has only the existing generated MLIR deprecation
+warnings and uses the same shared LLVM/MLIR targets.
+
+Sixteen operator tests cover the valid scalar matrix, invalid operand categories,
+unsupported syntax/operators through source and AST APIs, statement-only
+assignments, and valid integer minima/maxima. Constant and runtime checking share
+one operator-type table. Runtime operators use resolved signedness and widths;
+integer arithmetic checks representability, division/remainder guards dangerous
+operands before executing, and floats retain native-width rounding without
+fast-math flags. Boolean right operands live on conditional control-flow paths.
+
+The operator suite makes **103 external invocations: 37 return 42, and 66 trap as
+expected**. Successful cases exercise every integer width, signed quotient and
+remainder signs, high unsigned magnitudes, all comparisons, both float widths,
+boolean truth tables, nested conditions/loops/stores/call arguments, and eight
+exact runtime float-bit probes. The probes observe per-operation rounding,
+subnormals, and signed zero via a test-only bitcast adapter. SPEC-013's eight
+literal bit probes and all 29 E2E cases also continue to pass.
+
+Trap cases cover overflow/underflow, signed-minimum negation/division/remainder,
+zero integer divisors, both signs of floating zero divisors, and non-finite float
+results. They require the runner's trap signal, excluding compiler/optimizer
+errors and timeouts. Short-circuiting skips trapping calls and executes selected
+right operands. Test-only LLVM instrumentation records helper calls as decimal
+digits, verifying that skipped calls have no side effects and evaluated operands
+and arguments run once, left to right. Source call/control-flow operations remain
+unchanged; no language globals, references, or bitcasts are introduced.
+
+The previous checked-operator rejection fixture now verifies successful typed
+modules; invalid returns still fail in Sema. Codegen partial-module disposal is
+exercised through the explicit legacy backend, where runtime `!=` remains
+unsupported. No deferred feature assertions were disabled or weakened. The
+normative operator decisions precede implementation; general control-flow work,
+`unless`/`for`, and lowering/JIT/CLI remain SPEC-016 through SPEC-020.

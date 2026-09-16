@@ -711,6 +711,8 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
 
         return currentArray;
     } else if (auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
+        if (checked_data)
+            return gen_checked_unary(prefix);
         if (prefix->op == "*") {
             auto ptr = gen_expression(prefix->right.get());
             if (!ptr)
@@ -769,15 +771,15 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
 
         fail("Unsupported expression or unresolved value in code generation");
     } else if (auto *bin = dynamic_cast<const InfixExpression *>(expr)) {
+        if (checked_data)
+            return gen_checked_binary(bin);
         auto left = gen_expression(bin->left.get());
         auto right = gen_expression(bin->right.get());
 
         if (!left || !right)
             fail("Unsupported expression or unresolved value in code generation");
 
-        // Simple type checking/promotion for binary ops
-        if (checked_data && left.getType() != right.getType())
-            fail("Checked binary operands have different types");
+        // Legacy stage-only promotion; checked operators use canonical types above.
         if (left.getType() != right.getType()) {
             if (left.getType().isInteger(32) && right.getType().isInteger(64)) {
                 left = builder.create<mlir::arith::ExtSIOp>(location(), builder.getI64Type(), left);
@@ -788,15 +790,6 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             // Add more cases as needed (float, etc)
         }
 
-        if (checked_data) {
-            auto source_type = checked_data->types.at(bin->left.get());
-            const auto &info = core_type_info(source_type);
-            if (!info.is_integer && source_type != CoreType::Bool)
-                fail("Floating operators are not implemented (SPEC-015)");
-            if (info.is_integer && !info.is_signed &&
-                (bin->op == "/" || bin->op == "<" || bin->op == ">"))
-                fail("Unsigned division/comparison is not implemented (SPEC-015)");
-        }
         if (bin->op == "+")
             return builder.create<mlir::arith::AddIOp>(location(), left, right);
         if (bin->op == "-")

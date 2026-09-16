@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-014, maintained source definitions and CTest discovery both contain **256 tests**:
+At SPEC-015, maintained source definitions and CTest discovery both contain **272 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -18,6 +18,7 @@ At SPEC-014, maintained source definitions and CTest discovery both contain **25
 | VariablesTest | 17 |
 | NumericTest | 12 |
 | FunctionsTest | 12 |
+| OperatorsTest | 16 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -61,8 +62,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-014 both produce
-**248 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-015 both produce
+**264 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -113,7 +114,7 @@ identity and MLIR signature/storage type, aliases, signedness, unknown/deferred
 type rejection in all annotation positions, `void` restrictions, declaration IDs,
 call resolution, ownership after frontend/codegen destruction, duplicate and
 unresolved declaration failures, target rejection, independent compiler runs,
-return checking, and guards for unfinished operators. Compile-time assertions
+return checking, and verified scalar operators. Compile-time assertions
 prove that raw ASTs cannot call `CodeGen::generate` and clients cannot construct a
 `CheckedProgram`. [The contract](../docs/checked-program.md) documents the limits.
 
@@ -299,3 +300,44 @@ passing Sema. Deferred feature assertions remain intact. Both full suites report
 focused function/numeric/variable/scope/diagnostic/checked-program/E2E tests pass.
 General runtime operators, control-flow lowering, `unless`/`for`, and JIT/CLI
 integration remain SPEC-015 through SPEC-020.
+
+
+## Expression operators and arithmetic failure (SPEC-015)
+
+All 16 `OperatorsTest` cases pass. The scalar operator matrix verifies every
+accepted integer/float/bool combination and rejects invalid categories, mixed
+types, unsupported syntax, unsupported AST operators, and nested assignments.
+Constant and runtime checking use one operator-type table. Existing parser
+precedence and constant-evaluation tests continue to pass.
+
+The suite performs **103 external executions: 37 return 42 and 66 intentionally
+trap**. Successful programs cover signed/unsigned arithmetic and all comparisons
+at every integer width, negative division/remainder signs, high unsigned values,
+valid minimum/maximum results, both floating widths, boolean truth tables, and
+nested operators in conditions, loops, stores, and call arguments. Eight exact
+float-bit probes cover per-operation rounding, subnormals, and signed zero using
+a test-only bitcast adapter. These are in addition to SPEC-013's eight literal
+bit probes and the 29 existing E2E cases.
+
+Overflow, unsigned underflow, signed-minimum negation/division/remainder, zero
+divisors (including negative floating zero), and non-finite floating results
+must fail in the runner with a trap signal. Compiler/optimizer errors and
+timeouts do not satisfy those assertions. Expected child traps are distinct
+from test-process crashes and from a valid program return of -1.
+
+Short-circuit cases skip trapping calls and execute required right operands.
+A test-only LLVM global records calls as decimal digits, proving skipped calls
+have no side effects and evaluated operands/arguments run once, left to right.
+The test instruments helper bodies after checked compilation; it does not add
+language globals or change generated source call/control-flow operations.
+
+The old checked-operator rejection fixture now verifies successful typed modules;
+invalid return signatures still fail in Sema. The partial-module disposal test
+uses the explicit legacy backend, which still rejects runtime `!=`, preserving
+its codegen-stage failure assertion now that checked codegen supports it. The
+legacy stage path does not establish the new operator semantics.
+
+All **130 focused tests pass**. Full serial/parallel runs report **264/272 passes**
+with exactly the same eight known failures, no test-process crashes or skips,
+and 30-second timeouts. General control-flow completion, `unless`/`for`, lowering,
+and JIT/CLI integration remain SPEC-016 through SPEC-020.

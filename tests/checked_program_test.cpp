@@ -241,18 +241,21 @@ TEST(CheckedProgramTest, IndependentRunsCannotReuseSemanticBindings) {
     EXPECT_EQ(sema.check_for_codegen(std::move(invalid.program)), nullptr);
 }
 
-TEST(CheckedProgramTest, UnimplementedContractsCannotEmitWrongTypedOperations) {
+TEST(CheckedProgramTest, OperatorsAndReturnsRespectCanonicalTypes) {
     mlir::MLIRContext context;
-    for (const auto &[source, stage] : std::vector<std::pair<std::string, DiagnosticStage>>{
-             {"def f(x: f64) -> f64 { return x + x; }", DiagnosticStage::Codegen},
-             {"def f(x: u64) -> u64 { return x / x; }", DiagnosticStage::Codegen},
-             {"def f(x: u64) -> bool { return x < x; }", DiagnosticStage::Codegen},
-             {"def f(x: bool) -> i32 { return x; }", DiagnosticStage::Semantic},
-             {"def f(x: i32) -> u32 { return x; }", DiagnosticStage::Semantic},
-             {"def f() -> i32 { return; }", DiagnosticStage::Semantic}}) {
-        auto result = compile_source(source, "pending.gloin", context);
+    for (const std::string source :
+         {"def f(x: f64) -> f64 { return x + x; }", "def f(x: u64) -> u64 { return x / x; }",
+          "def f(x: u64) -> bool { return x < x; }"}) {
+        auto result = compile_source(source, "operators.gloin", context);
+        ASSERT_TRUE(result.success()) << source;
+        EXPECT_TRUE(mlir::succeeded(mlir::verify(*result.module)));
+    }
+    for (const std::string source :
+         {"def f(x: bool) -> i32 { return x; }", "def f(x: i32) -> u32 { return x; }",
+          "def f() -> i32 { return; }"}) {
+        auto result = compile_source(source, "returns.gloin", context);
         EXPECT_FALSE(result.success()) << source;
         EXPECT_FALSE(result.module);
-        EXPECT_EQ(result.failed_stage, stage);
+        EXPECT_EQ(result.failed_stage, DiagnosticStage::Semantic);
     }
 }

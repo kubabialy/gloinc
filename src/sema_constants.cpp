@@ -1,3 +1,4 @@
+#include "operators.h"
 #include "sema.h"
 
 void Sema::check_constant(const VariableDeclaration *declaration) {
@@ -62,9 +63,8 @@ std::shared_ptr<Type> Sema::check_constant_expression(const Expression *expressi
         if (!operand)
             return nullptr;
         auto core = resolve_core_type(operand->to_string()).value();
-        const auto &info = core_type_info(core);
-        if ((prefix->op == "!" && core == CoreType::Bool) || (prefix->op == "-" && info.is_signed))
-            return operand;
+        if (auto result = unary_operator_type(prefix->op, core))
+            return get_builtin_type(std::string(core_type_info(*result).name));
         log_error("Invalid unary operator in constant expression");
         return nullptr;
     }
@@ -76,17 +76,9 @@ std::shared_ptr<Type> Sema::check_constant_expression(const Expression *expressi
             log_error("Type mismatch in constant expression");
             return nullptr;
         }
-        const auto &op = binary->op;
         auto core = resolve_core_type(left->to_string()).value();
-        const auto &info = core_type_info(core);
-        bool boolean = core == CoreType::Bool;
-        bool numeric = info.is_integer || core == CoreType::F32 || core == CoreType::F64;
-        if (op == "==" || op == "!=" || (boolean && (op == "&&" || op == "||")) ||
-            (numeric && (op == "<" || op == ">" || op == "<=" || op == ">=")))
-            return get_builtin_type("bool");
-        if ((numeric && (op == "+" || op == "-" || op == "*" || op == "/")) ||
-            (info.is_integer && op == "%"))
-            return left;
+        if (auto result = binary_operator_type(binary->op, core))
+            return get_builtin_type(std::string(core_type_info(*result).name));
         log_error("Invalid binary operator in constant expression");
         return nullptr;
     }

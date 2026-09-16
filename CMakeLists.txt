@@ -85,6 +85,7 @@ target_link_libraries(gloin_frontend PUBLIC LLVM)
 
 add_library(gloin_backend STATIC
     src/codegen.cpp
+    src/codegen_operators.cpp
     src/compiler.cpp
     src/dialect/GloinDialect.cpp
     src/jit_runner.cpp
@@ -147,6 +148,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/parser_test.cpp
         tests/numeric_test.cpp
         tests/functions_test.cpp
+        tests/operators_test.cpp
         tests/variables_test.cpp
         tests/scope_test.cpp
         tests/sema_test.cpp
