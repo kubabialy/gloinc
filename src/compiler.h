@@ -14,10 +14,13 @@ struct CompilationResult {
     bool success() const { return module && !diagnostics->has_errors(); }
 };
 
-// Stops after the first failed stage. Lowering/execution and the file CLI remain
-// SPEC-018 through SPEC-020; this API produces the current high-level module.
+enum class CompilationOutput { HighLevel, LLVM };
+
+// Stops after the first failed stage. Both output forms are verified; LLVM uses
+// the shared lowering pipeline. Execution and the file CLI remain SPEC-019/020.
 // Module mode permits helper-only source. Use Executable before running main.
 CompilationResult compile_source(std::string text, std::string filename, mlir::MLIRContext &context,
-                                 CompilationMode mode = CompilationMode::Module);
+                                 CompilationMode mode = CompilationMode::Module,
+                                 CompilationOutput output = CompilationOutput::HighLevel);
 
 #endif

@@ -36,11 +36,8 @@ void verify_cfg(mlir::ModuleOp module) {
 
 void execute_module(mlir::ModuleOp module, int expected) {
     ASSERT_NO_FATAL_FAILURE(verify_cfg(module));
-    std::string ir;
-    llvm::raw_string_ostream stream(ir);
-    module.print(stream);
-    auto value = gloin_test::run_external_mlir(ir, {gloin_test::mlir_opt, {}},
-                                               {gloin_test::mlir_runner, {}});
+    auto value = gloin_test::run_external_module(module, {gloin_test::mlir_opt, {}},
+                                                 {gloin_test::mlir_runner, {}});
     ASSERT_TRUE(static_cast<bool>(value)) << llvm::toString(value.takeError());
     EXPECT_EQ(*value, expected);
 }

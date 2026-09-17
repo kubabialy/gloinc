@@ -9,11 +9,8 @@
 namespace {
 void execute_module(mlir::ModuleOp module, int expected) {
     ASSERT_TRUE(mlir::succeeded(mlir::verify(module)));
-    std::string ir;
-    llvm::raw_string_ostream stream(ir);
-    module.print(stream);
-    auto value = gloin_test::run_external_mlir(ir, {gloin_test::mlir_opt, {}},
-                                               {gloin_test::mlir_runner, {}});
+    auto value = gloin_test::run_external_module(module, {gloin_test::mlir_opt, {}},
+                                                 {gloin_test::mlir_runner, {}});
     ASSERT_TRUE(static_cast<bool>(value)) << llvm::toString(value.takeError());
     EXPECT_EQ(*value, expected);
 }

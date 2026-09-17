@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-018.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-019.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -127,9 +127,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 
 ## 4. Connect the actual compiler pipeline
 
-- [ ] **SPEC-018 — Verify IR and share one lowering pipeline.**
+- [x] **SPEC-018 — Verify IR and share one lowering pipeline.**
   Define the supported intermediate dialects and final legal operations/types. Provide a shared pipeline for all execution/output modes, including control-flow conversion. Reject custom operations without an implemented lowering and use source locations in diagnostics.
   **Done when:** generated modules are verified before execution and after appropriate conversions; no unsupported Gloin operation or unrealized conversion remains at LLVM export; failures propagate cleanly and module ownership is explicit.
+  **Verified:** [The shared pipeline](docs/lowering.md) verifies source-generated IR, consumes owned modules through all six conversions with pass verification, and enforces LLVM operation/type legality. Compiler LLVM output, the legacy JIT, and every external language execution use it. All 15 new tests and 229 focused tests pass; serial/parallel runs agree on 306/314 passes with the same eight failures. JIT translation/invocation and CLI remain SPEC-019/SPEC-020.
 
 - [ ] **SPEC-019 — Repair the in-process JIT.**
   Register required translation interfaces, including the builtin dialect for the selected MLIR version, use SPEC-018's pipeline, and invoke a validated entry-point ABI. Separate compiler/runtime failure from a program's returned value.
@@ -300,6 +301,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-015 | 2026-09-16 | [operators.h](src/operators.h) shares scalar operator rules between constant and runtime checking. [codegen_operators.cpp](src/codegen_operators.cpp) emits checked integer arithmetic, signed/unsigned division/remainder/comparisons, native float operations, logical negation, and short-circuit branches. All **16 operator tests and 130 focused tests pass**. The operator suite executes **37 successful results and 66 expected runtime traps**, including exact float bits and instrumented call-order/side-effect checks. Incremental Debug build succeeds; serial/parallel suites report **264/272 passes, the same eight known failures, and no test-process crashes/skips**. Runtime traps remain distinct from valid i32 results; in-process recovery/CLI integration remains SPEC-019/020. |
 | SPEC-016 | 2026-09-17 | [codegen_control_flow.cpp](src/codegen_control_flow.cpp) replaces empty-block reachability heuristics with explicit live continuations. Returns clear the insertion point; branches/loops connect only live paths, and raw generation rejects statements after termination. All **12 control-flow tests and 142 focused tests pass**, including nine external executions and structural CFG checks. The pre-change regression reproduced unchecked emission after returns. Incremental Debug build succeeds; serial/parallel suites report **276/284 passes, the same eight known failures, and no test-process crashes/skips**. Condition counters verify one-time branch evaluation, skipped else-if conditions, repeated loop conditions, and empty-loop execution. |
 | SPEC-017 | 2026-09-17 | Adds checked `unless` and C-style `for` semantics/lowering, independently optional header components, header/body scopes, and conservative initialization/return analysis. All **15 new tests and 206 focused tests pass**, including ten externally executed, verified modules. The counter returns 3; a helper trace confirms initializer/condition/body/update order. Incremental Debug build succeeds; serial/parallel suites report **291/299 passes**, the same eight failures, and no test-process crashes/skips. |
+| SPEC-018 | 2026-09-17 | Adds [shared verified LLVM lowering](src/lowering.cpp), explicit high-level/LLVM compiler output, source-located IR diagnostics, and ownership that discards partial modules on failure. The compiler, legacy JIT, and external language tests use one conversion pipeline. All **15 new tests and 229 focused tests pass**, including LLVM export/verification, six additional external executions, and three independent repeated compile/run checks. Incremental Debug build succeeds; full serial/parallel suites report **306/314 passes**, the same eight failures, and no test-process crashes/skips. |
 
 ### SPEC-001 verification
 
@@ -1116,3 +1118,67 @@ now reject still-deferred imports/defer/break, while execution tests prove the
 newly supported constructs cannot disappear. Deferred-feature failures remain
 visible. Shared verifier/lowering, in-process JIT, and CLI integration remain
 SPEC-018 through SPEC-020.
+
+
+### SPEC-018 verification
+
+Run on Apple Silicon macOS with LLVM/MLIR 21.1.6 using the existing Debug build:
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 \
+  -R '^(LoweringTest|ExternalRunnerTest|ForUnlessTest|ParserTest|ControlFlowTest|OperatorsTest|FunctionsTest|NumericTest|VariablesTest|DiagnosticsTest|ScopeTest|CheckedProgramTest|E2ETest)\.' \
+  --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec018-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec018-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+# Build and 229 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **314 tests, 306 passes, eight failures, and no skipped
+tests or test-process crashes**. Failure names match SPEC-017 exactly. Maintained
+source definitions match discovery without duplicates; every timeout remains
+30 seconds. Formatting and diff whitespace checks pass. The Debug build retains
+existing generated MLIR deprecation warnings.
+
+`compile_source` now verifies every successful high-level result. Its optional
+`CompilationOutput::LLVM` consumes the generated module through the shared
+pipeline: SCF to CF, CF to LLVM, arithmetic to LLVM, functions to LLVM, memrefs to
+LLVM, and cast reconciliation. Input verification precedes conversion; pass
+verification and a final operation/type legality check prevent unsupported IR
+from reaching export. Only the root builtin module and registered LLVM
+operations with compatible types survive. LLVM constant index-typed integer
+payloads are a documented exception for attributes, with concrete SSA result
+types; a raw SCF/memref fixture verifies their export and execution.
+
+Input custom/Gloin operations and types, unknown operations, and nested modules
+fail explicitly. Final high-level operations, illegal metadata types, and
+unrealized casts fail before output or execution. The diagnostic bridge captures
+MLIR errors even when a conversion reports success. Invalid input IR uses the
+Verification stage; conversion/legality failures use Lowering. File/line/column
+locations and available owned byte spans are preserved without inventing source
+text. Lowering consumes ownership; failure destroys partial IR. Borrowing
+consumers lower explicit clones and retain their original high-level modules.
+
+All external language execution helpers and the legacy JIT now use this pipeline.
+The external optimizer only parses/verifies serialized LLVM-dialect IR, removing
+the old duplicate conversion list. Existing arithmetic trap and result assertions
+remain unchanged. The JIT's translation registration, invocation ABI, and failure
+result remain explicitly deferred to SPEC-019.
+
+All 15 new tests pass, including real LLVM IR export and verification, all core
+scalar signatures, internal wide arithmetic, source calls/nested control flow,
+SCF/memref operations, clone preservation, source locations, invalid input,
+unsupported operations/types, cast leftovers, metadata legality, conversion
+failure, null modules, existing errors, and unchanged earlier source-error stages.
+Six additional external executions assert 42 for three fixtures and -1 for
+three independent compilations of the same loop. Those three contexts also
+produce identical printed LLVM-dialect IR, establishing fixture repeatability
+on this toolchain without claiming cross-platform or native-binary identity.
+
+The next task is SPEC-019; the CLI and full source-file/release acceptance gates
+remain SPEC-020/SPEC-021/SPEC-046. No deferred-feature assertion was weakened or
+removed, and the eight known full-suite failures remain visible.

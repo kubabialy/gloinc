@@ -15,16 +15,18 @@ It cannot yet compile or run the programs under `examples/`.
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | External execution tests | 29 E2E cases, nine if/while and ten unless/for executions, numeric bit probes, and 103 operator executions verify values, branches/loops, evaluation order, and arithmetic traps through external MLIR tools. |
-| Full test suite | 299 tests discovered; local serial/parallel runs both have 291 passes, 8 failures, no crashes. |
+| Full test suite | 314 tests discovered; local serial/parallel runs both have 306 passes, 8 failures, no crashes. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
 | Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/unless/while/for execution, loop-variable scope, and omitted for components are verified. |
 | Generics | Four IR-string checks pass; generic execution is not established. |
-| JIT | Smoke test fails on missing builtin LLVM translation registration. |
-| Shared lowering, CLI, imports, concurrency | Incomplete: SPEC-018, SPEC-020, SPEC-023/029/030, SPEC-040/041. |
+| IR verification/lowering | One pipeline verifies source output and conversions, rejects unsupported IR, and produces LLVM-compatible modules for output and execution consumers. |
+| JIT | Uses shared lowering; smoke test still fails on missing builtin LLVM translation registration. |
+| CLI, imports, concurrency | Incomplete: SPEC-020, SPEC-023/029/030, SPEC-040/041. |
 
 [Compiler diagnostics](docs/diagnostics.md) now connect parsing, checking, and high-level
-codegen through `compile_source`; the CLI connection remains SPEC-020.
+codegen through `compile_source`, with verified high-level or LLVM output via
+[the shared lowering pipeline](docs/lowering.md); the CLI connection remains SPEC-020.
 [The parser contract](docs/parser.md) distinguishes core compilation from
 syntax-only tests of deferred features.
 [The checked-program contract](docs/checked-program.md) defines the shared

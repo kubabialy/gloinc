@@ -517,6 +517,42 @@ struct-literal recognition requires type arguments followed by a literal brace,
 without any capitalization heuristic; generic language acceptance remains
 SPEC-031/SPEC-032.
 
+### Verified IR and lowering (SPEC-018)
+
+Successful source compilation returns a verified, owned module. The default
+inspection form retains high-level IR; LLVM output runs one shared pipeline
+also used by execution consumers. Invalid IR stops before conversion. Every
+conversion pass verifies its output, followed by a final legality and verifier
+check before LLVM export or execution. A failed stage returns diagnostics and
+no partial module.
+
+The lowering input boundary accepts registered operations in `func`, `arith`,
+`cf`, `scf`, `memref`, and `llvm`, within one root `builtin.module`. Nested modules are rejected. Temporary
+`builtin.unrealized_conversion_cast` operations may be reconciled during
+conversion. Types must be builtin or LLVM types, including nested types in
+signatures and attributes. These are compiler IR capabilities, not extra source
+language features; an operation in an accepted dialect still fails if the
+pipeline cannot convert it.
+
+The pipeline converts SCF to control flow, control flow to LLVM, arithmetic to
+LLVM, functions to LLVM, and memrefs to LLVM, then reconciles conversion casts.
+The final boundary permits only the root builtin module and registered LLVM
+operations with LLVM-compatible types, including types nested in signatures,
+block arguments, and attributes. LLVM constant operations may retain index-typed
+integer literal attributes supported by the exporter; their SSA result must
+have a concrete LLVM-compatible type. No Gloin/custom operation or type, high-level
+operation, or unrealized conversion cast may remain. LLVM's internal widths and
+aggregate descriptors do not add source-language types.
+
+Verification/lowering errors retain available source file, line, and column.
+Owned source text supplies byte spans when available; imported IR may provide
+only file/line/column, and synthetic unknown locations remain unknown. Lowering
+consumes module ownership and destroys partial IR on failure. A consumer that
+retains the high-level form must clone it explicitly; the MLIR context outlives
+all modules. This task adds no optimization-dependent language behavior. JIT
+translation registration, entry ABI, and execution-result handling follow
+SPEC-019; CLI commands and exit conventions follow SPEC-020.
+
 ### Canonical core examples
 
 A complete typed program with a forward call and a constant returns `42`:

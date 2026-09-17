@@ -306,11 +306,8 @@ TEST(NumericTest, FloatBitPatternsSurviveExternalExecution) {
         auto answer = builder.create<mlir::arith::SelectOp>(location, equal, yes, no);
         builder.create<mlir::func::ReturnOp>(location, answer.getResult());
         ASSERT_TRUE(mlir::succeeded(mlir::verify(*result.module)));
-        std::string source;
-        llvm::raw_string_ostream stream(source);
-        result.module->print(stream);
-        auto executed = gloin_test::run_external_mlir(source, {gloin_test::mlir_opt, {}},
-                                                      {gloin_test::mlir_runner, {}});
+        auto executed = gloin_test::run_external_module(*result.module, {gloin_test::mlir_opt, {}},
+                                                        {gloin_test::mlir_runner, {}});
         ASSERT_TRUE(static_cast<bool>(executed)) << llvm::toString(executed.takeError());
         EXPECT_EQ(*executed, 42);
     }

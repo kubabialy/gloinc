@@ -1,4 +1,5 @@
 #include "external_runner.h"
+#include "lowering.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/FileSystem.h"
@@ -47,6 +48,23 @@ llvm::Expected<std::string> run_tool(const ToolCommand &tool,
 }
 } // namespace
 
+llvm::Expected<int> run_external_module(mlir::ModuleOp module, const ToolCommand &optimizer,
+                                        const ToolCommand &runner, unsigned timeout_seconds) {
+    Diagnostics diagnostics;
+    auto lowered = lower_to_llvm(module ? mlir::OwningOpRef<mlir::ModuleOp>(module.clone())
+                                        : mlir::OwningOpRef<mlir::ModuleOp>{},
+                                 diagnostics);
+    if (!lowered) {
+        std::ostringstream errors;
+        diagnostics.render(errors);
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), "%s", errors.str().c_str());
+    }
+    std::string ir;
+    llvm::raw_string_ostream stream(ir);
+    lowered->print(stream);
+    return run_external_mlir(ir, optimizer, runner, timeout_seconds);
+}
+
 llvm::Expected<int> run_external_mlir(llvm::StringRef source, const ToolCommand &optimizer,
                                       const ToolCommand &runner, unsigned timeout_seconds) {
     if (timeout_seconds == 0)
@@ -71,11 +89,7 @@ llvm::Expected<int> run_external_mlir(llvm::StringRef source, const ToolCommand 
     }
 
     auto optimized =
-        run_tool(optimizer,
-                 {input, "--convert-scf-to-cf", "--convert-cf-to-llvm", "--convert-arith-to-llvm",
-                  "--convert-func-to-llvm", "--finalize-memref-to-llvm",
-                  "--reconcile-unrealized-casts", "-o", lowered},
-                 prefix + "optimizer", timeout_seconds);
+        run_tool(optimizer, {input, "-o", lowered}, prefix + "optimizer", timeout_seconds);
     if (!optimized)
         return optimized.takeError();
     auto output = run_tool(runner, {lowered, "-e", "main", "-entry-point-result=i32"},

@@ -1,16 +1,18 @@
 # Compiler diagnostics and stage boundaries
 
 `compile_source(text, filename, context)` in [compiler.h](../src/compiler.h)
-runs parsing, semantic checking, and high-level MLIR generation in order. Each
+runs parsing, semantic checking, MLIR generation, and verification in order. Each
 stage must succeed before the next starts. Its `CompilationResult` contains an
 owned module on success, structured diagnostics, and the failed stage on error.
 A failed result never exposes a partial module. The caller's MLIR context must
-outlive the result. This is the API for the eventual file-reading CLI; lowering,
-JIT execution, and the CLI remain SPEC-018 through SPEC-020.
+outlive the result. Optional LLVM output uses the shared lowering pipeline.
+JIT execution and the file-reading CLI remain SPEC-019/SPEC-020.
 
 The optional fourth argument is `CompilationMode::Module` by default; pass
 `CompilationMode::Executable` to require `main() -> i32` before generating IR.
 Module mode permits helper-only source but still rejects an invalid `main`.
+The fifth argument, `CompilationOutput::LLVM`, selects verified LLVM-dialect
+output; the default `HighLevel` retains verified high-level IR.
 
 [diagnostics.h](../src/diagnostics.h) defines the shared error representation.
 Each diagnostic records its stage, message, and source span. Tokens and AST
@@ -55,8 +57,11 @@ module, and context ownership and the limits of the implemented checks.
 
 Generated source operations use MLIR file/line/column locations. Synthetic
 runtime declarations use unknown locations. MLIR errors emitted during
-code generation join the same diagnostic collection. Complete IR verification
-and the lowering/JIT diagnostic paths remain SPEC-018/SPEC-019.
+code generation join the same diagnostic collection. SPEC-018 adds `Verification`
+and `Lowering` stages through [the shared IR pipeline](lowering.md). Errors from
+MLIR retain real file/line/column positions even when imported IR has no source
+text; owned source text provides byte spans when available. No partial module
+is exposed on failure. JIT diagnostics remain SPEC-019.
 
 SPEC-008 validates UTF-8 across the entire source, including comments and text
 after a parsing error. Invalid encoding, NUL, BOM, non-ASCII identifiers, and
@@ -107,7 +112,7 @@ paths. Malformed headers, unsupported `unless ... else`, and deferred loop contr
 remain parsing errors. Raw AST initializers other than bindings or expression
 statements fail explicitly in both Sema and the backend.
 
-The external E2E harness uses executable-mode `compile_source` before verification and tool
-execution. Stage-isolated codegen tests intentionally bypass semantic checking,
+The external E2E harness uses executable-mode `compile_source`, then the shared
+production lowering pipeline before tool execution. Stage-isolated codegen tests intentionally bypass semantic checking,
 but must check parser and codegen status. Such tests establish only the behavior
 of those stages, not end-to-end language support.

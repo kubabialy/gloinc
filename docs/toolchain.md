@@ -127,4 +127,4 @@ component `.a` files. GoogleTest's own static archives are expected.
 The `MLIRSetup.AllCompilerDialects` regression test uses the actual `CodeGen`
 constructor and checks that Gloin, Func, Arith, ControlFlow, MemRef, SCF, and LLVM
 dialects all load into one context. This is a toolchain/linkage check; repairing
-the JIT's lowering and translation path remains SPEC-018/SPEC-019.
+the JIT uses SPEC-018's shared lowering; translation and invocation remain SPEC-019.

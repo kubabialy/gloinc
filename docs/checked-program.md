@@ -253,6 +253,9 @@ A checked program outlives its synchronous codegen call. It contains no MLIR
 objects and can outlive its parser and Sema. Codegen borrows semantic data only
 during generation. The returned owned module may outlive both codegen and the
 checked program, but its caller-owned MLIR context must outlive the module.
+`compile_source` verifies generated IR before returning it and optionally consumes
+it through shared LLVM lowering. Consumers that retain high-level IR lower an
+owned clone; every failure destroys partial output.
 Failed generation destroys its partial module. A CodeGen instance generates one
 module; destruction also cleans up a module that was never transferred.
 
@@ -272,7 +275,8 @@ analysis, unreachable-source rejection, and explicit executable entry validation
 `if`/`while` lowering is verified under SPEC-016 and `unless`/`for` under SPEC-017.
 
 SPEC-015 implements checked scalar operators, including floating arithmetic and
-unsigned division/ordering. Complete verification/lowering and
-JIT integration remain SPEC-018/SPEC-019. Aggregate and concurrency contracts stay
+unsigned division/ordering. SPEC-018 verifies source-generated IR and supplies
+[one LLVM lowering pipeline](lowering.md), with explicit module ownership and
+operation/type legality checks. JIT integration remains SPEC-019. Aggregate and concurrency contracts stay
 deferred. A checked object establishes resolved identities and the checks currently
 implemented, not full release readiness.

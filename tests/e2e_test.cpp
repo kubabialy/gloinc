@@ -19,11 +19,8 @@ llvm::Expected<int> run_code(const std::string &code) {
     auto &module = result.module;
     if (!module || mlir::failed(mlir::verify(*module)))
         return llvm::createStringError(llvm::inconvertibleErrorCode(), "Invalid generated module");
-    std::string source;
-    llvm::raw_string_ostream stream(source);
-    module->print(stream);
-    return gloin_test::run_external_mlir(source, {gloin_test::mlir_opt, {}},
-                                         {gloin_test::mlir_runner, {}});
+    return gloin_test::run_external_module(*module, {gloin_test::mlir_opt, {}},
+                                           {gloin_test::mlir_runner, {}});
 }
 
 void expect_result(llvm::Expected<int> result, int expected) {

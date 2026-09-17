@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -34,33 +35,53 @@ struct SourceSpan {
     size_t end = 0;
 };
 
-enum class DiagnosticStage { Lexing, Parsing, Semantic, Codegen, Execution };
+enum class DiagnosticStage {
+    Lexing,
+    Parsing,
+    Semantic,
+    Codegen,
+    Verification,
+    Lowering,
+    Execution
+};
+
+// IR imported without source text can still retain a real file/line/column.
+struct DiagnosticPosition {
+    std::string filename;
+    size_t line;
+    size_t column;
+};
 
 struct Diagnostic {
     DiagnosticStage stage;
     SourceSpan span;
     std::string message;
+    std::optional<DiagnosticPosition> position;
 };
 
 class Diagnostics {
   public:
-    void error(DiagnosticStage stage, SourceSpan span, std::string message) {
+    void error(DiagnosticStage stage, SourceSpan span, std::string message,
+               std::optional<DiagnosticPosition> position = std::nullopt) {
         if (message.starts_with("Error: "))
             message.erase(0, 7);
         while (!message.empty() && (message.back() == '\n' || message.back() == '\r'))
             message.pop_back();
-        entries.push_back({stage, std::move(span), std::move(message)});
+        entries.push_back({stage, std::move(span), std::move(message), std::move(position)});
     }
 
     bool has_errors() const { return !entries.empty(); }
     const std::vector<Diagnostic> &all() const { return entries; }
     void render(std::ostream &out) const {
         for (const auto &entry : entries) {
-            auto [line, column] = entry.span.source
-                                      ? entry.span.source->line_column(entry.span.begin)
-                                      : std::pair<size_t, size_t>{1, 1};
-            out << (entry.span.source ? entry.span.source->name : "<unknown>") << ':' << line << ':'
-                << column << ": error: " << entry.message << '\n';
+            auto [line, column] =
+                entry.span.source ? entry.span.source->line_column(entry.span.begin)
+                : entry.position  ? std::pair{entry.position->line, entry.position->column}
+                                  : std::pair<size_t, size_t>{1, 1};
+            out << (entry.span.source ? entry.span.source->name
+                    : entry.position  ? entry.position->filename
+                                      : "<unknown>")
+                << ':' << line << ':' << column << ": error: " << entry.message << '\n';
         }
     }
 

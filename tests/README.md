@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-017, maintained source definitions and CTest discovery both contain **299 tests**:
+At SPEC-018, maintained source definitions and CTest discovery both contain **314 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -21,6 +21,7 @@ At SPEC-017, maintained source definitions and CTest discovery both contain **29
 | OperatorsTest | 16 |
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
+| LoweringTest | 15 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -64,8 +65,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-017 both produce
-**291 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-018 both produce
+**306 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -132,6 +133,12 @@ tools directory. `GLOIN_MLIR_OPT` and `GLOIN_MLIR_RUNNER` cache paths permit exp
 overrides. Missing tools fail configuration when tests are enabled; runtime
 launch failures are test errors. Tests-disabled builds do not discover these
 programs or create the fixture executable.
+
+Language execution tests call `run_external_module`, which clones the verified
+high-level module and uses the production `lower_to_llvm` pipeline. The external
+optimizer only parses/verifies the serialized LLVM-dialect IR; it no longer has
+its own conversion pass list. The string-level `run_external_mlir` API accepts
+already-lowered IR and remains available for controlled subprocess fixtures.
 
 Each E2E invocation owns a unique temporary directory containing its input,
 lowered IR, and separate stdout/stderr files for each child process. Files are
@@ -407,3 +414,34 @@ All **206 focused tests pass**. Serial/parallel suites both report **291/299
 passes**, the same eight failures, no test-process crashes/skips, and 30-second
 timeouts. Shared verification/lowering is next under SPEC-018; the in-process
 JIT and CLI remain SPEC-019/SPEC-020.
+
+
+## Verified IR and shared lowering (SPEC-018)
+
+All 15 `LoweringTest` cases pass. They verify high-level versus LLVM output,
+real LLVM export and LLVM verification, all scalar signatures and internal i128
+overflow calculations, nested calls/branches/loops and mutable storage, raw
+SCF/memref conversion, module ownership, preserved locations, invalid IR,
+unsupported custom operations/types, unknown operations, nested modules,
+unresolved casts, illegal types in metadata, and conversion errors. Null input
+and existing diagnostics cannot become successful output. Earlier source errors
+keep their original stage when LLVM output is requested.
+
+Six external executions run the new lowering fixtures: return-42, nested source
+control flow (42), internal SCF/memref operations (42), and three independent
+compilations/executions of a loop returning -1. The repeated compilations produce
+identical printed LLVM-dialect IR on the supported toolchain. This is fixture
+repeatability evidence, not a cross-platform or native-binary reproducibility
+claim. The memref fixture verifies LLVM's legitimate index-typed constant
+attributes while runtime index types remain rejected at the final boundary.
+
+Every existing language execution test now uses the same production pipeline,
+including integer/float arithmetic traps, numeric bit probes, and the full E2E,
+control-flow, and unless/for suites. Existing assertions and all eight known
+failures remain visible. The legacy JIT also lowers a clone through the shared
+pipeline; translation registration and invocation still need SPEC-019.
+
+All **229 focused tests pass**. Full serial/parallel suites report **306/314
+passes**, the same eight known failures, no test-process crashes/skips, and
+unchanged 30-second timeouts. [The pipeline contract](../docs/lowering.md)
+describes diagnostics and ownership boundaries.

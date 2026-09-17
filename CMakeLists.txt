@@ -89,6 +89,7 @@ add_library(gloin_backend STATIC
     src/codegen_operators.cpp
     src/codegen_control_flow.cpp
     src/compiler.cpp
+    src/lowering.cpp
     src/dialect/GloinDialect.cpp
     src/jit_runner.cpp
 )
@@ -153,6 +154,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/operators_test.cpp
         tests/control_flow_test.cpp
         tests/for_unless_test.cpp
+        tests/lowering_test.cpp
         tests/variables_test.cpp
         tests/scope_test.cpp
         tests/sema_test.cpp
