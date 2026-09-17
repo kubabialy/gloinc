@@ -264,6 +264,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
     DiagnosticScope source(current_span, stmt ? stmt->span : SourceSpan{});
     if (!stmt)
         fail("Missing statement in code generation");
+    if (!has_open_block())
+        fail("Unreachable statement in code generation");
 
     if (auto *func_def = dynamic_cast<const FunctionDefinition *>(stmt)) {
         if (checked_data)
@@ -290,37 +292,15 @@ void CodeGen::gen_statement(const Statement *stmt) {
 
         gen_statement(func_def->body.get());
 
-        // Check if the current block needs a terminator.
-        mlir::Block *currentBlock = builder.getBlock();
-        if (currentBlock) {
-            bool isEmpty = currentBlock->empty();
-            bool hasNoPreds = currentBlock->hasNoPredecessors();
-
-            // If the block is empty and unreachable (no predecessors), remove it.
-            // Exception: The entry block might have no predecessors but shouldn't be removed if
-            // empty? Actually, entry block is created by addEntryBlock() and is the start.
-            if (isEmpty && hasNoPreds && currentBlock != entryBlock) {
-                currentBlock->erase();
-            } else if (!isEmpty && !currentBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
-                // Reachable (or entry) but unterminated.
-                if (funcOp.getFunctionType().getNumResults() == 0) {
-                    builder.create<mlir::func::ReturnOp>(location());
-                } else {
-                    if (checked_data)
-                        fail("Checked non-void function reaches its end without returning");
-                    builder.create<mlir::LLVM::UnreachableOp>(location());
-                }
-            } else if (isEmpty) {
-                // Empty but reachable (e.g. fallthrough from previous block or entry block of empty
-                // function)
-                if (funcOp.getFunctionType().getNumResults() == 0) {
-                    builder.create<mlir::func::ReturnOp>(location());
-                } else {
-                    if (checked_data)
-                        fail("Checked non-void function reaches its end without returning");
-                    builder.create<mlir::LLVM::UnreachableOp>(location());
-                }
+        if (has_open_block()) {
+            if (funcOp.getFunctionType().getNumResults() == 0) {
+                builder.create<mlir::func::ReturnOp>(location());
+            } else {
+                if (checked_data)
+                    fail("Checked non-void function reaches its end without returning");
+                builder.create<mlir::LLVM::UnreachableOp>(location());
             }
+            builder.clearInsertionPoint();
         }
 
         leave_scope();
@@ -422,9 +402,9 @@ void CodeGen::gen_statement(const Statement *stmt) {
 
             gen_statement(method->body.get());
 
-            if (entryBlock->empty() ||
-                !entryBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
+            if (has_open_block()) {
                 builder.create<mlir::func::ReturnOp>(location());
+                builder.clearInsertionPoint();
             }
 
             leave_scope();
@@ -493,6 +473,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
             builder.create<mlir::func::ReturnOp>(location());
         }
 
+        builder.clearInsertionPoint();
+
     } else if (auto *block = dynamic_cast<const BlockStatement *>(stmt)) {
         enter_scope();
         for (const auto &s : block->statements) {
@@ -501,91 +483,10 @@ void CodeGen::gen_statement(const Statement *stmt) {
         leave_scope();
 
     } else if (auto *if_stmt = dynamic_cast<const IfStatement *>(stmt)) {
-        // Implement IfStatement using unstructured control flow (cf.cond_br)
-        // to support early returns inside branches.
-
-        auto *funcOp = builder.getBlock()->getParent()->getParentOp();
-        auto *region = builder.getBlock()->getParent();
-
-        auto *thenBlock = new mlir::Block();
-        auto *elseBlock = new mlir::Block(); // Use even if empty for simplicity
-        auto *mergeBlock = new mlir::Block();
-
-        region->getBlocks().insertAfter(builder.getBlock()->getIterator(), thenBlock);
-        region->getBlocks().insertAfter(thenBlock->getIterator(), elseBlock);
-        region->getBlocks().insertAfter(elseBlock->getIterator(), mergeBlock);
-
-        auto cond = gen_expression(if_stmt->condition.get());
-        if (!cond || !cond.getType().isInteger(1))
-            fail("If condition must be bool");
-
-        builder.create<mlir::cf::CondBranchOp>(location(), cond, thenBlock, mlir::ValueRange{},
-                                               elseBlock, mlir::ValueRange{});
-
-        // Then Block
-        builder.setInsertionPointToStart(thenBlock);
-        gen_statement(if_stmt->consequence.get());
-        // If not terminated (e.g. by return), branch to merge
-        auto *thenEnd = builder.getBlock();
-        // A nested if whose arms both return leaves an unused continuation.
-        // Do not connect that unreachable block to the enclosing merge.
-        if (thenEnd->empty() && thenEnd->hasNoPredecessors()) {
-            thenEnd->erase();
-        } else if (thenEnd->empty() || !thenEnd->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
-            builder.create<mlir::cf::BranchOp>(location(), mergeBlock);
-        }
-
-        // Else Block
-        builder.setInsertionPointToStart(elseBlock);
-        if (if_stmt->alternative) {
-            gen_statement(if_stmt->alternative.get());
-        }
-        auto *elseEnd = builder.getBlock();
-        if (elseEnd->empty() && elseEnd->hasNoPredecessors()) {
-            elseEnd->erase();
-        } else if (elseEnd->empty() || !elseEnd->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
-            builder.create<mlir::cf::BranchOp>(location(), mergeBlock);
-        }
-
-        // Continue after merge
-        builder.setInsertionPointToStart(mergeBlock);
+        gen_if(if_stmt);
 
     } else if (auto *while_stmt = dynamic_cast<const WhileStatement *>(stmt)) {
-        // Implement WhileStatement using unstructured control flow (cf.cond_br)
-
-        auto *region = builder.getBlock()->getParent();
-
-        auto *condBlock = new mlir::Block();
-        auto *bodyBlock = new mlir::Block();
-        auto *endBlock = new mlir::Block();
-
-        region->getBlocks().insertAfter(builder.getBlock()->getIterator(), condBlock);
-        region->getBlocks().insertAfter(condBlock->getIterator(), bodyBlock);
-        region->getBlocks().insertAfter(bodyBlock->getIterator(), endBlock);
-
-        builder.create<mlir::cf::BranchOp>(location(), condBlock);
-
-        // Condition Block
-        builder.setInsertionPointToStart(condBlock);
-        auto cond = gen_expression(while_stmt->condition.get());
-        if (!cond.getType().isInteger(1))
-            fail("While condition must be bool");
-        builder.create<mlir::cf::CondBranchOp>(location(), cond, bodyBlock, mlir::ValueRange{},
-                                               endBlock, mlir::ValueRange{});
-
-        // Body Block
-        builder.setInsertionPointToStart(bodyBlock);
-        gen_statement(while_stmt->body.get());
-        // If not terminated, branch back to condition
-        auto *bodyEnd = builder.getBlock();
-        if (bodyEnd->empty() && bodyEnd->hasNoPredecessors()) {
-            bodyEnd->erase();
-        } else if (bodyEnd->empty() || !bodyEnd->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
-            builder.create<mlir::cf::BranchOp>(location(), condBlock);
-        }
-
-        // End Block
-        builder.setInsertionPointToStart(endBlock);
+        gen_while(while_stmt);
 
     } else if (auto *expr_stmt = dynamic_cast<const ExpressionStatement *>(stmt)) {
         gen_expression(expr_stmt->expression.get(), true);
@@ -603,6 +504,8 @@ mlir::Value CodeGen::gen_expression(const Expression *expr, bool allow_void) {
     DiagnosticScope source(current_span, expr ? expr->span : SourceSpan{});
     if (!expr)
         fail("Missing expression in code generation");
+    if (!has_open_block())
+        fail("Expression has no live continuation in code generation");
     auto value = gen_expression_impl(expr);
     if (checked_data) {
         auto expected = checked_type(expr);

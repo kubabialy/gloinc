@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-015, maintained source definitions and CTest discovery both contain **272 tests**:
+At SPEC-016, maintained source definitions and CTest discovery both contain **284 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -19,6 +19,7 @@ At SPEC-015, maintained source definitions and CTest discovery both contain **27
 | NumericTest | 12 |
 | FunctionsTest | 12 |
 | OperatorsTest | 16 |
+| ControlFlowTest | 12 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -62,8 +63,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-015 both produce
-**264 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-016 both produce
+**276 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -341,3 +342,36 @@ All **130 focused tests pass**. Full serial/parallel runs report **264/272 passe
 with exactly the same eight known failures, no test-process crashes or skips,
 and 30-second timeouts. General control-flow completion, `unless`/`for`, lowering,
 and JIT/CLI integration remain SPEC-016 through SPEC-020.
+
+
+## Nested branch and loop control flow (SPEC-016)
+
+All 12 `ControlFlowTest` cases pass. The initial ten-case regression run exposed
+one backend failure: raw generation accepted statements after terminated paths.
+The other nine cases passed before the change. Backend generation now rejects
+such source defensively, while checked source retains SPEC-014's semantic
+rejection. Numeric conditions fail in both Sema and codegen; source diagnostics
+identify the condition span.
+
+Nine external executions cover every leaf of nested branches and else-if chains,
+partially returning arms, nested loops with branches and both backedges, early
+returns from loops, loop bodies whose two arms return, empty blocks/arms/bodies,
+implicit void returns, and conditions containing arithmetic guards and boolean
+short-circuiting. Every generated function is verified with MLIR and a structural
+walk: blocks have one final terminator, successors stay within the function, and
+all blocks are reachable in the control-flow graph (both edges of constant
+conditions are included).
+
+Two executions instrument helper bodies with test-only counters. They verify
+that if conditions run once, unselected else-if conditions do not run, while
+conditions run before the first iteration and after every continuing iteration,
+and an empty loop keeps rechecking until its condition becomes false. The source
+branch/loop/call operations are untouched; this instrumentation adds no language
+global-variable feature. Six programs return 42; the remaining programs assert
+34, the exact condition trace 1234343435, and four condition evaluations.
+
+All **142 focused tests pass**. Full serial/parallel suites report **276/284
+passes**, the same eight known failures, no test-process crashes/skips, and
+unchanged 30-second timeouts. Existing tests and deferred feature assertions are
+unchanged. `unless`/`for`, shared lowering, and in-process JIT/CLI integration
+remain SPEC-017 through SPEC-020.

@@ -110,7 +110,7 @@ initialized; a delayed immutable local permits only its first assignment.
 Delayed locals use storage with their resolved type. An immutable local with an
 initializer can remain an SSA value. These choices do not grant mutability:
 semantic checking has already rejected every forbidden store or uninitialized
-read. Aggregate addressability and full control-flow validation remain later tasks.
+read. Aggregate addressability remains deferred; `for` scope remains SPEC-017.
 
 Top-level constants are evaluated in source order after function collection and
 before bodies. Local constants obey lexical scope. The frontend evaluator in
@@ -185,11 +185,38 @@ i32 result; the external runner reports a failed child process. There is no
 in-process recovery API yet. `&&`/`||` use conditional branches and a boolean
 merge argument, so skipped operands are not emitted on the executed path.
 Operands and call arguments evaluate once, left to right. These expression
-continuations also work in existing branch/loop conditions and stores; general
-control-flow completion remains SPEC-016/017.
+continuations also work in branch/loop conditions and stores. SPEC-016 supplies
+the enclosing statement continuations; `unless`/`for` remain SPEC-017.
 
 The normative [operator contract](../SPEC.md#expression-operators-and-arithmetic-failure-spec-015)
 defines rounding, overflow, division/remainder signs, and unsupported operators.
+
+## Branch and loop continuations
+
+SPEC-016 gives codegen an explicit continuation contract. An active builder
+insertion point identifies a block that can accept operations; a cleared point
+means the current source path has ended. Returns clear the point immediately.
+Statement/expression visitors refuse to emit without a live continuation, and
+an active point on an already terminated block is an internal generation error.
+This also prevents raw stage tests from silently generating statements after
+returns; normal compilation already rejects such source in Sema.
+
+[codegen_control_flow.cpp](../src/codegen_control_flow.cpp) emits `if` edges from
+the final block of condition evaluation, then connects only continuing arms to
+the merge. If neither arm continues, it removes the unused merge and propagates
+the terminated state. A missing `else` sends the false edge directly to the merge.
+`while` repeats the original condition header from the body's final continuation;
+a returning body emits no backedge. Both constructs therefore compose with nested
+statements and SPEC-015's expression branches and arithmetic guards.
+
+Function finalization adds an implicit void return only when a live continuation
+remains. It no longer infers source reachability from an empty block or its
+predecessor count. The existing checked non-void fallthrough guard is retained.
+Conditions are boolean in both Sema and codegen. Tests verify every generated
+block has one final terminator, successors stay within their function, and no
+orphan continuation survives, then execute the module through external tools.
+The normative [branch/loop rules](../SPEC.md#branches-and-while-loops-spec-016)
+retain SPEC-014's conservative return analysis and unreachable-source rejection.
 
 ## Ownership
 
@@ -220,7 +247,7 @@ This contract does not complete semantic checking. The `for` initializer scope
 and loop lowering remain SPEC-017. Context-free literal defaults are `i32`/`f32`;
 typed contexts select the other supported widths. SPEC-014 establishes return-path
 analysis, unreachable-source rejection, and explicit executable entry validation.
-General control-flow lowering remains SPEC-016/017.
+`if`/`while` lowering is verified under SPEC-016; `unless`/`for` remain SPEC-017.
 
 SPEC-015 implements checked scalar operators, including floating arithmetic and
 unsigned division/ordering. Complete verification/lowering and

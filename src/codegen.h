@@ -111,6 +111,13 @@ class CodeGen {
     SymbolInfo lookup(const std::string &name);
 
     // Visitation methods
+    // A cleared insertion point means this path has terminated. An active one
+    // must always identify a block that can accept more operations.
+    bool has_open_block();
+    bool branch_if_open(mlir::Block *destination);
+    mlir::Value gen_condition(const Expression *condition, std::string_view construct);
+    void gen_if(const IfStatement *statement);
+    void gen_while(const WhileStatement *statement);
     void gen_statement(const Statement *stmt);
     mlir::Value gen_expression(const Expression *expr, bool allow_void = false);
     mlir::Value gen_expression_impl(const Expression *expr);

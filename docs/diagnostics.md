@@ -94,6 +94,12 @@ results follow explicit trap paths. The external harness reports runner failure
 separately from returned i32 values. Intentional trap regressions check the
 runner's trap signal, excluding compiler/optimizer failures and timeouts.
 
+SPEC-016 preserves semantic rejection of unreachable source and adds a defensive
+backend rejection for statements after terminated paths in raw stage tests.
+Failed generation discards the partial module. Boolean condition diagnostics
+retain the condition's source span; nested branch/loop lowering preserves the
+current continuation through expression guards and short-circuit blocks.
+
 The external E2E harness uses executable-mode `compile_source` before verification and tool
 execution. Stage-isolated codegen tests intentionally bypass semantic checking,
 but must check parser and codegen status. Such tests establish only the behavior

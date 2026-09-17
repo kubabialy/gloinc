@@ -244,6 +244,30 @@ in the checked program and materialized at uses by codegen. SPEC-013 supplies
 contextual literal typing for all supported integer and floating widths.
 Runtime arithmetic follows the checked failure rules in SPEC-015 below.
 
+### Branches and while loops (SPEC-016)
+
+`if` and `while` require a `bool` condition; numeric truthiness is not supported.
+An `if` evaluates its condition once and executes only the selected arm. An
+omitted `else` does nothing when the condition is false. `else if` applies the
+same rule to the next condition only when the preceding condition is false.
+Execution continues after the conditional only from arms that reach their end.
+
+A `while` evaluates its condition before each iteration, including the first.
+False exits the loop without executing its body. Reaching the end of the body
+repeats the complete condition, including calls and short-circuit operators.
+Empty blocks, arms, and loop bodies are allowed. A true empty loop can diverge;
+the compiler does not infer termination or treat it as a guaranteed return.
+
+Blocks, branches, and loops can nest. Locals follow SPEC-011/012 scope and
+initialization rules. `return` exits the enclosing function immediately, including
+from nested loops; no later statement, condition, or loop backedge executes on
+that path. Runtime arithmetic failure terminates execution according to SPEC-015.
+Unreachable source is rejected under SPEC-014, rather than emitted after a
+return. Both arms and loop bodies are checked even with constant conditions.
+
+These rules cover `if`/`else` and `while`. `unless` and C-style `for` remain
+SPEC-017; the selected core does not include `break` or `continue`.
+
 ### Functions, calls, returns, and entry points (SPEC-014)
 
 Core functions have explicitly typed, immutable scalar value parameters. Parameter
@@ -271,7 +295,7 @@ not satisfy a non-void function. Unconditional divergence is not inferred from
 calls. Statements following a structurally unconditional return (including a
 block or both arms of an `if`) are rejected as unreachable, even declarations or
 empty blocks. Both branches and loop bodies are checked regardless of constant
-conditions. General control-flow lowering and `unless`/`for` remain SPEC-016/017.
+conditions. `if`/`while` lowering follows SPEC-016; `unless`/`for` remain SPEC-017.
 
 Executable compilation requires exactly one file-scope function named `main`
 with no parameters and canonical return type `i32` (`int` is equivalent).

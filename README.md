@@ -14,11 +14,11 @@ It cannot yet compile or run the programs under `examples/`.
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
-| External execution tests | 29 E2E cases, numeric bit probes, and 103 operator executions verify values, evaluation order, short-circuiting, and arithmetic traps through external MLIR tools. |
-| Full test suite | 272 tests discovered; local serial/parallel runs both have 264 passes, 8 failures, no crashes. |
+| External execution tests | 29 E2E cases, nine control-flow executions, numeric bit probes, and 103 operator executions verify values, branches/loops, evaluation order, and arithmetic traps through external MLIR tools. |
+| Full test suite | 284 tests discovered; local serial/parallel runs both have 276 passes, 8 failures, no crashes. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
-| Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. General control-flow completion and for-loop scope remain open. |
+| Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/while execution is verified; unless/for-loop scope and lowering remain open. |
 | Generics | Four IR-string checks pass; generic execution is not established. |
 | JIT | Smoke test fails on missing builtin LLVM translation registration. |
 | CLI, imports, for-loops, concurrency | Incomplete: SPEC-017, SPEC-020, SPEC-023/029/030, SPEC-040/041. |

@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-016.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-017.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -115,9 +115,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **SPEC-006 scope:** implement the operator list in SPEC.md, including integer `%`; reject compound assignment, bitwise/shift operators, unary `+`, floating remainder, and assignment expressions for this release. Define precedence, evaluation order, and numeric failure behavior before adding acceptance cases.
   **Verified:** [The operator contract](SPEC.md#expression-operators-and-arithmetic-failure-spec-015) defines exact operand types, left-to-right evaluation, short-circuiting, checked arithmetic, and runtime traps. Shared semantic rules cover constants/runtime expressions; codegen selects signed/unsigned/float operations and guards failures. All 16 operator tests and 130 focused tests pass, including 103 operator executions (37 results and 66 expected traps). Serial/parallel suites agree on 264/272 passes with the same eight known failures. General control flow and lowering/JIT/CLI remain SPEC-016 through SPEC-020.
 
-- [ ] **SPEC-016 — Correct nested if/while control flow.**
+- [x] **SPEC-016 — Correct nested if/while control flow.**
   Require boolean conditions and track the current insertion block after recursive generation. Stop emitting into terminated blocks and correctly terminate merge blocks and loop backedges.
   **Done when:** nested branches, loops containing branches, early returns, and empty bodies produce valid IR and correct execution without missing terminators or accidental fallthrough. Unreachable source remains rejected according to SPEC-014.
+  **Verified:** [The branch/loop contract](SPEC.md#branches-and-while-loops-spec-016) defines boolean conditions, selected-arm execution, condition reevaluation, and early returns. Codegen explicitly tracks live continuations, creates merge/backedges only from continuing paths, and rejects statements after termination in raw stage tests. All 12 control-flow tests and 142 focused tests pass, including nine verified external executions. Serial/parallel suites agree on 276/284 passes with the same eight known failures. `unless`/`for` and lowering/JIT/CLI remain SPEC-017 through SPEC-020.
 
 - [ ] **SPEC-017 — Implement unless and C-style for loops.**
   Add semantic checking and lowering for both existing AST nodes. Define loop-variable scope and supported omitted components. Preserve the documented function-exit meaning of defer when defer support is completed.
@@ -296,6 +297,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-013 | 2026-09-15 | [numeric.cpp](src/numeric.cpp) validates complete literal spellings and exact-width ranges; [sema_numeric.cpp](src/sema_numeric.cpp) supplies contextual types without converting typed operands. Numeric AST nodes preserve spelling; checked literals/constants own APInt/APFloat values emitted directly by codegen. All **12 numeric tests, 24 E2E cases, and eight exact float-bit probes pass**. Incremental Debug build succeeds; full serial/parallel suites report **231/239 passes, the same eight known failures, and no crashes/skips**. Frontend APInt/APFloat uses the existing shared LLVM library with consistent linkage. The spec defines cast rejection and preserves later runtime operator/return work. |
 | SPEC-014 | 2026-09-16 | [sema.cpp](src/sema.cpp) validates call/return types, conservative return paths, unreachable source, and entry signatures before constructing a checked program. Module/executable modes preserve helper-only compilation while requiring a validated `main() -> i32` for execution. Codegen defensively rejects checked non-void fallthrough. All **12 function tests, 29 E2E cases, and 114 focused tests pass**. Incremental Debug build succeeds; serial/parallel suites report **248/256 passes, the same eight known failures, and no crashes/skips**. Five new execution cases cover nested branches, void returns, loop fallbacks, typed calls, and a valid -1 result. |
 | SPEC-015 | 2026-09-16 | [operators.h](src/operators.h) shares scalar operator rules between constant and runtime checking. [codegen_operators.cpp](src/codegen_operators.cpp) emits checked integer arithmetic, signed/unsigned division/remainder/comparisons, native float operations, logical negation, and short-circuit branches. All **16 operator tests and 130 focused tests pass**. The operator suite executes **37 successful results and 66 expected runtime traps**, including exact float bits and instrumented call-order/side-effect checks. Incremental Debug build succeeds; serial/parallel suites report **264/272 passes, the same eight known failures, and no test-process crashes/skips**. Runtime traps remain distinct from valid i32 results; in-process recovery/CLI integration remains SPEC-019/020. |
+| SPEC-016 | 2026-09-17 | [codegen_control_flow.cpp](src/codegen_control_flow.cpp) replaces empty-block reachability heuristics with explicit live continuations. Returns clear the insertion point; branches/loops connect only live paths, and raw generation rejects statements after termination. All **12 control-flow tests and 142 focused tests pass**, including nine external executions and structural CFG checks. The pre-change regression reproduced unchecked emission after returns. Incremental Debug build succeeds; serial/parallel suites report **276/284 passes, the same eight known failures, and no test-process crashes/skips**. Condition counters verify one-time branch evaluation, skipped else-if conditions, repeated loop conditions, and empty-loop execution. |
 
 ### SPEC-001 verification
 
@@ -991,3 +993,59 @@ exercised through the explicit legacy backend, where runtime `!=` remains
 unsupported. No deferred feature assertions were disabled or weakened. The
 normative operator decisions precede implementation; general control-flow work,
 `unless`/`for`, and lowering/JIT/CLI remain SPEC-016 through SPEC-020.
+
+
+### SPEC-016 verification
+
+Run on Apple Silicon macOS with LLVM/MLIR 21.1.6 using the existing Debug build:
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 \
+  -R '^(ControlFlowTest|OperatorsTest|FunctionsTest|NumericTest|VariablesTest|DiagnosticsTest|ScopeTest|CheckedProgramTest|E2ETest)\.' \
+  --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec016-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec016-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+# Build and 142 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **284 tests, 276 passes, eight failures, and no skipped
+tests or test-process crashes**. Failure names match SPEC-015 exactly. Maintained
+source definitions match discovery without duplicates; all timeouts remain
+30 seconds. Formatting and diff whitespace checks pass. The incremental Debug
+build retains the existing generated MLIR deprecation warnings.
+
+The initial ten-test control-flow regression run passed nine cases and failed
+`BackendRejectsStatementsAfterTerminatedPaths`: raw codegen accepted operations
+after returns. The new continuation contract fixes that regression. A return
+clears the builder insertion point; statement/expression visitors reject missing
+or terminated continuations. `if` lowering keeps only live arm-to-merge edges;
+`while` lowering sends a live body continuation back to the original condition
+header and omits backedges after returns. Function finalization adds implicit
+void returns only to live continuations. Boolean conditions and SPEC-014's
+semantic unreachable-source rejection are preserved.
+
+All twelve control-flow tests pass. Nine external executions exercise every leaf
+of nested branches/else-if chains, partial returns, nested loops with branches,
+early returns, both-returning loop arms, empty bodies/arms/blocks, implicit void
+returns, and conditions containing arithmetic guards and short-circuit branches.
+Each module passes MLIR verification and structural CFG checks for exactly one
+final terminator per block, successors in the same function, and no orphan
+blocks. Structural reachability includes both edges of constant conditions.
+
+Two executions instrument helper bodies with test-only LLVM counters, preserving
+source branch/loop/call operations. They prove if conditions evaluate once,
+unselected else-if conditions do not execute, while conditions run before the
+first iteration and after each continuing iteration, and empty loop bodies keep
+rechecking until false. Six programs return 42; the others assert 34, the exact
+condition trace 1234343435, and four empty-loop condition evaluations. No language
+global-variable or reference support is introduced by the instrumentation.
+
+Existing test assertions and the eight deferred-feature failures are unchanged.
+The shared lowering/verifier pipeline remains SPEC-018; this task verifies its
+control-flow output with the existing external harness. `unless`/`for`, in-process
+JIT recovery, and CLI integration remain SPEC-017/SPEC-019/SPEC-020.
