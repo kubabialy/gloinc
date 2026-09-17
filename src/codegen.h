@@ -1,0 +1,148 @@
+#ifndef CODEGEN_H
+#define CODEGEN_H
+
+#include "AST.h"
+#include "dialect/GloinDialect.h"
+#include "sema.h" // For type info
+
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/SymbolTable.h"
+
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+
+class CodeGen {
+  public:
+    CodeGen(mlir::MLIRContext &context,
+            std::shared_ptr<Diagnostics> diagnostics = std::make_shared<Diagnostics>());
+    std::shared_ptr<Diagnostics> diagnostics() const { return diagnostics_; }
+
+    mlir::OwningOpRef<mlir::ModuleOp> generate(const CheckedProgram &program);
+    // Stage-isolated experiments only; never used by compile_source.
+    mlir::ModuleOp
+    generate_unchecked_for_testing(const std::vector<std::unique_ptr<Statement>> &program);
+    ~CodeGen();
+    CodeGen(const CodeGen &) = delete;
+    CodeGen &operator=(const CodeGen &) = delete;
+    void dump();
+
+  private:
+    mlir::MLIRContext &context;
+    mlir::OpBuilder builder;
+    mlir::ModuleOp theModule;
+    std::shared_ptr<Diagnostics> diagnostics_;
+    SourceSpan current_span;
+    bool generated = false;
+    bool module_transferred = false;
+    const SemanticData *checked_data = nullptr;
+    CoreType checked_return_type = CoreType::Void;
+    mlir::func::FuncOp declare_function(const FunctionDefinition *function);
+    mlir::ModuleOp generate_impl(const std::vector<std::unique_ptr<Statement>> &program);
+    void initialize_unchecked_types();
+    mlir::Type lower_type(CoreType type);
+    mlir::Value emit_constant(const ConstantValue &constant);
+    mlir::Value gen_checked_unary(const PrefixExpression *expression);
+    mlir::Value gen_checked_binary(const InfixExpression *expression);
+    mlir::Value gen_short_circuit(const InfixExpression *expression);
+    void require_runtime(mlir::Value condition);
+    mlir::Value checked_integer_arithmetic(std::string_view op, mlir::Value left, mlir::Value right,
+                                           CoreType type);
+    mlir::Type checked_type(const Node *node);
+    SymbolId checked_binding(const Identifier *name);
+    struct GenerationFailure {};
+    [[noreturn]] void fail(const std::string &message);
+    mlir::Location location();
+
+    // Symbol table for variables
+    struct SymbolInfo {
+        mlir::Value value; // The SSA value or the MemRef address
+        bool is_address;   // True if 'value' is a pointer/memref to the actual data
+        mlir::Type type;   // The MLIR type of the value
+        std::string source_type;
+    };
+
+    struct GenScope {
+        std::map<std::string, SymbolInfo> values;
+        std::vector<const DeferStatement *> deferred;
+        std::shared_ptr<GenScope> parent;
+    };
+    std::shared_ptr<GenScope> current_scope;
+    std::map<SymbolId, SymbolInfo> checked_values;
+    std::map<SymbolId, mlir::func::FuncOp> checked_functions;
+    void declare_binding(const Identifier *name, mlir::Value value, bool address, mlir::Type type,
+                         const std::string &source_type);
+    SymbolInfo lookup_binding(const Identifier *name);
+
+    struct FunctionInfo {
+        mlir::func::FuncOp funcOp;
+        const FunctionDefinition *definition;
+    };
+    std::map<std::string, FunctionInfo> function_table;
+    std::map<std::string, const StructDefinition *> generic_struct_defs;
+    std::vector<const DeferStatement *> current_function_defers;
+
+    // Type registry
+    std::map<std::string, mlir::Type> type_table;
+    // Struct field indices: struct_name -> field_name -> index
+    std::map<std::string, std::map<std::string, int>> struct_field_indices;
+    // Struct field types: struct_name -> field_name -> type
+    std::map<std::string, std::map<std::string, mlir::Type>> struct_field_types;
+    // Struct field offsets (bits) for packed structs
+    std::map<std::string, std::map<std::string, int>> struct_field_offsets;
+    // Struct field widths (bits) for packed structs
+    std::map<std::string, std::map<std::string, int>> struct_field_widths;
+    // Struct endianness: struct_name -> is_big_endian
+    std::map<std::string, bool> struct_is_big_endian;
+
+    void enter_scope();
+    void leave_scope();
+    void declare(const std::string &name, mlir::Value value, bool is_address, mlir::Type type,
+                 const std::string &source_type);
+    SymbolInfo lookup(const std::string &name);
+
+    // Visitation methods
+    // A cleared insertion point means this path has terminated. An active one
+    // must always identify a block that can accept more operations.
+    bool has_open_block();
+    bool branch_if_open(mlir::Block *destination);
+    mlir::Value gen_condition(const Expression *condition, std::string_view construct);
+    void gen_branch(const Expression *condition, const BlockStatement *body,
+                    const Statement *alternative, bool invert = false);
+    void gen_for(const ForStatement *statement);
+    void gen_while(const WhileStatement *statement);
+    void gen_statement(const Statement *stmt);
+    mlir::Value gen_expression(const Expression *expr, bool allow_void = false);
+    mlir::Value gen_expression_impl(const Expression *expr);
+    mlir::Value gen_address(const Expression *expr);
+    mlir::Type get_expression_type(const Expression *expr);
+
+    // Helper to resolve type from AST/String to MLIR Type
+    mlir::Type resolve_type(const std::string &type_name);
+    int64_t get_type_size(mlir::Type type);
+    void create_runtime_functions();
+
+    // Import system support
+    void handle_import(const std::string &import_path);
+    void handle_std_import(const std::string &module_name);
+
+    // Type registry for endianness types
+    std::map<std::string, bool> integer_type_endianness;
+
+    void emit_deferred();
+
+    // Specific handlers
+    void gen_function(const std::string &name, const std::vector<std::string> &args,
+                      const Statement *body);
+};
+
+#endif // CODEGEN_H

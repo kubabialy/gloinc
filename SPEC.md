@@ -1,18 +1,729 @@
 # Gloin Language Spec
 
-This document is a work in progress. It contains the language specification, including syntax, semantics, and standard library details for the Gloin programming language.
+This document defines the intended language. It does not claim that the current
+compiler implements it. [README.md](README.md) records measured implementation
+status; [SPEC-TODO.md](SPEC-TODO.md) tracks implementation and verification.
 
-## Syntax
+## First release contract (SPEC-006)
+
+The first release is the **executable scalar core**, with an in-process JIT on
+**Apple Silicon macOS**, using the supported LLVM/MLIR 21.1.6 toolchain. Native
+object/executable output, cross-compilation, Linux, Windows, and Intel macOS are
+outside this release. This is a scope decision, not a release announcement.
+
+| Required for the first release | Implementation and acceptance |
+| --- | --- |
+| Valid UTF-8 source, the declaration/type/terminator rules below, source-aware errors, rejection of unsupported constructs | SPEC-007 through SPEC-010 |
+| Local immutable/mutable variables, compile-time scalar constants, lexical scopes, definite initialization | SPEC-011/SPEC-012 |
+| `bool`; `i8`, `i16`, `i32`, `i64`; `u8`, `u16`, `u32`, `u64`; `f32`, `f64`; aliases `int` and `usize`; `void` return type | SPEC-010/SPEC-013 |
+| Decimal, hexadecimal, binary integer literals and decimal floating literals; checked literal compatibility | SPEC-013 |
+| Top-level functions with typed value parameters and explicit return types, direct/forward/recursive calls, `def main() -> i32` | SPEC-011/SPEC-014 |
+| Assignment; unary `-` and `!`; binary `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `\|\|`; parentheses and function calls | SPEC-015 |
+| Boolean `if`/`else`, `unless`, `while`, C-style `for`, nested blocks, and early returns | SPEC-016/SPEC-017 |
+| Verified shared lowering, in-process JIT, file-reading CLI with checking/IR inspection modes and reliable failure status | SPEC-018 through SPEC-020 |
+| Complete source-file execution and expected-error fixtures for every advertised core feature | SPEC-021 |
+| Installation instructions, packaging, feature-to-test matrix, and release validation | SPEC-046 |
+
+SPEC-021 is the executable-core milestone; SPEC-046 is still required before
+publishing a release. Detailed numeric overflow/conversion rules, operator
+semantics, scope rules, and CLI exit conventions must be settled under their
+listed tasks before their implementation is accepted. The feature list above is
+fixed for this release; those tasks must not silently expand it.
+
+The first release has no imports, standard library, text output, strings,
+aggregates, pointers/references, allocation, `defer`, or concurrency. Its minimal
+complete program is:
+
+```gloin
+def main() -> i32 {
+    return 42;
+}
+```
+
+Its observable language result is the `i32` returned by `main`. Runtime/compiler
+failure must remain distinguishable from every valid `i32`, including `-1`;
+SPEC-020 defines how the CLI presents results within host exit-status limits.
+The later hello-world milestone requires strings and `@std` (SPEC-022/SPEC-023).
+
+## Core source and syntax rules
+
+These rules are normative, including for declarations in later feature designs.
+Examples in this section specify required behavior, not passing compiler tests.
+
+### Source encoding, identifiers, and trivia
+
+Source files must be valid UTF-8. The first release restricts identifiers to
+ASCII `[A-Za-z_][A-Za-z0-9_]*`, except that `_` alone is reserved and cannot bind a
+name. Names are case-sensitive, with no normalization or case folding. UTF-8
+text is permitted in comments and, when strings are implemented, string data;
+it does not make non-ASCII identifiers legal. Invalid UTF-8, an embedded NUL
+source byte, and non-ASCII identifier characters must produce a diagnostic,
+never truncate the input or depend on the host locale.
+
+Spaces, tabs, LF, and CRLF are whitespace; LF and CRLF each advance the source
+line once. Newlines do not terminate statements. `//` comments run to the end
+of the line or file. Block comments and a UTF-8 BOM are not accepted in the
+first release. SPEC-007/SPEC-008 own encoding validation and source positions.
+A lexer may expose newline tokens internally, but the parser treats them as
+trivia, including inside expressions.
+
+The core keywords are `def`, `mut`, `const`, `pub`, `priv`, `return`, `if`,
+`else`, `unless`, `while`, `for`, `true`, `false`, and the core type spellings.
+The later-feature words `import`, `extern`, `struct`, `enum`, `static`, `self`,
+`defer`, `deferred`, `spawnable`, `run`, `packed`, `bit`, `at`, `null`, `string`,
+`i128`, `u128`, `f128`, `char`, `in`, `break`, and `continue` are reserved. Legacy or
+undecided words `fn`, `spawn`, `await`, `switch`, `match`, `case`, and `default`
+are also reserved; using them as syntax or names must not succeed accidentally.
+Endian-qualified and custom-width integer type spellings are reserved for the
+later layout tasks. Unknown type names must never default to `i32`.
+
+### Lexical literal forms (SPEC-008)
+
+The lexer recognizes decimal integers `[0-9]+`, hexadecimal integers
+`0[xX][0-9A-Fa-f]+`, and binary integers `0[bB][01]+`. A decimal floating
+literal has either a decimal point with digits on both sides, an exponent, or
+both: `1.25`, `1e3`, and `2.5E-2`. An exponent is `[eE][+-]?[0-9]+`. Signs
+outside exponents are separate operators. Leading/trailing decimal points,
+hexadecimal floats, digit separators, and numeric type suffixes are not accepted.
+Malformed forms such as `0x`, `0b102`, `123abc`, and `1e+` are lexical errors,
+not valid numeric prefixes followed by unrelated names. Width/range checks and
+numeric conversion remain SPEC-013; the lexer preserves the original spelling.
+`0..10` is three tokens, including the reserved range operator.
+
+Quoted strings are single-line UTF-8 text. The recognized escapes are `\n`,
+`\r`, `\t`, `\0`, `\\`, `\"`, and `\'`; other escapes and unescaped ASCII control
+characters are errors. A character token uses single quotes and contains exactly
+one Unicode scalar or one of those escapes. Well-formed character tokens are
+still rejected by the core parser, as character expressions are outside the
+release scope. An unterminated quote is an error; lexing resumes at its newline
+or EOF. Quoted token payloads preserve escape spelling without their delimiters;
+source spans include the delimiters. Escape decoding, string storage, and the
+meaning of escaped NUL remain SPEC-022. The `string`/`char` type keywords have
+different token kinds from quoted string/character literals.
+
+Reserved words and punctuation receive deliberate tokens even when the feature
+is unsupported. Recognizing `spawn`, `await`, `in`, `..`, or `=>` does not enable
+legacy syntax: unsupported uses must produce a parser diagnostic. `int` and
+`usize` are type keywords; alias resolution remains SPEC-010/SPEC-013. Signed
+and unsigned integer width spellings, including `i4`, `u20`, `be_u4`, `le_i20`,
+`u16_be`, and `i32_le`, are reserved type names. Their tokenization approves
+neither an integer width nor an endian layout; SPEC-037 through SPEC-039 own
+those decisions. A word such as `integer` or `spawn_value` remains an identifier.
+
+### Declarations, modifiers, and explicit types
+
+Every independent declaration starts with `def`, including constants and
+future structs, fields, enums, and methods. An import is a directive, not a
+`def` declaration. Function parameters and struct-literal field labels are
+parts of a declaration/expression and do not take their own `def`.
+
+Canonical forms are:
+
+```text
+local binding:      def [mut] name: Type [= expression];
+constant:           def [pub|priv] const name: Type = constant_expression;
+function:           def [pub|priv] name(name: Type, ...) -> ReturnType { ... }
+later struct:       def [pub|priv] struct Name { ... }
+later field:        def [pub|priv] [mut] name: Type,
+later method:       def [pub|priv] [static|deferred|spawnable] name(...) -> Type { ... }
+```
+
+Square brackets in these forms mean optional syntax; `...` is explanatory,
+not a language token. Visibility, when present, comes **immediately after
+`def`**, before other modifiers. At most one of `pub`/`priv` is allowed;
+private is the default. Visibility is allowed on top-level functions/constants
+and later type/member declarations, not on local bindings or parameters.
+Visibility is recorded but does not restrict calls within the single source
+file of a core program. Exports/member-access checks arrive with
+SPEC-024/SPEC-026/SPEC-029.
+`mut` and `const` cannot be combined. Other modifier combinations must be
+explicitly specified by their feature tasks before they are accepted.
+
+Every binding, constant, field, and parameter needs a type annotation. Every
+function, including a function returning `void`, needs `-> ReturnType`.
+There is no variable, parameter, return-type, or generic-argument inference.
+A literal may take its type from an explicit declaration, parameter, return,
+or typed operand context; this does not infer a missing declaration annotation.
+SPEC-013 must define compatibility and any default type for context-free
+literal expressions. A typed expression cannot silently change its type to
+match another annotation.
+
+Function parameters are immutable value bindings in the core. Reassigning a
+parameter requires an explicitly declared mutable local copy. Later instance
+methods must spell their receiver type, for example `self: *Person`; bare
+`self` is not an exception to explicit typing. No implicit second receiver is
+added when lowering an explicitly declared receiver.
+
+`def x: i32 = compute();` is an immutable runtime binding. In contrast,
+`def const LIMIT: i32 = 10;` requires a compile-time initializer under the
+SPEC-012 rules below. Local bindings without an initializer may only be read
+after definite initialization.
+The core allows functions and constants at file scope; runtime global
+variables, nested functions, and user-defined type aliases are not in scope.
+
+### Declaration visibility and lexical scopes (SPEC-011)
+
+All top-level function signatures are collected before any function body is
+checked. A function can call any function in the same file, including itself
+and functions declared later; mutual recursion is allowed. Visibility modifiers
+do not change lookup within a file. There is no function overloading: a repeated
+top-level name is an error even when its signature differs. Functions and
+constants share the file's value namespace; constant evaluation and its
+dependency rules remain SPEC-012.
+
+Parameters and the outermost function body share one lexical scope. Every
+nested block, including an `if` branch or `while` body, introduces a child scope.
+Two declarations with the same name in one scope are an error, including two
+parameters or a body-local binding that repeats a parameter. A child scope may
+shadow an outer binding or function. Lookup uses the nearest visible declaration;
+calling a local scalar that shadows a function is an error. Parameters are
+immutable, and shadowing does not change the outer declaration's mutability.
+
+Local bindings become visible after their initializer has been checked. An
+initializer such as `def x: i32 = x;` refers to an outer `x`, if one exists;
+otherwise it is an unresolved-name error. Local declarations are not hoisted.
+Leaving a block removes its bindings from lookup; sibling blocks and different
+functions do not share local bindings. Compilation invocations have independent
+declarations. C-style `for` initializer lifetime follows SPEC-017 below.
+
+Type annotations use the predefined core type registry, available throughout
+the file, independently of value lookup. Built-in names and aliases cannot be
+redeclared. User-defined types, their declaration collection, and recursive
+aggregate rules remain deferred to SPEC-024 and SPEC-031 through SPEC-034; core compilation
+rejects them explicitly.
+
+### Variables, constants, and initialization (SPEC-012)
+
+Every local binding has an explicit non-void type. An initializer or assignment
+must have exactly that type after type resolution; there is no implicit
+conversion of typed values. An assignment target must be a local variable name
+in the scalar core. Parameters, functions, and constants cannot be assigned.
+Assignment checks the right-hand value before marking the target initialized;
+`def mut x: i32; x = x + 1;` therefore reads an uninitialized variable.
+
+A local without an initializer has no value and cannot be read until every
+path reaching that read has initialized it. Mutable locals can be assigned
+repeatedly. An immutable local can be initialized by assignment only when it
+is uninitialized on every incoming path; it cannot be reassigned, including
+when an earlier assignment occurred on only one possible path. Assignment in
+both arms of an `if` can initialize an immutable local once on each path.
+A branch ending in `return` does not contribute to the state after the `if`.
+Conditions are checked conservatively: literal `true`/`false` do not remove
+paths from initialization analysis.
+
+A `while` may execute zero or multiple times. Its body cannot establish
+initialization after the loop. An immutable local declared outside a loop
+cannot receive its first assignment inside that loop; use a mutable local or
+declare the immutable local inside the body. Body-local declarations start
+fresh on each iteration. Scope shadowing preserves each declaration's own
+initialization state. Return-path and unreachable-source rules are defined below.
+
+Constants require an initializer, are immutable, and have no runtime storage.
+Their expression subset consists of scalar literals, previously declared
+constants, parentheses, unary `-`/`!`, numeric `+ - * /` (integer `%`), numeric
+comparisons, scalar equality/inequality, and boolean `&&`/`||`. Operands must
+have compatible, identical types; boolean arithmetic and floating remainder
+are errors. Calls, runtime variables (including immutable ones), parameters,
+assignments, and aggregate/pointer expressions are not constant expressions.
+Both sides of a boolean expression are type checked, but `&&`/`||` evaluate
+their right operand only when needed.
+
+Top-level constants are evaluated in source order before function bodies;
+functions can use any top-level constant regardless of their position. A
+constant initializer can reference only earlier visible constants, so forward
+dependencies and self references without an outer binding are errors. Local
+constants obey the same lexical declaration order and shadowing rules as
+locals. Constants share the value namespace with functions and variables.
+
+Constant arithmetic must be representable in its resolved type. Integer
+overflow and division/remainder by zero are compile-time errors. Dividing or
+reducing the signed minimum modulo `-1` is overflow. Floating
+operations round to their resolved width at each operation; non-finite results
+and division by zero are errors. Values, including negative zero, are retained
+in the checked program and materialized at uses by codegen. SPEC-013 supplies
+contextual literal typing for all supported integer and floating widths.
+Runtime arithmetic follows the checked failure rules in SPEC-015 below.
+
+### Branches and while loops (SPEC-016)
+
+`if` and `while` require a `bool` condition; numeric truthiness is not supported.
+An `if` evaluates its condition once and executes only the selected arm. An
+omitted `else` does nothing when the condition is false. `else if` applies the
+same rule to the next condition only when the preceding condition is false.
+Execution continues after the conditional only from arms that reach their end.
+
+A `while` evaluates its condition before each iteration, including the first.
+False exits the loop without executing its body. Reaching the end of the body
+repeats the complete condition, including calls and short-circuit operators.
+Empty blocks, arms, and loop bodies are allowed. A true empty loop can diverge;
+the compiler does not infer termination or treat it as a guaranteed return.
+
+Blocks, branches, and loops can nest. Locals follow SPEC-011/012 scope and
+initialization rules. `return` exits the enclosing function immediately, including
+from nested loops; no later statement, condition, or loop backedge executes on
+that path. Runtime arithmetic failure terminates execution according to SPEC-015.
+Unreachable source is rejected under SPEC-014, rather than emitted after a
+return. Both arms and loop bodies are checked even with constant conditions.
+
+These rules cover `if`/`else` and `while`. SPEC-017 below defines `unless` and
+C-style `for`; the selected core does not include `break` or `continue`.
+
+### Unless and C-style for loops (SPEC-017)
+
+`unless condition { body }` evaluates its boolean condition once and executes
+the body only when false. It has no `else` clause. Its scope, initialization,
+return, and unreachable-source rules match `if !condition { body }`.
+
+`for initializer; condition; update { body }` executes the initializer once,
+checks the boolean condition before each iteration, and executes the update
+after each body path that reaches its end. It then repeats the complete
+condition. A false condition exits without executing the body or update. A
+return inside the body exits the function without executing the update.
+
+All three header components may be omitted independently. An absent initializer
+or update does nothing; an absent condition is `true`. Both semicolons and body
+braces are mandatory, including in `for ;; { ... }`. There are no parentheses
+around the complete header, range-based forms, comma-separated updates, `break`,
+or `continue` in the core. An initializer is a local binding/constant declaration
+or an expression/assignment statement. An update is an expression or assignment,
+including a void call, with no trailing semicolon or declaration.
+
+Each `for` owns a scope beginning at its initializer and ending after its body.
+Initializer bindings can shadow outer names; their initializers still resolve
+the prior binding. They are visible in the condition, body, and update, but not
+after the loop. The body adds a nested scope, so body locals cannot be referenced
+by the update. Initializer effects on existing outer bindings are guaranteed;
+body/update effects cannot establish definite initialization after the loop,
+because analysis conservatively includes a zero-iteration path even when the
+condition is absent or literally true. A repeated assignment to an immutable
+header or outer binding is rejected; mutable counters use `def mut`.
+
+Body and update are both checked even if a constant condition or unconditional
+body return prevents their execution. The update uses initialization state from
+continuing body paths; if none continue, it is checked against the state before
+the body. Like `while`, a `for` alone does not prove a non-void function returns.
+No implicit return or divergence inference is added by omitted components.
+
+`defer` remains outside the core and is rejected. When implemented under
+SPEC-027, its existing function-exit, LIFO contract applies inside these loops;
+neither loop iteration nor block exit is a defer execution point.
+
+### Functions, calls, returns, and entry points (SPEC-014)
+
+Core functions have explicitly typed, immutable scalar value parameters. Parameter
+names must be distinct and share the outermost body scope. Calls name a function
+through lexical lookup, supply exactly one argument per parameter, and match its
+canonical type (including signedness). Arguments evaluate once, left to right.
+Literal context and aliases follow SPEC-013; typed values are never implicitly
+converted. Direct, forward, and recursive calls use the collected signature.
+Function values, indirect calls, default arguments, and variadic parameters are
+unsupported. A non-void call's result may be discarded in an expression statement;
+a void call is allowed only as an expression statement, never as a value.
+
+`return value;` must match the enclosing non-void function's canonical result
+type. A void function permits `return;` and an implicit return when execution
+reaches the end of its body. It forbids `return value;`, including a void call.
+Non-void functions require a value at every return and cannot reach the end of
+their body. Returns outside functions are errors.
+
+Return analysis is structural and conservative: a return ends its path; a block
+continues only if its statements do; an `if` ends every path only when both arms
+exist and end every path. Conditions are not constant-folded for reachability,
+so `if true` still needs an alternative or a subsequent return. Loops are assumed
+to execute zero times, including `while true`; a return inside a loop alone does
+not satisfy a non-void function. Unconditional divergence is not inferred from
+calls. Statements following a structurally unconditional return (including a
+block or both arms of an `if`) are rejected as unreachable, even declarations or
+empty blocks. Both branches and loop bodies are checked regardless of constant
+conditions. `if`/`while` lowering follows SPEC-016; `unless`/`for` follow SPEC-017.
+
+Executable compilation requires exactly one file-scope function named `main`
+with no parameters and canonical return type `i32` (`int` is equivalent).
+Visibility does not change its entry-point role. Whenever a file-scope name
+`main` exists, module compilation also requires that signature; a constant named
+`main` is invalid. The compiler's module API permits helper-only source without
+`main`; explicit executable mode validates its presence before producing a
+checked program or IR. Calling `main` uses the same rules as any other function.
+Execution/CLI integration consumes this contract in SPEC-019/020.
+
+### Numeric literals and conversions (SPEC-013)
+
+Integer literals denote mathematical magnitudes in decimal, hexadecimal (`0x`
+or `0X`), or binary (`0b` or `0B`), with the same meaning in every base. A leading
+zero does not imply octal. Parsing retains the complete spelling; semantic
+checking converts it only after choosing its type. Invalid suffixes and partially
+consumed spellings are errors. The supported integer types are signed/unsigned
+8, 16, 32, and 64 bits; `int = i32` and `usize = u64` on the selected target.
+128-bit types remain deferred under SPEC-013b.
+
+A declaration, constant, assignment target, function parameter, or return
+annotation provides context for otherwise untyped literals and literal-only
+arithmetic expressions. An already typed operand (a variable, constant, or call)
+anchors the operand type of its arithmetic expression, including when it is on
+the right. For example, `def x: i64 = 40; def y: i64 = 2 + x;` uses i64 operands.
+Different typed operands never promote each other: i32 plus i64 is an error.
+An outer expected type does not convert a typed operand. Comparisons choose
+operand context independently of their boolean result; logical operands remain
+boolean. Parentheses do not change these rules.
+
+Without a numeric context or typed operand, integer literals default to i32 and
+floating literals to f32. Integer spellings require an integer context; decimal
+floating spellings require f32 or f64. Use `1.0` to express a floating value,
+not `1`. Mixed integer/floating expressions and boolean/numeric conversions
+are errors. Declarations still require explicit annotations.
+
+The value of an integer literal must fit its selected type, without truncation
+or wrapping. A unary minus directly applied to a numeric literal forms a signed
+literal: `-128` fits i8 and `-9223372036854775808` fits i64, while their positive
+magnitudes do not. Negative integer literals cannot have an unsigned type,
+including `-0`. The full u64 range through `18446744073709551615` is supported.
+Out-of-range values in any base are errors even in otherwise unused code or
+constants. This rule concerns literals; runtime operator overflow follows
+SPEC-015 below. Constant arithmetic retains SPEC-012's checked-overflow behavior at
+its resolved width, including unsigned overflow and underflow.
+
+Decimal floats are converted directly to IEEE binary32 or binary64 using
+round-to-nearest, ties-to-even, without first rounding through a host double.
+Inexact finite rounding and representable subnormals are accepted. Overflow,
+non-finite values, and a nonzero literal rounding to zero are errors. Zero,
+including negative zero, is preserved. Constant floating arithmetic rounds at
+each operation to the same resolved width; finite underflow during arithmetic
+may round to zero, as distinct from loss of a nonzero literal at conversion.
+
+The first release has no numeric cast syntax. Function-like casts (`i32(x)`),
+`as` casts, implicit widening/narrowing of typed values, signedness conversion,
+and integer/float conversion are rejected. No cast silently truncates, wraps,
+saturates, or reinterprets bits. Explicit conversion facilities require a future
+specification decision; the fixed first-release feature list is unchanged.
+
+### Built-in type spellings
+
+`int` is an exact alias of `i32`, independent of the host. `usize` is an exact
+alias of the target's pointer-width unsigned integer (`u64` on the selected
+arm64 target); it is not a separate nominal type. Aliases do not permit implicit
+conversions to other widths. Built-in names and aliases cannot be redefined.
+`void` is allowed only as a function return type, never as a value binding or
+parameter. `bool` is distinct from every integer type; conditions require
+`bool`, with no numeric truthiness.
+
+The language spelling for the later pointer-plus-length text type is **`string`**.
+`String` is not a built-in name or alias. A backend IR type named `String` is
+an implementation detail; it cannot create a language-visible type. A later
+user-defined `String` would be an ordinary distinct type. String layout and
+ownership remain SPEC-022; this naming decision does not add strings to the
+first release. `i128`, `u128`, `f128`, `char`, custom-width integers, and
+endian-qualified types are outside the initial scalar set and must be rejected
+until their contracts and implementations are added.
+
+### Terminators and delimiters
+
+A declaration of a binding/constant, assignment, expression statement,
+`return`, later `defer`, or import directive ends in `;`. A newline cannot
+replace it, even immediately before `}`. A function/type definition or a
+braced control-flow statement has no trailing `;`. Empty statements are not
+part of the core. Parameters, call arguments, and later struct fields/literal
+entries are separated by commas. A final comma is permitted in those lists;
+struct field declarations use commas rather than statement semicolons.
+
+Braces are mandatory for control-flow bodies; condition parentheses are
+optional expression grouping. In `if ready { ... }`, the brace starts the
+body, never a literal of a type named `ready`. SPEC-009 must preserve this
+rule when aggregate expressions are implemented.
+
+A C-style loop has the shape
+`for def mut i: i32 = 0; i < 3; i = i + 1 { ... }`: two header semicolons
+and no semicolon after its update. SPEC-017 defines omitted components and
+loop-variable scope. Range-loop syntax remains deferred under SPEC-036.
+Assignment is a statement (also allowed in a loop update), not a value-producing
+expression: chained assignments and assignments inside conditions are rejected.
+
+### Expression operators and arithmetic failure (SPEC-015)
+
+Binary operands must have the same canonical type; aliases and literal contexts
+follow SPEC-013. No operator implicitly converts a typed operand.
+
+| Operators | Accepted operands | Result |
+| --- | --- | --- |
+| Prefix `-` | Signed integers, f32, f64 | Operand type |
+| Prefix `!` | bool | bool |
+| `+`, `-`, `*`, `/` | Matching integers or matching floats | Operand type |
+| `%` | Matching integers | Operand type |
+| `==`, `!=` | Matching scalar types, including bool | bool |
+| `<`, `<=`, `>`, `>=` | Matching numeric types | bool |
+| `&&`, `\|\|` | bool | bool |
+
+Operands evaluate once, left to right, including nested expressions and call
+arguments. `&&` evaluates its right operand only when the left is true; `||`
+evaluates it only when the left is false. Both operands must be well typed even
+when evaluation skips one. Boolean arithmetic/ordering, unsigned unary minus,
+floating remainder, unary plus, bitwise/shift/compound operators, and assignment
+expressions are errors. Prefix minus directly on a literal retains SPEC-013's
+signed-literal range rule, including the signed minimum.
+
+Integer addition, subtraction, multiplication, and negation must fit the declared
+width and signedness; overflow and unsigned underflow fail. Signed division
+truncates toward zero; remainder has the dividend's sign (or is zero). Unsigned
+division/remainder use unsigned magnitudes. Zero divisors fail. Signed minimum
+with divisor `-1` fails for both division and remainder, matching constants.
+There is no implicit wrapping, saturation, or undefined arithmetic behavior.
+
+Floating operations use IEEE binary32/binary64 with nearest/ties-even rounding
+at each operation, without reassociation or fused multiply-add. Finite subnormal
+results and underflow to signed zero are permitted. Division by either sign of
+zero and any non-finite arithmetic result fail; NaN/infinity are not produced by
+valid core programs. Comparisons use numerical ordering, including `-0.0 == 0.0`.
+Unary minus flips the sign, including zero. The selected execution environment
+must retain the default rounding mode and gradual underflow.
+
+Constant failures are semantic diagnostics. Runtime failures terminate execution
+via an explicit trap; they never become an integer program result, including
+`-1`. Dangerous integer division/remainder is guarded before the operation.
+The external runner reports a failed execution. SPEC-019 defines process-terminating
+traps for in-process execution; CLI presentation follows SPEC-020. Runtime expressions are not required to be
+constant-folded or rejected at compile time, even when written with literals.
+
+### Expression grouping (SPEC-009)
+
+The core parser uses the following precedence, from weakest to strongest:
+
+| Operators | Grouping |
+| --- | --- |
+| `\|\|` | Left associative |
+| `&&` | Left associative |
+| `==`, `!=` | Left associative |
+| `<`, `<=`, `>`, `>=` | Left associative |
+| `+`, `-` | Left associative |
+| `*`, `/`, `%` | Left associative |
+| Prefix `-`, `!` | Nest from right to left |
+| Function call `(...)` | Left associative |
+
+Parentheses override this order. For example, `-f(1) * 2` groups as
+`(-f(1)) * 2`, and `a - b - c` as `(a - b) - c`. Comparison chains are
+ordinary grouped binary expressions, not mathematical chained comparisons;
+SPEC-013/SPEC-015 check whether the resulting operand types are compatible.
+Identifier capitalization never changes expression grammar.
+
+Assignment is excluded from this table. Its left side must be an assignable
+form, and its right side is an expression that cannot contain another assignment.
+Mutability, scope, and type compatibility are subsequent semantic checks.
+C-style loop headers accept independently omitted components under SPEC-017;
+both header semicolons and body braces remain required.
+
+Deferred syntax tests may construct member/index expressions and struct literals,
+but this does not admit them into the core. In that syntax, postfix member/index
+operations have the same precedence as calls. An unparenthesized condition or
+loop update always gives its following brace to the control-flow body. Generic
+struct-literal recognition requires type arguments followed by a literal brace,
+without any capitalization heuristic; generic language acceptance remains
+SPEC-031/SPEC-032.
+
+### Verified IR and lowering (SPEC-018)
+
+Successful source compilation returns a verified, owned module. The default
+inspection form retains high-level IR; LLVM output runs one shared pipeline
+also used by execution consumers. Invalid IR stops before conversion. Every
+conversion pass verifies its output, followed by a final legality and verifier
+check before LLVM export or execution. A failed stage returns diagnostics and
+no partial module.
+
+The lowering input boundary accepts registered operations in `func`, `arith`,
+`cf`, `scf`, `memref`, and `llvm`, within one root `builtin.module`. Nested modules are rejected. Temporary
+`builtin.unrealized_conversion_cast` operations may be reconciled during
+conversion. Types must be builtin or LLVM types, including nested types in
+signatures and attributes. These are compiler IR capabilities, not extra source
+language features; an operation in an accepted dialect still fails if the
+pipeline cannot convert it.
+
+The pipeline converts SCF to control flow, control flow to LLVM, arithmetic to
+LLVM, functions to LLVM, and memrefs to LLVM, then reconciles conversion casts.
+The final boundary permits only the root builtin module and registered LLVM
+operations with LLVM-compatible types, including types nested in signatures,
+block arguments, and attributes. LLVM constant operations may retain index-typed
+integer literal attributes supported by the exporter; their SSA result must
+have a concrete LLVM-compatible type. No Gloin/custom operation or type, high-level
+operation, or unrealized conversion cast may remain. LLVM's internal widths and
+aggregate descriptors do not add source-language types.
+
+Verification/lowering errors retain available source file, line, and column.
+Owned source text supplies byte spans when available; imported IR may provide
+only file/line/column, and synthetic unknown locations remain unknown. Lowering
+consumes module ownership and destroys partial IR on failure. A consumer that
+retains the high-level form must clone it explicitly; the MLIR context outlives
+all modules. This task adds no optimization-dependent language behavior. JIT
+translation registration, entry ABI, and execution-result handling follow
+SPEC-019; CLI commands and exit conventions follow SPEC-020.
+
+### In-process JIT execution (SPEC-019)
+
+The JIT consumes verified IR through SPEC-018's shared lowering pipeline using
+an owned clone; it leaves the caller's module unchanged. Both the builtin and
+LLVM dialect translation interfaces are required. LLVM export is verified before
+native compilation. The selected release executes on the native Apple Silicon
+macOS host; it does not introduce cross-compilation or native output files.
+
+The entry must be a defined, non-variadic `main() -> i32`, without parameters,
+using the C calling convention and external/internal/private emitted linkage.
+Source visibility does not change its role. Missing entries, invalid signatures,
+and unsupported external function/global declarations fail before invocation.
+The core JIT does not resolve user declarations against ambient host symbols.
+Helper functions also require the C calling convention and emitted
+external/internal/private linkage.
+A compiler-generated adapter with collision-free names uses MLIR's packed calling interface;
+user identifiers such as `_mlir_main` remain valid.
+
+A successful execution contains exactly one signed 32-bit value. Every value,
+including zero, -1, and both i32 bounds, is a valid result. Verification, lowering,
+entry validation, engine creation, and invocation errors contain diagnostics and
+no value; failure has no integer sentinel. Diagnostics preserve available source
+locations and are rendered by the caller. The JIT emits no routine debug output.
+Repeated calls create independent engines and release engine/module resources
+before returning. The caller keeps the MLIR context alive during execution.
+
+Runtime arithmetic failure retains SPEC-015's explicit trap semantics. It
+terminates the calling process and does not return an `ExecutionResult` or an i32.
+This release provides no in-process signal recovery, rollback, timeout, or defer
+cleanup after a trap. Tests isolate intentional traps in subprocesses and require
+the trap signal, so compiler/setup failure cannot satisfy those tests. Programs
+and embedders must retain the specified floating-point environment. CLI status
+and presentation follow SPEC-020.
+
+### Command-line interface (SPEC-020)
+
+`gloinc [--run | --check | --emit-ir | --emit-llvm] [--] FILE` accepts exactly
+one source file. Run is the default. Options may precede or follow the filename;
+`--` ends option recognition. A mode may be specified only once, even if repeated
+with the same spelling. Unknown options, conflicting modes, missing/extra input
+files, and misplaced help/version options are usage errors. `--help`/`-h` and
+`--version`/`-V` are standalone commands. The development version is `0.0.1-dev`;
+this is not a published 0.0.1 release.
+
+The input must be a readable regular file (symlinks to regular files are allowed).
+No extension is required. The complete bytes are read and passed to the shared
+compiler; lexical encoding rules still apply. There is no stdin special case,
+multi-file compilation, user program argument list, or native output file mode.
+Names beginning with a dash require `--` or an explicit path such as `./-file`.
+
+Run uses executable-mode compilation and SPEC-019's JIT. On success, stdout
+contains exactly the full signed decimal i32 result followed by a newline, and
+the process exits 0 regardless of that value. In particular, -1 and both i32
+limits are results, not truncated host exit statuses. Compiler, file/output I/O,
+and reported JIT failures write diagnostics to stderr and exit 1. Compilation
+and JIT failures emit no partial IR or result; stdout write failures can occur
+after some bytes have been written. Usage errors write a diagnostic and usage
+to stderr and exit 2.
+Arithmetic traps retain process-signal termination, with no successful result;
+no signal handler or recovery layer is added by the CLI.
+
+`--check` runs shared module-mode compilation and high-level IR verification,
+producing no output on success. `--emit-ir` prints verified high-level MLIR;
+`--emit-llvm` prints verified LLVM-dialect MLIR through SPEC-018's shared pipeline.
+Both include available source locations. These modes do not execute code and
+permit helper-only modules without `main`; a present invalid `main` is still
+rejected. Successful inspection, help, and version commands exit 0. Diagnostics
+are rendered once at the CLI boundary, and no token/debug output is emitted.
+Full source-file acceptance and packaging remain SPEC-021/SPEC-046.
+
+### Canonical core examples
+
+A complete typed program with a forward call and a constant returns `42`:
+
+```gloin
+def const OFFSET: int = 2;
+
+def main() -> i32 {
+    def input: i32 = 40;
+    return add(input, OFFSET);
+}
+
+def add(left: i32, right: i32) -> i32 {
+    return left + right;
+}
+```
+
+A complete mutation/control-flow program returns `3`:
+
+```gloin
+def main() -> i32 {
+    def mut count: i32 = 0;
+    def enabled: bool = true;
+    if enabled {
+        for def mut i: i32 = 0; i < 3; i = i + 1 {
+            count = count + 1;
+        }
+    } else {
+        return -1;
+    }
+    unless count == 3 {
+        return -1;
+    }
+    while count > 3 {
+        count = count - 1;
+    }
+    return count;
+}
+```
+
+These independent fragments require diagnostics (SPEC-007 through SPEC-014):
+
+| Invalid source | Required reason |
+| --- | --- |
+| `const LIMIT: i32 = 3;` | Missing `def`. |
+| `pub def work() -> void {}` | Visibility must follow `def`. |
+| `def const mut n: i32 = 0;` | Conflicting modifiers. |
+| `def n = 1;` | Missing binding type. |
+| `def work(x) -> i32 { return x; }` | Missing parameter type. |
+| `def work() { return; }` | Missing explicit return type. |
+| `def n: i32 = 1` | Missing semicolon, including at end of file. |
+| `def café: i32 = 1;` | Non-ASCII identifier. |
+| `def _: i32 = 1;` | Reserved name. |
+| `def n: Mystery = 1;` | Unknown type; no `i32` fallback. |
+| `def main() -> i32 { if 1 { return 0; } return 1; }` | Condition is not `bool`. |
+
+## Deferred features and implementation-only syntax
+
+No implementation-only syntax is grandfathered into the first release.
+Tokenization, parsing, AST/IR printing, and existing unit-test expectations are
+not language acceptance. The first release must diagnose unsupported features
+before execution, using SPEC-007/SPEC-009/SPEC-010 and the SPEC-021 negative
+fixtures. Feature tasks below remain open even if an initial rejection is added.
+The full test suite continues reporting failures; scope decisions do not disable
+tests or turn unimplemented features into expected successes.
+
+| Syntax or capability outside the core | Disposition and owning tasks |
+| --- | --- |
+| Bare `const`, `pub def`, bare `struct`, untyped declarations/returns, implicit `self`, omitted semicolons | Reject; use canonical forms above (SPEC-008/SPEC-009/SPEC-012/SPEC-014/SPEC-026). |
+| `fn`, `extern`, `switch`/`match`/`case`/`default`, `=>`, `?`, character literals | No accepted core extension. Reject under SPEC-008/SPEC-009/SPEC-015; any future syntax requires a separate contract before implementation. |
+| Compound assignment, bitwise operators, shifts, unary `+`, assignment expressions | Reject for the first release (SPEC-015); integer remainder `%` is included, floating remainder is not. |
+| `i128`, `u128`, `f128` | Deferred numeric extension (SPEC-013b); core type resolution rejects them (SPEC-010/SPEC-013). |
+| Strings, `@std`, standard I/O and conversions | Deferred (SPEC-022/SPEC-023/SPEC-030); `string` is canonical. |
+| Structs, raw pointers/references, methods, `defer`, arenas | Deferred (SPEC-024 through SPEC-028). |
+| Local modules and `#package` imports | Deferred (SPEC-029/SPEC-044). |
+| Generic types/functions, enums, `Result` | Deferred (SPEC-031 through SPEC-034); capitalization must not decide grammar. |
+| `[i32; 3]`, `u8[1024]`, array literals, indexing/slicing | Deferred syntax/layout choice (SPEC-035); neither array spelling is approved for the core. |
+| `for ... in ...`, `..`, `break`, `continue` | Deferred (SPEC-036); lex as reserved syntax and diagnose unsupported use. |
+| Endian spellings, custom-width integers, packed layouts | Deferred (SPEC-037 through SPEC-039). |
+| `deferred`, `spawnable`, `run`, `Deferred`, `Spawn`, joins | Deferred contract/runtime (SPEC-040 through SPEC-043). |
+| Implementation-only `spawn` and `await` | Reject for the first release; SPEC-040 decides whether to retain any later compatibility syntax. |
+| Native object/executable emission and additional targets | Explicitly deferred (SPEC-045). |
+
+## Later language design
+
+The remaining sections describe intended later features and conceptual examples,
+not additional first-release requirements. Their task IDs are in the table
+above. Core spelling rules still apply. Unsettled APIs, memory guarantees,
+packed layouts, and concurrency types must be resolved in their feature tasks
+before these examples become normative executable fixtures. In particular,
+formatted/numeric printing and the named HTTP package are not established APIs.
 
 All Gloin programs are written in UTF-8. Gloin is by design explicit, and does not have implicit typing or type inference.
 The reason for this is that Gloin is designed to be a simple, safe, fast language but most importantly transparent.
 It will not hide complexity from you, but will instead provide you with the tools to understand it.
 
-The entry point is the `main` function.
-This is the most basic Gloin program you can write.
+The later hello-world program requires SPEC-022/SPEC-023; the core entry-point
+example above has no imports:
 
 ```gloin
-import "@std"
+import "@std";
 
 def main() -> i32 {
     std.println("Hello World!");
@@ -44,10 +755,10 @@ def main() -> i32 {
 
 ### Constants
 
-Constants are declared with the `const` keyword. They are immutable and must be initialized at declaration.
+Constants are declared with `def const`. They are immutable and must be initialized at declaration.
 
 ```gloin
-    const PI: f64 = 3.14159;
+    def const PI: f64 = 3.14159;
     std.println(PI); // Prints 3.14159
 ```
 
@@ -68,7 +779,7 @@ Gloin supports three types of imports:
 ##### Standard Library `@std`
 
 ```gloin
-import "@std"
+import "@std";
 
 def main() -> i32 {
     std.println("Hello World");           // Print with newline
@@ -86,13 +797,13 @@ def main() -> i32 {
 
 ```gloin
 // utils.gloin
-def calculate(x: i32, y: i32) -> i32 {
+def pub calculate(x: i32, y: i32) -> i32 {
     return x * y + 10;
 }
 
 // main.gloin
-import "@std"
-import "./utils"
+import "@std";
+import "./utils";
 
 def main() -> i32 {
     def result: i32 = utils.calculate(5, 3);
@@ -105,9 +816,9 @@ def main() -> i32 {
 ##### External Packages (#package)
 
 ```gloin
-import "@std"
-import "#math"      // External package
-import "#http"      // Another external package
+import "@std";
+import "#math";      // External package
+import "#http";      // Another external package
 
 def main() -> i32 {
     def sqrt_val: i32 = math.sqrt(16);
@@ -118,35 +829,42 @@ def main() -> i32 {
 
 ### Pointers, References and Memory Management
 
-Gloin supports pointers and references in the same way as C or C++ does.
-You can modify the value pointed to by a pointer or reference. You can also create a new pointer or reference to the same value.
+Gloin supports pointers and references in the same way as C or C++ does, with some key differences for safety and clarity.
 
-Gloin does not have garbage collection and expects you to manage memory manually, to make the process less cumbersome, it provides you with a `defer` statement.
-The `defer` statement will be executed when the current function returns, similarily to how `defer` works in Go or Zig. 
-An important note is that the `defer` wokrs in LIFO order, so that the last defered function is executed first.
+#### Pointers (`*T` vs `&T`)
+
+- `*T`: A raw, nullable pointer. Equivalent to `T*` in C. It can be null and requires explicit checks or unsafe blocks to dereference (in future versions).
+- `&T`: A non-nullable reference. It is guaranteed to point to a valid object. It cannot be null.
+
+`self` in struct methods is always a pointer.
+
+#### Memory Management
+
+Gloin does not have garbage collection and expects you to manage memory manually. To assist with this, it provides:
+
+1.  **Arena Allocation**: The preferred way to manage memory for request lifecycles or temporary objects.
+2.  **`defer` statement**: Executed when the current function returns, in LIFO order (Last-In-First-Out).
 
 ```gloin
 def main() -> i32 {
-    def x: *SomeX = get_some_x();
-    defer x.free();
-    
-    def y: &SomeY = x.get_some_y();
-    defer y.free();
+    // Arena allocation example (conceptual)
+    def arena: Arena = Arena::new();
+    defer arena.free(); // Frees everything allocated in this arena
+
+    def x: *SomeX = arena.alloc(SomeX);
     
     return 0;
 }
-// The defered functions will be executed in LIFO order
-// y.free() -> x.free() -> exit(0)
 ```
 
 Example of pointer usage:
 
 ```gloin
-import "@std"
+import "@std";
 
 def main() -> i32 {
     def mut value: i32 = 42;
-    def ptr: *i32 = &value;  // Get address of value
+    def ptr: &i32 = &value;  // Get address of value as non-nullable reference
     
     std.print("Value: ");
     std.println(std.to_string(value));
@@ -163,24 +881,81 @@ def main() -> i32 {
 }
 ```
 
-### Structs and Enums
+### Strings
 
-Gloin supports structs and enums. Structs are similar to Go structs, except that they have methods declared in the same scope and their visibility is private by default.
-To make a method public, you must add the `pub` keyword before the method definition. The `priv` keyword can be used to make a method private, but since it's the default visibility, it's not necessary to write it.
+The `string` type in Gloin is a fat pointer consisting of a pointer to the character data and a length.
 
 ```gloin
-import "@std"
+// Conceptual representation, not a built-in type declaration.
+def struct StringLayout {
+    def ptr: *u8,
+    def len: usize,
+}
+```
+
+This means passing strings by value is cheap (two words), and slicing is efficient.
+
+### Structs and Enums
+
+Gloin supports structs and enums. Structs are similar to Go structs, except that they have methods declared in the same scope.
+
+#### Method Lowering (Syntactic Sugar)
+
+Methods defined inside a struct are purely syntactic sugar. They are lowered to global functions with the struct instance passed as a pointer in the first argument.
+
+```gloin
+def struct Foo {
+    def x: int,
+    
+    // Instance method
+    def bar(self: *Foo) -> int {
+        return 1; 
+    }
+}
+```
+
+Is exactly equivalent to:
+
+```gloin
+def struct Foo {
+    def x: int
+}
+
+// Lowered global function
+// Naming convention: StructName_MethodName
+def Foo_bar(self: *Foo) -> int {
+    return 1;
+}
+```
+
+When you call a method:
+```gloin
+def f: Foo = ...;
+f.bar();
+```
+
+It is compiled as:
+```gloin
+Foo_bar(&f);
+```
+
+Accessing `self.x` inside the method is simply accessing the field of the pointer passed as the first argument.
+
+To make a method public, you must place `pub` immediately after `def`. The `priv` keyword can be used to make a method private, but since it's the default visibility, it's not necessary to write it.
+
+```gloin
+import "@std";
 
 def struct Person {
     def pub name: string,
     def pub age: i32,
     
-    pub def greet(self) -> void {
+    def pub greet(self: *Person) -> void {
         std.print("Hello, I'm ");
         std.println(self.name);
     }
     
-    pub def is_adult(self) -> bool {
+    def pub is_adult(self: *Person) -> bool {
         return self.age >= 18;
     }
 }
@@ -203,10 +978,10 @@ def main() -> i32 {
 
 ### Functions
 
-Functions are declared with the `def` keyword. They can have parameters and must return values.
+Functions are declared with the `def` keyword. Every parameter and return type is explicit; a `void` function returns no value.
 
 ```gloin
-import "@std"
+import "@std";
 
 // Function with parameters and return value
 def add(a: i32, b: i32) -> i32 {
@@ -233,7 +1008,7 @@ def main() -> i32 {
 Gloin supports control flow statements like `if`, `unless`, `while`, and `for` loops.
 
 ```gloin
-import "@std"
+import "@std";
 
 def main() -> i32 {
     def x: i32 = 10;
@@ -283,8 +1058,8 @@ Key Concepts
 Example: Async Network Fetch
 
 ```gloin
-import "@std"
-import "#http"
+import "@std";
+import "#http";
 // Define the async function
 def deferred fetch_config(url: string) -> Deferred<Result<string, AppError>> {
     println("Fetching from {}...", url);
@@ -325,18 +1100,18 @@ Key Concepts
 Example: Parallel Computation
 
 ```gloin
-import "@std"
+import "@std";
 
-struct MathEngine {
+def struct MathEngine {
     def factor: f32,
     def static new(f: f32) -> MathEngine {
         return MathEngine{ factor: f };
     }
 
     // A method marked as spawnable
-    def spawnable compute_heavy_pi(self, iterations: i32) -> f32 {
+    def spawnable compute_heavy_pi(self: *MathEngine, iterations: i32) -> f32 {
         def mut result: f32 = 0.0;
-        for i: i32 in 0..iterations {
+        for def i: i32 in 0..iterations {
             result = result + (self.factor * 3.14159);
         }
         
@@ -376,7 +1151,12 @@ def main() -> i32 {
 | **Result Handling** | `join()` or `force_join()` | `join()` |
 
 
-### Zero-cost bit-field and `packed` keyword
+### Packed bitfield design (unresolved: SPEC-037/SPEC-038)
+
+The examples below preserve open layout proposals: omitted backing storage,
+implicit offsets, and mixed endian spellings are not approved alternatives.
+SPEC-037/SPEC-038 must replace them with one consistent contract and byte-exact
+examples before implementation acceptance.
 
 Networking protocols often pack multiple flags into a single byte. C bit-fields are notoriously non-portable and implementation-defined. 
 Gloin can solve this by being explicit about bit-positioning.
@@ -392,18 +1172,47 @@ def packed struct Flags {
 }
 ```
 
-By defining the exact bit-offset, the compiler can generate perfect AND/OR/SHIFT sequences. 
-Because the struct is packed, there is zero padding, making it safe to cast directly from a network buffer.
+Explicit offsets are intended to lower to masks and shifts. Packing alone does
+not establish safe access to a network buffer; alignment, bounds, and pointer
+rules must also be defined and checked.
+
+### Bit Indexing and Endianness
+
+Bit indexing in `packed` structs is strictly tied to the endianness of the backing storage type.
+
+- **Little Endian (`u32`, `le_u32`)**: Bit 0 is the Least Significant Bit (LSB).
+  - Example: `def flags: u4 at 0` occupies the lowest 4 bits of the word.
+  - Usage: Standard x86/ARM local processing.
+
+- **Big Endian (`be_u32`)**: Bit 0 is the Most Significant Bit (MSB).
+  - Example: `def flags: u4 at 0` occupies the highest 4 bits of the word.
+  - Usage: Network protocols (TCP/IP), file formats.
+
+This ensures that "Bit 0" always corresponds to the "first bit" as defined by the protocol or architecture being modeled, avoiding common portability pitfalls.
+
+```gloin
+// Network Protocol (Big Endian): Bit 0 is MSB
+def packed struct(be_u32) NetworkHeader {
+    def version: u4 at 0, // Top 4 bits (31-28)
+    def ihl: u4 at 4,     // Next 4 bits (27-24)
+}
+
+// Hardware Register (Little Endian): Bit 0 is LSB
+def packed struct(le_u32) DeviceReg {
+    def enable: bit at 0, // Bottom bit (0)
+    def mode: u2 at 1,    // Bits 1-2
+}
+```
 
 #### `packed` keyword
 
-The `packed` keyword tells the compiler not to add padding for alignment, ensuring the memory layout matches the TCP/IP spec exactly.
-Sometimes you often need to map a struct directly onto a sequence of bits from a packet. 
-In C, this is messy with bitmasks. In Gloin, we can use the def keyword with explicit bit-widths.
+The intended purpose of `packed` is to control padding and bit layout; matching
+a protocol requires the complete layout rules and byte-level verification.
+It is mandatory to specify the storage container (backing integer type) for the packed struct to define the "Word" size for bit-manipulation operations.
 
 ```gloin
-// A 20-byte IPv4 Header definition
-def packed struct IPv4Header {
+// A 20-byte IPv4 Header definition backed by u32 words
+def packed struct(u32) IPv4Header {
     def version: u4,           // 4 bits
     def ihl: u4,               // 4 bits
     def dscp: u6,              // 6 bits
@@ -413,3 +1222,5 @@ def packed struct IPv4Header {
     // ... rest of the fields
 }
 ```
+
+The storage type (e.g., `u32`) dictates how the compiler generates shift and mask instructions.
