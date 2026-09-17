@@ -6,7 +6,7 @@ stage must succeed before the next starts. Its `CompilationResult` contains an
 owned module on success, structured diagnostics, and the failed stage on error.
 A failed result never exposes a partial module. The caller's MLIR context must
 outlive the result. Optional LLVM output uses the shared lowering pipeline.
-[In-process JIT execution](jit.md) uses this output; the file-reading CLI remains SPEC-020.
+[In-process JIT execution](jit.md) and the [file-reading CLI](cli.md) use this output.
 
 The optional fourth argument is `CompilationMode::Module` by default; pass
 `CompilationMode::Executable` to require `main() -> i32` before generating IR.

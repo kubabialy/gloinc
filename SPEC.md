@@ -479,7 +479,7 @@ Constant failures are semantic diagnostics. Runtime failures terminate execution
 via an explicit trap; they never become an integer program result, including
 `-1`. Dangerous integer division/remainder is guarded before the operation.
 The external runner reports a failed execution. SPEC-019 defines process-terminating
-traps for in-process execution; CLI presentation remains SPEC-020. Runtime expressions are not required to be
+traps for in-process execution; CLI presentation follows SPEC-020. Runtime expressions are not required to be
 constant-folded or rejected at compile time, even when written with literals.
 
 ### Expression grouping (SPEC-009)
@@ -586,6 +586,42 @@ cleanup after a trap. Tests isolate intentional traps in subprocesses and requir
 the trap signal, so compiler/setup failure cannot satisfy those tests. Programs
 and embedders must retain the specified floating-point environment. CLI status
 and presentation follow SPEC-020.
+
+### Command-line interface (SPEC-020)
+
+`gloinc [--run | --check | --emit-ir | --emit-llvm] [--] FILE` accepts exactly
+one source file. Run is the default. Options may precede or follow the filename;
+`--` ends option recognition. A mode may be specified only once, even if repeated
+with the same spelling. Unknown options, conflicting modes, missing/extra input
+files, and misplaced help/version options are usage errors. `--help`/`-h` and
+`--version`/`-V` are standalone commands. The development version is `0.0.1-dev`;
+this is not a published 0.0.1 release.
+
+The input must be a readable regular file (symlinks to regular files are allowed).
+No extension is required. The complete bytes are read and passed to the shared
+compiler; lexical encoding rules still apply. There is no stdin special case,
+multi-file compilation, user program argument list, or native output file mode.
+Names beginning with a dash require `--` or an explicit path such as `./-file`.
+
+Run uses executable-mode compilation and SPEC-019's JIT. On success, stdout
+contains exactly the full signed decimal i32 result followed by a newline, and
+the process exits 0 regardless of that value. In particular, -1 and both i32
+limits are results, not truncated host exit statuses. Compiler, file/output I/O,
+and reported JIT failures write diagnostics to stderr and exit 1. Compilation
+and JIT failures emit no partial IR or result; stdout write failures can occur
+after some bytes have been written. Usage errors write a diagnostic and usage
+to stderr and exit 2.
+Arithmetic traps retain process-signal termination, with no successful result;
+no signal handler or recovery layer is added by the CLI.
+
+`--check` runs shared module-mode compilation and high-level IR verification,
+producing no output on success. `--emit-ir` prints verified high-level MLIR;
+`--emit-llvm` prints verified LLVM-dialect MLIR through SPEC-018's shared pipeline.
+Both include available source locations. These modes do not execute code and
+permit helper-only modules without `main`; a present invalid `main` is still
+rejected. Successful inspection, help, and version commands exit 0. Diagnostics
+are rendered once at the CLI boundary, and no token/debug output is emitted.
+Full source-file acceptance and packaging remain SPEC-021/SPEC-046.
 
 ### Canonical core examples
 

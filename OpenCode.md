@@ -22,8 +22,9 @@ ctest --test-dir build -R '^MLIRSetup\.' --output-on-failure
 `BUILD_TESTING=OFF` skips GoogleTest and test tools. Every `tests/*_test.cpp` suite
 must be in CMake's explicit source list. See [tests/README.md](tests/README.md) for
 inventory, timeouts, and failure task IDs. Keep full-suite failures visible; do
-not disable cases or weaken assertions to make CI green. The CLI still ignores
-input files, and examples are not acceptance tests.
+not disable cases or weaken assertions to make CI green. The CLI reads source
+files; its tests execute `examples/core_counter.gloin`. Other examples remain
+design inputs; the broader source-file acceptance gate is SPEC-021.
 
 ## Targets and linkage
 

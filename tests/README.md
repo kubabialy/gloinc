@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-019, maintained source definitions and CTest discovery both contain **329 tests**:
+At SPEC-020, maintained source definitions and CTest discovery both contain **345 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -36,6 +36,7 @@ At SPEC-019, maintained source definitions and CTest discovery both contain **32
 | ArrayStringTest | 2 |
 | UnlessTest | 1 |
 | JitRunnerTest | 16 |
+| CliTest | 16 |
 | E2ETest | 29 |
 | ExternalRunnerTest | 8 |
 
@@ -51,7 +52,8 @@ The root-level `simple_test_runner.cpp`, `test_imports.cpp`, and
 `test_for_loop_parsing.cpp` are legacy manual probes, excluded from the maintained
 inventory. They have stale relative includes and weak or print-only checks;
 their output is not build or language-coverage evidence. Maintained loop tests now cover SPEC-017; imports
-remain tracked in SPEC-023/SPEC-029/SPEC-030, and the status documents were corrected in SPEC-005. Example `.gloin` files are also not automated tests.
+remain tracked in SPEC-023/SPEC-029/SPEC-030, and the status documents were corrected in SPEC-005.
+`examples/core_counter.gloin` is exercised by the CLI suite; other example files remain manual inputs.
 
 ## Running and inspecting tests
 
@@ -65,8 +67,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-019 both produce
-**322 passes, 7 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-020 both produce
+**338 passes, 7 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -477,3 +479,31 @@ visible. There are no skipped tests or unexpected test-process crashes; timeouts
 remain 30 seconds. No deferred-feature assertion was removed or weakened.
 [The JIT contract](../docs/jit.md) documents result/error separation, ownership,
 ABI checks, and process-terminating arithmetic failures. The next task is SPEC-020.
+
+## File-reading CLI (SPEC-020)
+
+All 16 `CliTest` cases pass. They launch the built `gloinc` executable directly
+through LLVM's process API, with literal argument vectors, captured stdout/stderr,
+isolated temporary files, and a 10-second child timeout. CTest retains its
+30-second timeout. Building `gloinc_test` also builds the CLI.
+
+Coverage includes default/explicit runs with different input files, the repository
+`core_counter.gloin` example returning 42, i32 limits and negative/zero results,
+standalone help/version, rejected usage, missing/unreadable/non-regular files,
+symlinks, quoted/option-like paths, complete-byte reads, invalid UTF-8, source-located
+compiler errors, invalid entry signatures, helper-only modules, repeated runs,
+and independent concurrent processes. Check mode succeeds silently for trapping
+and non-terminating programs, establishing that it does not execute them.
+
+Both inspection outputs are reparsed and verified; LLVM inspection contains only
+LLVM operations beneath the module. Inspection of trapping source succeeds
+without executing it. Two runtime trap cases require SIGTRAP/SIGILL-style process
+termination with no result, so ordinary compilation errors and timeouts cannot
+pass as arithmetic traps. All successful results use exit 0; reported errors and
+usage use 1 and 2 respectively. No existing assertion was removed or weakened.
+
+All **261 focused tests pass**. Full serial/parallel runs report **338/345 passes**,
+with the same seven deferred-language failures, no skipped tests or unexpected
+test-process crashes, and matching maintained/discovered inventories.
+[The CLI contract](../docs/cli.md) documents the interface and version `0.0.1-dev`.
+The broader source-file acceptance suite remains SPEC-021.

@@ -7,9 +7,9 @@ specification-coverage percentages have been withdrawn.
 The audit and SPEC-001 through SPEC-004 established fresh builds, consistent
 LLVM/MLIR linkage, a 112-case test inventory, and a checked external-tool harness.
 Those runs had 98 passes and 14 failures; current results are in
-[the test inventory](../tests/README.md). The CLI remains a lexer
-demonstration. SPEC-019 now verifies in-process JIT execution; these example
-files are still outside the automated acceptance suite.
+[the test inventory](../tests/README.md). SPEC-019 verifies in-process JIT execution,
+and SPEC-020 connects the [file-reading CLI](../docs/cli.md). Its tests execute
+`core_counter.gloin`; the older example files remain outside the acceptance suite.
 
 | Earlier item | Current tracking |
 | --- | --- |
@@ -20,7 +20,7 @@ files are still outside the automated acceptance suite.
 | Defer across scopes and exits | Incomplete: SPEC-027. |
 | Endianness and packed bitfields | Incomplete: SPEC-037 through SPEC-039. |
 | Concurrency | Incomplete: SPEC-040 through SPEC-043; the restored spawn assertion fails. |
-| Shared lowering and JIT | Verified under SPEC-018/SPEC-019; file CLI remains SPEC-020. |
+| Shared lowering, JIT, and file CLI | Verified under SPEC-018 through SPEC-020; broader source-file acceptance remains SPEC-021. |
 
 [SPEC-TODO.md](../SPEC-TODO.md) replaces the phase roadmap. Its completion log
 records commands and results; [tests/README.md](../tests/README.md) lists failures.

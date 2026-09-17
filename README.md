@@ -8,32 +8,34 @@ verification evidence in order.
 ## Current status
 
 Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR 21.1.6.
-The CLI still tokenizes a hardcoded string and ignores input-file arguments.
-It cannot yet compile or run the programs under `examples/`.
+The CLI compiles source files and runs scalar programs through the in-process JIT.
+The tested `examples/core_counter.gloin` program returns 42; checking and IR
+inspection modes are also available. The current version is `0.0.1-dev`.
 
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | External execution tests | 29 E2E cases, nine if/while and ten unless/for executions, numeric bit probes, and 103 operator executions verify values, branches/loops, evaluation order, and arithmetic traps through external MLIR tools. |
-| Full test suite | 329 tests discovered; local serial/parallel runs both have 322 passes, 7 failures, no crashes. |
+| Full test suite | 345 tests discovered; local serial/parallel runs both have 338 passes, 7 failures, no crashes. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
 | Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/unless/while/for execution, loop-variable scope, and omitted for components are verified. |
 | Generics | Four IR-string checks pass; generic execution is not established. |
 | IR verification/lowering | One pipeline verifies source output and conversions, rejects unsupported IR, and produces LLVM-compatible modules for output and execution consumers. |
 | JIT | All 16 tests pass: native execution, validated entry/signatures, separate results/errors, repeated runs, and integer/float trap behavior. |
-| CLI, imports, concurrency | Incomplete: SPEC-020, SPEC-023/029/030, SPEC-040/041. |
+| CLI | All 16 process tests pass: file loading, native results, checking, verified IR output, diagnostics, usage, and exit behavior. |
+| Imports, concurrency | Incomplete: SPEC-023/029/030, SPEC-040/041. |
 
 [Compiler diagnostics](docs/diagnostics.md) now connect parsing, checking, and high-level
 codegen through `compile_source`, with verified high-level or LLVM output via
-[the shared lowering pipeline](docs/lowering.md); the CLI connection remains SPEC-020.
+[the shared lowering pipeline](docs/lowering.md) and [file-reading CLI](docs/cli.md).
 [The parser contract](docs/parser.md) distinguishes core compilation from
 syntax-only tests of deferred features.
 [The checked-program contract](docs/checked-program.md) defines the shared
 semantic data and ownership boundary required by normal codegen.
 
-[The JIT API](docs/jit.md) executes compiled modules in process; file loading and
-CLI commands are the next task, SPEC-020.
+[The JIT API](docs/jit.md) executes compiled modules in process. SPEC-021 is next:
+a broader source-file acceptance suite for the executable core.
 
 Test pass counts are not specification-coverage percentages. The compiler is not
 ready for production use. Detailed failure names and task IDs are in
@@ -65,6 +67,22 @@ Tests are enabled by default and fetch checksum-pinned GoogleTest 1.16.0. Add
 `-DBUILD_TESTING=OFF` for a compiler-only build without test dependencies. See
 [docs/toolchain.md](docs/toolchain.md) for offline overrides and Makefile options.
 
+## Compile and run a program
+
+```sh
+./build/gloinc examples/core_counter.gloin               # Prints 42, exits 0.
+./build/gloinc --check examples/core_counter.gloin        # Checks without running.
+./build/gloinc --emit-ir examples/core_counter.gloin      # High-level MLIR.
+./build/gloinc --emit-llvm examples/core_counter.gloin    # LLVM-dialect MLIR.
+./build/gloinc --help
+./build/gloinc --version
+```
+
+Run mode requires `def main() -> i32`. The signed result is printed to stdout;
+every successful result uses exit status 0. Compiler/file/JIT errors use status 1
+and stderr; usage errors use status 2. Runtime arithmetic traps terminate the
+process with a signal. See [the CLI reference](docs/cli.md) for the complete interface.
+
 ## Verify the build
 
 ```sh
@@ -74,16 +92,16 @@ ctest --test-dir build -j 4 --output-on-failure
 ```
 
 All four dialect setup tests pass. The full suite exits nonzero for the documented
-failures; do not disable those cases to obtain a green run. `./build/gloinc` only
-runs the lexer demo. Passing it a filename does not verify that program.
+failures; do not disable those cases to obtain a green run. The CLI suite launches
+the built executable directly and verifies actual file-dependent results.
 
 ## Architecture and next milestones
 
 `gloin_frontend` contains the lexer, parser, AST interfaces, and semantic analysis;
 it uses shared LLVM for resolved integer and floating values.
 `gloin_backend` contains codegen, the Gloin dialect, and the JIT runner. Both
-executables link these libraries. Tests drive compiler stages directly;
-connecting them through a file-reading CLI remains SPEC-020.
+executables link these libraries. The CLI and tests use the same compilation,
+lowering, and execution APIs.
 
 [SPEC-006's contract](SPEC.md#first-release-contract-spec-006) selects a scalar
 JIT compiler on Apple Silicon macOS for the first release. SPEC-021 is its

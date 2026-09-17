@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-020.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-021.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -137,9 +137,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** return-42, function-call, branch, and loop programs execute through JitRunner; a legitimate return of -1 is distinguishable internally from execution failure; missing symbols or invalid signatures produce diagnostics instead of crashes.
   **Verified:** [The JIT contract](docs/jit.md) defines packed invocation through a validated adapter, separate optional i32 results/diagnostics, owned engine lifetimes, and process-terminating arithmetic traps. Builtin/LLVM translation is registered, LLVM IR is verified, and invalid entries/dependencies fail before invocation. All 16 JIT tests and 245 focused tests pass, including 25 successful native invocations and five intentional subprocess traps. Full serial/parallel suites agree on 322/329 passes; the JIT failure is fixed and seven deferred-language failures remain.
 
-- [ ] **SPEC-020 — Replace the lexer demo with a real CLI.**
+- [x] **SPEC-020 — Replace the lexer demo with a real CLI.**
   Load source files and route them through parsing, checking, codegen, lowering, and execution. Document the command interface and provide checking and IR inspection modes useful for development. Remove hardcoded input and unconditional debug output.
   **Done when:** a file passed to `gloinc` controls the result; missing/unreadable files and invalid source fail with useful diagnostics; help/version and exit behavior are documented; CLI and tests use the same compiler stages.
+  **Verified:** [The CLI](docs/cli.md) reads complete files and shares compilation/lowering/JIT APIs. Run prints the full signed i32 result with exit 0; compiler/I/O/JIT errors use stderr and exit 1, usage errors exit 2, and arithmetic traps retain signal termination. Check and verified high-level/LLVM IR modes never execute source. All 16 CLI tests and 261 focused tests pass, including the repository counter example returning 42. Serial/parallel suites agree on 338/345 passes and the same seven deferred-language failures.
 
 - [ ] **SPEC-021 — Establish the executable core acceptance suite.**
   Convert the core audit reproductions into repository fixtures driven through the CLI. Cover decimal/hex/binary values, calls, mutation, boolean operators, nested control flow, for/unless, and invalid-source diagnostics.
@@ -304,6 +305,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-017 | 2026-09-17 | Adds checked `unless` and C-style `for` semantics/lowering, independently optional header components, header/body scopes, and conservative initialization/return analysis. All **15 new tests and 206 focused tests pass**, including ten externally executed, verified modules. The counter returns 3; a helper trace confirms initializer/condition/body/update order. Incremental Debug build succeeds; serial/parallel suites report **291/299 passes**, the same eight failures, and no test-process crashes/skips. |
 | SPEC-018 | 2026-09-17 | Adds [shared verified LLVM lowering](src/lowering.cpp), explicit high-level/LLVM compiler output, source-located IR diagnostics, and ownership that discards partial modules on failure. The compiler, legacy JIT, and external language tests use one conversion pipeline. All **15 new tests and 229 focused tests pass**, including LLVM export/verification, six additional external executions, and three independent repeated compile/run checks. Incremental Debug build succeeds; full serial/parallel suites report **306/314 passes**, the same eight failures, and no test-process crashes/skips. |
 | SPEC-019 | 2026-09-17 | Repairs builtin/LLVM translation registration and invokes validated `main` through MLIR's packed ABI with a collision-free adapter. `ExecutionResult` separates every i32 value from diagnostics; owned clones/engines preserve caller IR and isolate runs. All **16 JIT tests and 245 focused tests pass**, including **25 successful native invocations and five intentional subprocess traps**. Incremental Debug build succeeds; full serial/parallel suites report **322/329 passes**, resolving the JIT smoke failure while retaining seven deferred-language failures, with no unexpected test-process crashes/skips. |
+| SPEC-020 | 2026-09-17 | Replaces hardcoded lexer input with file-reading run/check/IR commands using the shared compiler and JIT. Documents full i32 stdout results, separate exit statuses/diagnostics, standalone help/version, source locations, and process-terminating traps. All **16 CLI tests and 261 focused tests pass**, including the runnable repository counter example. Incremental Debug build succeeds; serial/parallel suites report **338/345 passes**, the same seven deferred-language failures, and no unexpected test-process crashes/skips. |
 
 ### SPEC-001 verification
 
@@ -1250,3 +1252,56 @@ These are intentional child traps, not crashes of the maintained test processes.
 The file-reading CLI is next under SPEC-020, followed by source-file acceptance
 and release packaging under SPEC-021/SPEC-046. Seven deferred-language failures
 remain visible with their original assertions.
+
+### SPEC-020 verification
+
+Run on Apple Silicon macOS with LLVM/MLIR 21.1.6 using the existing Debug build:
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 \
+  -R '^(CliTest|JitRunnerTest|LoweringTest|ExternalRunnerTest|ForUnlessTest|ParserTest|ControlFlowTest|OperatorsTest|FunctionsTest|NumericTest|VariablesTest|DiagnosticsTest|ScopeTest|CheckedProgramTest|E2ETest)\.' \
+  --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec020-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec020-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+/private/tmp/gloinc-spec009-build/gloinc examples/core_counter.gloin
+# Build and 261 focused tests exit 0; full suites exit 8 for known failures.
+# The example prints 42 and exits 0.
+/opt/homebrew/opt/llvm/bin/clang-format --dry-run --Werror main.cpp tests/cli_test.cpp src/compiler.h
+git diff --check
+```
+
+Both JUnit reports contain **345 tests, 338 passes, seven failures, and no skipped
+tests or unexpected test-process crashes**. The failure names match SPEC-019:
+`CodeGenTest.GenerateSpawn`, `ArenaTest.ArenaAllocation`,
+`AsyncTest.DeferredFunctionGeneration`, `AsyncTest.SpawnGeneration`,
+`SemaAsyncTest.AsyncTypes`, `ArrayStringTest.HandlesStringLiterals`, and
+`ArrayStringTest.HandlesArrayLiterals`. Maintained source definitions and discovery
+match without duplicates; every CTest timeout remains 30 seconds. Formatting and
+whitespace checks pass; existing generated MLIR deprecation warnings remain.
+
+The CLI accepts one readable regular file and passes every byte plus its original
+filename through `compile_source`. Run uses executable-mode checking and the
+shared JIT; inspection uses module mode and optionally the shared LLVM lowering.
+Diagnostics are rendered once and unsuccessful compilation never emits partial
+IR/results. Successful run prints the signed i32 value with a newline and exits 0,
+including zero, -1, and both limits. Error/usage statuses are separate; stdout
+write errors are checked. Help and version are standalone, and the version is
+`0.0.1-dev`, not a published release.
+
+All 16 CLI cases invoke the real executable with argument vectors and isolated
+temporary output files. Tests cover file-dependent values, the repository example,
+help/version/usage, all modes, helper-only and invalid-entry modules, source errors,
+missing/unreadable/non-regular files, symlinks, literal paths, malformed bytes,
+repeated and concurrent runs. Emitted IR is reparsed and verified; LLVM output is
+checked for LLVM-only operations. Check/inspection do not run trapping source,
+and checking a non-terminating program completes successfully. Integer and float
+trap subprocesses require signal termination without output; compiler failures
+and timeouts cannot pass as traps.
+
+SPEC-021 is next: broaden source-file fixtures across the advertised core and
+verify them from fresh builds and CI. SPEC-046 remains the release gate. Existing
+deferred-feature failures stay visible without weakened or removed assertions.

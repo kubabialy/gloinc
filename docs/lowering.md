@@ -84,5 +84,5 @@ supported toolchain, not cross-platform or byte-identical native binaries.
 
 All existing external language tests now use production lowering, including
 arithmetic trap tests. SPEC-019 adds [JIT translation registration, validated
-invocation, and separate execution failure/results](jit.md). The file CLI remains
-SPEC-020; source-file acceptance and release packaging remain SPEC-021/SPEC-046.
+invocation, and separate execution failure/results](jit.md). [The file CLI](cli.md)
+uses these APIs; source-file acceptance and release packaging remain SPEC-021/SPEC-046.

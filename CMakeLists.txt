@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gloinc)
+project(gloinc VERSION 0.0.1)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -107,6 +107,10 @@ target_link_libraries(gloin_backend PUBLIC
 
 add_executable(gloinc main.cpp)
 target_link_libraries(gloinc PRIVATE gloin_backend)
+target_compile_definitions(gloinc PRIVATE
+    GLOIN_VERSION="${PROJECT_VERSION}-dev"
+    GLOIN_LLVM_VERSION="${LLVM_PACKAGE_VERSION}"
+)
 set(GLOIN_TARGETS gloin_frontend gloin_backend gloinc)
 
 include(CTest)
@@ -138,6 +142,8 @@ if(BUILD_TESTING)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/tests/$<CONFIG>/tool_paths.h" CONTENT
 "#pragma once
 namespace gloin_test {
+inline constexpr auto gloinc = R\"tool($<TARGET_FILE:gloinc>)tool\";
+inline constexpr auto core_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/core_counter.gloin)tool\";
 inline constexpr auto mlir_opt = R\"tool(${GLOIN_MLIR_OPT})tool\";
 inline constexpr auto mlir_runner = R\"tool(${GLOIN_MLIR_RUNNER})tool\";
 inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process>)tool\";
@@ -172,11 +178,12 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/array_string_test.cpp
         tests/unless_test.cpp
         tests/jit_test.cpp
+        tests/cli_test.cpp
         tests/codegen_generics_test.cpp
         tests/external_runner_test.cpp
         tests/support/external_runner.cpp
     )
-    add_dependencies(gloinc_test gloin_test_process)
+    add_dependencies(gloinc_test gloin_test_process gloinc)
     target_include_directories(gloinc_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/tests/$<CONFIG>")
     # Keep the explicit source list, but fail configuration if a new suite is omitted.
     file(GLOB GLOIN_TEST_FILES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
