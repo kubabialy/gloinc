@@ -47,7 +47,7 @@ it with a concrete integer result; runtime index types remain forbidden. Raw
 SCF/memref fixtures exercise this internal compiler capability without adding
 source-language arrays or structured IR syntax.
 
-The legacy JIT and `run_external_module` test helper both lower owned clones
+`JitRunner` and the `run_external_module` test helper both lower owned clones
 through this function. The external helper then uses `mlir-opt` only to
 parse/verify the serialized LLVM module and `mlir-runner` to execute it. It no
 longer maintains a separate conversion pipeline. Low-level subprocess harness
@@ -83,6 +83,6 @@ three external executions. This establishes that fixture's repeatability on the
 supported toolchain, not cross-platform or byte-identical native binaries.
 
 All existing external language tests now use production lowering, including
-arithmetic trap tests. JIT translation registration, validated invocation, and
-separate execution failure/results remain SPEC-019. The file CLI remains
+arithmetic trap tests. SPEC-019 adds [JIT translation registration, validated
+invocation, and separate execution failure/results](jit.md). The file CLI remains
 SPEC-020; source-file acceptance and release packaging remain SPEC-021/SPEC-046.

@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-019.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-020.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -132,9 +132,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** generated modules are verified before execution and after appropriate conversions; no unsupported Gloin operation or unrealized conversion remains at LLVM export; failures propagate cleanly and module ownership is explicit.
   **Verified:** [The shared pipeline](docs/lowering.md) verifies source-generated IR, consumes owned modules through all six conversions with pass verification, and enforces LLVM operation/type legality. Compiler LLVM output, the legacy JIT, and every external language execution use it. All 15 new tests and 229 focused tests pass; serial/parallel runs agree on 306/314 passes with the same eight failures. JIT translation/invocation and CLI remain SPEC-019/SPEC-020.
 
-- [ ] **SPEC-019 — Repair the in-process JIT.**
+- [x] **SPEC-019 — Repair the in-process JIT.**
   Register required translation interfaces, including the builtin dialect for the selected MLIR version, use SPEC-018's pipeline, and invoke a validated entry-point ABI. Separate compiler/runtime failure from a program's returned value.
   **Done when:** return-42, function-call, branch, and loop programs execute through JitRunner; a legitimate return of -1 is distinguishable internally from execution failure; missing symbols or invalid signatures produce diagnostics instead of crashes.
+  **Verified:** [The JIT contract](docs/jit.md) defines packed invocation through a validated adapter, separate optional i32 results/diagnostics, owned engine lifetimes, and process-terminating arithmetic traps. Builtin/LLVM translation is registered, LLVM IR is verified, and invalid entries/dependencies fail before invocation. All 16 JIT tests and 245 focused tests pass, including 25 successful native invocations and five intentional subprocess traps. Full serial/parallel suites agree on 322/329 passes; the JIT failure is fixed and seven deferred-language failures remain.
 
 - [ ] **SPEC-020 — Replace the lexer demo with a real CLI.**
   Load source files and route them through parsing, checking, codegen, lowering, and execution. Document the command interface and provide checking and IR inspection modes useful for development. Remove hardcoded input and unconditional debug output.
@@ -302,6 +303,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-016 | 2026-09-17 | [codegen_control_flow.cpp](src/codegen_control_flow.cpp) replaces empty-block reachability heuristics with explicit live continuations. Returns clear the insertion point; branches/loops connect only live paths, and raw generation rejects statements after termination. All **12 control-flow tests and 142 focused tests pass**, including nine external executions and structural CFG checks. The pre-change regression reproduced unchecked emission after returns. Incremental Debug build succeeds; serial/parallel suites report **276/284 passes, the same eight known failures, and no test-process crashes/skips**. Condition counters verify one-time branch evaluation, skipped else-if conditions, repeated loop conditions, and empty-loop execution. |
 | SPEC-017 | 2026-09-17 | Adds checked `unless` and C-style `for` semantics/lowering, independently optional header components, header/body scopes, and conservative initialization/return analysis. All **15 new tests and 206 focused tests pass**, including ten externally executed, verified modules. The counter returns 3; a helper trace confirms initializer/condition/body/update order. Incremental Debug build succeeds; serial/parallel suites report **291/299 passes**, the same eight failures, and no test-process crashes/skips. |
 | SPEC-018 | 2026-09-17 | Adds [shared verified LLVM lowering](src/lowering.cpp), explicit high-level/LLVM compiler output, source-located IR diagnostics, and ownership that discards partial modules on failure. The compiler, legacy JIT, and external language tests use one conversion pipeline. All **15 new tests and 229 focused tests pass**, including LLVM export/verification, six additional external executions, and three independent repeated compile/run checks. Incremental Debug build succeeds; full serial/parallel suites report **306/314 passes**, the same eight failures, and no test-process crashes/skips. |
+| SPEC-019 | 2026-09-17 | Repairs builtin/LLVM translation registration and invokes validated `main` through MLIR's packed ABI with a collision-free adapter. `ExecutionResult` separates every i32 value from diagnostics; owned clones/engines preserve caller IR and isolate runs. All **16 JIT tests and 245 focused tests pass**, including **25 successful native invocations and five intentional subprocess traps**. Incremental Debug build succeeds; full serial/parallel suites report **322/329 passes**, resolving the JIT smoke failure while retaining seven deferred-language failures, with no unexpected test-process crashes/skips. |
 
 ### SPEC-001 verification
 
@@ -1182,3 +1184,69 @@ on this toolchain without claiming cross-platform or native-binary identity.
 The next task is SPEC-019; the CLI and full source-file/release acceptance gates
 remain SPEC-020/SPEC-021/SPEC-046. No deferred-feature assertion was weakened or
 removed, and the eight known full-suite failures remain visible.
+
+
+### SPEC-019 verification
+
+Run on Apple Silicon macOS with LLVM/MLIR 21.1.6 using the existing Debug build:
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 \
+  -R '^(JitRunnerTest|LoweringTest|ExternalRunnerTest|ForUnlessTest|ParserTest|ControlFlowTest|OperatorsTest|FunctionsTest|NumericTest|VariablesTest|DiagnosticsTest|ScopeTest|CheckedProgramTest|E2ETest)\.' \
+  --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec019-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec019-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+# Build and 245 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **329 tests, 322 passes, seven failures, and no skipped
+tests or unexpected test-process crashes**. The former JIT smoke failure is
+resolved; the seven other failure names match SPEC-018. Maintained source tests
+match discovery without duplicates; every timeout remains 30 seconds. Formatting
+and whitespace checks pass. The Debug build retains existing generated MLIR
+deprecation warnings.
+
+The original return-42 smoke assertion passes after registering builtin and LLVM
+translation interfaces. `JitRunner` lowers an owned clone through SPEC-018,
+validates a defined zero-argument non-variadic i32 entry with C calling convention
+and emitted linkage, and rejects external declarations before creating an engine.
+Helpers require C calling convention and external/internal/private emitted linkage.
+Native target registration runs once; generated LLVM IR is verified. A uniquely
+named adapter invokes `main` through MLIR's packed interface with an int32_t
+result slot. The adapter and its future wrapper name are checked for collisions;
+user `_mlir_main` functions remain valid. There is no unchecked native-address cast.
+
+`ExecutionResult` contains either a valid i32 or diagnostics with a failed stage;
+zero, -1, and both i32 limits remain successful values. MLIR/engine errors preserve
+available source positions and are rendered only by the caller. Verification and
+lowering failures retain their stages. Clones and engines are destroyed before
+returning, leaving the caller's module unchanged and its context caller-owned.
+The JIT emits no routine
+debug output.
+
+All 16 JIT tests pass. They perform 25 successful native invocations covering
+calls, branches, all core scalar call signatures, mutation, while/for/unless,
+recursion, early returns, short-circuiting, delayed initialization, private and
+already-lowered entries, i32 boundaries, repeated runs, engine state isolation,
+wrapper collisions, quiet output, and independent concurrent contexts. Negative
+fixtures reject null/invalid IR, unsupported Gloin operations, missing or
+non-function entries, declaration-only entries, incorrect parameters/results,
+variadic/alternate-convention entries, non-emitted linkage, and external function/
+global dependencies. No partial result is returned.
+
+Five subprocess fixtures invoke the real in-process JIT and require SIGTRAP or
+SIGILL for integer zero division, signed addition overflow, signed-minimum
+remainder, floating division by negative zero, and floating overflow. Compile or
+setup failures instead exit with normal fixture statuses and cannot pass these
+assertions. The release preserves process-terminating arithmetic failures and
+adds no in-process signal recovery, rollback, timeout, or trap-time cleanup.
+These are intentional child traps, not crashes of the maintained test processes.
+
+The file-reading CLI is next under SPEC-020, followed by source-file acceptance
+and release packaging under SPEC-021/SPEC-046. Seven deferred-language failures
+remain visible with their original assertions.

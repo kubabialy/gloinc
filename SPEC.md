@@ -478,8 +478,8 @@ must retain the default rounding mode and gradual underflow.
 Constant failures are semantic diagnostics. Runtime failures terminate execution
 via an explicit trap; they never become an integer program result, including
 `-1`. Dangerous integer division/remainder is guarded before the operation.
-The external runner reports a failed execution; in-process recovery and CLI
-presentation remain SPEC-019/020. Runtime expressions are not required to be
+The external runner reports a failed execution. SPEC-019 defines process-terminating
+traps for in-process execution; CLI presentation remains SPEC-020. Runtime expressions are not required to be
 constant-folded or rejected at compile time, even when written with literals.
 
 ### Expression grouping (SPEC-009)
@@ -552,6 +552,40 @@ retains the high-level form must clone it explicitly; the MLIR context outlives
 all modules. This task adds no optimization-dependent language behavior. JIT
 translation registration, entry ABI, and execution-result handling follow
 SPEC-019; CLI commands and exit conventions follow SPEC-020.
+
+### In-process JIT execution (SPEC-019)
+
+The JIT consumes verified IR through SPEC-018's shared lowering pipeline using
+an owned clone; it leaves the caller's module unchanged. Both the builtin and
+LLVM dialect translation interfaces are required. LLVM export is verified before
+native compilation. The selected release executes on the native Apple Silicon
+macOS host; it does not introduce cross-compilation or native output files.
+
+The entry must be a defined, non-variadic `main() -> i32`, without parameters,
+using the C calling convention and external/internal/private emitted linkage.
+Source visibility does not change its role. Missing entries, invalid signatures,
+and unsupported external function/global declarations fail before invocation.
+The core JIT does not resolve user declarations against ambient host symbols.
+Helper functions also require the C calling convention and emitted
+external/internal/private linkage.
+A compiler-generated adapter with collision-free names uses MLIR's packed calling interface;
+user identifiers such as `_mlir_main` remain valid.
+
+A successful execution contains exactly one signed 32-bit value. Every value,
+including zero, -1, and both i32 bounds, is a valid result. Verification, lowering,
+entry validation, engine creation, and invocation errors contain diagnostics and
+no value; failure has no integer sentinel. Diagnostics preserve available source
+locations and are rendered by the caller. The JIT emits no routine debug output.
+Repeated calls create independent engines and release engine/module resources
+before returning. The caller keeps the MLIR context alive during execution.
+
+Runtime arithmetic failure retains SPEC-015's explicit trap semantics. It
+terminates the calling process and does not return an `ExecutionResult` or an i32.
+This release provides no in-process signal recovery, rollback, timeout, or defer
+cleanup after a trap. Tests isolate intentional traps in subprocesses and require
+the trap signal, so compiler/setup failure cannot satisfy those tests. Programs
+and embedders must retain the specified floating-point environment. CLI status
+and presentation follow SPEC-020.
 
 ### Canonical core examples
 

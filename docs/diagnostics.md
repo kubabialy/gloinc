@@ -6,7 +6,7 @@ stage must succeed before the next starts. Its `CompilationResult` contains an
 owned module on success, structured diagnostics, and the failed stage on error.
 A failed result never exposes a partial module. The caller's MLIR context must
 outlive the result. Optional LLVM output uses the shared lowering pipeline.
-JIT execution and the file-reading CLI remain SPEC-019/SPEC-020.
+[In-process JIT execution](jit.md) uses this output; the file-reading CLI remains SPEC-020.
 
 The optional fourth argument is `CompilationMode::Module` by default; pass
 `CompilationMode::Executable` to require `main() -> i32` before generating IR.
@@ -61,7 +61,12 @@ code generation join the same diagnostic collection. SPEC-018 adds `Verification
 and `Lowering` stages through [the shared IR pipeline](lowering.md). Errors from
 MLIR retain real file/line/column positions even when imported IR has no source
 text; owned source text provides byte spans when available. No partial module
-is exposed on failure. JIT diagnostics remain SPEC-019.
+is exposed on failure. SPEC-019 adds structured `ExecutionResult` errors for
+JIT entry validation, translation, engine creation, and invocation. Verification
+and lowering errors keep their original stage; execution errors retain available
+IR positions. Failed executions contain no integer value, and the JIT does not
+print routine messages. Arithmetic traps terminate the process without returning
+a result; they are tested in subprocesses.
 
 SPEC-008 validates UTF-8 across the entire source, including comments and text
 after a parsing error. Invalid encoding, NUL, BOM, non-ASCII identifiers, and

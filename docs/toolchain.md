@@ -62,7 +62,7 @@ cmake --build build-no-tests -j 2
 This still compiles the frontend, code generator, dialect, and JIT implementation.
 It creates no `gloinc_test` target or GoogleTest fetch steps. Use separate build
 directories for the two modes so old test artifacts do not confuse inspection.
-The full test suite still has known language/JIT failures. Serial and parallel
+The full test suite still has known deferred-language failures. Serial and parallel
 execution are supported; subprocess tests use isolated temporary directories and
 checked tool invocations. See the [test inventory and harness](../tests/README.md)
 for timeouts, tool-path overrides, and failure classifications.
@@ -126,5 +126,6 @@ component `.a` files. GoogleTest's own static archives are expected.
 
 The `MLIRSetup.AllCompilerDialects` regression test uses the actual `CodeGen`
 constructor and checks that Gloin, Func, Arith, ControlFlow, MemRef, SCF, and LLVM
-dialects all load into one context. This is a toolchain/linkage check; repairing
-the JIT uses SPEC-018's shared lowering; translation and invocation remain SPEC-019.
+dialects all load into one context. This is a toolchain/linkage check. The JIT
+uses SPEC-018's shared lowering and SPEC-019's validated translation/invocation;
+[the JIT tests](../tests/README.md#in-process-jit-execution-spec-019) verify execution.

@@ -182,7 +182,7 @@ underflow to signed zero remain valid.
 
 Guards branch to an LLVM trap on failure. Failure is distinct from a program's
 i32 result; the external runner reports a failed child process. There is no
-in-process recovery API yet. `&&`/`||` use conditional branches and a boolean
+in-process recovery API; SPEC-019 keeps traps process-terminating. `&&`/`||` use conditional branches and a boolean
 merge argument, so skipped operands are not emitted on the executed path.
 Operands and call arguments evaluate once, left to right. These expression
 continuations also work in branch/loop conditions and stores. SPEC-016 supplies
@@ -277,6 +277,7 @@ analysis, unreachable-source rejection, and explicit executable entry validation
 SPEC-015 implements checked scalar operators, including floating arithmetic and
 unsigned division/ordering. SPEC-018 verifies source-generated IR and supplies
 [one LLVM lowering pipeline](lowering.md), with explicit module ownership and
-operation/type legality checks. JIT integration remains SPEC-019. Aggregate and concurrency contracts stay
+operation/type legality checks. SPEC-019 adds [validated in-process execution](jit.md)
+with separate results/errors and owned engine lifetimes. Aggregate and concurrency contracts stay
 deferred. A checked object establishes resolved identities and the checks currently
 implemented, not full release readiness.

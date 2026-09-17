@@ -17,7 +17,7 @@ struct CompilationResult {
 enum class CompilationOutput { HighLevel, LLVM };
 
 // Stops after the first failed stage. Both output forms are verified; LLVM uses
-// the shared lowering pipeline. Execution and the file CLI remain SPEC-019/020.
+// the shared lowering pipeline. JitRunner executes modules; the CLI remains SPEC-020.
 // Module mode permits helper-only source. Use Executable before running main.
 CompilationResult compile_source(std::string text, std::string filename, mlir::MLIRContext &context,
                                  CompilationMode mode = CompilationMode::Module,

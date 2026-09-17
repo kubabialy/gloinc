@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-018, maintained source definitions and CTest discovery both contain **314 tests**:
+At SPEC-019, maintained source definitions and CTest discovery both contain **329 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -35,7 +35,7 @@ At SPEC-018, maintained source definitions and CTest discovery both contain **31
 | AsyncTest | 2 |
 | ArrayStringTest | 2 |
 | UnlessTest | 1 |
-| JitRunnerTest | 1 |
+| JitRunnerTest | 16 |
 | E2ETest | 29 |
 | ExternalRunnerTest | 8 |
 
@@ -65,8 +65,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-018 both produce
-**306 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-019 both produce
+**322 passes, 7 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -169,7 +169,6 @@ parent test remains subject to CTest's 30-second limit.
 | `ArenaTest.ArenaAllocation` | SPEC-028: `Arena::new` is unresolved; codegen previously emitted an unchecked call. |
 | `ArrayStringTest.HandlesStringLiterals` | SPEC-022 |
 | `ArrayStringTest.HandlesArrayLiterals` | SPEC-035: `[i32; 3]` type resolution is unsupported; a null type was previously tolerated. |
-| `JitRunnerTest.SmokeTest` | SPEC-019: missing builtin LLVM translation interface |
 
 SPEC-007's newline handling made
 `LexerTest.HandlesComments`, `LexerTest.TrackLineNumbers`,
@@ -445,3 +444,36 @@ All **229 focused tests pass**. Full serial/parallel suites report **306/314
 passes**, the same eight known failures, no test-process crashes/skips, and
 unchanged 30-second timeouts. [The pipeline contract](../docs/lowering.md)
 describes diagnostics and ownership boundaries.
+
+
+## In-process JIT execution (SPEC-019)
+
+All 16 `JitRunnerTest` cases pass. The original return-42 smoke assertion is
+preserved and now passes. Fifteen added cases cover calls, branches, while/for/
+unless, recursion, short-circuiting, delayed initialization, all scalar call
+signatures, private/already-lowered entry points, every significant i32 boundary,
+repeated execution, independent engine state, wrapper-name collisions, missing
+entries, invalid signatures/calling conventions/linkage, external dependencies,
+verification/lowering failures, located quiet diagnostics, and concurrent contexts.
+
+There are **25 successful in-process JIT invocations and five intentional trap
+executions** in this suite. Zero, -1, i32 minimum, and i32 maximum remain valid
+results. Three runs of the same module preserve its printed IR; three runs of a
+test-only LLVM counter global each return 1, proving engines do not retain prior
+state. Separate contexts return 17 and 93 concurrently. Test IR globals and
+adapter-collision fixtures do not add source-language globals or an FFI.
+
+The integer trap fixtures cover zero division, signed addition overflow, and
+signed-minimum remainder by -1. Floating fixtures cover division by negative zero
+and finite overflow. These run the real in-process JIT in thread-safe death-test
+subprocesses and require SIGTRAP or SIGILL. Compiler/setup failures exit normally
+with distinct fixture statuses and cannot satisfy the trap predicate. The parent
+test processes do not crash. In-process signal recovery remains outside the
+release contract; runtime traps never return a program value.
+
+All **245 focused tests pass**. Full serial/parallel runs report **322/329 passes**,
+with the JIT failure resolved and the same seven deferred-language failures still
+visible. There are no skipped tests or unexpected test-process crashes; timeouts
+remain 30 seconds. No deferred-feature assertion was removed or weakened.
+[The JIT contract](../docs/jit.md) documents result/error separation, ownership,
+ABI checks, and process-terminating arithmetic failures. The next task is SPEC-020.
