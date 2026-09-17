@@ -483,7 +483,12 @@ void CodeGen::gen_statement(const Statement *stmt) {
         leave_scope();
 
     } else if (auto *if_stmt = dynamic_cast<const IfStatement *>(stmt)) {
-        gen_if(if_stmt);
+        gen_branch(if_stmt->condition.get(), if_stmt->consequence.get(),
+                   if_stmt->alternative.get());
+    } else if (auto *unless_stmt = dynamic_cast<const UnlessStatement *>(stmt)) {
+        gen_branch(unless_stmt->condition.get(), unless_stmt->consequence.get(), nullptr, true);
+    } else if (auto *for_stmt = dynamic_cast<const ForStatement *>(stmt)) {
+        gen_for(for_stmt);
 
     } else if (auto *while_stmt = dynamic_cast<const WhileStatement *>(stmt)) {
         gen_while(while_stmt);

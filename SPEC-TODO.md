@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-017.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-018.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -120,9 +120,10 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** nested branches, loops containing branches, early returns, and empty bodies produce valid IR and correct execution without missing terminators or accidental fallthrough. Unreachable source remains rejected according to SPEC-014.
   **Verified:** [The branch/loop contract](SPEC.md#branches-and-while-loops-spec-016) defines boolean conditions, selected-arm execution, condition reevaluation, and early returns. Codegen explicitly tracks live continuations, creates merge/backedges only from continuing paths, and rejects statements after termination in raw stage tests. All 12 control-flow tests and 142 focused tests pass, including nine verified external executions. Serial/parallel suites agree on 276/284 passes with the same eight known failures. `unless`/`for` and lowering/JIT/CLI remain SPEC-017 through SPEC-020.
 
-- [ ] **SPEC-017 — Implement unless and C-style for loops.**
+- [x] **SPEC-017 — Implement unless and C-style for loops.**
   Add semantic checking and lowering for both existing AST nodes. Define loop-variable scope and supported omitted components. Preserve the documented function-exit meaning of defer when defer support is completed.
   **Done when:** a three-iteration counter returns 3; `unless false` executes its body; invalid body references/conditions fail; nested loops and early returns work. Neither construct can silently disappear.
+  **Verified:** [The unless/for contract](SPEC.md#unless-and-c-style-for-loops-spec-017) defines optional components, header/body scopes, conservative initialization/returns, and function-exit defer semantics. All 15 new tests and 206 focused tests pass, including ten verified external executions. Serial/parallel suites agree on 291/299 passes with the same eight failures. Shared lowering, in-process JIT, and CLI remain SPEC-018 through SPEC-020.
 
 ## 4. Connect the actual compiler pipeline
 
@@ -298,6 +299,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-014 | 2026-09-16 | [sema.cpp](src/sema.cpp) validates call/return types, conservative return paths, unreachable source, and entry signatures before constructing a checked program. Module/executable modes preserve helper-only compilation while requiring a validated `main() -> i32` for execution. Codegen defensively rejects checked non-void fallthrough. All **12 function tests, 29 E2E cases, and 114 focused tests pass**. Incremental Debug build succeeds; serial/parallel suites report **248/256 passes, the same eight known failures, and no crashes/skips**. Five new execution cases cover nested branches, void returns, loop fallbacks, typed calls, and a valid -1 result. |
 | SPEC-015 | 2026-09-16 | [operators.h](src/operators.h) shares scalar operator rules between constant and runtime checking. [codegen_operators.cpp](src/codegen_operators.cpp) emits checked integer arithmetic, signed/unsigned division/remainder/comparisons, native float operations, logical negation, and short-circuit branches. All **16 operator tests and 130 focused tests pass**. The operator suite executes **37 successful results and 66 expected runtime traps**, including exact float bits and instrumented call-order/side-effect checks. Incremental Debug build succeeds; serial/parallel suites report **264/272 passes, the same eight known failures, and no test-process crashes/skips**. Runtime traps remain distinct from valid i32 results; in-process recovery/CLI integration remains SPEC-019/020. |
 | SPEC-016 | 2026-09-17 | [codegen_control_flow.cpp](src/codegen_control_flow.cpp) replaces empty-block reachability heuristics with explicit live continuations. Returns clear the insertion point; branches/loops connect only live paths, and raw generation rejects statements after termination. All **12 control-flow tests and 142 focused tests pass**, including nine external executions and structural CFG checks. The pre-change regression reproduced unchecked emission after returns. Incremental Debug build succeeds; serial/parallel suites report **276/284 passes, the same eight known failures, and no test-process crashes/skips**. Condition counters verify one-time branch evaluation, skipped else-if conditions, repeated loop conditions, and empty-loop execution. |
+| SPEC-017 | 2026-09-17 | Adds checked `unless` and C-style `for` semantics/lowering, independently optional header components, header/body scopes, and conservative initialization/return analysis. All **15 new tests and 206 focused tests pass**, including ten externally executed, verified modules. The counter returns 3; a helper trace confirms initializer/condition/body/update order. Incremental Debug build succeeds; serial/parallel suites report **291/299 passes**, the same eight failures, and no test-process crashes/skips. |
 
 ### SPEC-001 verification
 
@@ -1049,3 +1051,68 @@ Existing test assertions and the eight deferred-feature failures are unchanged.
 The shared lowering/verifier pipeline remains SPEC-018; this task verifies its
 control-flow output with the existing external harness. `unless`/`for`, in-process
 JIT recovery, and CLI integration remain SPEC-017/SPEC-019/SPEC-020.
+
+
+### SPEC-017 verification
+
+Run on Apple Silicon macOS with LLVM/MLIR 21.1.6 using the existing Debug build:
+
+```sh
+cmake --build /private/tmp/gloinc-spec009-build -j 2
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 \
+  -R '^(ForUnlessTest|ParserTest|ControlFlowTest|OperatorsTest|FunctionsTest|NumericTest|VariablesTest|DiagnosticsTest|ScopeTest|CheckedProgramTest|E2ETest)\.' \
+  --output-on-failure
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec017-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec017-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec009-build --show-only=json-v1
+# Build and 206 focused tests exit 0; full suites exit 8 for known failures.
+git diff --check
+```
+
+Both JUnit reports contain **299 tests, 291 passes, eight failures, and no skipped
+tests or test-process crashes**. Failure names match SPEC-016 exactly. Maintained
+source definitions match discovery without duplicates; all timeouts remain
+30 seconds. Formatting and diff whitespace checks pass. The incremental Debug
+build retains the existing generated MLIR deprecation warnings.
+
+The normative contract permits independently omitted initializer, condition, and
+update; an omitted condition means true. Two semicolons and braces remain required.
+The initializer owns a scope through the update, and the body owns a nested
+scope. Initializers resolve outer names before the new binding; header names do
+not leak after the loop, and body locals cannot be used by the update. Initializer
+stores are definite, while loop body/update stores include a conservative
+zero-iteration path. Only continuing body paths supply initialization to the
+update. All-returning bodies still have their update checked against pre-body
+state. Repeated stores to immutable header/outer locals fail. Loop divergence
+does not satisfy return checking. Defer remains rejected, retaining its future
+function-exit LIFO meaning under SPEC-027.
+
+Sema and codegen share conditional helpers between `if` and `unless`; the latter
+reverses the destinations without reevaluating the condition. `for` executes its
+initializer once and generates an update/backedge only for a continuing body
+path. Conditions and updates retain expression continuations from short-circuit
+operators and arithmetic guards. Returning paths skip the update.
+
+All 15 new tests pass. Ten external executions verify false/true `unless`, the
+three-iteration counter (3), zero-iteration loops, header shadowing/constants,
+initializer assignment, body-to-update initialization, fresh immutable body
+locals, omitted components, void-call updates, discarded expressions, nested
+loops, early returns that skip trapping updates, and guarded/short-circuit
+headers. Modules pass MLIR verification before external lowering/execution.
+Eight programs return 42; the counter returns 3; the instrumented trace returns
+123423422. The trace changes helper bodies only, preserving source control flow
+and proving initializer-once, condition/body/update order, the final false
+condition, and single evaluation of an `unless` condition.
+
+Negative cases cover malformed headers, unsupported loop controls, non-boolean
+conditions with exact diagnostic spans, leaked/unknown references, invalid body
+and update stores, uninitialized reads, immutable repeated stores, missing
+returns, unreachable body statements, and invalid raw AST initializers. Checks
+apply to statically unexecuted bodies and updates. The parser's former omission
+rejections were replaced by all-eight-combinations coverage. Diagnostic tests
+now reject still-deferred imports/defer/break, while execution tests prove the
+newly supported constructs cannot disappear. Deferred-feature failures remain
+visible. Shared verifier/lowering, in-process JIT, and CLI integration remain
+SPEC-018 through SPEC-020.

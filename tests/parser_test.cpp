@@ -405,14 +405,13 @@ TEST(ParserTest, AssignmentsAreOnlyStatementsOrLoopUpdates) {
     EXPECT_NE(dynamic_cast<AssignmentExpression *>(loop->increment.get()), nullptr);
 }
 
-TEST(ParserTest, RequiresCompleteForHeadersAndBracedBodies) {
+TEST(ParserTest, RequiresForSeparatorsAndBracedBodies) {
     for (const std::string body :
          {"for def mut i: i32 = 0; i < 3 i = i + 1 {}",
           "for def mut i: i32 = 0 i < 3; i = i + 1 {}",
-          "for def mut i: i32 = 0; i < 3; i = i + 1; {}", "for ;; {}",
-          "for def i: i32 = 0; ; i = i + 1 {}", "for def i: i32 = 0; i < 3; {}",
-          "for if true {} true; f() {}", "if true return;", "while true return;",
-          "unless true return;", "if true {} else return;"})
+          "for def mut i: i32 = 0; i < 3; i = i + 1; {}", "for if true {} true; f() {}",
+          "if true return;", "while true return;", "unless true return;",
+          "if true {} else return;"})
         rejected("def main() -> void { " + body + " }");
 }
 

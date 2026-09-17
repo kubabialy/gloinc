@@ -339,21 +339,13 @@ void Sema::check_statement(const Statement *stmt) {
         }
         falls_through = false;
     } else if (const auto *if_stmt = dynamic_cast<const IfStatement *>(stmt)) {
-        auto cond_type = check_expression(if_stmt->condition.get());
-        if (cond_type && !cond_type->equals(*get_builtin_type("bool"))) {
-            DiagnosticScope condition_location(current_span, if_stmt->condition->span);
-            log_error("If condition must be bool");
-        }
-        auto before = initialization;
-        bool before_reaches = falls_through;
-        check_statement(if_stmt->consequence.get());
-        auto then_state = initialization;
-        bool then_reaches = falls_through;
-        initialization = before;
-        falls_through = before_reaches;
-        if (if_stmt->alternative)
-            check_statement(if_stmt->alternative.get());
-        merge_initialization(before, then_state, then_reaches, initialization, falls_through);
+        check_conditional(if_stmt->condition.get(), if_stmt->consequence.get(),
+                          if_stmt->alternative.get(), "If");
+    } else if (const auto *unless_stmt = dynamic_cast<const UnlessStatement *>(stmt)) {
+        check_conditional(unless_stmt->condition.get(), unless_stmt->consequence.get(), nullptr,
+                          "Unless");
+    } else if (const auto *for_stmt = dynamic_cast<const ForStatement *>(stmt)) {
+        check_for(for_stmt);
     } else if (const auto *while_stmt = dynamic_cast<const WhileStatement *>(stmt)) {
         auto cond_type = check_expression(while_stmt->condition.get());
         if (cond_type && !cond_type->equals(*get_builtin_type("bool"))) {

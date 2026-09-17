@@ -116,7 +116,9 @@ class CodeGen {
     bool has_open_block();
     bool branch_if_open(mlir::Block *destination);
     mlir::Value gen_condition(const Expression *condition, std::string_view construct);
-    void gen_if(const IfStatement *statement);
+    void gen_branch(const Expression *condition, const BlockStatement *body,
+                    const Statement *alternative, bool invert = false);
+    void gen_for(const ForStatement *statement);
     void gen_while(const WhileStatement *statement);
     void gen_statement(const Statement *stmt);
     mlir::Value gen_expression(const Expression *expr, bool allow_void = false);

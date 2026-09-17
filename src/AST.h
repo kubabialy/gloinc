@@ -306,7 +306,9 @@ struct ForStatement : public Statement {
 
     std::string to_string() const override {
         std::stringstream ss;
-        ss << "for " << init->to_string() << " " << condition->to_string() << "; " << increment->to_string() << " " << body->to_string();
+        ss << "for " << (init ? init->to_string() : ";") << " "
+           << (condition ? condition->to_string() : "") << "; "
+           << (increment ? increment->to_string() : "") << " " << body->to_string();
         return ss.str();
     }
 };

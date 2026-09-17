@@ -110,7 +110,7 @@ initialized; a delayed immutable local permits only its first assignment.
 Delayed locals use storage with their resolved type. An immutable local with an
 initializer can remain an SSA value. These choices do not grant mutability:
 semantic checking has already rejected every forbidden store or uninitialized
-read. Aggregate addressability remains deferred; `for` scope remains SPEC-017.
+read. Aggregate addressability remains deferred; SPEC-017 defines `for` scope below.
 
 Top-level constants are evaluated in source order after function collection and
 before bodies. Local constants obey lexical scope. The frontend evaluator in
@@ -186,7 +186,7 @@ in-process recovery API yet. `&&`/`||` use conditional branches and a boolean
 merge argument, so skipped operands are not emitted on the executed path.
 Operands and call arguments evaluate once, left to right. These expression
 continuations also work in branch/loop conditions and stores. SPEC-016 supplies
-the enclosing statement continuations; `unless`/`for` remain SPEC-017.
+the enclosing statement continuations; SPEC-017 extends them to `unless`/`for`.
 
 The normative [operator contract](../SPEC.md#expression-operators-and-arithmetic-failure-spec-015)
 defines rounding, overflow, division/remainder signs, and unsupported operators.
@@ -218,6 +218,29 @@ orphan continuation survives, then execute the module through external tools.
 The normative [branch/loop rules](../SPEC.md#branches-and-while-loops-spec-016)
 retain SPEC-014's conservative return analysis and unreachable-source rejection.
 
+## Unless and for scope and continuations
+
+SPEC-017 shares conditional checking and lowering between `if` and `unless`.
+`unless` reverses the branch destinations and evaluates the boolean condition
+once. Its skipped-body path participates in initialization and return analysis.
+
+A `for` introduces a header scope, with a nested scope for its body. Initializers
+resolve outer names before adding their binding. The binding is visible in the
+condition, body, and update, and disappears after the loop; body-local names
+cannot leak into the update. Initializer stores are definite. Body/update stores
+merge with a conservative zero-iteration path, even for an omitted condition.
+The update reads initialization from continuing body paths; if all paths return,
+it is still checked using the pre-body state. Repeated writes to immutable header
+or outer locals fail. These checks live in
+[sema_control_flow.cpp](../src/sema_control_flow.cpp).
+
+Codegen executes the initializer once, branches to the condition, and emits an
+update/backedge only from a continuing body path. Missing conditions emit `true`;
+missing initializers/updates emit no operations. Expression guards and boolean
+short-circuiting retain their final continuation throughout the header. Returning
+paths skip the update and further condition checks. Defer stays unsupported;
+SPEC-027 will retain its function-exit semantics inside loops.
+
 ## Ownership
 
 The checked program owns its AST and semantic tables. AST addresses remain stable
@@ -243,11 +266,10 @@ bypass explicit; it is never used by `compile_source`. Tests retain their origin
 feature assertions and known failures. Synthetic runtime declarations and legacy
 aggregate registries are initialized only on this unchecked path.
 
-This contract does not complete semantic checking. The `for` initializer scope
-and loop lowering remain SPEC-017. Context-free literal defaults are `i32`/`f32`;
+This contract does not complete semantic checking. Context-free literal defaults are `i32`/`f32`;
 typed contexts select the other supported widths. SPEC-014 establishes return-path
 analysis, unreachable-source rejection, and explicit executable entry validation.
-`if`/`while` lowering is verified under SPEC-016; `unless`/`for` remain SPEC-017.
+`if`/`while` lowering is verified under SPEC-016 and `unless`/`for` under SPEC-017.
 
 SPEC-015 implements checked scalar operators, including floating arithmetic and
 unsigned division/ordering. Complete verification/lowering and

@@ -100,6 +100,13 @@ Failed generation discards the partial module. Boolean condition diagnostics
 retain the condition's source span; nested branch/loop lowering preserves the
 current continuation through expression guards and short-circuit blocks.
 
+SPEC-017 checks `unless` and `for` before generation. Non-boolean conditions keep
+the condition span; unknown header/body names, invalid stores, uninitialized
+reads, and missing returns remain semantic errors even on statically unexecuted
+paths. Malformed headers, unsupported `unless ... else`, and deferred loop control
+remain parsing errors. Raw AST initializers other than bindings or expression
+statements fail explicitly in both Sema and the backend.
+
 The external E2E harness uses executable-mode `compile_source` before verification and tool
 execution. Stage-isolated codegen tests intentionally bypass semantic checking,
 but must check parser and codegen status. Such tests establish only the behavior

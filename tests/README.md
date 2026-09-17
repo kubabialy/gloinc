@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-016, maintained source definitions and CTest discovery both contain **284 tests**:
+At SPEC-017, maintained source definitions and CTest discovery both contain **299 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -20,6 +20,7 @@ At SPEC-016, maintained source definitions and CTest discovery both contain **28
 | FunctionsTest | 12 |
 | OperatorsTest | 16 |
 | ControlFlowTest | 12 |
+| ForUnlessTest | 15 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -48,8 +49,8 @@ passing on a non-null module.
 The root-level `simple_test_runner.cpp`, `test_imports.cpp`, and
 `test_for_loop_parsing.cpp` are legacy manual probes, excluded from the maintained
 inventory. They have stale relative includes and weak or print-only checks;
-their output is not build or language-coverage evidence. Import and loop behavior
-remain tracked in SPEC-017/SPEC-023/SPEC-029/SPEC-030, and the status documents were corrected in SPEC-005. Example `.gloin` files are also not automated tests.
+their output is not build or language-coverage evidence. Maintained loop tests now cover SPEC-017; imports
+remain tracked in SPEC-023/SPEC-029/SPEC-030, and the status documents were corrected in SPEC-005. Example `.gloin` files are also not automated tests.
 
 ## Running and inspecting tests
 
@@ -63,8 +64,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-016 both produce
-**276 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-017 both produce
+**291 passes, 8 failures, no crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -82,7 +83,7 @@ establish parsing, type support, numeric conversion, or string execution.
 All 49 parser tests pass. Twenty new cases cover complete canonical programs,
 identifier conditions, precedence/associativity, newline trivia at every token
 boundary, strict lists, mandatory annotations, modifier order, declaration scopes,
-statement-only assignment, complete loop headers, malformed/truncated input,
+statement-only assignment, required loop separators, malformed/truncated input,
 source spans, excessive nesting, and deferred syntax composition.
 
 `ParseMode::Core` is the default used by `compile_source`. Stage-isolated tests
@@ -375,3 +376,34 @@ passes**, the same eight known failures, no test-process crashes/skips, and
 unchanged 30-second timeouts. Existing tests and deferred feature assertions are
 unchanged. `unless`/`for`, shared lowering, and in-process JIT/CLI integration
 remain SPEC-017 through SPEC-020.
+
+
+## Unless and C-style for loops (SPEC-017)
+
+All 15 `ForUnlessTest` cases pass. They cover all eight combinations of omitted
+header components, required separators/braces, boolean conditions, header/body
+scope and shadowing, initializer name lookup, definite initialization through
+continuing paths, immutable repeated writes, conservative returns, and invalid
+references in unexecuted bodies/updates. Numeric condition errors preserve their
+source spans. Hand-built invalid initializer statements fail in both checking
+and raw generation.
+
+Ten verified external executions cover false/true `unless`, the three-iteration
+counter returning 3, zero-iteration loops, header constants, void-call updates,
+discarded expressions, nested loops, early returns that skip trapping updates,
+and arithmetic guards/short-circuit expressions in loop headers. A test-only
+LLVM global records helper calls without changing the source control flow. The
+exact trace **123423422** proves initializer-once, condition-before-body,
+body-before-update, final false-condition checking, and single evaluation of a
+skipped `unless` body condition. Eight other programs return 42.
+
+Parser tests now accept omitted header components and keep rejecting missing
+separators. The diagnostic test that previously rejected `unless`/`for` now
+checks still-deferred imports, `defer`, and `break`; the new suite verifies the
+supported constructs execute instead of disappearing. No deferred-feature
+assertions are disabled or weakened.
+
+All **206 focused tests pass**. Serial/parallel suites both report **291/299
+passes**, the same eight failures, no test-process crashes/skips, and 30-second
+timeouts. Shared verification/lowering is next under SPEC-018; the in-process
+JIT and CLI remain SPEC-019/SPEC-020.

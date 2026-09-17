@@ -99,17 +99,13 @@ TEST(DiagnosticsTest, NonBooleanConditionsFailSemanticChecking) {
 
 TEST(DiagnosticsTest, UnsupportedStatementsCannotDisappear) {
     mlir::MLIRContext context;
-    for (const auto &text :
-         {"def main() -> i32 { unless false { return 0; } return 1; }",
-          "def main() -> i32 { for def mut i: i32 = 0; i < 2; i = i + 1 {} return 0; }",
-          "import \"@std\"; def main() -> i32 { return 0; }"}) {
+    for (const auto &text : {"import \"@std\"; def main() -> i32 { return 0; }",
+                             "def main() -> i32 { defer f(); return 0; }",
+                             "def main() -> i32 { for ;; { break; } return 0; }"}) {
         auto result = compile_source(text, "unsupported.gloin", context);
         EXPECT_FALSE(result.success()) << text;
         EXPECT_FALSE(result.module);
-        EXPECT_EQ(result.failed_stage, std::string(text).starts_with("import")
-                                           ? DiagnosticStage::Parsing
-                                           : DiagnosticStage::Semantic)
-            << text;
+        EXPECT_EQ(result.failed_stage, DiagnosticStage::Parsing) << text;
     }
 }
 

@@ -22,6 +22,15 @@ backend rejects constants because it has no evaluated semantic data.
 Private is the default; public/private metadata
 does not impose cross-module access restrictions in the single-file core.
 
+SPEC-017 accepts `unless condition { ... }` without an `else`, and C-style
+`for initializer; condition; update { ... }`. Each header component is optional;
+both semicolons and the body braces are required. Missing components have null
+AST pointers; a missing condition means `true`. Initializers accept local
+bindings/constants or expression/assignment statements, while updates accept
+expressions/assignments (including void calls), without a trailing semicolon.
+Complete-header parentheses, comma updates, ranges, `break`, `continue`, and
+`defer` remain rejected in core mode.
+
 ## Token consumption and failure
 
 The parser buffers tokens and removes newline trivia before parsing. Every

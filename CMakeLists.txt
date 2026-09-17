@@ -76,6 +76,7 @@ add_library(gloin_frontend STATIC
     src/numeric.cpp
     src/sema_numeric.cpp
     src/sema_constants.cpp
+    src/sema_control_flow.cpp
 )
 target_include_directories(gloin_frontend PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(gloin_frontend PUBLIC cxx_std_23)
@@ -151,6 +152,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/functions_test.cpp
         tests/operators_test.cpp
         tests/control_flow_test.cpp
+        tests/for_unless_test.cpp
         tests/variables_test.cpp
         tests/scope_test.cpp
         tests/sema_test.cpp

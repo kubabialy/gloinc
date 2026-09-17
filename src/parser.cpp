@@ -586,9 +586,8 @@ std::unique_ptr<ImportStatement> GloinParser::parse_import_statement_impl() {
 
 std::unique_ptr<ForStatement> GloinParser::parse_for_statement_impl() {
     expect(GLOIN_TOKEN_FOR, "Expected 'for'");
-    // Omitted components and loop scope remain SPEC-017; parse the specified complete header.
     std::unique_ptr<Statement> init;
-    {
+    if (!accept(GLOIN_TOKEN_SEMICOLON)) {
         Restore header_scope(block_depth, block_depth + 1);
         if (current_token.type == GLOIN_TOKEN_DEF) {
             init = parse_def_statement();
@@ -598,10 +597,12 @@ std::unique_ptr<ForStatement> GloinParser::parse_for_statement_impl() {
             init = parse_expression_statement();
         }
     }
-    auto condition = parse_condition();
+    std::unique_ptr<Expression> condition;
+    if (current_token.type != GLOIN_TOKEN_SEMICOLON)
+        condition = parse_condition();
     expect(GLOIN_TOKEN_SEMICOLON, "Expected semicolon after for condition");
     std::unique_ptr<Expression> update;
-    {
+    if (current_token.type != GLOIN_TOKEN_LBRACE) {
         Restore header_context(allow_struct_literal, false);
         update = parse_assignment();
     }

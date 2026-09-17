@@ -184,7 +184,7 @@ initializer such as `def x: i32 = x;` refers to an outer `x`, if one exists;
 otherwise it is an unresolved-name error. Local declarations are not hoisted.
 Leaving a block removes its bindings from lookup; sibling blocks and different
 functions do not share local bindings. Compilation invocations have independent
-declarations. C-style `for` initializer lifetime remains SPEC-017.
+declarations. C-style `for` initializer lifetime follows SPEC-017 below.
 
 Type annotations use the predefined core type registry, available throughout
 the file, independently of value lookup. Built-in names and aliases cannot be
@@ -265,8 +265,48 @@ that path. Runtime arithmetic failure terminates execution according to SPEC-015
 Unreachable source is rejected under SPEC-014, rather than emitted after a
 return. Both arms and loop bodies are checked even with constant conditions.
 
-These rules cover `if`/`else` and `while`. `unless` and C-style `for` remain
-SPEC-017; the selected core does not include `break` or `continue`.
+These rules cover `if`/`else` and `while`. SPEC-017 below defines `unless` and
+C-style `for`; the selected core does not include `break` or `continue`.
+
+### Unless and C-style for loops (SPEC-017)
+
+`unless condition { body }` evaluates its boolean condition once and executes
+the body only when false. It has no `else` clause. Its scope, initialization,
+return, and unreachable-source rules match `if !condition { body }`.
+
+`for initializer; condition; update { body }` executes the initializer once,
+checks the boolean condition before each iteration, and executes the update
+after each body path that reaches its end. It then repeats the complete
+condition. A false condition exits without executing the body or update. A
+return inside the body exits the function without executing the update.
+
+All three header components may be omitted independently. An absent initializer
+or update does nothing; an absent condition is `true`. Both semicolons and body
+braces are mandatory, including in `for ;; { ... }`. There are no parentheses
+around the complete header, range-based forms, comma-separated updates, `break`,
+or `continue` in the core. An initializer is a local binding/constant declaration
+or an expression/assignment statement. An update is an expression or assignment,
+including a void call, with no trailing semicolon or declaration.
+
+Each `for` owns a scope beginning at its initializer and ending after its body.
+Initializer bindings can shadow outer names; their initializers still resolve
+the prior binding. They are visible in the condition, body, and update, but not
+after the loop. The body adds a nested scope, so body locals cannot be referenced
+by the update. Initializer effects on existing outer bindings are guaranteed;
+body/update effects cannot establish definite initialization after the loop,
+because analysis conservatively includes a zero-iteration path even when the
+condition is absent or literally true. A repeated assignment to an immutable
+header or outer binding is rejected; mutable counters use `def mut`.
+
+Body and update are both checked even if a constant condition or unconditional
+body return prevents their execution. The update uses initialization state from
+continuing body paths; if none continue, it is checked against the state before
+the body. Like `while`, a `for` alone does not prove a non-void function returns.
+No implicit return or divergence inference is added by omitted components.
+
+`defer` remains outside the core and is rejected. When implemented under
+SPEC-027, its existing function-exit, LIFO contract applies inside these loops;
+neither loop iteration nor block exit is a defer execution point.
 
 ### Functions, calls, returns, and entry points (SPEC-014)
 
@@ -295,7 +335,7 @@ not satisfy a non-void function. Unconditional divergence is not inferred from
 calls. Statements following a structurally unconditional return (including a
 block or both arms of an `if`) are rejected as unreachable, even declarations or
 empty blocks. Both branches and loop bodies are checked regardless of constant
-conditions. `if`/`while` lowering follows SPEC-016; `unless`/`for` remain SPEC-017.
+conditions. `if`/`while` lowering follows SPEC-016; `unless`/`for` follow SPEC-017.
 
 Executable compilation requires exactly one file-scope function named `main`
 with no parameters and canonical return type `i32` (`int` is equivalent).
@@ -466,8 +506,8 @@ Identifier capitalization never changes expression grammar.
 Assignment is excluded from this table. Its left side must be an assignable
 form, and its right side is an expression that cannot contain another assignment.
 Mutability, scope, and type compatibility are subsequent semantic checks.
-The complete C-style loop header specified above is accepted; decisions about
-omitted components remain SPEC-017 and omissions currently receive a diagnostic.
+C-style loop headers accept independently omitted components under SPEC-017;
+both header semicolons and body braces remain required.
 
 Deferred syntax tests may construct member/index expressions and struct literals,
 but this does not admit them into the core. In that syntax, postfix member/index

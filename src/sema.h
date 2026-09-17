@@ -173,6 +173,9 @@ class Sema {
     InitializationState initialization;
     bool falls_through = true;
     unsigned loop_depth = 0;
+    void check_conditional(const Expression *condition, const BlockStatement *body,
+                           const Statement *alternative, std::string_view construct);
+    void check_for(const ForStatement *statement);
     void check_constant(const VariableDeclaration *declaration);
     std::shared_ptr<Type> check_constant_expression(const Expression *expression);
     std::optional<ConstantValue> evaluate_constant(const Expression *expression);
