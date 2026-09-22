@@ -44,6 +44,9 @@ Its observable language result is the `i32` returned by `main`. Runtime/compiler
 failure must remain distinguishable from every valid `i32`, including `-1`;
 SPEC-020 defines how the CLI presents results within host exit-status limits.
 The later hello-world milestone requires strings and `@std` (SPEC-022/SPEC-023).
+Those subsequent milestones are now implemented. The first-release scope above
+records the scalar baseline; current standard output and revised CLI exit
+semantics are specified under SPEC-023 below.
 
 ## Core source and syntax rules
 
@@ -160,7 +163,7 @@ added when lowering an explicitly declared receiver.
 `def const LIMIT: i32 = 10;` requires a compile-time initializer under the
 SPEC-012 rules below. Local bindings without an initializer may only be read
 after definite initialization.
-The core allows functions and constants at file scope; runtime global
+The core allows functions, constants, and (since SPEC-023) `@std` imports at file scope; runtime global
 variables, nested functions, and user-defined type aliases are not in scope.
 
 ### Declaration visibility and lexical scopes (SPEC-011)
@@ -606,10 +609,11 @@ compiler; lexical encoding rules still apply. There is no stdin special case,
 multi-file compilation, user program argument list, or native output file mode.
 Names beginning with a dash require `--` or an explicit path such as `./-file`.
 
-Run uses executable-mode compilation and SPEC-019's JIT. On success, stdout
-contains exactly the full signed decimal i32 result followed by a newline, and
-the process exits 0 regardless of that value. In particular, -1 and both i32
-limits are results, not truncated host exit statuses. Compiler, file/output I/O,
+Run uses executable-mode compilation and SPEC-019's JIT. As of SPEC-023, main's
+return value sets the process exit status (the low eight bits of the i32); it is
+never automatically printed. The JIT API preserves the full i32 separately.
+Only explicit output calls write to stdout during execution, regardless of imports.
+Compiler, file/output I/O,
 and reported JIT failures write diagnostics to stderr and exit 1. Compilation
 and JIT failures emit no partial IR or result; stdout write failures can occur
 after some bytes have been written. Usage errors write a diagnostic and usage
@@ -698,7 +702,7 @@ tests or turn unimplemented features into expected successes.
 | `fn`, `extern`, `switch`/`match`/`case`/`default`, `=>`, `?`, character literals | No accepted core extension. Reject under SPEC-008/SPEC-009/SPEC-015; any future syntax requires a separate contract before implementation. |
 | Compound assignment, bitwise operators, shifts, unary `+`, assignment expressions | Reject for the first release (SPEC-015); integer remainder `%` is included, floating remainder is not. |
 | `i128`, `u128`, `f128` | Deferred numeric extension (SPEC-013b); core type resolution rejects them (SPEC-010/SPEC-013). |
-| Strings, `@std`, standard I/O and conversions | Deferred (SPEC-022/SPEC-023/SPEC-030); `string` is canonical. |
+| `@std`, standard I/O and conversions | `@std`, `std.print(string)` and `std.println(string)` are implemented by SPEC-023. Further I/O and conversions remain SPEC-030; `string` is implemented by SPEC-022. |
 | Structs, raw pointers/references, methods, `defer`, arenas | Deferred (SPEC-024 through SPEC-028). |
 | Local modules and `#package` imports | Deferred (SPEC-029/SPEC-044). |
 | Generic types/functions, enums, `Result` | Deferred (SPEC-031 through SPEC-034); capitalization must not decide grammar. |
@@ -722,7 +726,47 @@ All Gloin programs are written in UTF-8. Gloin is by design explicit, and does n
 The reason for this is that Gloin is designed to be a simple, safe, fast language but most importantly transparent.
 It will not hide complexity from you, but will instead provide you with the tools to understand it.
 
-The later hello-world program requires SPEC-022/SPEC-023; the core entry-point
+### Standard output (SPEC-023)
+
+`import "@std";` is a file-scope declaration available throughout the file,
+including functions preceding the import. Duplicate imports and file-scope
+declarations named `std` conflict. Local bindings may shadow `std`; a shadowed
+name cannot be used to call standard members. Import paths decode string escapes.
+`@name` loads a lowercase `name.gloin` file from the selected standard-library
+directory. Names match `[a-z][a-z0-9_]*`; other paths are rejected. Currently
+`stdlib/std.gloin` is shipped; adding `math.gloin` or `io.gloin` requires no
+compiler changes. Only declared `pub` functions are accessible as module members.
+Module functions/constants use an isolated scope and cannot see application
+declarations. Private helpers are callable inside their own module. Imports
+between library files, exported constants, local paths, and package paths remain
+deferred and produce diagnostics.
+
+Module files are parsed and type-checked on every compilation, retaining their
+own diagnostic locations. Missing/unreadable files and missing/private members
+are errors, with no built-in fallback. CLI `--stdlib-dir DIR` selects an explicit
+directory; default lookup uses the executable's adjacent `stdlib/` directory or
+the installed `../share/gloinc/stdlib/` directory. The compiler API accepts an
+optional directory argument and otherwise uses its configured build library.
+
+`print` and `println` are ordinary functions defined in `std.gloin`. Standard
+module bodies may call the native primitive `__write_stdout(string) -> void`;
+application source cannot access it directly. The primitive writes bytes and
+flushes stdout, while `println` implements the newline in Gloin.
+
+`std.print(value: string) -> void` writes exactly the string's byte length to
+stdout. `std.println(value: string) -> void` writes those bytes followed by one
+LF byte. Both preserve UTF-8, embedded NULs, and literal percent signs; neither
+performs formatting or numeric conversion. Arguments evaluate once at the call
+site. Missing members, wrong arity/types, missing imports, and using output calls
+as values are errors. Output is flushed per call; a write failure is reported as
+an execution error. Bytes already written cannot be rolled back on later failure.
+
+The CLI returns main's result as its host exit status (low eight bits); output
+calls and imports do not change the returned value. JitRunner continues returning
+the complete i32 separately. Return values are never printed automatically.
+Check and IR emission modes never execute output calls.
+
+The hello-world program uses SPEC-022/SPEC-023; the scalar entry-point
 example above has no imports:
 
 ```gloin

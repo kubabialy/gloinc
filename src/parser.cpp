@@ -1,6 +1,30 @@
 #include "parser.h"
+#include <string>
 
 namespace {
+std::string decode_string_literal(std::string_view spelling) {
+    std::string decoded;
+    decoded.reserve(spelling.size());
+    for (size_t i = 0; i < spelling.size(); ++i) {
+        if (spelling[i] != '\\') {
+            decoded.push_back(spelling[i]);
+            continue;
+        }
+        ++i;
+        switch (spelling[i]) {
+        case '\\': decoded.push_back('\\'); break;
+        case '"': decoded.push_back('"'); break;
+        case '\'': decoded.push_back('\''); break;
+        case 'n': decoded.push_back('\n'); break;
+        case 'r': decoded.push_back('\r'); break;
+        case 't': decoded.push_back('\t'); break;
+        case '0': decoded.push_back('\0'); break;
+        default: break; // The lexer has already diagnosed invalid escapes.
+        }
+    }
+    return decoded;
+}
+
 // Restore contextual grammar flags even when a parse failure unwinds the stack.
 template <typename T> struct Restore {
     T &target;
@@ -136,8 +160,7 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         return node;
     }
     case GLOIN_TOKEN_STRING_LITERAL: {
-        require_extended("String literals");
-        auto node = located_node<StringLiteral>(std::string(current_token.literal));
+        auto node = located_node<StringLiteral>(decode_string_literal(current_token.literal));
         advance_token();
         return node;
     }
@@ -217,7 +240,6 @@ std::unique_ptr<Expression> GloinParser::parse_infix_impl(std::unique_ptr<Expres
         return std::make_unique<IndexExpression>(std::move(left), std::move(index));
     }
     if (type == GLOIN_TOKEN_DOT) {
-        require_extended("Member access");
         advance_token();
         return std::make_unique<MemberAccessExpression>(std::move(left), parse_name());
     }
@@ -331,7 +353,6 @@ std::unique_ptr<Statement> GloinParser::parse_statement_impl() {
         require_extended("Defer statements");
         return parse_defer_statement();
     case GLOIN_TOKEN_IMPORT:
-        require_extended("Imports");
         return parse_import_statement();
     case GLOIN_TOKEN_LBRACE:
         return parse_block_statement();
@@ -574,11 +595,12 @@ std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed
 }
 
 std::unique_ptr<ImportStatement> GloinParser::parse_import_statement_impl() {
-    require_extended("Imports");
+    if (mode == ParseMode::Core && block_depth != 0)
+        fail("Imports are only allowed at file scope");
     expect(GLOIN_TOKEN_IMPORT, "Expected 'import'");
     if (current_token.type != GLOIN_TOKEN_STRING_LITERAL)
         fail("Expected string literal after import");
-    std::string path(current_token.literal);
+    std::string path = decode_string_literal(current_token.literal);
     advance_token();
     expect(GLOIN_TOKEN_SEMICOLON, "Expected semicolon after import");
     return std::make_unique<ImportStatement>(path);
@@ -617,7 +639,8 @@ std::vector<std::unique_ptr<Statement>> GloinParser::parse_program() {
     std::vector<std::unique_ptr<Statement>> program;
     while (!has_error() && !at_end()) {
         auto start = current_token.span;
-        if (mode == ParseMode::Core && current_token.type != GLOIN_TOKEN_DEF) {
+        if (mode == ParseMode::Core && current_token.type != GLOIN_TOKEN_DEF &&
+            current_token.type != GLOIN_TOKEN_IMPORT) {
             diagnostics()->error(DiagnosticStage::Parsing, start,
                                  "Expected top-level function or constant");
             return {};
@@ -628,6 +651,7 @@ std::vector<std::unique_ptr<Statement>> GloinParser::parse_program() {
         if (mode == ParseMode::Core) {
             auto *variable = dynamic_cast<VariableDeclaration *>(statement.get());
             if (!dynamic_cast<FunctionDefinition *>(statement.get()) &&
+                !dynamic_cast<ImportStatement *>(statement.get()) &&
                 !(variable && variable->is_const)) {
                 diagnostics()->error(DiagnosticStage::Parsing, start,
                                      "Only functions and constants are allowed at file scope");

@@ -5,6 +5,7 @@
 #include "compilation_mode.h"
 #include "numeric.h"
 #include <unordered_map>
+#include <unordered_set>
 
 using SymbolId = size_t;
 inline constexpr SymbolId invalid_symbol = static_cast<SymbolId>(-1);
@@ -19,6 +20,8 @@ struct ResolvedSymbol {
     SourceSpan span;
 };
 struct SemanticData {
+    std::unordered_set<const CallExpression *> runtime_calls;
+    std::unordered_map<SymbolId, std::string> linkage_names;
     TargetInfo target;
     CompilationMode mode = CompilationMode::Module;
     std::optional<SymbolId> entry_point;

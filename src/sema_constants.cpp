@@ -44,6 +44,8 @@ void Sema::check_constant(const VariableDeclaration *declaration) {
 std::shared_ptr<Type> Sema::check_constant_expression(const Expression *expression) {
     if (dynamic_cast<const BooleanLiteral *>(expression))
         return get_builtin_type("bool");
+    if (dynamic_cast<const StringLiteral *>(expression))
+        return get_builtin_type("string");
     if (const auto *identifier = dynamic_cast<const Identifier *>(expression)) {
         auto *symbol = current_scope->resolve(identifier->value);
         if (!symbol) {
@@ -93,6 +95,8 @@ std::optional<ConstantValue> Sema::evaluate_constant(const Expression *expressio
         return found->second;
     if (const auto *boolean = dynamic_cast<const BooleanLiteral *>(expression))
         return ConstantValue{type, boolean->value};
+    if (const auto *string = dynamic_cast<const StringLiteral *>(expression))
+        return ConstantValue{type, string->value};
     if (const auto *identifier = dynamic_cast<const Identifier *>(expression))
         return recording->constants.at(recording->bindings.at(identifier));
     if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expression)) {

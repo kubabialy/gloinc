@@ -16,7 +16,7 @@ class CoreAcceptanceTest : public gloin_test::CliFixture {
         expect_success(invoke({"--check", file}), "");
         // Independent compile/JIT processes must produce the same observable result.
         for (unsigned i = 0; i < 3; ++i)
-            expect_success(invoke({file}), expected + "\n");
+            expect_run(invoke({file}), std::stoi(expected));
     }
     void rejects(const std::string &name, const std::string &reason) {
         const auto file = fixture(name);
@@ -259,8 +259,8 @@ TEST_F(CoreAcceptanceTest, RejectConstantCycle) {
     rejects("reject/constant_cycle.gloin", "Undefined constant");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredStrings) {
-    rejects("reject/deferred_strings.gloin", "core");
+TEST_F(CoreAcceptanceTest, RunsStrings) {
+    runs("reject/deferred_strings.gloin", "42");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredCharacters) {
@@ -337,16 +337,18 @@ TEST_F(CoreAcceptanceTest, RejectDeferredMatch) {
     rejects("reject/deferred_match.gloin", "Expected expression");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredStandardImport) {
-    rejects("reject/deferred_standard_import.gloin", "top-level function or constant");
+TEST_F(CoreAcceptanceTest, StandardHelloWorld) {
+    auto file = fixture("run/hello_world.gloin");
+    expect_success(invoke({"--check", file}), "");
+    expect_success(invoke({"--run", file}), "Hello World!\n");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredLocalImport) {
-    rejects("reject/deferred_local_import.gloin", "top-level function or constant");
+    rejects("reject/deferred_local_import.gloin", "Unsupported module path");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredPackageImport) {
-    rejects("reject/deferred_package_import.gloin", "top-level function or constant");
+    rejects("reject/deferred_package_import.gloin", "Unsupported module path");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredStruct) {

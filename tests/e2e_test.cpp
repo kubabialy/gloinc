@@ -1,4 +1,5 @@
 #include "../src/compiler.h"
+#include "../src/codegen.h"
 #include "../src/lexer.h"
 #include "../src/parser.h"
 #include "../src/sema.h"
@@ -151,6 +152,46 @@ TEST(E2ETest, ControlFlowLoop) {
         }
     )";
     expect_result(run_code(code), 10);
+}
+
+TEST(E2ETest, LoopLocalMutableDoesNotGrowTheStack) {
+    expect_result(run_code(R"(
+        def main() -> i32 {
+            def mut i: i32 = 0;
+            while i < 100000 {
+                def mut x: i32 = i;
+                x = x + 1;
+                i = i + 1;
+            }
+            return i;
+        }
+    )"),
+                  100000);
+}
+
+TEST(E2ETest, LoopLocalMutableAllocaIsHoistedToFunctionEntry) {
+    mlir::MLIRContext context;
+    auto result = compile_source(R"(
+        def main() -> i32 {
+            def mut i: i32 = 0;
+            while i < 10 {
+                def mut x: i32 = i;
+                x = x + 1;
+                i = i + 1;
+            }
+            return i;
+        }
+    )",
+                                 "alloca.gloin", context, CompilationMode::Executable);
+    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.module);
+
+    for (auto function : result.module->getOps<mlir::func::FuncOp>()) {
+        auto &entry = function.getBody().front();
+        function.walk([&](mlir::LLVM::AllocaOp alloca) {
+            EXPECT_EQ(alloca->getBlock(), &entry);
+        });
+    }
 }
 
 TEST(E2ETest, MultilineIdentifierConditionAndCalls) {

@@ -34,8 +34,10 @@ parameters and a signless i32 result. It must use C calling convention and
 external, internal, or private emitted linkage. Source `priv` does not prevent
 execution. Helper functions also require C calling convention and emitted
 external/internal/private linkage. External function/global declarations are
-rejected before engine creation; the core does not resolve user symbols from
-ambient process libraries or provide an FFI.
+rejected before engine creation except for the exact standard-output runtime ABI:
+`gloin.runtime.output(ptr, i64) -> void`, with external linkage and C calling
+convention. The JIT registers that callback explicitly when the module uses it. Its name
+cannot be spelled as a source identifier. This does not provide a general FFI.
 
 Native target/assembly-printer registration runs once. Builtin and LLVM dialect
 translation interfaces are registered in the caller's context. The translated
@@ -66,8 +68,10 @@ satisfy them. This does not change successful in-process execution into an
 external-runner implementation.
 
 The floating-point environment must retain the specified default rounding and
-gradual underflow. There is no source-language I/O, concurrency, or global-variable
-feature added by JIT support. File loading, result/exit conventions, and
+gradual underflow. SPEC-023 adds byte-length-aware standard output; write errors
+return an execution diagnostic without an i32 result. Output already written
+remains visible if a later error or trap occurs. Concurrency and global variables
+remain deferred. File loading, result/exit conventions, and
 check/IR modes are documented in [the CLI reference](cli.md). Source-file acceptance
 is covered by [SPEC-021's fixtures](../tests/fixtures/core/README.md); installation
 and packaging are documented in [the release guide](release.md).

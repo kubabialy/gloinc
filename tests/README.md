@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-046, maintained source definitions and CTest discovery both contain **470 tests**:
+At SPEC-023, maintained source definitions and CTest discovery both contain **491 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -33,12 +33,13 @@ At SPEC-046, maintained source definitions and CTest discovery both contain **47
 | SpecTest | 8 |
 | ArenaTest | 1 |
 | AsyncTest | 2 |
-| ArrayStringTest | 2 |
+| ArrayStringTest | 4 |
 | UnlessTest | 1 |
 | JitRunnerTest | 16 |
 | CliTest | 16 |
+| StandardModuleTest | 17 |
 | CoreAcceptanceTest | 125 |
-| E2ETest | 29 |
+| E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
 The four generic tests are now included without changing their assertions. Their
@@ -68,8 +69,28 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel Release runs at SPEC-046 both produce
-**463 passes, 7 failures, no unexpected test-process crashes or skipped tests**, with identical failing test names.
+as expected successes. The local parallel SPEC-023 run reports
+**486 passes, 5 failures, no unexpected test-process crashes or skipped tests**.
+
+## Standard modules and output (SPEC-023)
+
+Seventeen `StandardModuleTest` cases cover exact UTF-8/NUL/escape/percent bytes,
+empty strings, newlines, constants and delayed locals, call evaluation order,
+branches and loops, file-wide imports, namespace shadowing/conflicts, wrong
+arguments, unsupported modules/members, void-value rejection, silent checking
+and IR modes, repeated compilation/JIT execution, invalid runtime ABI rejection,
+and output write errors. File-loading tests replace `std.gloin` to change behavior
+and signatures, add `math.gloin` without compiler changes, reject missing/empty/
+unreadable files, preserve library diagnostic locations, enforce private exports
+and scope isolation, and verify the byte-output primitive's visibility.
+`CoreAcceptanceTest.StandardHelloWorld` drives a maintained
+source fixture through the CLI. The required `check-core` target and installed/
+extracted package checks include this suite.
+
+As requested for SPEC-023, CLI tests now assert main's result modulo 256 as the
+host exit status, independently of imports and explicit stdout. Full i32 results
+remain checked by the JIT and external execution suites. Prior milestone evidence
+below describes the old CLI contract at the time those checks ran.
 
 ## Lexical contract checks
 
@@ -170,8 +191,7 @@ parent test remains subject to CTest's 30-second limit.
 | `AsyncTest.DeferredFunctionGeneration` | SPEC-040: fixture uses obsolete `let` and an omitted return annotation; replace against the deferred-call contract when defined. |
 | `CodeGenTest.GenerateSpawn` | SPEC-040, SPEC-041: restored lit assertion finds no spawn operation |
 | `ArenaTest.ArenaAllocation` | SPEC-028: `Arena::new` is unresolved; codegen previously emitted an unchecked call. |
-| `ArrayStringTest.HandlesStringLiterals` | SPEC-022 |
-| `ArrayStringTest.HandlesArrayLiterals` | SPEC-035: `[i32; 3]` type resolution is unsupported; a null type was previously tolerated. |
+| `ArrayStringTest.ArrayTypesRemainDeferred` | SPEC-035: `[i32; 3]` type resolution is unsupported; a null type was previously tolerated. |
 
 SPEC-007's newline handling made
 `LexerTest.HandlesComments`, `LexerTest.TrackLineNumbers`,

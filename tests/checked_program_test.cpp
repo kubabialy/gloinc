@@ -34,7 +34,7 @@ std::unique_ptr<CheckedProgram> check(const std::string &source) {
 
 TEST(CheckedProgramTest, EveryCoreScalarHasOneSignatureAndStorageType) {
     for (const auto &info : core_types) {
-        if (info.id == CoreType::Void)
+        if (info.id == CoreType::Void || info.id == CoreType::String)
             continue;
         std::string name(info.name);
         auto program = check("def identity(value: " + name + ") -> " + name +
@@ -104,7 +104,7 @@ TEST(CheckedProgramTest, SignednessAndBooleanRemainDistinct) {
 TEST(CheckedProgramTest, UnknownAndDeferredTypesFailInEveryAnnotationPosition) {
     mlir::MLIRContext context;
     for (const std::string type :
-         {"Mystery", "String", "string", "i128", "u128", "f128", "char", "u4", "be_u16"}) {
+         {"Mystery", "String", "i128", "u128", "f128", "char", "u4", "be_u16"}) {
         for (const std::string source :
              {"def f(x: " + type + ") -> void {}", "def f() -> " + type + " {}",
               "def f() -> void { def mut x: " + type + "; }"}) {

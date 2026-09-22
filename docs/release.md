@@ -2,7 +2,8 @@
 
 Version 0.0.1 is the scalar-core JIT compiler for Apple Silicon macOS with
 LLVM/MLIR 21.1.6. It reads a source file, checks it, and executes `main() -> i32`.
-Successful execution prints the full signed result with a newline and exits 0.
+Since SPEC-023, execution returns main's low eight bits as its process exit
+status. Only explicit `std.print`/`std.println` calls write to stdout.
 Compiler/file/JIT errors exit 1, usage errors exit 2, and arithmetic traps
 terminate with SIGTRAP or SIGILL. `--check`, `--emit-ir`, and `--emit-llvm` do
 not execute the program; LLVM inspection prints LLVM-dialect MLIR.
@@ -46,6 +47,8 @@ tests enabled. `make run` defaults to the counter example; use
 | `bin/gloinc` | Compiler and in-process JIT client |
 | `share/doc/gloinc/` | README, specification, checklist, and technical guides |
 | `share/gloinc/examples/core_counter.gloin` | Runnable example returning 42 |
+| `share/gloinc/examples/hello_world.gloin` | Runnable standard-output example |
+| `share/gloinc/stdlib/std.gloin` | Standard utility functions, compiled when imported |
 | `share/gloinc/core-fixtures/` | All 125 source acceptance fixtures and their matrix |
 
 LLVM/MLIR and their Homebrew dependencies are external and are not redistributed
@@ -69,20 +72,22 @@ tar -xzf gloinc-0.0.1-macos-arm64.tar.gz
 ```
 
 `bash scripts/check-package.sh build build/package-check` validates a staged
-installation and a relocated extraction. Each runs the existing 141 CLI/source
+installation and a relocated extraction. Each runs 158 CLI/standard-output/source
 cases against that binary, using the installed fixtures. The script also executes
-the packaged counter example, records shared-library dependencies, and retains
+the packaged counter and hello-world examples and records shared-library
+dependencies. Removing the relocated `std.gloin` must cause a module
+loading error, proving there is no fallback to the source checkout. It retains
 JUnit reports, archive, and checksum. `GLOIN_TEST_CLI` and `GLOIN_TEST_FIXTURES`
 are explicit test-harness overrides used for this purpose, not compiler options.
 
 ## Release validation
 
-The `check-core` target runs all 424 scalar-core checks, including lower-level
+The `check-core` target runs 443 required scalar and standard-output checks, including lower-level
 frontend/operator/lowering tests and external execution probes as well as the
 125 source fixtures. No known failure is reclassified as success. Full serial
-and parallel runs remain separate and report seven deferred-feature failures:
-spawn codegen, arenas, deferred/spawn generation, async types, strings, and arrays.
-Those features are rejected by the source compiler.
+and parallel runs remain separate. The full suite currently retains five
+deferred-feature failures: spawn codegen, arenas, deferred/spawn generation, and
+async types. Those features are rejected by the source compiler.
 
 ```sh
 ctest --test-dir build -j 1 --output-on-failure --output-junit serial.xml

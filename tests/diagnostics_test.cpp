@@ -99,7 +99,7 @@ TEST(DiagnosticsTest, NonBooleanConditionsFailSemanticChecking) {
 
 TEST(DiagnosticsTest, UnsupportedStatementsCannotDisappear) {
     mlir::MLIRContext context;
-    for (const auto &text : {"import \"@std\"; def main() -> i32 { return 0; }",
+    for (const auto &text : {"def main() -> i32 { import \"@std\"; return 0; }",
                              "def main() -> i32 { defer f(); return 0; }",
                              "def main() -> i32 { for ;; { break; } return 0; }"}) {
         auto result = compile_source(text, "unsupported.gloin", context);
@@ -269,7 +269,6 @@ TEST(DiagnosticsTest, CorePipelineRejectsDeferredSyntaxBeforeChecking) {
     mlir::MLIRContext context;
     for (const std::string source :
          {"def struct X { def x: i32 } def main() -> i32 { return 0; }",
-          "def main() -> i32 { def x: string = \"text\"; return 0; }",
           "def main() -> i32 { defer work(); return 0; }",
           "def main() -> i32 { def x: *i32; return 0; }", "def main() -> i32 { return x = 1; }"}) {
         auto result = compile_source(source, "core.gloin", context);

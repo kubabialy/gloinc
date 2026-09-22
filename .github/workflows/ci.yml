@@ -57,8 +57,12 @@ jobs:
           cmake --build build-ci-no-tests -j 2 2>&1 | tee ci-reports/build-no-tests.log
           test ! -e build-ci-no-tests/_deps
           test ! -e build-ci-no-tests/gloinc_test
-          result=$(build-ci-no-tests/gloinc examples/core_counter.gloin)
-          test "$result" = 42
+          program_status=0
+          result=$(build-ci-no-tests/gloinc examples/core_counter.gloin) || program_status=$?
+          test "$program_status" = 42
+          test -z "$result"
+          result=$(build-ci-no-tests/gloinc examples/hello_world.gloin)
+          test "$result" = 'Hello World!'
 
       - name: Build with tests
         id: build

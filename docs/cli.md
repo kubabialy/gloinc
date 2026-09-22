@@ -4,7 +4,7 @@ Build instructions are in [the README](../README.md). The supported development
 platform is Apple Silicon macOS with LLVM/MLIR 21.1.6.
 
 ```text
-gloinc [--run | --check | --emit-ir | --emit-llvm] [--] FILE
+gloinc [--run | --check | --emit-ir | --emit-llvm] [--stdlib-dir DIR] [--] FILE
 gloinc --help
 gloinc --version
 ```
@@ -17,9 +17,18 @@ Standard input, program arguments, and native binary output are not supported.
 Duplicate modes, unknown options, and extra/missing files are usage errors.
 Help (`-h`) and version (`-V`) must be used alone.
 
+`--stdlib-dir DIR` selects the directory containing `std.gloin` and any other
+standard module files. It may appear once, before `--`, with any compilation mode.
+By default the CLI uses `stdlib/` beside the executable when that directory
+exists (build layout), otherwise `../share/gloinc/stdlib/` relative to the actual
+executable (installed layout). It never falls back to compiled-in standard functions
+or the source checkout if a selected file is missing. Scalar programs with no
+imports do not need this directory. To edit library functions without rebuilding,
+run `./build/gloinc --stdlib-dir stdlib examples/hello_world.gloin`.
+
 | Mode | Behavior on success |
 | --- | --- |
-| `--run` (default) | Compile and execute `def main() -> i32`; print its signed decimal result and a newline. |
+| `--run` (default) | Compile and execute `def main() -> i32`; return its low eight bits as the process exit status. Only explicit output calls write to stdout. |
 | `--check` | Compile and verify high-level IR without execution; stdout is empty. |
 | `--emit-ir` | Print verified high-level MLIR with source locations without execution. |
 | `--emit-llvm` | Lower and print verified LLVM-dialect MLIR with source locations without execution. This is MLIR syntax, not native LLVM `.ll` syntax. |
@@ -30,7 +39,7 @@ or non-terminating source programs.
 
 ```sh
 ./build/gloinc examples/core_counter.gloin
-# stdout: 42 followed by a newline; exit status: 0
+# stdout is empty; exit status: 42
 ./build/gloinc --check examples/core_counter.gloin
 ./build/gloinc --emit-llvm examples/core_counter.gloin > core_counter.mlir
 ```
@@ -39,12 +48,15 @@ or non-terminating source programs.
 
 | Exit status | Meaning |
 | --- | --- |
-| 0 | Successful run/check/inspection/help/version. Every i32 result, including -1 and both limits, is successful. |
+| 0–255 | For run, main's i32 result modulo 256: -1 becomes 255, 256 becomes 0. Other successful modes exit 0. |
 | 1 | File, compiler, lowering, JIT, or stdout write error. Diagnostics go to stderr. |
 | 2 | Usage error; stderr includes a diagnostic and usage text. |
 
-A program result is separate from the host process exit status. Compilation and
-JIT failures produce no partial IR or result on stdout. Source diagnostics carry
+SPEC-023 replaces the earlier automatic result printing. Imports and output calls
+never change main's return value. The JIT API retains the full signed i32, while
+the host process exposes only its low eight bits. A returned 1 or 2 can share a
+status with a compiler/usage error; those errors additionally report diagnostics.
+Compilation and JIT setup failures produce no partial IR or result on stdout. Source diagnostics carry
 the supplied filename and available line/byte-column locations. Output write
 failures can occur after some bytes have been written.
 
@@ -56,7 +68,9 @@ does not add signal recovery or execution timeouts.
 `--version` reports `gloinc 0.0.1 (LLVM/MLIR 21.1.6)`. This identifies the
 scalar-core compiler. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
 core acceptance; [the release guide](release.md) documents installation,
-packaging, and validation. Standard-library printing and strings remain separate work.
+packaging, and validation. `import "@std";` enables `std.print(string)` and
+`std.println(string)`. Output preserves exact bytes, including embedded NULs;
+println appends LF. Both return void. Missing modules/members fail before execution.
 
 ## Shared compiler path and verification
 

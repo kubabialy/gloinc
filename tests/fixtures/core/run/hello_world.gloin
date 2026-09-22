@@ -1,6 +1,5 @@
 import "@std";
 
-// A simple "Hello World" program
 def main() -> i32 {
     std.println("Hello World!");
     return 0;

@@ -281,3 +281,12 @@ operation/type legality checks. SPEC-019 adds [validated in-process execution](j
 with separate results/errors and owned engine lifetimes. Aggregate and concurrency contracts stay
 deferred. A checked object establishes resolved identities and the checks currently
 implemented, not full release readiness.
+
+SPEC-023 loads standard module files before semantic checking. Each import owns
+its parsed declarations and source spans. Sema collects module functions and
+constants in a separate scope, resolves public qualified calls to ordinary
+`SymbolId`s, and records collision-free emitted names in `SemanticData`.
+Codegen declares and compiles those function bodies through the same path as
+application functions. Only library calls to `__write_stdout` receive a separate
+runtime-call marker; `print` and `println` have no special compiler handling.
+Local/package imports and dependencies between standard files remain deferred.

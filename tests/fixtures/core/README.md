@@ -29,7 +29,8 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 | Omitted for components, initializer effects/scope, skipped body/update | [for_components](run/for_components.gloin) |
 | Precedence and parentheses | [precedence](run/precedence.gloin) |
 | UTF-8 comments, CRLF, multiline expressions | [utf8_comments](run/utf8_comments.gloin) |
-| Full signed i32 result independent of exit status | [negative](run/negative_result.gloin), [zero](run/zero_result.gloin), [minimum](run/minimum_result.gloin), [maximum](run/maximum_result.gloin) |
+| i32 result mapped to host exit status modulo 256, with no implicit output | [negative](run/negative_result.gloin), [zero](run/zero_result.gloin), [minimum](run/minimum_result.gloin), [maximum](run/maximum_result.gloin) |
+| Standard import and exact hello-world output (SPEC-023) | [hello_world](run/hello_world.gloin) |
 | Eleven normative invalid fragments | `reject/canonical_01.gloin` through `canonical_11.gloin`; the unknown-type binding is wrapped in a function to reach type checking |
 | Initialization, immutability, scopes, types, literal ranges, calls, returns, constants | Named files under [reject](reject), including [uninitialized](reject/uninitialized.gloin), [mixed_widths](reject/mixed_widths.gloin), [missing_return](reject/missing_return.gloin) |
 | Deferred syntax/type families and unsupported operators | `reject/deferred_*.gloin`: imports, text, aggregates, pointers/references, generics, concurrency, extended numeric/layout types, legacy syntax, range loops, bitwise/shift/compound operators |
@@ -38,12 +39,13 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 
 ## What each case proves
 
-The 28 `run` fixtures must pass checking and then print their expected result
-with exit 0 and empty stderr in three independent compile/run processes. These
+The scalar `run` fixtures pass checking and then return the expected host exit
+status with empty stdout/stderr in three independent compile/run processes. The
+hello-world fixture separately asserts exact stdout and exit 0. These
 checks establish repeatability for the selected toolchain/platform, not native
 binary reproducibility or portability.
 
-The 83 `reject` fixtures must exit 1 with empty stdout and the expected diagnostic
+Negative fixtures must exit 1 with empty stdout and the expected diagnostic
 text plus filename/line/column in all four modes. The expected text is matched
 against the diagnostic message, not the filename. Many fixtures place an integer
 trap before the invalid construct: execution before validation cannot pass as a

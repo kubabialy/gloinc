@@ -1,0 +1,9 @@
+// Standard utility functions. __write_stdout is the native byte-output primitive.
+def pub print(value: string) -> void {
+    __write_stdout(value);
+}
+
+def pub println(value: string) -> void {
+    print(value);
+    print("\n");
+}

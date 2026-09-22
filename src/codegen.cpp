@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include "standard_runtime.h"
 #include "mlir/IR/Diagnostics.h"
 #include <iostream>
 
@@ -39,16 +40,7 @@ void CodeGen::initialize_unchecked_types() {
     // Initialize String struct: struct String { ptr: *u8, len: i64 }
     auto u8PtrType = mlir::LLVM::LLVMPointerType::get(&context);
     auto lenType = builder.getI64Type();
-    auto stringType = mlir::LLVM::LLVMStructType::getIdentified(&context, "String");
-    if (mlir::succeeded(stringType.setBody({u8PtrType, lenType}, /*isPacked=*/false))) {
-        type_table["string"] = stringType;
-        type_table["String"] = stringType;
-
-        struct_field_indices["String"]["ptr"] = 0;
-        struct_field_indices["String"]["len"] = 1;
-        struct_field_types["String"]["ptr"] = u8PtrType;
-        struct_field_types["String"]["len"] = lenType;
-    }
+    (void)string_type();
 
     // Initialize Arena struct: struct Arena { ptr: *u8, end: *u8, blocks: *u8 }
     // ptr: Current bump pointer
@@ -61,6 +53,20 @@ void CodeGen::initialize_unchecked_types() {
     }
 
     create_runtime_functions();
+}
+
+mlir::LLVM::LLVMStructType CodeGen::string_type() {
+    auto type = mlir::LLVM::LLVMStructType::getIdentified(&context, "gloin.string");
+    if (!type.isInitialized()) {
+        auto ptr = mlir::LLVM::LLVMPointerType::get(&context);
+        (void)type.setBody({ptr, builder.getI64Type()}, false);
+    }
+    type_table["string"] = type;
+    struct_field_indices["string"]["ptr"] = 0;
+    struct_field_indices["string"]["len"] = 1;
+    struct_field_types["string"]["ptr"] = mlir::LLVM::LLVMPointerType::get(&context);
+    struct_field_types["string"]["len"] = builder.getI64Type();
+    return type;
 }
 
 int64_t CodeGen::get_type_size(mlir::Type type) {
@@ -191,6 +197,10 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
         builder.setInsertionPointToEnd(theModule.getBody());
         if (checked_data) {
             for (const auto &stmt : program) {
+                if (const auto *import = dynamic_cast<const ImportStatement *>(stmt.get()))
+                    for (const auto &declaration : import->declarations)
+                        if (const auto *function = dynamic_cast<const FunctionDefinition *>(declaration.get()))
+                            declare_function(function);
                 if (const auto *function = dynamic_cast<const FunctionDefinition *>(stmt.get()))
                     declare_function(function);
             }
@@ -250,7 +260,13 @@ mlir::func::FuncOp CodeGen::declare_function(const FunctionDefinition *func_def)
     }
 
     auto funcType = builder.getFunctionType(argTypes, resultTypes);
-    auto funcOp = builder.create<mlir::func::FuncOp>(location(), func_def->name->value, funcType);
+    std::string emitted_name = func_def->name->value;
+    if (checked_data) {
+        auto found = checked_data->linkage_names.find(checked_binding(func_def->name.get()));
+        if (found != checked_data->linkage_names.end())
+            emitted_name = found->second;
+    }
+    auto funcOp = builder.create<mlir::func::FuncOp>(location(), emitted_name, funcType);
 
     // Register function in table
     if (checked_data)
@@ -430,10 +446,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
         }
 
         if (var_decl->is_mutable || (checked_data && !var_decl->initializer)) {
-            auto one = builder.create<mlir::LLVM::ConstantOp>(location(), builder.getI64Type(),
-                                                              builder.getI64IntegerAttr(1));
-            auto alloca = builder.create<mlir::LLVM::AllocaOp>(
-                location(), mlir::LLVM::LLVMPointerType::get(&context), type, one, 0);
+            auto alloca = create_entry_alloca(type);
             if (initVal) {
                 builder.create<mlir::LLVM::StoreOp>(location(), initVal, alloca);
             }
@@ -497,7 +510,10 @@ void CodeGen::gen_statement(const Statement *stmt) {
         gen_expression(expr_stmt->expression.get(), true);
 
     } else if (auto *import_stmt = dynamic_cast<const ImportStatement *>(stmt)) {
-        handle_import(import_stmt->path);
+        if (!checked_data || !import_stmt->loaded)
+            handle_import(import_stmt->path);
+        for (const auto &declaration : import_stmt->declarations)
+            gen_statement(declaration.get());
     } else if (auto *defer_stmt = dynamic_cast<const DeferStatement *>(stmt)) {
         current_function_defers.push_back(defer_stmt);
     } else {
@@ -548,75 +564,25 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     } else if (auto *bool_lit = dynamic_cast<const BooleanLiteral *>(expr)) {
         return builder.create<mlir::arith::ConstantIntOp>(location(), bool_lit->value ? 1 : 0, 1);
     } else if (auto *str_lit = dynamic_cast<const StringLiteral *>(expr)) {
-        std::string strVal = str_lit->value;
-        auto strType = mlir::LLVM::LLVMArrayType::get(builder.getI8Type(), strVal.size() + 1);
-
-        std::string globalName = "str_" + std::to_string(std::hash<std::string>{}(strVal));
-
-        mlir::LLVM::GlobalOp globalStr;
-        {
-            mlir::OpBuilder::InsertionGuard guard(builder);
-            builder.setInsertionPointToStart(theModule.getBody());
-            globalStr = builder.create<mlir::LLVM::GlobalOp>(
-                location(), strType,
-                /*isConstant=*/true, mlir::LLVM::Linkage::Internal, globalName,
-                builder.getStringAttr(strVal + "\0"));
-        }
-
-        auto globalPtr = builder.create<mlir::LLVM::AddressOfOp>(location(), globalStr);
-
-        auto stringStructType = type_table["String"];
-        auto undef = builder.create<mlir::LLVM::UndefOp>(location(), stringStructType);
-
-        auto zero = builder.create<mlir::LLVM::ConstantOp>(location(), builder.getI64Type(),
-                                                           builder.getI64IntegerAttr(0));
-        auto gep = builder.create<mlir::LLVM::GEPOp>(
-            location(), mlir::LLVM::LLVMPointerType::get(&context), strType, globalPtr,
-            mlir::ValueRange{zero, zero});
-
-        auto tmp1 = builder.create<mlir::LLVM::InsertValueOp>(location(), undef, gep,
-                                                              llvm::ArrayRef<int64_t>{0});
-
-        auto lenVal = builder.create<mlir::LLVM::ConstantOp>(
-            location(), builder.getI64Type(), builder.getI64IntegerAttr(strVal.size()));
-        auto res = builder.create<mlir::LLVM::InsertValueOp>(location(), tmp1, lenVal,
-                                                             llvm::ArrayRef<int64_t>{1});
-
-        return res;
+        return emit_constant(ConstantValue{CoreType::String, str_lit->value});
     } else if (auto *array_lit = dynamic_cast<const ArrayLiteral *>(expr)) {
-        if (array_lit->elements.empty()) {
-            // Handle empty array? Maybe array<0 x i8>?
-            // For now assume non-empty or handle via type inference if possible.
+        if (array_lit->elements.empty())
             fail("Unsupported expression or unresolved value in code generation");
-        }
-
         auto firstElem = gen_expression(array_lit->elements[0].get());
         if (!firstElem)
             fail("Unsupported expression or unresolved value in code generation");
-
         mlir::Type elemType = firstElem.getType();
         auto arrayType = mlir::LLVM::LLVMArrayType::get(elemType, array_lit->elements.size());
-
         mlir::Value currentArray = builder.create<mlir::LLVM::UndefOp>(location(), arrayType);
-
-        // Insert first element
         currentArray = builder.create<mlir::LLVM::InsertValueOp>(
             location(), currentArray, firstElem, llvm::ArrayRef<int64_t>{0});
-
         for (size_t i = 1; i < array_lit->elements.size(); ++i) {
             auto elem = gen_expression(array_lit->elements[i].get());
-            if (!elem)
-                fail("Unsupported expression or unresolved value in code generation");
-
-            // Simple type check/cast
-            if (elem.getType() != elemType) {
-                // Cast if compatible?
-            }
-
+            if (!elem || elem.getType() != elemType)
+                fail("Array element type mismatch in code generation");
             currentArray = builder.create<mlir::LLVM::InsertValueOp>(
-                location(), currentArray, elem, llvm::ArrayRef<int64_t>{(int64_t)i});
+                location(), currentArray, elem, llvm::ArrayRef<int64_t>{static_cast<int64_t>(i)});
         }
-
         return currentArray;
     } else if (auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
         if (checked_data)
@@ -748,7 +714,28 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
         if (checked_data) {
+            if (checked_data->runtime_calls.contains(call)) {
+                auto value = gen_expression(call->arguments.front().get());
+                auto ptr = builder.create<mlir::LLVM::ExtractValueOp>(
+                    location(), value, llvm::ArrayRef<int64_t>{0});
+                auto len = builder.create<mlir::LLVM::ExtractValueOp>(
+                    location(), value, llvm::ArrayRef<int64_t>{1});
+                auto runtime = theModule.lookupSymbol<mlir::LLVM::LLVMFuncOp>(standard_output_symbol);
+                if (!runtime) {
+                    mlir::OpBuilder::InsertionGuard guard(builder);
+                    builder.setInsertionPointToStart(theModule.getBody());
+                    auto type = mlir::LLVM::LLVMFunctionType::get(
+                        mlir::LLVM::LLVMVoidType::get(&context),
+                        {mlir::LLVM::LLVMPointerType::get(&context), builder.getI64Type()}, false);
+                    runtime = builder.create<mlir::LLVM::LLVMFuncOp>(location(), standard_output_symbol, type);
+                }
+                builder.create<mlir::LLVM::CallOp>(location(), runtime,
+                    mlir::ValueRange{ptr, len});
+                return {};
+            }
             auto *callee = dynamic_cast<const Identifier *>(call->function.get());
+            if (const auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get()))
+                callee = dynamic_cast<const Identifier *>(member->member.get());
             if (!callee)
                 fail("Checked call has no direct callee");
             auto found = checked_functions.find(checked_binding(callee));
@@ -1002,7 +989,6 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
 
         return trunc;
     }
-
     fail("Unsupported expression or unresolved value in code generation");
 }
 
@@ -1018,6 +1004,8 @@ mlir::Type CodeGen::get_expression_type(const Expression *expr) {
         return builder.getI1Type();
     if (dynamic_cast<const FloatLiteral *>(expr))
         return builder.getF32Type();
+    if (dynamic_cast<const StringLiteral *>(expr))
+        return string_type();
 
     if (auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
         mlir::Type baseType = get_expression_type(member_access->left.get());
@@ -1293,7 +1281,26 @@ mlir::Type CodeGen::lower_type(CoreType type) {
         return builder.getF32Type();
     if (type == CoreType::F64)
         return builder.getF64Type();
+    if (type == CoreType::String)
+        return string_type();
     return builder.getIntegerType(info.bits);
+}
+
+mlir::Value CodeGen::create_entry_alloca(mlir::Type type) {
+    auto *block = builder.getBlock();
+    if (!block)
+        fail("Cannot allocate a local without an active function");
+    auto function = llvm::dyn_cast<mlir::func::FuncOp>(block->getParentOp());
+    if (!function)
+        fail("Cannot allocate a local outside a function");
+
+    mlir::OpBuilder::InsertionGuard guard(builder);
+    auto &entry = function.getBody().front();
+    builder.setInsertionPointToStart(&entry);
+    auto one = builder.create<mlir::LLVM::ConstantOp>(
+        location(), builder.getI64Type(), builder.getI64IntegerAttr(1));
+    return builder.create<mlir::LLVM::AllocaOp>(
+        location(), mlir::LLVM::LLVMPointerType::get(&context), type, one, 0);
 }
 
 mlir::Type CodeGen::checked_type(const Node *node) {
@@ -1332,6 +1339,35 @@ CodeGen::SymbolInfo CodeGen::lookup_binding(const Identifier *name) {
 }
 
 mlir::Value CodeGen::emit_constant(const ConstantValue &constant) {
+    if (auto text = std::get_if<std::string>(&constant.value)) {
+        auto stringStructType = string_type();
+        auto found = string_globals.find(*text);
+        mlir::LLVM::GlobalOp globalStr;
+        auto strType = mlir::LLVM::LLVMArrayType::get(builder.getI8Type(), text->size() + 1);
+        if (found == string_globals.end()) {
+            std::string bytes = *text;
+            bytes.push_back('\0');
+            std::string globalName;
+            do {
+                globalName = "str_" + std::to_string(next_string_global++);
+            } while (theModule.lookupSymbol(globalName));
+            mlir::OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(theModule.getBody());
+            globalStr = builder.create<mlir::LLVM::GlobalOp>(
+                location(), strType, true, mlir::LLVM::Linkage::Internal, globalName,
+                builder.getStringAttr(llvm::StringRef(bytes.data(), bytes.size())));
+            string_globals.emplace(*text, globalStr);
+        } else {
+            globalStr = found->second;
+        }
+        auto globalPtr = builder.create<mlir::LLVM::AddressOfOp>(location(), globalStr);
+        auto undef = builder.create<mlir::LLVM::UndefOp>(location(), stringStructType);
+        auto zero = builder.create<mlir::LLVM::ConstantOp>(location(), builder.getI64Type(), builder.getI64IntegerAttr(0));
+        auto gep = builder.create<mlir::LLVM::GEPOp>(location(), mlir::LLVM::LLVMPointerType::get(&context), strType, globalPtr, mlir::ValueRange{zero, zero});
+        auto ptrValue = builder.create<mlir::LLVM::InsertValueOp>(location(), undef, gep, llvm::ArrayRef<int64_t>{0});
+        auto lenValue = builder.create<mlir::LLVM::ConstantOp>(location(), builder.getI64Type(), builder.getI64IntegerAttr(text->size()));
+        return builder.create<mlir::LLVM::InsertValueOp>(location(), ptrValue, lenValue, llvm::ArrayRef<int64_t>{1});
+    }
     auto type = lower_type(constant.type);
     if (auto integer = std::get_if<llvm::APInt>(&constant.value))
         return builder.create<mlir::arith::ConstantOp>(location(), type,

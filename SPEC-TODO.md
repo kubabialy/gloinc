@@ -2,9 +2,9 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-046 (scalar-core release gate).** SPEC-001 through SPEC-021 are complete. Deferred features resume after the selected first release, as specified below. Completed items have verification evidence in the completion log.
+**Next item: SPEC-024 (ordinary structs and target-correct layout).** SPEC-001 through SPEC-023 are complete. Deferred features resume after the selected first release, as specified below. Completed items have verification evidence in the completion log.
 
-The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
+The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-024 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
 ## How to use this checklist
 
@@ -150,13 +150,14 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 
 ## 5. Finish data, memory, and basic modules
 
-- [ ] **SPEC-022 — Implement the specified string representation and literals.**
-  Define length units, UTF-8/escape handling, embedded NUL behavior, and storage ownership/lifetime. Implement pointer-plus-length strings, correctly sized global initializers, and repeated-literal reuse or unique symbols. Define slicing syntax and bounds/lifetime behavior if included in the selected scope.
-  **Done when:** empty, escaped, non-ASCII, embedded-NUL, and repeated strings produce valid IR and preserve bytes/lengths; string use does not depend on an accidental terminator or dangling storage.
+- [x] **SPEC-022 — Implement the specified string representation and literals.**
+  `string` is a pointer-plus-byte-length LLVM struct. The parser decodes the supported escapes while preserving UTF-8 bytes; globals carry one private trailing NUL, which is excluded from the length. String constants are immutable, owned by the generated module, and reused by exact byte contents. `String` remains an ordinary user name rather than a built-in spelling; slicing is deferred with the array/slice design.
+  **Verified:** empty, escaped, non-ASCII, embedded-NUL, repeated, parameter, return, and checked local string cases produce verified IR. [array_string_test.cpp](tests/array_string_test.cpp) checks the decoded byte payload, byte length, and repeated-global reuse; the CLI fixture exercises checked compilation and execution. The targeted string and checked scalar tests pass; the full suite retains only the pre-existing deferred-feature failures.
 
-- [ ] **SPEC-023 — Implement minimal standard-module loading and output.**
+- [x] **SPEC-023 — Implement minimal standard-module loading and output.**
   Resolve `import "@std"` to actual symbols and implement `std.print`/`std.println` with the documented string ABI. Reject missing standard members and unsupported module paths until their implementations are available.
   **Done when:** the specification's basic hello-world runs through the CLI and prints exactly `Hello World!` plus a newline. A missing module or member never succeeds through an empty stub.
+  **Verified:** `@name` loads the lowercase `name.gloin` file, and `stdlib/std.gloin` implements `print`/`println` as ordinary checked functions over the native byte-output primitive. Seventeen standard-module regressions and the CLI hello-world fixture pass, including editable signatures/bodies, isolated scopes, source locations, missing/unreadable files, exact UTF-8/NUL bytes, evaluation order, and write errors. Per the agreed CLI contract, main's return sets the host exit status (low eight bits), without implicit stdout and independently of imports/output. A fresh Release build passes all **443 required checks**; the full suite has **486/491 passes** with the same five deferred failures. All **158 package checks pass twice**, against installed and relocated binaries.
 
 - [ ] **SPEC-024 — Complete ordinary structs and target-correct layout.**
   Check field declarations, initializers, visibility, duplicate/missing/unknown fields, and field assignments. Use target data layout for size/alignment rather than adding field sizes or hardcoding pointer size.
@@ -309,6 +310,38 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-019 | 2026-09-17 | Repairs builtin/LLVM translation registration and invokes validated `main` through MLIR's packed ABI with a collision-free adapter. `ExecutionResult` separates every i32 value from diagnostics; owned clones/engines preserve caller IR and isolate runs. All **16 JIT tests and 245 focused tests pass**, including **25 successful native invocations and five intentional subprocess traps**. Incremental Debug build succeeds; full serial/parallel suites report **322/329 passes**, resolving the JIT smoke failure while retaining seven deferred-language failures, with no unexpected test-process crashes/skips. |
 | SPEC-020 | 2026-09-17 | Replaces hardcoded lexer input with file-reading run/check/IR commands using the shared compiler and JIT. Documents full i32 stdout results, separate exit statuses/diagnostics, standalone help/version, source locations, and process-terminating traps. All **16 CLI tests and 261 focused tests pass**, including the runnable repository counter example. Incremental Debug build succeeds; serial/parallel suites report **338/345 passes**, the same seven deferred-language failures, and no unexpected test-process crashes/skips. |
 | SPEC-021 | 2026-09-22 | Adds 125 source-file fixtures (28 successful, 83 rejected, 14 traps), a shared CLI process fixture, and a separate core CI gate. All **161 focused tests pass** from fresh local and hosted builds. Both CI build configurations pass; the compiler-only example returns 42. Full local/CI serial and parallel suites agree on **463/470 passes**, seven unchanged deferred-feature failures, and no unexpected test-process crashes/skips. README examples execute successfully; usage instructions and a feature-to-fixture matrix are documented. [Hosted evidence](https://github.com/kubabialy/gloinc/actions/runs/35736970025). |
+| SPEC-022 | 2026-09-22 | Adds canonical checked `string` support across parsing, semantic type identities, constants, function signatures, local storage, and MLIR/LLVM code generation. String literals decode `\\`, quotes, control escapes, and `\\0`; lengths count UTF-8 bytes and embedded NULs; globals include a private terminator without counting it; identical literals share one global. Targeted string tests pass, including empty, escaped/non-ASCII/NUL bytes, checked signatures, and reuse. The full CTest run reports **469/474 passes**, with the five existing deferred-feature failures and no new string-related failures; the inventory increased by two maintained string regressions. |
+
+### SPEC-023 verification
+
+Verified locally on 2026-09-22 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+A fresh Release/Ninja build at `/tmp/gloinc-file-stdlib-fresh` reused the pinned
+GoogleTest source cache through `FETCHCONTENT_SOURCE_DIR_GOOGLETEST`; all compiler
+and test objects were rebuilt. Build warnings are the existing generated MLIR
+accessor deprecations.
+
+```sh
+cmake --build /tmp/gloinc-file-stdlib-fresh --target check-core
+ctest --test-dir build -j 4 --output-on-failure
+bash scripts/check-package.sh /tmp/gloinc-file-stdlib-fresh /tmp/gloinc-file-stdlib-package
+```
+
+Results: **443/443 required checks pass**; the full suite reports **486/491**,
+with only `CodeGenTest.GenerateSpawn`, `ArenaTest.ArenaAllocation`,
+`AsyncTest.DeferredFunctionGeneration`, `AsyncTest.SpawnGeneration`, and
+`SemaAsyncTest.AsyncTypes` failing (SPEC-028/040/041). The seventeen
+`StandardModuleTest` cases are included in the required CI gate. Package checks
+pass **158/158** for each of the staged installation and relocated archive, and
+exercise the packaged counter and hello-world examples. Removing the relocated
+`std.gloin` produces a module-loading error without falling back to the checkout.
+Hosted CI was updated
+but not run for this local change.
+
+The standard runtime accepts only its reserved symbol with the exact C ABI;
+wrong signatures, varargs, and conflicting definitions fail before invocation.
+CLI tests now assert return values modulo 256 independently of output. Existing
+JIT/external tests preserve full i32 coverage. Prior milestone logs below retain
+the stdout/exit convention used when those milestones were verified.
 
 ### SPEC-001 verification
 

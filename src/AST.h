@@ -327,6 +327,10 @@ struct WhileStatement : public Statement {
 
 struct ImportStatement : public Statement {
     std::string path;
+    // Populated by the module loader; owned alongside the importing AST.
+    bool loaded = false;
+    std::string module_name;
+    std::vector<std::unique_ptr<Statement>> declarations;
 
     explicit ImportStatement(std::string path) : path(std::move(path)) {}
 

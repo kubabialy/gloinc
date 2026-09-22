@@ -1,5 +1,6 @@
 #include "jit_runner.h"
 #include "lowering.h"
+#include "standard_runtime.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/IR/Diagnostics.h"
@@ -12,6 +13,23 @@
 #include <mutex>
 
 namespace {
+void standard_output(const char *bytes, uint64_t length) {
+    auto &output = llvm::outs();
+    if (length)
+        output.write(bytes, length);
+    output.flush();
+}
+
+bool is_standard_output(mlir::LLVM::LLVMFuncOp function) {
+    auto &context = *function.getContext();
+    auto type = mlir::LLVM::LLVMFunctionType::get(
+        mlir::LLVM::LLVMVoidType::get(&context),
+        {mlir::LLVM::LLVMPointerType::get(&context), mlir::IntegerType::get(&context, 64)}, false);
+    return function.getName() == standard_output_symbol && function.isExternal() &&
+           function.getFunctionType() == type && function.getCConv() == mlir::LLVM::CConv::C &&
+           function.getLinkage() == mlir::LLVM::Linkage::External;
+}
+
 void execution_error(Diagnostics &diagnostics, mlir::Location location, std::string message) {
     std::optional<DiagnosticPosition> position;
     if (auto file = location->findInstanceOf<mlir::FileLineColLoc>())
@@ -37,9 +55,13 @@ mlir::LLVM::LLVMFuncOp validate_entry(mlir::ModuleOp module, Diagnostics &diagno
                         "convention and emitted linkage");
         return {};
     }
-    // Core programs are self-contained. Never resolve user declarations against
-    // ambient process symbols or defer missing-symbol discovery until invocation.
+    // Only the explicitly registered standard output ABI can be external.
     for (auto function : module.getOps<mlir::LLVM::LLVMFuncOp>()) {
+        if (function.getName() == standard_output_symbol) {
+            if (!is_standard_output(function))
+                execution_error(diagnostics, function.getLoc(), "Invalid standard output runtime ABI");
+            continue;
+        }
         if (function.isExternal())
             execution_error(diagnostics, function.getLoc(),
                             "External function is not supported by the core JIT: " +
@@ -133,6 +155,14 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module) {
     }
     if (diagnostics->has_errors())
         return failure();
+    if (lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>(standard_output_symbol)) {
+        (*engine)->registerSymbols([](llvm::orc::MangleAndInterner mangle) {
+            llvm::orc::SymbolMap symbols;
+            symbols[mangle(standard_output_symbol)] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&standard_output), llvm::JITSymbolFlags::Exported);
+            return symbols;
+        });
+    }
     int32_t value = 0;
     void *arguments[] = {&value};
     if (auto error = (*engine)->invokePacked(entry, arguments)) {
@@ -142,5 +172,11 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module) {
     }
     if (diagnostics->has_errors())
         return failure();
+    if (llvm::outs().has_error()) {
+        const auto error = llvm::outs().error();
+        llvm::outs().clear_error();
+        execution_error(*diagnostics, main.getLoc(), "Cannot write stdout: " + error.message());
+        return failure();
+    }
     return {value, diagnostics, std::nullopt};
 }

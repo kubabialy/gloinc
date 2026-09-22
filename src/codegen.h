@@ -93,6 +93,8 @@ class CodeGen {
 
     // Type registry
     std::map<std::string, mlir::Type> type_table;
+    std::map<std::string, mlir::LLVM::GlobalOp> string_globals;
+    unsigned next_string_global = 0;
     // Struct field indices: struct_name -> field_name -> index
     std::map<std::string, std::map<std::string, int>> struct_field_indices;
     // Struct field types: struct_name -> field_name -> type
@@ -129,6 +131,7 @@ class CodeGen {
     // Helper to resolve type from AST/String to MLIR Type
     mlir::Type resolve_type(const std::string &type_name);
     int64_t get_type_size(mlir::Type type);
+    mlir::Value create_entry_alloca(mlir::Type type);
     void create_runtime_functions();
 
     // Import system support
@@ -139,6 +142,7 @@ class CodeGen {
     std::map<std::string, bool> integer_type_endianness;
 
     void emit_deferred();
+    mlir::LLVM::LLVMStructType string_type();
 
     // Specific handlers
     void gen_function(const std::string &name, const std::vector<std::string> &args,

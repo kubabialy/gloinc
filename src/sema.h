@@ -160,6 +160,9 @@ class Sema {
 
   private:
     std::optional<SemanticData> recording;
+    std::unordered_map<std::string, const ImportStatement *> imports;
+    std::unordered_map<const ImportStatement *, std::shared_ptr<Scope>> module_scopes;
+    const ImportStatement *current_module = nullptr;
     bool resolving_callee = false;
     bool checking_constant = false;
     std::optional<CoreType> expected_type;

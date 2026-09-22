@@ -21,6 +21,7 @@ enum class CompilationOutput { HighLevel, LLVM };
 // Module mode permits helper-only source. Use Executable before running main.
 CompilationResult compile_source(std::string text, std::string filename, mlir::MLIRContext &context,
                                  CompilationMode mode = CompilationMode::Module,
-                                 CompilationOutput output = CompilationOutput::HighLevel);
+                                 CompilationOutput output = CompilationOutput::HighLevel,
+                                 std::string standard_library_directory = {});
 
 #endif

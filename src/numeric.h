@@ -9,7 +9,7 @@
 #include <variant>
 
 // Language identities retain signedness even though MLIR uses signless integer storage.
-enum class CoreType { Void, Bool, I8, I16, I32, I64, U8, U16, U32, U64, F32, F64 };
+enum class CoreType { Void, Bool, I8, I16, I32, I64, U8, U16, U32, U64, F32, F64, String };
 struct CoreTypeInfo {
     CoreType id;
     std::string_view name;
@@ -30,6 +30,7 @@ inline constexpr std::array core_types = {
     CoreTypeInfo{CoreType::U64, "u64", 64, true, false},
     CoreTypeInfo{CoreType::F32, "f32", 32, false, true},
     CoreTypeInfo{CoreType::F64, "f64", 64, false, true},
+    CoreTypeInfo{CoreType::String, "string", 0, false, false},
 };
 inline const CoreTypeInfo &core_type_info(CoreType type) {
     return core_types.at(static_cast<size_t>(type));
@@ -52,7 +53,7 @@ inline std::optional<CoreType> resolve_core_type(std::string_view name, TargetIn
 
 struct ConstantValue {
     CoreType type;
-    std::variant<llvm::APInt, llvm::APFloat, bool> value;
+    std::variant<llvm::APInt, llvm::APFloat, bool, std::string> value;
 };
 
 const llvm::fltSemantics &float_semantics(CoreType type);

@@ -17,9 +17,9 @@ package validation are documented in [the release guide](docs/release.md).
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
-| External execution tests | 29 E2E cases, nine if/while and ten unless/for executions, numeric bit probes, and 103 operator executions verify values, branches/loops, evaluation order, and arithmetic traps through external MLIR tools. |
-| Full test suite | 470 tests discovered; local serial/parallel runs both have 463 passes, 7 failures, no unexpected test-process crashes. |
-| Core acceptance | 125 CLI-driven source fixtures: 28 successful programs, 83 expected compiler errors, and 14 runtime traps. Successful programs run three times with identical results. |
+| Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
+| Full test suite | 491 tests discovered; local parallel run has 486 passes, 5 deferred-feature failures, no unexpected test-process crashes. |
+| Core acceptance | 125 CLI-driven source fixtures: 30 successful programs, 81 expected compiler errors, and 14 runtime traps. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
 | Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/unless/while/for execution, loop-variable scope, and omitted for components are verified. |
@@ -27,7 +27,8 @@ package validation are documented in [the release guide](docs/release.md).
 | IR verification/lowering | One pipeline verifies source output and conversions, rejects unsupported IR, and produces LLVM-compatible modules for output and execution consumers. |
 | JIT | All 16 tests pass: native execution, validated entry/signatures, separate results/errors, repeated runs, and integer/float trap behavior. |
 | CLI | All 16 process tests pass: file loading, native results, checking, verified IR output, diagnostics, usage, and exit behavior. |
-| Imports, concurrency | Incomplete: SPEC-023/029/030, SPEC-040/041. |
+| Standard output | `@std` loads `stdlib/std.gloin`, which defines `print` and `println`; all 17 standard-module tests pass. |
+| Other imports, concurrency | Incomplete: SPEC-029/030, SPEC-040/041. |
 
 [Compiler diagnostics](docs/diagnostics.md) now connect parsing, checking, and high-level
 codegen through `compile_source`, with verified high-level or LLVM output via
@@ -86,7 +87,7 @@ Compile and execute it with the in-process JIT:
 
 ```sh
 ./build/gloinc main.gloin
-# Prints: 42
+# Exits with status 42; no implicit stdout output.
 ```
 
 The compiler reads the file, checks types, lowers it to LLVM, and executes `main`.
@@ -94,7 +95,7 @@ It does not create a standalone binary. You can also run the included example,
 which uses a helper function, a mutable counter, `for`, and `unless`:
 
 ```sh
-./build/gloinc examples/core_counter.gloin               # Prints 42, exits 0.
+./build/gloinc examples/core_counter.gloin               # Exits 42; no stdout.
 ./build/gloinc --check examples/core_counter.gloin        # Checks without running.
 ./build/gloinc --emit-ir examples/core_counter.gloin      # High-level MLIR.
 ./build/gloinc --emit-llvm examples/core_counter.gloin    # LLVM-dialect MLIR.
@@ -102,10 +103,28 @@ which uses a helper function, a mutable counter, `for`, and `unless`:
 ./build/gloinc --version
 ```
 
-Run mode requires `def main() -> i32`. The signed result is printed to stdout;
-every successful result uses exit status 0. Compiler/file/JIT errors use status 1
+Run mode requires `def main() -> i32`. Its low eight bits become the process exit
+status; the result is never printed automatically. Compiler/file/JIT errors use status 1
 and stderr; usage errors use status 2. Runtime arithmetic traps terminate the
 process with a signal. See [the CLI reference](docs/cli.md) for the complete interface.
+
+Standard output is explicit:
+
+```gloin
+import "@std";
+def main() -> i32 {
+    std.println("Hello World!");
+    return 0;
+}
+```
+
+Run `tests/fixtures/core/run/hello_world.gloin` to print exactly `Hello World!`
+and a newline, with exit status 0. `std.print` writes without adding a newline.
+
+The standard library lives in [stdlib/std.gloin](stdlib/std.gloin). These are
+ordinary Gloin functions; adding a future `math.gloin` or `io.gloin` uses the same
+file-loading path. See [standard module development](stdlib/README.md) for the
+native primitive, public exports, and `--stdlib-dir` option.
 
 ### Language essentials
 
@@ -135,10 +154,10 @@ This program returns 42. More runnable examples are in
 
 Supported types are `bool`, signed and unsigned 8/16/32/64-bit integers,
 `f32`, `f64`, aliases `int` (`i32`) and `usize` (`u64`), and `void` function
-returns. There are no implicit numeric conversions. Strings, imports, printing
-from Gloin code, arrays, structs, pointers, concurrency, and native executable
-output remain deferred. `examples/hello_world.gloin` needs these later features;
-use the core examples above to get started.
+returns. `string`, `import "@std"`, and explicit string output are supported.
+There are no implicit numeric conversions. Other imports, numeric formatting,
+arrays, structs, pointers, concurrency, and native executable output remain
+deferred. `examples/hello_world.gloin` is a runnable standard-output example.
 
 For a diagnostic example:
 
@@ -174,7 +193,7 @@ bash scripts/check-package.sh build build/package-check
 
 CPack writes `build/gloinc-0.0.1-macos-arm64.tar.gz` and its `.sha256` checksum.
 The archive contains `bin/gloinc`, documentation, an example, and the core source
-fixtures. The verification script runs all 141 CLI/source acceptance cases against
+fixtures. The verification script runs all 158 CLI/standard-output/source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
 spaces. See [the release guide](docs/release.md) for extraction, dependencies,
 sanitizer checks, and the supported-platform limits.
@@ -188,7 +207,7 @@ ctest --test-dir build -j 1 --output-on-failure
 ctest --test-dir build -j 4 --output-on-failure
 ```
 
-`check-core` runs all 424 required scalar-core checks, including frontend,
+`check-core` runs 443 required scalar and standard-output checks, including frontend,
 lowering, external execution, source acceptance, CLI, JIT, and dialect setup.
 The full suite exits nonzero for the documented
 failures; do not disable those cases to obtain a green run. The CLI suite launches

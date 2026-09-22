@@ -83,7 +83,7 @@ std::string runtime_expression(const std::string &type, const std::string &left,
 
 TEST(OperatorsTest, ValidOperatorsProduceVerifiedScalarSignatures) {
     for (const auto &info : core_types) {
-        if (info.id == CoreType::Void)
+        if (info.id == CoreType::Void || info.id == CoreType::String)
             continue;
         const std::string type(info.name);
         for (const std::string op :
@@ -238,7 +238,7 @@ TEST(OperatorsTest, SignedMinimumNegationAndDivisionOverflowTrap) {
 
 TEST(OperatorsTest, ZeroDivisorsTrapForEveryNumericType) {
     for (const auto &info : core_types) {
-        if (info.id == CoreType::Void || info.id == CoreType::Bool)
+        if (info.id == CoreType::Void || info.id == CoreType::Bool || info.id == CoreType::String)
             continue;
         const std::string type(info.name);
         traps(runtime_expression(type, info.is_integer ? "1" : "1.0", "/",

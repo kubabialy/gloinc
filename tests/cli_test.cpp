@@ -41,14 +41,14 @@ TEST_F(CliTest, UsageErrorsDoNotReadOrExecuteInput) {
 
 TEST_F(CliTest, InputFilesControlDefaultAndExplicitRun) {
     auto first = source("def main() -> i32 { return 17; }", "first.gloin");
-    expect_success(invoke({first}), "17\n");
-    expect_success(invoke({"--run", gloin_test::core_example}), "42\n");
+    expect_run(invoke({first}), 17);
+    expect_run(invoke({"--run", gloin_test::core_example}), 42);
 }
 
-TEST_F(CliTest, EveryI32ResultUsesStdoutAndSuccessStatus) {
-    for (const std::string value : {"0", "-1", "2147483647", "-2147483648", "2"}) {
+TEST_F(CliTest, EveryI32ResultUsesHostExitStatusWithoutPrinting) {
+    for (const std::string value : {"0", "-1", "2147483647", "-2147483648", "1", "2", "256", "257"}) {
         auto file = source("def main() -> i32 { return " + value + "; }");
-        expect_success(invoke({file}), value + "\n");
+        expect_run(invoke({file}), std::stoi(value));
     }
 }
 
@@ -107,7 +107,7 @@ TEST_F(CliTest, CompilerErrorsKeepSourceLocationsAndNoPartialOutput) {
     for (const std::string text :
          {"def main() -> i32 {\nreturn 0x;\n}", "def main() -> i32 {\nreturn 42\n}",
           "def main() -> i32 {\nreturn missing;\n}", "def main() -> i32 {\nreturn true;\n}",
-          "import \"@std\";", "def main() -> i32 { defer f(); return 0; }"}) {
+          "import \"missing\";", "def main() -> i32 { defer f(); return 0; }"}) {
         const auto file = source(text);
         for (const std::string option : {"--run", "--check", "--emit-ir", "--emit-llvm"})
             expect_error(invoke({option, file}), 1, file + ":");
@@ -134,13 +134,13 @@ TEST_F(CliTest, MissingUnreadableAndNonRegularFilesFail) {
 
 TEST_F(CliTest, PathsWithSpacesAndOptionTerminatorsAreHandledLiterally) {
     const auto file = source("def main() -> i32 { return 42; }", "-quoted ' ; $() file");
-    expect_success(invoke({"--", file}), "42\n");
-    expect_success(invoke({file, "--run"}), "42\n");
+    expect_run(invoke({"--", file}), 42);
+    expect_run(invoke({file, "--run"}), 42);
     expect_error(invoke({"--", "--not-a-file"}), 1, "cannot read");
     expect_error(invoke({"--not-a-file"}), 2, "option");
     auto link = directory + "/linked.gloin";
     ASSERT_FALSE(llvm::sys::fs::create_link(file, link));
-    expect_success(invoke({link}), "42\n");
+    expect_run(invoke({link}), 42);
 }
 
 TEST_F(CliTest, ReadsAllBytesAndRejectsInvalidEncoding) {
@@ -158,7 +158,7 @@ TEST_F(CliTest, RepeatedFileRunsProduceIdenticalResults) {
     auto file =
         source("def main() -> i32 { def mut x: i32 = 0; while x < 3 { x = x + 1; } return x; }");
     for (unsigned i = 0; i < 3; ++i)
-        expect_success(invoke({file}), "3\n");
+        expect_run(invoke({file}), 3);
 }
 
 TEST_F(CliTest, ConcurrentInvocationsHaveIndependentOutput) {
@@ -166,8 +166,8 @@ TEST_F(CliTest, ConcurrentInvocationsHaveIndependentOutput) {
     auto second = source("def main() -> i32 { return 93; }", "second.gloin");
     auto a = std::async(std::launch::async, [&] { return invoke({first}); });
     auto b = std::async(std::launch::async, [&] { return invoke({second}); });
-    expect_success(a.get(), "17\n");
-    expect_success(b.get(), "93\n");
+    expect_run(a.get(), 17);
+    expect_run(b.get(), 93);
 }
 
 TEST_F(CliTest, RuntimeTrapsCannotMasqueradeAsProgramResults) {

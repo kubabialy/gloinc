@@ -64,6 +64,11 @@ class CliFixture : public testing::Test {
         EXPECT_FALSE(result.launch_failed) << result.message;
         return result;
     }
+    void expect_run(const ProcessResult &result, int32_t value, const std::string &out = "") {
+        EXPECT_EQ(result.status, static_cast<uint32_t>(value) & 0xff) << result.err << result.message;
+        EXPECT_EQ(result.out, out);
+        EXPECT_TRUE(result.err.empty()) << result.err;
+    }
     void expect_success(const ProcessResult &result, const std::string &out) {
         EXPECT_EQ(result.status, 0) << result.err << result.message;
         EXPECT_EQ(result.out, out);

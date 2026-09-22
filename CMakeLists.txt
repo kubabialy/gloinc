@@ -94,11 +94,19 @@ add_library(gloin_backend STATIC
     src/codegen_operators.cpp
     src/codegen_control_flow.cpp
     src/compiler.cpp
+    src/module_loader.cpp
     src/lowering.cpp
     src/dialect/GloinDialect.cpp
     src/jit_runner.cpp
 )
 add_dependencies(gloin_backend GloinDialectIncGen GloinTypesIncGen GloinOpsIncGen)
+target_compile_definitions(gloin_backend PRIVATE
+    GLOIN_BUILD_STDLIB_DIR="${CMAKE_CURRENT_BINARY_DIR}/stdlib")
+file(GLOB GLOIN_STANDARD_MODULES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/*.gloin")
+foreach(module IN LISTS GLOIN_STANDARD_MODULES)
+    get_filename_component(module_name "${module}" NAME)
+    configure_file("${module}" "stdlib/${module_name}" COPYONLY)
+endforeach()
 target_include_directories(gloin_backend PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(gloin_backend SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 separate_arguments(GLOIN_LLVM_DEFINITIONS NATIVE_COMMAND "${LLVM_DEFINITIONS}")
@@ -185,6 +193,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/unless_test.cpp
         tests/jit_test.cpp
         tests/cli_test.cpp
+        tests/standard_module_test.cpp
         tests/core_acceptance_test.cpp
         tests/codegen_generics_test.cpp
         tests/external_runner_test.cpp
@@ -219,7 +228,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     gtest_discover_tests(gloinc_test PROPERTIES TIMEOUT 30)
 
     # Required scalar-core suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure
@@ -244,9 +253,12 @@ include(GNUInstallDirs)
 set_target_properties(gloinc PROPERTIES
     INSTALL_RPATH "$<TARGET_FILE_DIR:LLVM>;$<TARGET_FILE_DIR:MLIR>;$<TARGET_FILE_DIR:MLIRExecutionEngineShared>")
 install(TARGETS gloinc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY stdlib/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/stdlib
+    FILES_MATCHING PATTERN "*.gloin")
 install(FILES README.md SPEC.md SPEC-TODO.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
-install(FILES examples/core_counter.gloin DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
+install(FILES examples/core_counter.gloin examples/hello_world.gloin
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY tests/fixtures/core/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/core-fixtures)
 
 # Packages depend on the same LLVM/MLIR installation used at configure time.
