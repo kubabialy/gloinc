@@ -1,0 +1,7 @@
+// Zażółć gęślą jaźń — Unicode is allowed in comments.
+def main() -> i32 {
+    return (
+        40 + // 日本語
+        2
+    );
+}

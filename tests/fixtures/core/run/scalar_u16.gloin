@@ -1,0 +1,15 @@
+def identity(x: u16) -> u16 { return x; }
+def arithmetic(x: u16, y: u16) -> bool {
+    if x + y != 10 || x - y != 4 || x * y != 21 { return false; }
+    if x / y != 2 || x % y != 1 { return false; }
+    if !(x > y) || !(x >= y) || !(y < x) || !(y <= x) { return false; }
+    if x == y || x != x || !(x >= x) || !(y <= y) { return false; }
+    return true;
+}
+def main() -> i32 {
+    def low: u16 = identity(0);
+    def high: u16 = identity(65535);
+    if low != 0 || high != 65535 || !(low < high) { return -1; }
+    if !arithmetic(7, 3) { return -2; }
+    return 42;
+}

@@ -1,0 +1,2 @@
+# Preserve the source-encoding acceptance fixture byte-for-byte across checkouts.
+tests/fixtures/core/run/utf8_comments.gloin -text whitespace=cr-at-eol

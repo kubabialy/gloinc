@@ -1,0 +1,11 @@
+def choose(limit: i32) -> i32 {
+    for def mut i: i32 = 0; i < limit; i = i + 1 {
+        def mut j: i32 = 0;
+        while j < 3 {
+            unless i != 2 { if j == 1 { return i * 10 + j; } }
+            j = j + 1;
+        }
+    }
+    return -1;
+}
+def main() -> i32 { return choose(4); }

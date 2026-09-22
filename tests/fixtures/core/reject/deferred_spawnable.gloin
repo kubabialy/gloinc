@@ -1,0 +1,4 @@
+def spawnable helper() -> void {}
+def main() -> i32 {
+return 42;
+}

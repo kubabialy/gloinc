@@ -1,0 +1,4 @@
+def packed struct Flags { def x: u8, }
+def main() -> i32 {
+return 42;
+}

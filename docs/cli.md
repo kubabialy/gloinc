@@ -54,8 +54,9 @@ shells may describe the signal and map it to a shell-specific status. The CLI
 does not add signal recovery or execution timeouts.
 
 `--version` reports `gloinc 0.0.1-dev (LLVM/MLIR 21.1.6)`. This identifies a
-development build; SPEC-021 and SPEC-046 still track core acceptance and release
-readiness. Standard-library printing and strings remain separate work.
+development build. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check core
+acceptance; SPEC-046 still tracks release readiness. Standard-library printing
+and strings remain separate work.
 
 ## Shared compiler path and verification
 

@@ -20,7 +20,7 @@ and SPEC-020 connects the [file-reading CLI](../docs/cli.md). Its tests execute
 | Defer across scopes and exits | Incomplete: SPEC-027. |
 | Endianness and packed bitfields | Incomplete: SPEC-037 through SPEC-039. |
 | Concurrency | Incomplete: SPEC-040 through SPEC-043; the restored spawn assertion fails. |
-| Shared lowering, JIT, and file CLI | Verified under SPEC-018 through SPEC-020; broader source-file acceptance remains SPEC-021. |
+| Shared lowering, JIT, and file CLI | Verified under SPEC-018 through SPEC-020; SPEC-021 adds [source-file acceptance](../tests/fixtures/core/README.md). |
 
 [SPEC-TODO.md](../SPEC-TODO.md) replaces the phase roadmap. Its completion log
 records commands and results; [tests/README.md](../tests/README.md) lists failures.

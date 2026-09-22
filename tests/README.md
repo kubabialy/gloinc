@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-020, maintained source definitions and CTest discovery both contain **345 tests**:
+At SPEC-021, maintained source definitions and CTest discovery both contain **470 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -37,6 +37,7 @@ At SPEC-020, maintained source definitions and CTest discovery both contain **34
 | UnlessTest | 1 |
 | JitRunnerTest | 16 |
 | CliTest | 16 |
+| CoreAcceptanceTest | 125 |
 | E2ETest | 29 |
 | ExternalRunnerTest | 8 |
 
@@ -67,8 +68,8 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-020 both produce
-**338 passes, 7 failures, no crashes or skipped tests**, with identical failing test names.
+as expected successes. Serial and parallel runs at SPEC-021 both produce
+**463 passes, 7 failures, no unexpected test-process crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
 
@@ -507,3 +508,36 @@ with the same seven deferred-language failures, no skipped tests or unexpected
 test-process crashes, and matching maintained/discovered inventories.
 [The CLI contract](../docs/cli.md) documents the interface and version `0.0.1-dev`.
 The broader source-file acceptance suite remains SPEC-021.
+
+## Executable core acceptance (SPEC-021)
+
+`CoreAcceptanceTest` adds 125 maintained cases backed by files under
+[`fixtures/core`](fixtures/core/README.md). The feature matrix there maps every
+advertised scalar type and supported operator, canonical core examples, invalid
+fragments, and deferred feature families to source files.
+
+The 28 successful programs pass checking and execute three times each, asserting
+exact stdout, empty stderr, and exit 0. The 83 expected-error files are rejected
+in all four CLI modes with exit 1, empty stdout, an expected diagnostic message,
+and filename/line/column. Diagnostic text is matched separately from filenames.
+Many negative programs contain an earlier runtime trap to detect execution before
+validation. Fourteen runtime-error files pass checking and require signal
+termination without output when executed. Each child has a 10-second timeout;
+CTest retains 30-second case timeouts and no disabled/expected-failure tests.
+
+The shared [`CliFixture`](support/cli_fixture.h) preserves the existing CLI suite's
+process isolation, argument vectors, captured output, and launch-failure checks.
+CMake checks that every `.gloin` acceptance fixture is named in the maintained
+test source. The inventory remains explicit `TEST`/`TEST_F` definitions.
+
+From a fresh Debug build, all **161 focused cases pass** (125 acceptance, 16 CLI,
+16 JIT, four dialect setup). Full serial and parallel runs report **463/470
+passes**, with the same seven deferred-feature failures and no unexpected
+test-process crashes or skips. Both README source examples also print 42 with
+exit 0. The full suite remains separate from the focused acceptance result.
+
+CI adds a named **Verify executable core acceptance** step after its fresh build,
+uses `--no-tests=error`, and uploads `core.xml`/`core.log` alongside the unfiltered
+serial/parallel reports. Its tests-disabled build also runs the repository counter
+example. The full suite runs even if the core step fails, preserving both results.
+Core acceptance is the working-compiler milestone; SPEC-046 remains the release gate.

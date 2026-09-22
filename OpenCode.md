@@ -23,8 +23,9 @@ ctest --test-dir build -R '^MLIRSetup\.' --output-on-failure
 must be in CMake's explicit source list. See [tests/README.md](tests/README.md) for
 inventory, timeouts, and failure task IDs. Keep full-suite failures visible; do
 not disable cases or weaken assertions to make CI green. The CLI reads source
-files; its tests execute `examples/core_counter.gloin`. Other examples remain
-design inputs; the broader source-file acceptance gate is SPEC-021.
+files; its tests execute `examples/core_counter.gloin`. SPEC-021 adds maintained
+source-file acceptance fixtures under `tests/fixtures/core`; register new files
+in `CoreAcceptanceTest`. Other examples remain design inputs.
 
 ## Targets and linkage
 

@@ -1,0 +1,16 @@
+def identity(x: i32) -> i32 { return x; }
+def arithmetic(x: i32, y: i32) -> bool {
+    if x + y != 10 || x - y != 4 || x * y != 21 { return false; }
+    if x / y != 2 || x % y != 1 { return false; }
+    if !(x > y) || !(x >= y) || !(y < x) || !(y <= x) { return false; }
+    if x == y || x != x || !(x >= x) || !(y <= y) { return false; }
+    if -x != -7 || -x / y != -2 || -x % y != -1 { return false; }
+    return true;
+}
+def main() -> i32 {
+    def low: i32 = identity(-2147483648);
+    def high: i32 = identity(2147483647);
+    if low != -2147483648 || high != 2147483647 || !(low < high) { return -1; }
+    if !arithmetic(7, 3) { return -2; }
+    return 42;
+}

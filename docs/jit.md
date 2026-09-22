@@ -68,5 +68,6 @@ external-runner implementation.
 The floating-point environment must retain the specified default rounding and
 gradual underflow. There is no source-language I/O, concurrency, or global-variable
 feature added by JIT support. File loading, result/exit conventions, and
-check/IR modes are documented in [the CLI reference](cli.md). Full source-file acceptance and release packaging
-remain SPEC-021/SPEC-046.
+check/IR modes are documented in [the CLI reference](cli.md). Source-file acceptance
+is covered by [SPEC-021's fixtures](../tests/fixtures/core/README.md); release
+packaging remains SPEC-046.

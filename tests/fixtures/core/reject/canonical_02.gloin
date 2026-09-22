@@ -1,0 +1,1 @@
+pub def work() -> void {}

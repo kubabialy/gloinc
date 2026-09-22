@@ -48,7 +48,9 @@ The later hello-world milestone requires strings and `@std` (SPEC-022/SPEC-023).
 ## Core source and syntax rules
 
 These rules are normative, including for declarations in later feature designs.
-Examples in this section specify required behavior, not passing compiler tests.
+Examples in this section specify required behavior. The maintained
+[source-file acceptance matrix](tests/fixtures/core/README.md) records the
+executable fixtures and expected-error cases that verify the core contract.
 
 ### Source encoding, identifiers, and trivia
 

@@ -144,6 +144,7 @@ if(BUILD_TESTING)
 namespace gloin_test {
 inline constexpr auto gloinc = R\"tool($<TARGET_FILE:gloinc>)tool\";
 inline constexpr auto core_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/core_counter.gloin)tool\";
+inline constexpr auto core_fixtures = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/core)tool\";
 inline constexpr auto mlir_opt = R\"tool(${GLOIN_MLIR_OPT})tool\";
 inline constexpr auto mlir_runner = R\"tool(${GLOIN_MLIR_RUNNER})tool\";
 inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process>)tool\";
@@ -179,6 +180,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/unless_test.cpp
         tests/jit_test.cpp
         tests/cli_test.cpp
+        tests/core_acceptance_test.cpp
         tests/codegen_generics_test.cpp
         tests/external_runner_test.cpp
         tests/support/external_runner.cpp
@@ -192,6 +194,17 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     foreach(test_file IN LISTS GLOIN_TEST_FILES)
         if(NOT test_file IN_LIST GLOIN_TEST_SOURCES)
             message(FATAL_ERROR "Test suite ${test_file} is missing from the gloinc_test target")
+        endif()
+    endforeach()
+    # Source-file acceptance fixtures must each be named by a maintained test.
+    file(GLOB_RECURSE GLOIN_CORE_FIXTURES CONFIGURE_DEPENDS
+        RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/core/*.gloin")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_acceptance_test.cpp" GLOIN_CORE_TESTS)
+    foreach(fixture IN LISTS GLOIN_CORE_FIXTURES)
+        string(FIND "${GLOIN_CORE_TESTS}" "\"${fixture}\"" fixture_position)
+        if(fixture_position EQUAL -1)
+            message(FATAL_ERROR "Core fixture ${fixture} is missing from CoreAcceptanceTest")
         endif()
     endforeach()
     target_link_libraries(gloinc_test PRIVATE gloin_backend GTest::gtest_main)

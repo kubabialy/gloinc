@@ -146,6 +146,7 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   Convert the core audit reproductions into repository fixtures driven through the CLI. Cover decimal/hex/binary values, calls, mutation, boolean operators, nested control flow, for/unless, and invalid-source diagnostics.
   **Done when:** the supported core examples execute with asserted values/output, negative cases fail before execution, and both targeted tests and the corresponding CI checks pass from a fresh build. This is the first working compiler milestone, not full specification completion.
   **SPEC-006 scope:** turn the complete core examples and invalid fragments in SPEC.md into source-file fixtures, cover every advertised scalar type/operator, and verify that unsupported later syntax fails before execution. The core has no standard output API; assert returned values and diagnostics. Keep later-feature failures visible in the full suite.
+  **Local verification:** 125 maintained source fixtures pass through the actual CLI; the fresh-build core gate has 161 passing cases. The README includes tested source examples and commands. Hosted CI verification is pending before marking this item complete; commands and evidence follow below.
 
 ## 5. Finish data, memory, and basic modules
 
@@ -1305,3 +1306,54 @@ and timeouts cannot pass as traps.
 SPEC-021 is next: broaden source-file fixtures across the advertised core and
 verify them from fresh builds and CI. SPEC-046 remains the release gate. Existing
 deferred-feature failures stay visible without weakened or removed assertions.
+
+### SPEC-021 verification
+
+Run on 2026-09-22 on Apple Silicon macOS with LLVM/MLIR 21.1.6. The build directory
+was fresh; only GoogleTest source was reused through the documented offline override:
+
+```sh
+cmake -S . -B /private/tmp/gloinc-spec021-fresh -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/Users/kubabialy/CLionProjects/gloinc/build/_deps/googletest-src
+cmake --build /private/tmp/gloinc-spec021-fresh -j 2
+ctest --test-dir /private/tmp/gloinc-spec021-fresh -j 4 --no-tests=error \
+  -R '^(CoreAcceptanceTest|CliTest|JitRunnerTest|MLIRSetup)\.' \
+  --output-on-failure --output-junit /private/tmp/spec021-core.xml
+ctest --test-dir /private/tmp/gloinc-spec021-fresh -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec021-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec021-fresh -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec021-parallel.xml
+ctest --test-dir /private/tmp/gloinc-spec021-fresh --show-only=json-v1
+/opt/homebrew/opt/llvm/bin/clang-format --dry-run --Werror \
+  tests/cli_test.cpp tests/core_acceptance_test.cpp tests/support/cli_fixture.h
+git diff --check
+```
+
+Configuration/build and all **161 focused checks pass**. Both full JUnit reports
+contain **470 tests, 463 passes, seven failures, and no skipped tests or unexpected
+test-process crashes**. The failure names match SPEC-020: spawn codegen, arena
+allocation, deferred/spawn generation, async types, string literals, and array
+literals. All source definitions match CTest discovery without duplicates; every
+timeout remains 30 seconds. All 125 `.gloin` fixtures are registered exactly once.
+Formatting and whitespace checks pass. Existing generated MLIR deprecation
+warnings remain; no compiler implementation or deferred assertion was changed.
+
+The [acceptance matrix](tests/fixtures/core/README.md) links the scalar contract to
+28 successful programs, 83 expected compiler errors, and 14 runtime traps. The
+successful files each pass checking and execute three times in independent
+processes, asserting exact results and quiet diagnostics. Invalid files fail in
+all four modes before emitting any result/IR, with expected message text and
+filename/line/column. Many include an earlier runtime trap to expose accidental
+execution. Runtime trap fixtures pass checking then require signal termination;
+ordinary compiler failures/timeouts cannot satisfy them. Tests reuse the existing
+CLI process fixture with isolated output paths and bounded waits.
+
+The root README now teaches build, source syntax, running, checking, IR inspection,
+error handling, supported types, and release limitations. Its two complete code
+examples were extracted and executed with the fresh CLI: both print 42 and exit 0.
+Its local links resolve. CI has a separate named core gate with JUnit/log artifacts,
+retains both full-suite runs, and executes the counter example in the tests-disabled
+build. Hosted results will be recorded after pushing these changes.

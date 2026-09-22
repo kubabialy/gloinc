@@ -13,8 +13,8 @@ Core parsing enforces explicit binding/parameter/return annotations, modifier
 order, mandatory statement semicolons, braced control-flow bodies, and comma
 separators with optional final commas. Assignment is allowed only as a statement
 or loop update. [SPEC.md](../SPEC.md#expression-grouping-spec-009) defines operator
-precedence. The canonical core examples parse; their complete semantic and
-execution acceptance remains SPEC-021.
+precedence. The canonical core examples also have complete semantic and
+execution checks in [SPEC-021's source fixtures](../tests/fixtures/core/README.md).
 
 `const` and visibility are preserved in the AST. SPEC-012 evaluates pure
 constant expressions in Sema and gives codegen folded values. The unchecked

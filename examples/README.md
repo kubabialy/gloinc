@@ -8,9 +8,9 @@ established by the maintained suite.
 
 | Files | Intended subject | Current follow-up |
 | --- | --- | --- |
-| `core_counter.gloin` | Scalar core execution | Verified by SPEC-020's CLI tests; broader fixtures follow in SPEC-021. |
+| `core_counter.gloin` | Scalar core execution | Verified by the CLI tests; broader runnable fixtures are in [core acceptance](../tests/fixtures/core/README.md). |
 | `hello_world.gloin` | Standard output | Strings and standard-module output: SPEC-022, SPEC-023. |
-| `simple_test.gloin`, `comprehensive_test.gloin`, `P2_SUMMARY_DEMO.gloin` | Mixed features | Not validated end to end; core acceptance: SPEC-021. |
+| `simple_test.gloin`, `comprehensive_test.gloin`, `P2_SUMMARY_DEMO.gloin` | Mixed features | Historical design inputs; use the maintained core acceptance fixtures for verified programs. |
 | `defer_test.gloin` | Deferred cleanup | Scope and exit paths: SPEC-027. |
 | `basic_endianness_test.gloin` | Byte-order-aware types | Representation and semantics: SPEC-037 through SPEC-039. |
 
