@@ -11,7 +11,8 @@ Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR
 The CLI compiles source files and runs scalar programs through the in-process JIT.
 The executable core has 125 source-file acceptance cases covering successful
 programs, rejected source, and runtime arithmetic traps. Checking and IR inspection
-modes are also available. The current version is `0.0.1-dev`.
+modes are also available. The scalar-core version is `0.0.1`; installation and
+package validation are documented in [the release guide](docs/release.md).
 
 | Area | Verified status |
 | --- | --- |
@@ -38,7 +39,8 @@ semantic data and ownership boundary required by normal codegen.
 
 [The JIT API](docs/jit.md) executes compiled modules in process. The
 [core acceptance matrix](tests/fixtures/core/README.md) maps the release contract
-to source fixtures. SPEC-046 is the remaining packaging and release gate.
+to source fixtures. [The release guide](docs/release.md) describes package contents,
+runtime dependencies, and the SPEC-046 validation gate.
 
 Test pass counts are not specification-coverage percentages. The compiler is not
 ready for production use. Detailed failure names and task IDs are in
@@ -54,7 +56,7 @@ and MLIR tools. Other platforms have not been validated.
 xcode-select --install  # Only if Command Line Tools are not already installed.
 brew install cmake ninja
 bash scripts/install-llvm.sh
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
   -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir
 cmake --build build -j 2
@@ -148,17 +150,46 @@ For a diagnostic example:
 The acceptance suite checks repeatable results on the supported toolchain and
 platform. It does not promise identical native machine code across platforms.
 
+## Install or package
+
+After building and passing `check-core`, install into your user prefix:
+
+```sh
+cmake --install build --prefix "$HOME/.local"
+"$HOME/.local/bin/gloinc" --version
+"$HOME/.local/bin/gloinc" "$HOME/.local/share/gloinc/examples/core_counter.gloin"
+```
+
+Add `$HOME/.local/bin` to your `PATH` to use `gloinc` from any directory.
+The installed compiler still requires the exact LLVM/MLIR installation used
+to build it. With the supported Homebrew setup, that is `/opt/homebrew/opt/llvm`;
+LLVM is an external dependency and is not bundled.
+
+To create and verify an archive:
+
+```sh
+cmake --build build --target package
+bash scripts/check-package.sh build build/package-check
+```
+
+CPack writes `build/gloinc-0.0.1-macos-arm64.tar.gz` and its `.sha256` checksum.
+The archive contains `bin/gloinc`, documentation, an example, and the core source
+fixtures. The verification script runs all 141 CLI/source acceptance cases against
+both an installed copy and an archive unpacked into a different path containing
+spaces. See [the release guide](docs/release.md) for extraction, dependencies,
+sanitizer checks, and the supported-platform limits.
+
 ## Verify the build
 
 ```sh
 ctest --test-dir build -R '^MLIRSetup\.' --output-on-failure
-ctest --test-dir build -j 4 --no-tests=error \
-  -R '^(CoreAcceptanceTest|CliTest|JitRunnerTest|MLIRSetup)\.' --output-on-failure
+cmake --build build --target check-core
 ctest --test-dir build -j 1 --output-on-failure
 ctest --test-dir build -j 4 --output-on-failure
 ```
 
-The focused command runs 161 core acceptance, CLI, JIT, and dialect setup tests.
+`check-core` runs all 424 required scalar-core checks, including frontend,
+lowering, external execution, source acceptance, CLI, JIT, and dialect setup.
 The full suite exits nonzero for the documented
 failures; do not disable those cases to obtain a green run. The CLI suite launches
 the built executable directly and verifies actual file-dependent results.
@@ -183,7 +214,8 @@ backlog replaces the old phase notes as the implementation plan.
 [Compiler CI](.github/workflows/ci.yml) targets hosted macOS 15 arm64. It installs
 LLVM/MLIR 21.1.6, builds from empty directories with tests disabled and enabled,
 and checks core acceptance before running the complete suite serially and in
-parallel. The core step has its own result and `core.xml`/`core.log` reports.
+parallel. It also validates installed/extracted packages and a separate ASan/UBSan
+Debug build. The core step has its own result and `core.xml`/`core.log` reports.
 JUnit reports, full logs,
 environment details, and test inventory are uploaded as `compiler-ci-reports`,
 including on failure. The workflow remains red while the full suite fails.

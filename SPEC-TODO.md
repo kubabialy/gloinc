@@ -257,6 +257,7 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   Turn normative spec examples into complete executable or expected-error fixtures. Clearly identify conceptual examples and external dependencies. Finish installation/packaging, version/help information, platform setup instructions, and a feature matrix linked to acceptance tests.
   **Done when:** a fresh checkout can build/test/install by following the README; all tests required by the chosen release scope pass; every advertised feature has end-to-end evidence; remaining unsupported features are documented and rejected. Record serial/parallel results and applicable runtime sanitizer checks. No temporary audit patch, cached old binary, or machine-specific path is required.
   **SPEC-006 scope:** publish only after SPEC-001 through SPEC-021 and this release gate are verified for the scalar JIT contract. Deferred tasks need not be complete, but their unsupported behavior must be diagnosed. Report targeted core acceptance separately from the unfiltered suite, retaining every unresolved failure and its task ID.
+  **Local verification:** the Release and ASan/UBSan Debug builds pass 424 core checks; installed and extracted packages each pass 141 CLI/source cases. Version 0.0.1, installation, CPack archive/checksum generation, dependencies, usage, and the acceptance matrix are documented. Full Release runs retain 463/470 passes and the same seven deferred-feature failures. Fresh-checkout hosted release checks are pending before completing this gate.
 
 ### Deferred numeric extension
 
@@ -1371,3 +1372,60 @@ those failures. The direct-push run's core step also passed.
 
 This completes the executable-core milestone. SPEC-046 is the next task under
 the selected scalar release plan; deferred feature tasks remain unchecked.
+
+### SPEC-046 verification
+
+Local validation on 2026-09-22 used macOS 15.1.1 arm64, AppleClang 16.0.0,
+CMake 4.2.1, and LLVM/MLIR 21.1.6. Both build directories were fresh; only the
+documented GoogleTest source override reused existing source files:
+
+```sh
+cmake -S . -B /private/tmp/gloinc-spec046-release -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/Users/kubabialy/CLionProjects/gloinc/build/_deps/googletest-src
+cmake --build /private/tmp/gloinc-spec046-release -j 2
+cmake --build /private/tmp/gloinc-spec046-release --target check-core
+ctest --test-dir /private/tmp/gloinc-spec046-release -j 1 --output-on-failure \
+  --output-junit /private/tmp/spec046-serial.xml
+ctest --test-dir /private/tmp/gloinc-spec046-release -j 4 --output-on-failure \
+  --output-junit /private/tmp/spec046-parallel.xml
+bash scripts/check-package.sh /private/tmp/gloinc-spec046-release /private/tmp/spec046-package-final
+cmake -S . -B /private/tmp/gloinc-spec046-sanitized -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DGLOIN_ENABLE_SANITIZERS=ON \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/Users/kubabialy/CLionProjects/gloinc/build/_deps/googletest-src
+cmake --build /private/tmp/gloinc-spec046-sanitized -j 2
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /private/tmp/gloinc-spec046-sanitized --target check-core
+git diff --check
+```
+
+Both Release and ASan/UBSan Debug pass **424/424 required core cases**. All 48
+project compile entries in the sanitizer build carry address/undefined
+instrumentation; prebuilt LLVM/MLIR and generated machine code are outside that
+instrumentation claim. No sanitizer errors were reported. LeakSanitizer is not
+claimed on macOS. Sanitizer configurations have no CPack package target.
+
+Full Release serial/parallel JUnit reports agree on **463/470 passes**, the same
+seven deferred-feature failures as SPEC-021, and no skips or unexpected test-process
+crashes. The new `check-core` target includes every maintained scalar-core suite,
+extending the prior 161-case focused gate with lexer, semantic, operator, lowering,
+and external execution checks. The unfiltered suite retains all original assertions.
+
+Installation and relocated archive extraction each pass **141/141 CLI/source
+cases**, including all 125 installed source fixtures. Both destination paths
+contain spaces; the packaged example prints 42. The archive SHA-256 verifies.
+`otool -L` confirms the compiler uses the selected LLVM/MLIR shared libraries and
+system libraries, with no dependency on the compiler build directory. LLVM and
+its dependencies are external, not bundled. Package contents, supported platform,
+source instructions, exact versions, and runtime limitations are documented in
+[the release guide](docs/release.md) and README. The CLI reports version 0.0.1.
+
+CI now repeats the Release builds with tests off/on, the 424-case gate,
+installation/extraction checks, a fresh sanitizer build and core run, and both
+unfiltered runs. It retains logs, JUnit, package/checksum, and environment details.
+Fresh-checkout hosted results are pending. No release tag or GitHub Release has
+been created by this preparation task.

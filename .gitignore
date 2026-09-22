@@ -6,6 +6,8 @@
 
 # Build directories
 build/
+build-*/
+ci-reports/
 cmake-build-debug/
 cmake-build-release/
 bin/

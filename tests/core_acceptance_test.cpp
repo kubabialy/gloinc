@@ -5,7 +5,9 @@ namespace {
 class CoreAcceptanceTest : public gloin_test::CliFixture {
   protected:
     std::string fixture(const std::string &name) {
-        const auto path = std::string(gloin_test::core_fixtures) + "/" + name;
+        const char *override_path = std::getenv("GLOIN_TEST_FIXTURES");
+        const auto path =
+            std::string(override_path ? override_path : gloin_test::core_fixtures) + "/" + name;
         EXPECT_TRUE(llvm::sys::fs::is_regular_file(path)) << path;
         return path;
     }

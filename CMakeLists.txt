@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.28)
 project(gloinc VERSION 0.0.1)
 
+option(GLOIN_ENABLE_SANITIZERS "Instrument project C++ code with AddressSanitizer and UBSan" OFF)
+if(GLOIN_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "GLOIN_ENABLE_SANITIZERS requires Clang or AppleClang")
+endif()
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # MLIR/LLVM Setup
@@ -108,7 +113,7 @@ target_link_libraries(gloin_backend PUBLIC
 add_executable(gloinc main.cpp)
 target_link_libraries(gloinc PRIVATE gloin_backend)
 target_compile_definitions(gloinc PRIVATE
-    GLOIN_VERSION="${PROJECT_VERSION}-dev"
+    GLOIN_VERSION="${PROJECT_VERSION}"
     GLOIN_LLVM_VERSION="${LLVM_PACKAGE_VERSION}"
 )
 set(GLOIN_TARGETS gloin_frontend gloin_backend gloinc)
@@ -212,6 +217,14 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
 
     include(GoogleTest)
     gtest_discover_tests(gloinc_test PROPERTIES TIMEOUT 30)
+
+    # Required scalar-core suites; the unfiltered suite still reports deferred failures.
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
+    add_custom_target(check-core
+        COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
+            -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure
+            --output-junit "${CMAKE_CURRENT_BINARY_DIR}/core.xml"
+        DEPENDS gloinc_test USES_TERMINAL VERBATIM)
 endif()
 
 set_target_properties(${GLOIN_TARGETS} PROPERTIES
@@ -219,3 +232,31 @@ set_target_properties(${GLOIN_TARGETS} PROPERTIES
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
 )
+
+if(GLOIN_ENABLE_SANITIZERS)
+    foreach(target IN LISTS GLOIN_TARGETS)
+        target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    endforeach()
+endif()
+
+include(GNUInstallDirs)
+set_target_properties(gloinc PROPERTIES
+    INSTALL_RPATH "$<TARGET_FILE_DIR:LLVM>;$<TARGET_FILE_DIR:MLIR>;$<TARGET_FILE_DIR:MLIRExecutionEngineShared>")
+install(TARGETS gloinc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES README.md SPEC.md SPEC-TODO.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
+install(FILES examples/core_counter.gloin DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
+install(DIRECTORY tests/fixtures/core/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/core-fixtures)
+
+# Packages depend on the same LLVM/MLIR installation used at configure time.
+# Sanitizer builds are diagnostic tools, never distribution artifacts.
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" AND NOT GLOIN_ENABLE_SANITIZERS)
+    set(CPACK_GENERATOR TGZ)
+    set(CPACK_PACKAGE_NAME gloinc)
+    set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+    set(CPACK_PACKAGE_FILE_NAME "gloinc-${PROJECT_VERSION}-macos-arm64")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Gloin scalar-core JIT compiler; requires LLVM/MLIR 21.1.6")
+    set(CPACK_PACKAGE_CHECKSUM SHA256)
+    include(CPack)
+endif()

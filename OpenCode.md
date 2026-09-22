@@ -15,6 +15,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
   -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
   -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir
 cmake --build build -j 2
+cmake --build build --target check-core
 ctest --test-dir build --output-on-failure -j 4
 ctest --test-dir build -R '^MLIRSetup\.' --output-on-failure
 ```
@@ -26,6 +27,9 @@ not disable cases or weaken assertions to make CI green. The CLI reads source
 files; its tests execute `examples/core_counter.gloin`. SPEC-021 adds maintained
 source-file acceptance fixtures under `tests/fixtures/core`; register new files
 in `CoreAcceptanceTest`. Other examples remain design inputs.
+Release/package and sanitizer validation commands are in [docs/release.md](docs/release.md).
+Keep test-only CLI/fixture overrides out of normal compiler behavior; they let the
+same acceptance suite validate installed and extracted packages.
 
 ## Targets and linkage
 

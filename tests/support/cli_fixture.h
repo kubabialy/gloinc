@@ -5,6 +5,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 #include <atomic>
+#include <cstdlib>
 #include <fstream>
 #include <gtest/gtest.h>
 
@@ -44,17 +45,20 @@ class CliFixture : public testing::Test {
         return buffer ? (*buffer)->getBuffer().str() : "";
     }
     ProcessResult invoke(const std::vector<std::string> &arguments) {
+        // Release validation reuses every CLI assertion against installed/extracted binaries.
+        const char *override_path = std::getenv("GLOIN_TEST_CLI");
+        const std::string executable = override_path ? override_path : gloin_test::gloinc;
         const auto prefix = directory + "/call-" + std::to_string(calls++);
         const auto stdout_path = prefix + ".out";
         const auto stderr_path = prefix + ".err";
-        std::vector<llvm::StringRef> argv{gloin_test::gloinc};
+        std::vector<llvm::StringRef> argv{executable};
         for (const auto &argument : arguments)
             argv.push_back(argument);
         const std::optional<llvm::StringRef> redirects[] = {llvm::StringRef(), stdout_path,
                                                             stderr_path};
         ProcessResult result{};
-        result.status = llvm::sys::ExecuteAndWait(gloin_test::gloinc, argv, std::nullopt, redirects,
-                                                  10, 0, &result.message, &result.launch_failed);
+        result.status = llvm::sys::ExecuteAndWait(executable, argv, std::nullopt, redirects, 10, 0,
+                                                  &result.message, &result.launch_failed);
         result.out = read(stdout_path);
         result.err = read(stderr_path);
         EXPECT_FALSE(result.launch_failed) << result.message;

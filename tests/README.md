@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-021, maintained source definitions and CTest discovery both contain **470 tests**:
+At SPEC-046, maintained source definitions and CTest discovery both contain **470 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -68,7 +68,7 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. Serial and parallel runs at SPEC-021 both produce
+as expected successes. Serial and parallel Release runs at SPEC-046 both produce
 **463 passes, 7 failures, no unexpected test-process crashes or skipped tests**, with identical failing test names.
 
 ## Lexical contract checks
@@ -547,3 +547,30 @@ passes both fresh builds and all 161 focused checks. Downloaded JUnit reports
 confirm the same 463/470 full-suite results and exact seven failures in both
 serial and parallel runs. No tests are skipped; no unexpected test-process
 crashes occur. The full-suite step retains its failing status.
+
+## Scalar release validation (SPEC-046)
+
+`cmake --build build --target check-core` builds the tests and runs all **424
+required scalar-core cases**, emitting `build/core.xml`. The suites are Lexer,
+Diagnostics, CheckedProgram, Parser, Scope, Variables, Numeric, Functions,
+Operators, ControlFlow, ForUnless, Lowering, JitRunner, Cli, CoreAcceptance, E2E,
+ExternalRunner, and MLIRSetup. Legacy later-feature tests remain in the unfiltered
+470-case suite. This explicit release gate neither disables them nor marks their
+failures expected successes.
+
+Fresh local Release and ASan/UBSan Debug builds both pass **424/424 core tests**.
+The full Release serial and parallel suites each report **463/470 passes** with
+the unchanged seven deferred-feature failures. Instrumentation covers project
+C++ compiler/harness code; prebuilt LLVM/MLIR and JIT-generated machine code are
+not instrumented. LeakSanitizer is not claimed on macOS. See the exact build
+commands and runtime options in [the release guide](../docs/release.md).
+
+`scripts/check-package.sh` runs all **141 CLI/source tests** twice: once against
+an installed compiler, then against the extracted archive in another prefix with
+spaces. `GLOIN_TEST_CLI` selects the executable; `GLOIN_TEST_FIXTURES` selects its
+installed fixture directory. Normal tests use generated build/source paths.
+Each package check verifies all source fixtures, exact version/help/results,
+diagnostics, paths, inspection, and runtime traps through the same assertions.
+The script also checks the archive checksum, packaged counter example, and shared
+dependencies; reports are retained for review. No new test definitions or weakened
+assertions are needed to validate the distribution copies.

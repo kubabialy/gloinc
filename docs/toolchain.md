@@ -90,12 +90,20 @@ The Makefile delegates to these CMake targets and CTest:
 make build BUILD_DIR=build-no-tests BUILD_TESTING=OFF BUILD_ARGS='-j 2'
 make test BUILD_DIR=build CTEST_ARGS='-R ^MLIRSetup'
 make run BUILD_DIR=build-no-tests BUILD_TESTING=OFF
+make run BUILD_DIR=build-no-tests BUILD_TESTING=OFF RUN_ARGS='--check examples/core_counter.gloin'
+make check-core BUILD_DIR=build
+make install BUILD_DIR=build-no-tests BUILD_TESTING=OFF INSTALL_PREFIX="$HOME/.local"
+make package BUILD_DIR=build-no-tests BUILD_TESTING=OFF
 make clean BUILD_DIR=build-no-tests
 ```
 
 `CMAKE_ARGS` passes generator/package paths and other configure options;
 `BUILD_ARGS` passes build options; `CTEST_ARGS` passes test filters/options.
 `make test` explicitly enables tests and preserves CTest's failure exit status.
+`make run` defaults to `examples/core_counter.gloin`; `RUN_ARGS` overrides its CLI
+arguments. `check-core` requires a tests-enabled build and runs the 424 required
+scalar-core checks. Installation, CPack archives, external runtime dependencies,
+and the sanitizer build option are described in [release.md](release.md).
 `make clean` invokes CMake's clean target in an already configured directory,
 removing build products while retaining the configuration and downloaded sources.
 

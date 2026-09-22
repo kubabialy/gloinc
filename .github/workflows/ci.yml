@@ -28,6 +28,7 @@ jobs:
         run: |
           test ! -e build-ci
           test ! -e build-ci-no-tests
+          test ! -e build-ci-sanitized
           mkdir -p ci-reports
 
       - name: Install build tools and pinned LLVM/MLIR
@@ -49,7 +50,7 @@ jobs:
       - name: Build without test dependencies
         run: |
           cmake -S . -B build-ci-no-tests -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
             -DLLVM_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/llvm" \
             -DMLIR_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/mlir" \
             2>&1 | tee ci-reports/configure-no-tests.log
@@ -63,7 +64,7 @@ jobs:
         id: build
         run: |
           cmake -S . -B build-ci -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
             -DLLVM_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/llvm" \
             -DMLIR_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/mlir" \
             2>&1 | tee ci-reports/configure.log
@@ -74,15 +75,35 @@ jobs:
         id: core
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          ctest --test-dir build-ci -j 4 --no-tests=error \
-            -R '^(CoreAcceptanceTest|CliTest|JitRunnerTest|MLIRSetup)\.' \
-            --output-on-failure --output-junit "$PWD/ci-reports/core.xml" \
-            2>&1 | tee ci-reports/core.log
+          cmake --build build-ci --target check-core 2>&1 | tee ci-reports/core.log
+          cp build-ci/core.xml ci-reports/core.xml
           {
             echo '## Executable core acceptance'
-            echo 'Source fixtures, CLI, JIT, and dialect setup checks passed from a fresh build.'
+            echo 'All required scalar-core suites passed from a fresh Release build.'
             echo 'This result is separate from the unfiltered suite and its deferred-feature failures.'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify installation and relocated package
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
+        run: |
+          bash scripts/check-package.sh build-ci ci-reports/package \
+            2>&1 | tee ci-reports/package.log
+
+      - name: Build and check with AddressSanitizer and UBSan
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          cmake -S . -B build-ci-sanitized -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DGLOIN_ENABLE_SANITIZERS=ON \
+            -DLLVM_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/llvm" \
+            -DMLIR_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/mlir" \
+            2>&1 | tee ci-reports/sanitized-configure.log
+          cmake --build build-ci-sanitized -j 2 2>&1 | tee ci-reports/sanitized-build.log
+          test ! -e build-ci-sanitized/CPackConfig.cmake
+          cmake --build build-ci-sanitized --target check-core 2>&1 | tee ci-reports/sanitized-core.log
+          cp build-ci-sanitized/core.xml ci-reports/sanitized-core.xml
 
       - name: Run complete suite serially and in parallel
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -117,3 +138,6 @@ jobs:
             build-ci/compile_commands.json
             build-ci/CMakeCache.txt
             build-ci-no-tests/CMakeCache.txt
+            build-ci-sanitized/core.xml
+            build-ci-sanitized/Testing/Temporary/
+            build-ci-sanitized/CMakeCache.txt

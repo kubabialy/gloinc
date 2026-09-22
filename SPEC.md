@@ -596,8 +596,9 @@ one source file. Run is the default. Options may precede or follow the filename;
 `--` ends option recognition. A mode may be specified only once, even if repeated
 with the same spelling. Unknown options, conflicting modes, missing/extra input
 files, and misplaced help/version options are usage errors. `--help`/`-h` and
-`--version`/`-V` are standalone commands. The development version is `0.0.1-dev`;
-this is not a published 0.0.1 release.
+`--version`/`-V` are standalone commands. The scalar-core release version is
+`0.0.1`; the command also reports the configured LLVM/MLIR version. Publication
+and release validation are recorded separately under SPEC-046.
 
 The input must be a readable regular file (symlinks to regular files are allowed).
 No extension is required. The complete bytes are read and passed to the shared
