@@ -541,3 +541,9 @@ uses `--no-tests=error`, and uploads `core.xml`/`core.log` alongside the unfilte
 serial/parallel reports. Its tests-disabled build also runs the repository counter
 example. The full suite runs even if the core step fails, preserving both results.
 Core acceptance is the working-compiler milestone; SPEC-046 remains the release gate.
+
+[Hosted run 35736970025](https://github.com/kubabialy/gloinc/actions/runs/35736970025)
+passes both fresh builds and all 161 focused checks. Downloaded JUnit reports
+confirm the same 463/470 full-suite results and exact seven failures in both
+serial and parallel runs. No tests are skipped; no unexpected test-process
+crashes occur. The full-suite step retains its failing status.

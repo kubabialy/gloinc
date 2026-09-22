@@ -189,7 +189,9 @@ environment details, and test inventory are uploaded as `compiler-ci-reports`,
 including on failure. The workflow remains red while the full suite fails.
 Compiler build outputs are not restored from a cache.
 
-[The verified SPEC-005 run](https://github.com/kubabialy/gloinc/actions/runs/34242653935)
-built both configurations and published the complete reports. Both test runs
-matched the then-current SPEC-005 baseline: 98 passes and the same 14 failures out of 112 tests,
-with no crashes or skipped tests. The run is red because those failures remain.
+[The verified SPEC-021 run](https://github.com/kubabialy/gloinc/actions/runs/35736970025)
+built both configurations and passed all **161 focused checks**. Its complete
+serial and parallel runs each report **463/470 passes**, with the same seven
+deferred-feature failures and no unexpected test-process crashes or skips.
+The overall run is red because those full-suite failures remain; the core
+acceptance step passes. Download `compiler-ci-reports` for the evidence.

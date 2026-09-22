@@ -2,7 +2,7 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-021.** Completed items have verification evidence in the completion log. Existing partial implementations and results from temporary audit repairs do not count as completed work.
+**Next item: SPEC-046 (scalar-core release gate).** SPEC-001 through SPEC-021 are complete. Deferred features resume after the selected first release, as specified below. Completed items have verification evidence in the completion log.
 
 The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-022 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
@@ -142,11 +142,11 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** a file passed to `gloinc` controls the result; missing/unreadable files and invalid source fail with useful diagnostics; help/version and exit behavior are documented; CLI and tests use the same compiler stages.
   **Verified:** [The CLI](docs/cli.md) reads complete files and shares compilation/lowering/JIT APIs. Run prints the full signed i32 result with exit 0; compiler/I/O/JIT errors use stderr and exit 1, usage errors exit 2, and arithmetic traps retain signal termination. Check and verified high-level/LLVM IR modes never execute source. All 16 CLI tests and 261 focused tests pass, including the repository counter example returning 42. Serial/parallel suites agree on 338/345 passes and the same seven deferred-language failures.
 
-- [ ] **SPEC-021 — Establish the executable core acceptance suite.**
+- [x] **SPEC-021 — Establish the executable core acceptance suite.**
   Convert the core audit reproductions into repository fixtures driven through the CLI. Cover decimal/hex/binary values, calls, mutation, boolean operators, nested control flow, for/unless, and invalid-source diagnostics.
   **Done when:** the supported core examples execute with asserted values/output, negative cases fail before execution, and both targeted tests and the corresponding CI checks pass from a fresh build. This is the first working compiler milestone, not full specification completion.
   **SPEC-006 scope:** turn the complete core examples and invalid fragments in SPEC.md into source-file fixtures, cover every advertised scalar type/operator, and verify that unsupported later syntax fails before execution. The core has no standard output API; assert returned values and diagnostics. Keep later-feature failures visible in the full suite.
-  **Local verification:** 125 maintained source fixtures pass through the actual CLI; the fresh-build core gate has 161 passing cases. The README includes tested source examples and commands. Hosted CI verification is pending before marking this item complete; commands and evidence follow below.
+  **Verified:** 125 maintained source fixtures pass through the actual CLI; the fresh-build core gate has 161 passing cases locally and in [hosted CI](https://github.com/kubabialy/gloinc/actions/runs/35736970025). Both fresh CI build configurations pass, including the compiler-only example. Local and hosted serial/parallel suites agree on 463/470 passes with the same seven deferred-feature failures. The README includes tested source examples and commands; the [acceptance matrix](tests/fixtures/core/README.md) maps the supported core to fixtures. SPEC-046 is next.
 
 ## 5. Finish data, memory, and basic modules
 
@@ -307,6 +307,7 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-018 | 2026-09-17 | Adds [shared verified LLVM lowering](src/lowering.cpp), explicit high-level/LLVM compiler output, source-located IR diagnostics, and ownership that discards partial modules on failure. The compiler, legacy JIT, and external language tests use one conversion pipeline. All **15 new tests and 229 focused tests pass**, including LLVM export/verification, six additional external executions, and three independent repeated compile/run checks. Incremental Debug build succeeds; full serial/parallel suites report **306/314 passes**, the same eight failures, and no test-process crashes/skips. |
 | SPEC-019 | 2026-09-17 | Repairs builtin/LLVM translation registration and invokes validated `main` through MLIR's packed ABI with a collision-free adapter. `ExecutionResult` separates every i32 value from diagnostics; owned clones/engines preserve caller IR and isolate runs. All **16 JIT tests and 245 focused tests pass**, including **25 successful native invocations and five intentional subprocess traps**. Incremental Debug build succeeds; full serial/parallel suites report **322/329 passes**, resolving the JIT smoke failure while retaining seven deferred-language failures, with no unexpected test-process crashes/skips. |
 | SPEC-020 | 2026-09-17 | Replaces hardcoded lexer input with file-reading run/check/IR commands using the shared compiler and JIT. Documents full i32 stdout results, separate exit statuses/diagnostics, standalone help/version, source locations, and process-terminating traps. All **16 CLI tests and 261 focused tests pass**, including the runnable repository counter example. Incremental Debug build succeeds; serial/parallel suites report **338/345 passes**, the same seven deferred-language failures, and no unexpected test-process crashes/skips. |
+| SPEC-021 | 2026-09-22 | Adds 125 source-file fixtures (28 successful, 83 rejected, 14 traps), a shared CLI process fixture, and a separate core CI gate. All **161 focused tests pass** from fresh local and hosted builds. Both CI build configurations pass; the compiler-only example returns 42. Full local/CI serial and parallel suites agree on **463/470 passes**, seven unchanged deferred-feature failures, and no unexpected test-process crashes/skips. README examples execute successfully; usage instructions and a feature-to-fixture matrix are documented. [Hosted evidence](https://github.com/kubabialy/gloinc/actions/runs/35736970025). |
 
 ### SPEC-001 verification
 
@@ -1356,4 +1357,17 @@ error handling, supported types, and release limitations. Its two complete code
 examples were extracted and executed with the fresh CLI: both print 42 and exit 0.
 Its local links resolve. CI has a separate named core gate with JUnit/log artifacts,
 retains both full-suite runs, and executes the counter example in the tests-disabled
-build. Hosted results will be recorded after pushing these changes.
+build.
+
+[Hosted run 35736970025](https://github.com/kubabialy/gloinc/actions/runs/35736970025)
+verifies implementation commit `3d65ae8` on macOS 15.7.9 arm64, AppleClang 17,
+CMake 4.4.3, Ninja 1.13.2, and LLVM/MLIR 21.1.6. Both fresh build configurations,
+the compiler-only example, and the named core acceptance step pass. Downloaded
+`compiler-ci-reports` artifacts confirm **161/161 core passes** and **463/470
+passes in both full runs**, with exactly the seven failures named above, no skips
+or unexpected test-process crashes/timeouts, 470 discovered cases, and unchanged
+30-second timeouts. The workflow is red solely because the full suite preserves
+those failures. The direct-push run's core step also passed.
+
+This completes the executable-core milestone. SPEC-046 is the next task under
+the selected scalar release plan; deferred feature tasks remain unchecked.
