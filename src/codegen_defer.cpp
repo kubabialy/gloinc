@@ -16,6 +16,9 @@ std::vector<mlir::Value> CodeGen::gen_call_arguments(const CallExpression *call)
 }
 
 mlir::Value CodeGen::emit_checked_call(const CallExpression *call, mlir::ValueRange arguments) {
+    if (auto primitive = checked_data->arena_runtime_calls.find(call);
+        primitive != checked_data->arena_runtime_calls.end())
+        return emit_arena_primitive(primitive->second, arguments);
     if (checked_data->runtime_calls.contains(call)) {
         auto ptr = builder.create<mlir::LLVM::ExtractValueOp>(location(), arguments.front(),
                                                               llvm::ArrayRef<int64_t>{0});
@@ -42,6 +45,9 @@ mlir::Value CodeGen::emit_checked_call(const CallExpression *call, mlir::ValueRa
     auto found = checked_functions.find(checked_binding(callee));
     if (found == checked_functions.end())
         fail("Checked function has not been emitted");
+    if (auto allocation = checked_data->arena_allocations.find(call);
+        allocation != checked_data->arena_allocations.end())
+        return emit_arena_allocation(found->second, allocation->second, arguments);
     auto result = builder.create<mlir::func::CallOp>(location(), found->second, arguments);
     return result.getNumResults() ? result.getResult(0) : mlir::Value{};
 }

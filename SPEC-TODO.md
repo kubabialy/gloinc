@@ -2,9 +2,9 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-028 (arena runtime and ABI).** SPEC-001 through SPEC-027 are complete. Deferred features resume after the selected first release, as specified below. Completed items have verification evidence in the completion log.
+**Next item: SPEC-029 (local modules and exported symbols).** SPEC-001 through SPEC-028 are complete. Deferred features resume after the selected first release, as specified below. Completed items have verification evidence in the completion log.
 
-The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-028 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
+The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-029 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
 ## How to use this checklist
 
@@ -181,9 +181,12 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Implemented:** reached calls capture their receiver and arguments immediately, then register independent typed heap records in a per-invocation LIFO log. Explicit, implicit, and early returns evaluate their result before draining cleanup. Values survive source scopes; captured pointers retain manual lifetime responsibilities without extending resources or introducing borrow checking. Traps do not unwind. Shared ordinary/deferred call lowering preserves types, privacy, receiver order, and non-void result discarding. Records are freed before invoking cleanup; checked native allocator ABIs have no collision with source functions and add no user allocator API.
   **Verified:** all 24 defer tests pass, including native allocation/release instrumentation, forced allocation failure, 100,000 reverse-order registrations, and external LLVM execution. One million pending registrations also pass with a 2 MiB stack. A fresh Release build passes **526/526 required checks**; the full suite reports **569/574 passes**, retaining only the five SPEC-028/040/041 failures. Installed and relocated packages each pass **241/241 checks**. See the verification record below.
 
-- [ ] **SPEC-028 — Implement the arena runtime and ABI.**
+- [x] **SPEC-028 — Implement the arena runtime and ABI.**
   Specify allocation, alignment, growth, reset/free behavior, failure behavior, and pointer invalidation. Implement and link the declared arena functions and expose a coherent language API.
+  **Agreed contract:** initialized-value allocation through `@arena` / `stdlib/arena.gloin`, starting with `GeneralArena` while allowing additional allocator types. `alloc` traps on failure; `try_alloc` returns null. Handles alias manually owned storage; reset invalidates objects and retains blocks, while free releases storage and clears only its receiver. Typed allocation preserves each allocator's identity and storage policy. The [contract](SPEC.md#arena-allocation-spec-028) defines alignment, growth, lifetime boundaries, and the native ABI.
   **Done when:** real arena programs allocate correctly aligned mixed-size objects, read/write them, and release/reset storage correctly. Runtime tests cover allocation failure and invalidation boundaries; meaningful sanitizer checks cover the native runtime.
+  **Implemented:** `stdlib/arena.gloin` defines `GeneralArena` lifecycle and allocation policies. Resolved typed allocation bridges pass native size/alignment and store initialized values only on success. The LLVM-independent native runtime uses stable aligned blocks, checked arithmetic, lazy growth, retained reset storage, and explicit destruction. JIT ABI validation and symbol registration, external shared-runtime execution, installed static/shared libraries and C header, and the runnable `examples/arena_lab.gloin` are included. Other module types retain their own ordinary method behavior.
+  **Verified:** 21 source/compiler arena cases and nine native runtime cases pass. A fresh Release build passes **559/559 required checks** and **602/606 full-suite checks**, retaining only the four SPEC-040/041 failures. A fresh ASan/UBSan build passes **559/559 required checks**, including instrumented native runtime and external execution. Installed and relocated packages each pass **265/265 checks**. One million particles over two reset cycles pass under a 2 MiB stack. See the verification record below.
 
 - [ ] **SPEC-029 — Implement local modules and exported symbols.**
   Define module-relative paths, exported/private declarations, duplicate imports, cycles, and initialization rules. Load and check dependencies once and resolve qualified calls across files.
@@ -317,6 +320,59 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-020 | 2026-09-17 | Replaces hardcoded lexer input with file-reading run/check/IR commands using the shared compiler and JIT. Documents full i32 stdout results, separate exit statuses/diagnostics, standalone help/version, source locations, and process-terminating traps. All **16 CLI tests and 261 focused tests pass**, including the runnable repository counter example. Incremental Debug build succeeds; serial/parallel suites report **338/345 passes**, the same seven deferred-language failures, and no unexpected test-process crashes/skips. |
 | SPEC-021 | 2026-09-22 | Adds 125 source-file fixtures (28 successful, 83 rejected, 14 traps), a shared CLI process fixture, and a separate core CI gate. All **161 focused tests pass** from fresh local and hosted builds. Both CI build configurations pass; the compiler-only example returns 42. Full local/CI serial and parallel suites agree on **463/470 passes**, seven unchanged deferred-feature failures, and no unexpected test-process crashes/skips. README examples execute successfully; usage instructions and a feature-to-fixture matrix are documented. [Hosted evidence](https://github.com/kubabialy/gloinc/actions/runs/35736970025). |
 | SPEC-022 | 2026-09-22 | Adds canonical checked `string` support across parsing, semantic type identities, constants, function signatures, local storage, and MLIR/LLVM code generation. String literals decode `\\`, quotes, control escapes, and `\\0`; lengths count UTF-8 bytes and embedded NULs; globals include a private terminator without counting it; identical literals share one global. Targeted string tests pass, including empty, escaped/non-ASCII/NUL bytes, checked signatures, and reuse. The full CTest run reports **469/474 passes**, with the five existing deferred-feature failures and no new string-related failures; the inventory increased by two maintained string regressions. |
+
+### SPEC-028 verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+Fresh Release and sanitizer Debug/Ninja builds reused the pinned GoogleTest
+source cache; neither required a dependency download.
+
+```sh
+cmake -S . -B /tmp/gloinc-spec028-fresh -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
+cmake --build /tmp/gloinc-spec028-fresh -j 4
+cmake --build /tmp/gloinc-spec028-fresh --target check-core
+ctest --test-dir /tmp/gloinc-spec028-fresh -j 4 --output-on-failure
+bash scripts/check-package.sh /tmp/gloinc-spec028-fresh /tmp/gloinc-spec028-package
+cmake -S . -B /tmp/gloinc-spec028-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DGLOIN_ENABLE_SANITIZERS=ON \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
+cmake --build /tmp/gloinc-spec028-sanitize -j 4
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec028-sanitize --target check-core
+```
+
+Results: **559/559 required Release checks**, **559/559 required ASan/UBSan checks**,
+**602/606 full-suite passes**, and **265/265 package checks** for both staged
+installation and relocated extraction. The full suite retains only
+`CodeGenTest.GenerateSpawn`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-040/041).
+No cases were disabled or converted into expected failures. Hosted CI was updated
+but not run.
+
+The 21 `ArenaTest` cases validate the source API, all scalar types and aggregate
+layout, pointer qualifiers, shallow copies, initialized values, stable growth,
+manual handle aliasing/reset, cleared-handle traps, once-only ordered evaluation,
+deferred allocation, module extensibility/privacy, exact ABI rejection, forced
+allocation failure, and external LLVM execution. Nine independent
+`ArenaRuntimeTest` cases exercise actual aligned storage and contents, overflow,
+zero-sized objects, retained large blocks, transactional failures, independent
+arenas, and balanced releases under ASan/UBSan. LeakSanitizer is not claimed on
+macOS, and generated JIT loads/stores are not automatically instrumented.
+
+`examples/arena_lab.gloin` prints `arena lab: ok` and exits zero. A stress variant
+with `PARTICLES = 1000000` and `FRAMES = 2` passed with a 2 MiB stack, verifying
+linked-object contents and reuse after reset. It took 0.663 seconds including
+compilation on this machine; this is a local observation, not a performance gate.
+
+The initial required-suite run found an incorrect test expectation: type-valued
+`alloc(i32)` is rejected by the parser, not Sema. The expectation now checks that
+actual diagnostic in every CLI mode. The first external sanitizer run exposed
+ASan being loaded too late by `mlir-runner`; the test now preloads its own ASan
+image at process startup without hardcoding an Xcode path. The final complete
+required runs pass after both corrections. The obsolete unchecked arena test
+and placeholder runtime declarations were replaced by the checked API and
+source/native tests, resolving the prior SPEC-028 failure.
 
 ### SPEC-027 verification
 

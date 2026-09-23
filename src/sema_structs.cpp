@@ -185,6 +185,14 @@ std::shared_ptr<Type> Sema::expression_type_hint(const Expression *expression) {
         if (literal->name)
             return resolve_type_from_string(literal->name->value);
     } else if (const auto *call = dynamic_cast<const CallExpression *>(expression)) {
+        if (const auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get())) {
+            if (const auto *method = method_target(member);
+                method && arena_methods.contains(method) && call->arguments.size() == 1) {
+                if (auto type = arena_value_type_hint(call->arguments.front().get()))
+                    return std::make_shared<PointerType>(type, arena_methods.at(method), false);
+                return nullptr;
+            }
+        }
         auto type = expression_type_hint(call->function.get());
         if (auto function = std::dynamic_pointer_cast<FunctionType>(type))
             return function->return_type;

@@ -9,7 +9,7 @@ verification evidence in order.
 
 Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR 21.1.6.
 The CLI compiles source files and runs scalar and ordinary struct programs through the in-process JIT.
-The executable core has 133 source-file acceptance cases covering successful
+The executable core has 136 source-file acceptance cases covering successful
 programs, rejected source, and runtime arithmetic traps. Checking and IR inspection
 modes are also available. The scalar-core version is `0.0.1`; installation and
 package validation are documented in [the release guide](docs/release.md).
@@ -18,8 +18,8 @@ package validation are documented in [the release guide](docs/release.md).
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | 574 tests discovered; local parallel run has 569 passes, 5 deferred-feature failures, no unexpected test-process crashes. |
-| Core acceptance | 133 CLI-driven source fixtures: 34 successful programs, 82 expected compiler errors, and 17 runtime traps. |
+| Full test suite | 606 tests discovered; local parallel run has 602 passes, 4 deferred-feature failures, no unexpected test-process crashes. |
+| Core acceptance | 136 CLI-driven source fixtures: 35 successful programs, 83 expected compiler errors, and 18 runtime traps. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
 | Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/unless/while/for execution, loop-variable scope, and omitted for components are verified. |
@@ -32,6 +32,7 @@ package validation are documented in [the release guide](docs/release.md).
 | Pointers/references | 18 tests cover typed access, read-only views, recursive links, null traps, and manual lifetimes with no borrow checker. |
 | Methods | 19 tests cover instance/static calls, one explicit receiver, mutability, visibility, evaluation order, recursion, diagnostics, and external execution. |
 | Defer | 24 tests cover registration-time captures, conditional/loop registration, LIFO function-exit cleanup, early returns, traps, native allocation bookkeeping, and external execution. |
+| Arenas | `@arena` exposes `GeneralArena`: 21 compiler/API tests and nine native runtime tests cover initialized allocation, alignment, growth, reset/free, failure, and external linking. See [the arena guide](docs/arenas.md). |
 | Other imports, concurrency | Incomplete: SPEC-029/030, SPEC-040/041. |
 
 [Compiler diagnostics](docs/diagnostics.md) now connect parsing, checking, and high-level
@@ -204,8 +205,8 @@ bash scripts/check-package.sh build build/package-check
 ```
 
 CPack writes `build/gloinc-0.0.1-macos-arm64.tar.gz` and its `.sha256` checksum.
-The archive contains `bin/gloinc`, documentation, an example, and the core source
-fixtures. The verification script runs all 241 CLI/defer/method/pointer/struct/standard-output/source acceptance cases against
+The archive contains `bin/gloinc`, standard modules, native arena libraries and header,
+documentation, runnable examples, and the core source fixtures. The verification script runs all 265 CLI/arena/defer/method/pointer/struct/standard-output/source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
 spaces. See [the release guide](docs/release.md) for extraction, dependencies,
 sanitizer checks, and the supported-platform limits.
@@ -219,7 +220,7 @@ ctest --test-dir build -j 1 --output-on-failure
 ctest --test-dir build -j 4 --output-on-failure
 ```
 
-`check-core` runs 526 required scalar, defer, method, pointer, struct, and standard-output checks, including frontend,
+`check-core` runs 559 required scalar, arena, defer, method, pointer, struct, and standard-output checks, including frontend,
 lowering, external execution, source acceptance, CLI, JIT, and dialect setup.
 The full suite exits nonzero for the documented
 failures; do not disable those cases to obtain a green run. The CLI suite launches
@@ -231,13 +232,14 @@ the built executable directly and verifies actual file-dependent results.
 it uses shared LLVM for resolved integer and floating values.
 `gloin_backend` contains codegen, the Gloin dialect, and the JIT runner. Both
 executables link these libraries. The CLI and tests use the same compilation,
-lowering, and execution APIs.
+lowering, and execution APIs. `gloin_runtime` supplies the LLVM-independent
+native arena allocator; a shared variant is installed for external LLVM execution.
 
 [SPEC-006's contract](SPEC.md#first-release-contract-spec-006) selects a scalar
 JIT compiler on Apple Silicon macOS for the first release. SPEC-021 supplies its
 executable-core acceptance suite; SPEC-046 remains the release gate. Subsequent
 tasks add the strings, standard output, structs, pointers, methods, and defer
-listed above. Arenas, concurrency, and native binaries remain deferred. The
+listed above, followed by initialized-value arena allocation. Concurrency and native binaries remain deferred. The
 ordered backlog replaces the old phase notes as the implementation plan.
 
 ## Continuous integration

@@ -4,9 +4,10 @@ The maintained suite is the `TEST`/`TEST_F` definitions in `tests/*_test.cpp`,
 registered through `gloinc_test` and CTest. CMake checks that every file matching
 that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
-not additional test cases.
+not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
+`gloin_arena_test` target, registered with CTest and independent of LLVM.
 
-At SPEC-027, maintained source definitions and CTest discovery both contain **574 tests**:
+At SPEC-028, maintained source definitions and CTest discovery both contain **606 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -31,7 +32,8 @@ At SPEC-027, maintained source definitions and CTest discovery both contain **57
 | CodeGenGenericsTest | 4 |
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
-| ArenaTest | 1 |
+| ArenaTest | 21 |
+| ArenaRuntimeTest | 9 |
 | AsyncTest | 2 |
 | ArrayStringTest | 4 |
 | UnlessTest | 1 |
@@ -42,7 +44,7 @@ At SPEC-027, maintained source definitions and CTest discovery both contain **57
 | PointerTest | 18 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 133 |
+| CoreAcceptanceTest | 136 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -73,8 +75,33 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. The local parallel SPEC-027 run reports
-**569 passes, 5 failures, no unexpected test-process crashes or skipped tests**.
+as expected successes. The local parallel SPEC-028 run reports
+**602 passes, 4 failures, no unexpected test-process crashes or skipped tests**.
+
+## Arena allocation (SPEC-028)
+
+Twenty-one `ArenaTest` cases exercise the source API, all scalar types, nested
+struct/string/pointer values, native layout, shallow copies, initialized references,
+fallible allocation, mutable receivers, stable linked objects, reset/handle
+aliasing, cleared-handle traps, evaluation order, deferred allocation, module
+privacy, other allocator types, exact runtime ABIs, forced failure, and external
+LLVM execution. They participate in required and installed/relocated package checks.
+The previous unchecked `Arena::new` test has been replaced by these executable
+source tests. Core fixtures cover success, invalid type-valued arguments, the
+required import, and use of a cleared handle.
+
+Nine independent `ArenaRuntimeTest` cases exercise the actual native allocator,
+including alignment through 64 KiB, mixed-size object contents across growth,
+zero-sized allocations, large blocks, reset retention/reuse, independent arenas,
+overflow, deterministic allocation failure, unchanged state on failure, and
+balanced releases. This target builds without the compiler/backend and runs under
+ASan/UBSan. On macOS, the external LLVM test preloads the test executable's ASan
+library before loading an instrumented arena runtime into `mlir-runner`.
+
+The maintained example is `examples/arena_lab.gloin`. A manual stress run with
+one million particles over two frames passes under a 2 MiB stack. Retired arena
+references are never dereferenced by valid tests: reuse of retained storage does
+not provide general stale-reference detection.
 
 ## Function-exit defer (SPEC-027)
 
@@ -256,14 +283,13 @@ parent test remains subject to CTest's 30-second limit.
 | `AsyncTest.SpawnGeneration`, `SemaAsyncTest.AsyncTypes` | SPEC-040/SPEC-041: legacy syntax is rejected; concurrency contract, canonical fixtures, and runtime remain open. |
 | `AsyncTest.DeferredFunctionGeneration` | SPEC-040: fixture uses obsolete `let` and an omitted return annotation; replace against the deferred-call contract when defined. |
 | `CodeGenTest.GenerateSpawn` | SPEC-040, SPEC-041: restored lit assertion finds no spawn operation |
-| `ArenaTest.ArenaAllocation` | SPEC-028: `Arena::new` is unresolved; codegen previously emitted an unchecked call. |
-| `ArrayStringTest.ArrayTypesRemainDeferred` | SPEC-035: `[i32; 3]` type resolution is unsupported; a null type was previously tolerated. |
 
 SPEC-007's newline handling made
 `LexerTest.HandlesComments`, `LexerTest.TrackLineNumbers`,
 `ParserTest.ParseStructDefinition`, and `ParserTest.ParsePackedStruct` pass.
-Three formerly passing cases now expose failures: arena construction, the invalid
-async fixture, and array type resolution. None were disabled or converted into
+At SPEC-007, three formerly passing cases exposed failures: arena construction,
+the invalid async fixture, and array type resolution. SPEC-028 now implements
+arenas with source-based coverage; arrays remain an explicit rejection under SPEC-035. None were disabled or converted into
 expected successes. `BasicCodeGenTest.HandlesControlFlow` now explicitly declares
 its assigned variable `mut`, as required by SPEC-006; a new diagnostic regression
 checks that the original immutable assignment fails. SPEC-007 added 15 passing

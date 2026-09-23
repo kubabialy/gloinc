@@ -705,7 +705,7 @@ tests or turn unimplemented features into expected successes.
 | Pointers and references | Implemented by SPEC-025 with manual lifetimes, typed access, mutability checks, and null traps. |
 | Instance/static methods | Implemented for ordinary structs (SPEC-026); explicit typed `self`, checked receivers, and file/module visibility. |
 | `defer` | Function-exit LIFO calls with registration-time argument capture (SPEC-027). |
-| Arenas | Deferred (SPEC-028). |
+| Arenas | Initialized-value allocation through `@arena` / `arena.GeneralArena` (SPEC-028). |
 | Local modules and `#package` imports | Deferred (SPEC-029/SPEC-044). |
 | Generic types/functions, enums, `Result` | Deferred (SPEC-031 through SPEC-034); capitalization must not decide grammar. |
 | `[i32; 3]`, `u8[1024]`, array literals, indexing/slicing | Deferred syntax/layout choice (SPEC-035); neither array spelling is approved for the core. |
@@ -1071,21 +1071,175 @@ def main() -> i32 {
 
 This prints `body`, `second`, and `first`, each on its own line, and exits 42.
 
-##### Planned arena API
+##### Arena allocation (SPEC-028)
 
-Gloin does not have garbage collection and expects you to manage memory manually. To assist with this, it provides:
+SPEC-028 implements initialized-value allocation through a real standard module, `stdlib/arena.gloin`, imported as
+`@arena`. This module may expose multiple allocator types; it is not tied to a
+single built-in `Arena` type.
 
-1.  **Arena Allocation**: The preferred way to manage memory for request lifecycles or temporary objects.
-2.  **`defer` statement**: Executed when the current function returns, in LIFO order (Last-In-First-Out).
+The first public type is `arena.GeneralArena`: a general-purpose,
+growing arena with stable allocation addresses. Other strategies may later have
+their own public types in the same file, without renaming this type or changing
+its behavior. Additional strategies and a shared allocator interface are not
+required for SPEC-028.
+
+The `alloc(value) -> &T` operation evaluates an initialized value of
+type `T` once, allocates storage using that type's native size and alignment,
+and copies the value into it before returning a non-null reference. Copies are
+shallow; referenced resources retain their existing manual lifetimes. The first
+API does not use the old conceptual `alloc(Type)` form.
+
+Typed allocation requires compiler support until generic functions are defined.
+That support must identify the allocator declaration and its allocation
+operation explicitly, rather than treating every method named `alloc`, or every
+type exported by `@arena`, as the general allocator. Lifecycle methods belong in
+the library, with native storage operations behind a small runtime ABI. Future
+allocator types must be able to select their own storage policy.
+
+Memory management remains manual, without a borrow checker. The following
+contract governs the source API and native runtime.
+
+**Public operations and failure behavior**
+
+| Operation | Result | Contract |
+| --- | --- | --- |
+| `GeneralArena.create()` | `GeneralArena` | Creates an empty arena; failure to allocate its control object traps. Backing blocks are allocated lazily. |
+| `a.alloc(value)` | `&T` | Stores an initialized copy of `value`; allocation failure traps. |
+| `a.try_alloc(value)` | `*T` | Stores an initialized copy on success; returns null on allocation failure. |
+| `a.reset()` | `void` | Invalidates all allocated objects and retains backing blocks for reuse. |
+| `a.free()` | `void` | Releases every backing block and the control object, then clears this handle. |
+
+Instance operations require a writable receiver, as with `self: &GeneralArena`.
+The receiver is evaluated first, then the initializer exactly once, before
+attempting allocation. `try_alloc` does not undo initializer side effects on
+failure. Allocation accepts supported, non-void value types; the checked
+initializer type determines `T`, without changing general type-inference rules.
+The returned reference/pointer designates writable storage, subject to ordinary
+field mutability rules. No reference is produced before initialization finishes.
+
+`try_alloc` makes allocation failure recoverable; it does not recover from
+initializer traps or invalid lifetime use. A failed storage request leaves the
+arena's allocation state and existing objects intact and releases any partial
+native allocations. Unrepresentable sizes and arithmetic overflow are allocation
+failures. Traps do not run deferred cleanup, consistent with SPEC-027.
+
+**Handle ownership and lifetimes**
+
+The handle contains private native state. Copying or passing it by value creates
+an alias to the same arena, not a new arena or an additional owner. The programmer
+designates one owner responsible for freeing it; helpers should take `&GeneralArena`.
+There is no reference counting, implicit free, move tracking, or borrow checking.
+Losing the last handle without freeing it leaks its storage.
+
+`reset()` invalidates every allocated object and every pointer/reference into
+those objects, including ones obtained through another handle. All live handles
+still refer to the now-empty arena. Retaining or reusing the same address does not
+make an old pointer/reference valid again. Reset does not run object destructors
+or free resources referenced by stored values; those remain manually managed.
+
+`free()` invalidates all allocated objects and all other copies of the handle.
+Repeated `free()` on the same cleared handle is a no-op. Allocation and reset
+through that cleared handle trap. A new `create()` result may be assigned to it
+to start another arena. Other copies are dangling: using or freeing them is an
+invalid lifetime operation with no promised runtime detection. Private fields
+do not make a handle noncopyable or protect against this error.
+
+The owner must stay alive through `defer owner.free()`, which captures its
+address under ordinary method/defer rules. Cleanup of resources stored in the
+arena must run before the arena is freed; LIFO registration determines that
+order. Returning an arena reference from a function that frees the arena before
+returning leaves a dangling reference and is the programmer's error.
+
+The allocator has no internal synchronization. Concurrent operations on the same
+arena require external synchronization; separate arenas have independent state.
+
+**Storage and alignment**
+
+The general allocator uses aligned bump allocation within native blocks. When a
+block cannot satisfy a request, it reuses a suitable retained block or allocates
+another. Existing blocks and objects never move during growth. Large requests
+receive suitably sized blocks. Block sizes and growth factors are implementation
+tuning choices, not observable capacity guarantees.
+
+Allocation uses the compiler's target layout, including struct padding and
+alignment. The runtime checks alignment padding and all size arithmetic before
+allocating or advancing a cursor. Alignment must be a nonzero power of two and
+must be honored even when it exceeds the backing allocator's default alignment.
+Zero-sized values reserve at least one byte so that successful live allocations
+still have distinct, non-null, correctly aligned addresses.
+
+Reset rewinds allocation state without obtaining new storage and retains all
+backing blocks, including large ones. Retained capacity therefore follows past
+demand until `free()` releases it. Reset does not promise zeroed memory. Subsequent
+typed allocations initialize their values normally; struct padding has no
+specified contents. Individual object deallocation and uninitialized allocation
+are outside this initial API.
+
+**Native ABI and compiler boundary**
+
+The general allocator has its own opaque native control object. The runtime uses
+the C calling convention and these signatures on the selected native target:
+
+```c
+void *gloin_arena_general_create(void);
+void *gloin_arena_general_alloc(void *state, uint64_t size, uint64_t alignment);
+void gloin_arena_general_reset(void *state);
+void gloin_arena_general_destroy(void *state);
+```
+
+Create and allocation return null on allocation failure. Allocation returns null
+for invalid alignment or a request whose arithmetic cannot be represented on the
+target. A successful allocation returns raw storage; compiler-generated typed
+code initializes it before exposing the result. Reset and allocation require
+live, non-null state. Destroy accepts null as a no-op; otherwise it requires live
+state. No native exception crosses the ABI. Library/compiler wrappers enforce
+the public trap/null policy and clear the receiver after destruction.
+
+The JIT validates exact runtime signatures and registers these symbols explicitly.
+Source functions cannot masquerade as runtime declarations. The native runtime
+must also be available to external LLVM execution and relocated installations.
+These operations are not a general source FFI, and future allocator types may
+use different native state and storage operations.
+
+**Implementation and acceptance sequence**
+
+1. Implement the native general allocator and direct runtime tests, including
+   deterministic allocation-failure injection and ASan/UBSan execution.
+2. Add `arena.gloin`, checked typed allocation, native-layout lowering, and exact
+   runtime linking/ABI validation. Preserve allocator identity and reject
+   unrelated methods/types rather than dispatching by spelling alone.
+3. Add source execution/rejection/trap fixtures and a substantial runnable
+   example covering mixed types, mutation, growth, reset/reuse, and deferred free.
+4. Run required and full compiler suites, external execution, and installed and
+   relocated package checks. Replace the obsolete unchecked arena test with
+   maintained source-based coverage; keep unrelated deferred failures visible.
+
+Tests must cover native alignment, empty structs, large requests, stable addresses
+through growth, independent arenas, shallow copies, evaluation order, mutable
+receivers, forced failure without state corruption or leaks, checked arithmetic,
+reset retention/reuse, complete freeing, and large allocation loops with a small
+stack. Live handle aliases must observe the same allocation/reset state. Cleared
+handle behavior and defer order need explicit tests. Tests must not dereference
+dangling handles or retired objects as if their behavior were defined: retained
+storage means ASan alone cannot establish reset-time lifetime correctness.
+
+The following example is executable under SPEC-028.
 
 ```gloin
-def main() -> i32 {
-    // Arena allocation example (conceptual)
-    def arena: Arena = Arena::new();
-    defer arena.free(); // Frees everything allocated in this arena
+import "@arena";
 
-    def x: *SomeX = arena.alloc(SomeX);
-    
+def struct Particle {
+    def mut position: f64,
+    def mut velocity: f64,
+}
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+    def particle: &Particle = memory.alloc(
+        Particle { position: 0.0, velocity: 2.0 }
+    );
+    particle.position = particle.position + particle.velocity;
     return 0;
 }
 ```

@@ -11,6 +11,7 @@ established by the maintained suite.
 | --- | --- | --- |
 | `core_counter.gloin` | Scalar core execution | Verified by the CLI tests; broader runnable fixtures are in [core acceptance](../tests/fixtures/core/README.md). |
 | `hello_world.gloin` | Standard output | Runnable with SPEC-022/SPEC-023. |
+| `arena_lab.gloin` | Typed arena allocation | Runnable with SPEC-028; linked particles, native layout, methods, reset/reuse, independent arenas, and deferred free. |
 | `simple_test.gloin`, `comprehensive_test.gloin`, `P2_SUMMARY_DEMO.gloin` | Mixed features | Historical design inputs; use the maintained core acceptance fixtures for verified programs. |
 | `defer_test.gloin` | Deferred cleanup | Scope and exit paths: SPEC-027. |
 | `basic_endianness_test.gloin` | Byte-order-aware types | Representation and semantics: SPEC-037 through SPEC-039. |

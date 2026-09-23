@@ -1,4 +1,6 @@
 #include "jit_runner.h"
+#include "arena_lowering.h"
+#include "arena_runtime.h"
 #include "lowering.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
@@ -67,8 +69,16 @@ mlir::LLVM::LLVMFuncOp validate_entry(mlir::ModuleOp module, Diagnostics &diagno
                         "convention and emitted linkage");
         return {};
     }
-    // Only explicitly registered output and defer bookkeeping ABIs can be external.
+    // Only explicitly registered output, defer, and arena ABIs can be external.
     for (auto function : module.getOps<mlir::LLVM::LLVMFuncOp>()) {
+        if (auto kind = arena_operation(function.getName().str(), arena_runtime_names)) {
+            if (!function.isExternal() ||
+                function.getFunctionType() != arena_runtime_type(*module.getContext(), *kind) ||
+                function.getCConv() != mlir::LLVM::CConv::C ||
+                function.getLinkage() != mlir::LLVM::Linkage::External)
+                execution_error(diagnostics, function.getLoc(), "Invalid arena runtime ABI");
+            continue;
+        }
         if (function.getName() == "malloc" || function.getName() == "free") {
             if (!is_defer_allocator(function))
                 execution_error(diagnostics, function.getLoc(), "Invalid defer allocator runtime ABI");
@@ -168,9 +178,7 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module) {
     }
     if (diagnostics->has_errors())
         return failure();
-    if (lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>(standard_output_symbol) ||
-        lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>("malloc") ||
-        lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>("free")) {
+    {
         (*engine)->registerSymbols([](llvm::orc::MangleAndInterner mangle) {
             llvm::orc::SymbolMap symbols;
             symbols[mangle(standard_output_symbol)] = llvm::orc::ExecutorSymbolDef(
@@ -179,6 +187,18 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module) {
                 llvm::orc::ExecutorAddr::fromPtr(&std::malloc), llvm::JITSymbolFlags::Exported);
             symbols[mangle("free")] = llvm::orc::ExecutorSymbolDef(
                 llvm::orc::ExecutorAddr::fromPtr(&std::free), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_arena_general_create")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_general_create),
+                llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_arena_general_alloc")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_general_alloc),
+                llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_arena_general_reset")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_general_reset),
+                llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_arena_general_destroy")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_general_destroy),
+                llvm::JITSymbolFlags::Exported);
             return symbols;
         });
     }

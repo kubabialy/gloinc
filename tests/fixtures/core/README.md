@@ -31,6 +31,7 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 | UTF-8 comments, CRLF, multiline expressions | [utf8_comments](run/utf8_comments.gloin) |
 | i32 result mapped to host exit status modulo 256, with no implicit output | [negative](run/negative_result.gloin), [zero](run/zero_result.gloin), [minimum](run/minimum_result.gloin), [maximum](run/maximum_result.gloin) |
 | Function-exit LIFO defer and checked registration (SPEC-027) | [defer](run/defer.gloin), [invalid operand](reject/defer_operand.gloin), [cleanup trap](trap/defer_cleanup.gloin) |
+| Initialized arena allocation, import requirement, and freed-handle traps (SPEC-028) | [arena](run/arena.gloin), [type argument](reject/arena_value.gloin), [missing import](reject/unimported_arena.gloin), [freed handle](trap/arena_freed.gloin) |
 | Instance/static methods and explicit self (SPEC-026) | [methods](run/methods.gloin), [invalid receiver](reject/method_receiver.gloin), [null method access](trap/null_method.gloin) |
 | Pointers, references, indirect writes, and read-only aliases (SPEC-025) | [pointers](run/pointers.gloin) |
 | Null reference and pointee mismatch diagnostics | [null_reference](reject/null_reference.gloin), [pointer_type_mismatch](reject/pointer_type_mismatch.gloin) |

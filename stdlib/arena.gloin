@@ -1,0 +1,37 @@
+// GeneralArena owns native blocks. Copies alias that ownership; free exactly
+// once through the designated owner. Helpers should receive &GeneralArena.
+def pub struct GeneralArena {
+    def mut state: *u8,
+
+    def pub static create() -> GeneralArena {
+        def state: *u8 = __arena_general_create();
+        __arena_require(state);
+        return GeneralArena { state: state };
+    }
+
+    // Typed allocation bridges: callers write alloc(value) / try_alloc(value).
+    // The compiler supplies the value's native size/alignment to these methods,
+    // then stores the captured value into the returned storage. These are NOT
+    // public raw-allocation signatures. Keep storage and failure policy here.
+    def pub alloc(self: &GeneralArena, size: u64, alignment: u64) -> *u8 {
+        __arena_require(self.state);
+        def storage: *u8 = __arena_general_alloc(self.state, size, alignment);
+        __arena_require(storage);
+        return storage;
+    }
+
+    def pub try_alloc(self: &GeneralArena, size: u64, alignment: u64) -> *u8 {
+        __arena_require(self.state);
+        return __arena_general_alloc(self.state, size, alignment);
+    }
+
+    def pub reset(self: &GeneralArena) -> void {
+        __arena_require(self.state);
+        __arena_general_reset(self.state);
+    }
+
+    def pub free(self: &GeneralArena) -> void {
+        __arena_general_destroy(self.state);
+        self.state = null;
+    }
+}

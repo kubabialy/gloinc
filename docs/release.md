@@ -49,7 +49,11 @@ tests enabled. `make run` defaults to the counter example; use
 | `share/gloinc/examples/core_counter.gloin` | Runnable example returning 42 |
 | `share/gloinc/examples/hello_world.gloin` | Runnable standard-output example |
 | `share/gloinc/stdlib/std.gloin` | Standard utility functions, compiled when imported |
-| `share/gloinc/core-fixtures/` | All 133 source acceptance fixtures and their matrix |
+| `share/gloinc/stdlib/arena.gloin` | General arena allocator and explicit lifecycle methods |
+| `share/gloinc/examples/arena_lab.gloin` | Linked particles with arena growth/reset/reuse |
+| `lib/libgloin_runtime.a`, `lib/libgloin_runtime.dylib` | Native arena runtime for static and external LLVM execution |
+| `include/gloin/arena_runtime.h` | C runtime ABI header |
+| `share/gloinc/core-fixtures/` | All 136 source acceptance fixtures and their matrix |
 
 LLVM/MLIR and their Homebrew dependencies are external and are not redistributed
 in this package. The installed executable uses the library installation selected
@@ -72,21 +76,22 @@ tar -xzf gloinc-0.0.1-macos-arm64.tar.gz
 ```
 
 `bash scripts/check-package.sh build build/package-check` validates a staged
-installation and a relocated extraction. Each runs 241 CLI/defer/method/pointer/struct/standard-output/source
+installation and a relocated extraction. Each runs 265 CLI/arena/defer/method/pointer/struct/standard-output/source
 cases against that binary, using the installed fixtures. The script also executes
-the packaged counter and hello-world examples and records shared-library
-dependencies. Removing the relocated `std.gloin` must cause a module
-loading error, proving there is no fallback to the source checkout. It retains
-JUnit reports, archive, and checksum. `GLOIN_TEST_CLI` and `GLOIN_TEST_FIXTURES`
+the packaged counter, hello-world, and arena examples, verifies external LLVM
+execution against the relocated runtime library, checks missing standard modules,
+and records shared-library dependencies. Removing either relocated `std.gloin`
+or `arena.gloin` must cause a module loading error, proving there is no fallback to the source checkout. It retains
+JUnit reports, archive, and checksum. `GLOIN_TEST_CLI`, `GLOIN_TEST_FIXTURES`, and `GLOIN_TEST_ARENA_RUNTIME`
 are explicit test-harness overrides used for this purpose, not compiler options.
 
 ## Release validation
 
-The `check-core` target runs 526 required scalar, defer, method, pointer, struct, and standard-output checks, including lower-level
+The `check-core` target runs 559 required scalar, arena, defer, method, pointer, struct, and standard-output checks, including lower-level
 frontend/operator/lowering tests and external execution probes as well as the
-133 source fixtures. No known failure is reclassified as success. Full serial
-and parallel runs remain separate. The full suite currently retains five
-deferred-feature failures: spawn codegen, arenas, deferred/spawn generation, and
+136 source fixtures. No known failure is reclassified as success. Full serial
+and parallel runs remain separate. The full suite currently retains four
+deferred-feature failures: spawn codegen, deferred/spawn generation, and
 async types. Those features are rejected by the source compiler.
 
 ```sh
@@ -107,7 +112,10 @@ ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
   cmake --build build-sanitized --target check-core
 ```
 
-This checks the compiler and its C++ test harness. Prebuilt LLVM/MLIR libraries
+This checks the compiler, native arena runtime, and C++ test harness. The
+standalone `gloin_arena_test` target directly exercises native allocation and
+read/write operations under instrumentation; the external LLVM arena test also
+loads the instrumented runtime with ASan initialized at process startup. Prebuilt LLVM/MLIR libraries
 and dynamically generated machine code are not sanitizer-instrumented. JIT
 arithmetic failures are checked through explicit signal assertions. LeakSanitizer
 is not part of the macOS validation claim. Sanitizer builds have no package target.

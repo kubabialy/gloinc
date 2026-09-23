@@ -1,0 +1,80 @@
+import "@arena";
+import "@std";
+
+// Each frame owns a linked list of individually allocated particles. Their
+// addresses stay stable as the arena grows. Reset reuses the blocks next frame.
+def const PARTICLES: i64 = 10000;
+def const FRAMES: i64 = 4;
+
+def struct Particle {
+    def tag: u8,
+    def id: i64,
+    def mut position: f64,
+    def velocity: f64,
+    def next: *Particle,
+
+    def step(self: &Particle) -> void {
+        self.position = self.position + self.velocity;
+    }
+}
+
+def struct Frame {
+    def first: &Particle,
+    def head: &Particle,
+}
+
+def build_frame(memory: &arena.GeneralArena) -> Frame {
+    def first: &Particle = memory.alloc(Particle {
+        tag: 7, id: 0, position: 1.25, velocity: 0.5, next: null
+    });
+    def mut head: &Particle = first;
+    for def mut id: i64 = 1; id < PARTICLES; id = id + 1 {
+        head = memory.alloc(Particle {
+            tag: 7, id: id, position: 1.25, velocity: 0.5, next: head
+        });
+    }
+    return Frame { first: first, head: head };
+}
+
+def verify_frame(frame: Frame) -> bool {
+    def mut cursor: *Particle = frame.head;
+    def mut count: i64 = 0;
+    def mut checksum: i64 = 0;
+    while cursor != null {
+        (&*cursor).step();
+        if cursor.tag != 7 || cursor.position != 1.75 { return false; }
+        checksum = checksum + cursor.id;
+        count = count + 1;
+        cursor = cursor.next;
+    }
+    return count == PARTICLES && checksum == PARTICLES * (PARTICLES - 1) / 2
+        && frame.first.position == 1.75;
+}
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    // An independent arena outlives all frame resets. String allocation copies
+    // the string descriptor; it does not duplicate the literal's bytes.
+    def mut messages: arena.GeneralArena = arena.GeneralArena.create();
+    defer messages.free();
+    def message: &string = messages.alloc("arena lab: ok");
+
+    for def mut index: i64 = 0; index < FRAMES; index = index + 1 {
+        def frame: Frame = build_frame(&memory);
+        if !verify_frame(frame) { return 1; }
+
+        def count: *i64 = memory.try_alloc(PARTICLES);
+        if count == null { return 2; }
+        if *count != PARTICLES { return 3; }
+        memory.reset();
+        // frame and count are now invalid. Nothing below reads them.
+    }
+
+    // Free clears this handle; repeating it on the same handle is harmless.
+    memory.free();
+    memory.free();
+    std.println(*message);
+    return 0;
+}

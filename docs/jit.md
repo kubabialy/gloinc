@@ -35,11 +35,13 @@ external, internal, or private emitted linkage. Source `priv` does not prevent
 execution. Helper functions also require C calling convention and emitted
 external/internal/private linkage. External function/global declarations are
 rejected before engine creation except for the exact runtime ABIs:
-`gloin.runtime.output(ptr, i64) -> void`, `malloc(i64) -> ptr`, and `free(ptr) -> void`,
+`gloin.runtime.output(ptr, i64) -> void`, `malloc(i64) -> ptr`, `free(ptr) -> void`,
+and the four [arena runtime operations](arenas.md#library-and-compiler-boundary),
 all with external linkage, C calling convention, and no variadic arguments.
 The JIT registers output and native allocation callbacks explicitly. Allocation
-supports SPEC-027's pending-call records, not a source allocator API or general
-FFI. Source functions named `malloc`/`free` receive separate internal linkage
+supports SPEC-027's pending-call records and SPEC-028's explicit arena API. This
+does not introduce general FFI. Source functions named `malloc`/`free` or with
+arena runtime symbol names receive separate internal linkage
 names, preserving ordinary source lookup without a runtime symbol collision.
 
 Native target/assembly-printer registration runs once. Builtin and LLVM dialect

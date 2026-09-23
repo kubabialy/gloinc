@@ -63,6 +63,8 @@ jobs:
           test -z "$result"
           result=$(build-ci-no-tests/gloinc examples/hello_world.gloin)
           test "$result" = 'Hello World!'
+          result=$(build-ci-no-tests/gloinc examples/arena_lab.gloin)
+          test "$result" = 'arena lab: ok'
 
       - name: Build with tests
         id: build

@@ -12,8 +12,9 @@ work_dir=$(mktemp -d "$report_dir/work.XXXXXX")
 cmake --install "$build_dir" --prefix "$work_dir/install prefix"
 cmake -E env "GLOIN_TEST_CLI=$work_dir/install prefix/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$work_dir/install prefix/share/gloinc/core-fixtures" \
+  "GLOIN_TEST_ARENA_RUNTIME=$work_dir/install prefix/lib/libgloin_runtime.dylib" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/installed.xml"
 
 cpack --config "$build_dir/CPackConfig.cmake" -B "$work_dir/packages"
@@ -27,14 +28,18 @@ tar -xzf "$archive" -C "$work_dir/extracted prefix"
 package_root="$work_dir/extracted prefix/$archive_name"
 cmake -E env "GLOIN_TEST_CLI=$package_root/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$package_root/share/gloinc/core-fixtures" \
+  "GLOIN_TEST_ARENA_RUNTIME=$package_root/lib/libgloin_runtime.dylib" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/extracted.xml"
 program_status=0
 result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/core_counter.gloin") || program_status=$?
 [[ "$program_status" == 42 && -z "$result" ]]
 result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/hello_world.gloin")
 [[ "$result" == 'Hello World!' ]]
+result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/arena_lab.gloin")
+[[ "$result" == 'arena lab: ok' ]]
+[[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" ]]
 # A relocated compiler must depend on its installed module, never a source fallback.
 mv "$package_root/share/gloinc/stdlib/std.gloin" "$work_dir/std.gloin.saved"
 module_status=0
@@ -43,10 +48,17 @@ result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/hello_w
 mv "$work_dir/std.gloin.saved" "$package_root/share/gloinc/stdlib/std.gloin"
 [[ "$module_status" == 1 && -z "$result" ]]
 grep -F "Cannot load module '@std'" "$report_dir/missing-stdlib.txt"
-otool -L "$package_root/bin/gloinc" > "$report_dir/dependencies.txt"
+mv "$package_root/share/gloinc/stdlib/arena.gloin" "$work_dir/arena.gloin.saved"
+module_status=0
+result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/arena_lab.gloin" \
+  2> "$report_dir/missing-arena.txt") || module_status=$?
+mv "$work_dir/arena.gloin.saved" "$package_root/share/gloinc/stdlib/arena.gloin"
+[[ "$module_status" == 1 && -z "$result" ]]
+grep -F "Cannot load module '@arena'" "$report_dir/missing-arena.txt"
+otool -L "$package_root/bin/gloinc" "$package_root/lib/libgloin_runtime.dylib" > "$report_dir/dependencies.txt"
 if grep -F "$build_dir" "$report_dir/dependencies.txt"; then
   echo "Installed compiler still depends on its build directory" >&2
   exit 1
 fi
 cp "$archive" "$archive.sha256" "$report_dir/"
-echo "Installed and extracted packages passed all 241 CLI/defer/method/pointer/struct/standard-output/source acceptance cases."
+echo "Installed and extracted packages passed all CLI/arena/defer/method/pointer/struct/standard-output/source acceptance cases."

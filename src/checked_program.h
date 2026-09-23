@@ -2,6 +2,7 @@
 #define GLOINC_CHECKED_PROGRAM_H
 
 #include "AST.h"
+#include "arena_abi.h"
 #include "compilation_mode.h"
 #include "numeric.h"
 #include <stdexcept>
@@ -63,6 +64,9 @@ struct ResolvedSymbol {
     SourceSpan span;
 };
 struct SemanticData {
+    std::unordered_map<const CallExpression *, ArenaPrimitive> arena_runtime_calls;
+    // Typed allocation calls target a checked library layout method. true is try_alloc.
+    std::unordered_map<const CallExpression *, bool> arena_allocations;
     std::unordered_map<const FunctionDefinition *, std::vector<const DeferStatement *>> defers;
     // Instance calls pass the receiver once, before explicit arguments.
     // true takes the address of struct storage; false passes a pointer value.

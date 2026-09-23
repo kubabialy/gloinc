@@ -38,20 +38,7 @@ void CodeGen::initialize_unchecked_types() {
     type_table["u16"] = builder.getI16Type();
     type_table["i16"] = builder.getI16Type();
 
-    // Initialize String struct: struct String { ptr: *u8, len: i64 }
-    auto u8PtrType = mlir::LLVM::LLVMPointerType::get(&context);
-    auto lenType = builder.getI64Type();
     (void)string_type();
-
-    // Initialize Arena struct: struct Arena { ptr: *u8, end: *u8, blocks: *u8 }
-    // ptr: Current bump pointer
-    // end: End of current block
-    // blocks: Pointer to current block (linked list head)
-
-    auto arenaType = mlir::LLVM::LLVMStructType::getIdentified(&context, "Arena");
-    if (mlir::succeeded(arenaType.setBody({u8PtrType, u8PtrType, u8PtrType}, /*isPacked=*/false))) {
-        type_table["Arena"] = arenaType;
-    }
 
     create_runtime_functions();
 }
@@ -102,23 +89,6 @@ void CodeGen::create_runtime_functions() {
     auto freeType = mlir::LLVM::LLVMFunctionType::get(voidType, {ptrType}, false);
     builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "free", freeType);
     // }
-
-    // Arena Runtime Functions
-    auto arenaInitType = mlir::LLVM::LLVMFunctionType::get(voidType, {ptrType}, false);
-    builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "gloin_arena_init",
-                                           arenaInitType);
-
-    auto arenaAllocType = mlir::LLVM::LLVMFunctionType::get(ptrType, {ptrType, i64Type}, false);
-    builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "gloin_arena_alloc",
-                                           arenaAllocType);
-
-    auto arenaResetType = mlir::LLVM::LLVMFunctionType::get(voidType, {ptrType}, false);
-    builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "gloin_arena_reset",
-                                           arenaResetType);
-
-    auto arenaDestroyType = mlir::LLVM::LLVMFunctionType::get(voidType, {ptrType}, false);
-    builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "gloin_arena_destroy",
-                                           arenaDestroyType);
 
     // Async Runtime Functions
     // Task* gloin_spawn_task(void* (*func)(void*), void* arg)

@@ -53,6 +53,12 @@ class CoreAcceptanceTest : public gloin_test::CliFixture {
 
 TEST_F(CoreAcceptanceTest, RunMinimal) { runs("run/minimal.gloin", "42"); }
 
+TEST_F(CoreAcceptanceTest, RunArena) { runs("run/arena.gloin", "42"); }
+TEST_F(CoreAcceptanceTest, RejectArenaTypeArgument) {
+    rejects("reject/arena_value.gloin", "Expected expression");
+}
+TEST_F(CoreAcceptanceTest, TrapFreedArena) { traps("trap/arena_freed.gloin"); }
+
 TEST_F(CoreAcceptanceTest, RunForwardCall) { runs("run/forward_call.gloin", "42"); }
 
 TEST_F(CoreAcceptanceTest, RunControlFlow) { runs("run/control_flow.gloin", "3"); }
@@ -407,8 +413,8 @@ TEST_F(CoreAcceptanceTest, RejectDeferredTypeU16Be) {
     rejects("reject/deferred_type_u16_be.gloin", "Unknown or unsupported core type");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredTypeArena) {
-    rejects("reject/deferred_type_Arena.gloin", "Unknown or unsupported core type");
+TEST_F(CoreAcceptanceTest, RejectUnimportedArena) {
+    rejects("reject/unimported_arena.gloin", "Unknown or unsupported core type");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredTypeResult) {

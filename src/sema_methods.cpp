@@ -45,6 +45,7 @@ void Sema::collect_methods(const std::vector<std::unique_ptr<Statement>> &progra
             if (!valid)
                 continue;
             collected_functions.emplace(method.get(), signature);
+            register_arena_method(structure, method.get(), signature);
             recording->linkage_names[recording->bindings.at(method->name.get())] =
                 "gloin.method." + std::to_string(*structure->identity) + "." + name;
         }
@@ -137,6 +138,23 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
     if (!method->is_public && structure->owner != current_module) {
         log_error("Private method '" + method->name->value + "'");
         return nullptr;
+    }
+    if (auto bridge = arena_methods.find(method); bridge != arena_methods.end()) {
+        if (call->arguments.size() != 1) {
+            log_error("Arena allocation expects exactly one initialized value");
+            return nullptr;
+        }
+        // Infer T from the value itself, not from an expected pointer result.
+        auto previous = expected_pointer;
+        expected_pointer.reset();
+        auto value = check_expression(call->arguments.front().get());
+        expected_pointer = previous;
+        if (!value || !value_type(value) || value_type(value) == ValueType(CoreType::Void))
+            return nullptr;
+        recording->arena_allocations[call] = bridge->second;
+        recording->bindings[static_cast<const Identifier *>(member->member.get())] =
+            recording->bindings.at(method->name.get());
+        return std::make_shared<PointerType>(value, bridge->second, false);
     }
     if (call->arguments.size() != signature->param_types.size() - offset) {
         log_error("Incorrect number of method arguments");

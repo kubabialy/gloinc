@@ -116,6 +116,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         return false;
     current_scope = std::make_shared<Scope>();
     collected_functions.clear();
+    arena_methods.clear();
     for (auto &structure : collected_struct_types)
         structure->fields.clear();
     collected_struct_types.clear();
@@ -297,7 +298,8 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
         return nullptr;
     // Keep source functions independent of the defer bookkeeping's native ABI.
     if (recording && !current_module &&
-        (sym.name == "malloc" || sym.name == "free"))
+        (sym.name == "malloc" || sym.name == "free" ||
+         arena_operation(sym.name, arena_runtime_names)))
         recording->linkage_names[recording->bindings.at(func_def->name.get())] =
             "gloin.user." + sym.name;
     return func_type;
@@ -697,6 +699,10 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
                 return result;
         }
         const auto *direct = dynamic_cast<const Identifier *>(call->function.get());
+        if (recording && current_module && current_module->module_name == "arena" && direct) {
+            if (auto kind = arena_operation(direct->value, arena_primitive_names))
+                return check_arena_primitive(call, *kind);
+        }
         if (recording && current_module && direct && direct->value == "__write_stdout") {
             if (call->arguments.size() != 1) {
                 log_error("__write_stdout expects exactly one string argument");
@@ -842,6 +848,11 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
     }
     if (current_module && name->value == "__write_stdout") {
         log_error("Cannot redeclare the native byte-output primitive");
+        return false;
+    }
+    if (current_module && current_module->module_name == "arena" &&
+        arena_operation(name->value, arena_primitive_names)) {
+        log_error("Cannot redeclare a native arena primitive");
         return false;
     }
     if (current_scope->symbols.contains(name->value) ||

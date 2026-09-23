@@ -216,6 +216,12 @@ class Sema {
     std::vector<std::shared_ptr<StructType>> collected_struct_types;
     void collect_structs(const std::vector<std::unique_ptr<Statement>> &program);
     void collect_methods(const std::vector<std::unique_ptr<Statement>> &program);
+    std::unordered_map<const FunctionDefinition *, bool> arena_methods;
+    void register_arena_method(const std::shared_ptr<StructType> &structure,
+                               const FunctionDefinition *method,
+                               const std::shared_ptr<FunctionType> &signature);
+    std::shared_ptr<Type> check_arena_primitive(const CallExpression *call, ArenaPrimitive kind);
+    std::shared_ptr<Type> arena_value_type_hint(const Expression *value);
     void check_methods(const StructDefinition *definition);
     std::shared_ptr<StructType> method_type_receiver(const Expression *expression);
     const FunctionDefinition *method_target(const MemberAccessExpression *member);

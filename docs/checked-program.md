@@ -371,4 +371,22 @@ mangled. Both the JIT and external LLVM runner execute the emitted code.
 Value captures outlive lexical source bindings; pointer captures do not retain
 resources or extend their lifetime. Function-scope storage stays live through
 cleanup. Scope/iteration-local pointer escapes remain the programmer's
-responsibility under manual lifetimes. No borrow checker or arena API is added.
+responsibility under manual lifetimes. SPEC-027 adds no borrow checker;
+SPEC-028 supplies the explicit arena API described below.
+
+## Typed arena allocation (SPEC-028)
+
+`SemanticData::arena_runtime_calls` records validated library primitives, and
+`arena_allocations` records typed allocation calls plus their nullability policy.
+Sema recognizes the nominal `GeneralArena` declaration in `@arena`, validates
+its public layout-method signatures, and resolves calls to those methods.
+Other allocator types in that module keep their own identities and policies.
+
+Source `alloc(value)`/`try_alloc(value)` calls are checked using the initialized
+value's own type; their results retain its complete nominal/pointer identity.
+Codegen passes the captured receiver and native size/alignment to the resolved
+library method, then stores the initializer only if storage exists. Ordinary
+and deferred calls use the same bridge, including once-only captures. The native
+runtime owns blocks independently of the compiler/JIT and uses checked size and
+alignment arithmetic. See [arenas.md](arenas.md) for the source/native boundary,
+manual ownership, and reset/free semantics.

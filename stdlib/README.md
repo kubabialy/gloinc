@@ -19,10 +19,20 @@ Public methods may use private fields/helpers inside the module. Callers still
 need the receiver capability required by the signature, and cannot call private
 methods directly. See [SPEC-026](../SPEC.md#methods-spec-026).
 
-`__write_stdout(value: string) -> void` is the only native primitive provided to
-these modules. It writes the string's exact bytes and flushes stdout. `println`
-adds its newline in Gloin by calling `print` a second time. Application source
-cannot call the primitive directly; general FFI is not implemented.
+`import "@arena";` loads [arena.gloin](arena.gloin), exposing initialized-value
+allocation through `arena.GeneralArena`. The same file can export additional
+allocator types with their own storage policies. See [the arena guide](../docs/arenas.md)
+for ownership, failure behavior, and the typed allocation bridge.
+
+Native primitives are deliberately limited: `__write_stdout(value: string)` is
+available inside standard modules for exact byte output and flushing. `println`
+adds its newline in Gloin by calling `print` twice. The arena module additionally
+has private native allocation/reset/free primitives and a non-null guard.
+Application source cannot invoke these primitives directly; general FFI remains
+deferred. `GeneralArena.alloc` and `try_alloc` declare explicit size/alignment
+layout hooks in the library, while application calls supply one initialized
+value. Sema validates the hooks and the compiler supplies the layout and typed
+store; this narrow bridge does not enable general generic functions.
 
 CMake copies `*.gloin` files beside the build executable under `stdlib/` and
 installs them to `share/gloinc/stdlib/`. Rebuild after changing the source library,
