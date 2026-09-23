@@ -267,22 +267,22 @@ TEST_F(CoreAcceptanceTest, RejectDeferredCharacters) {
     rejects("reject/deferred_characters.gloin", "Character");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredPointer) {
-    rejects("reject/deferred_pointer.gloin", "Pointer");
+TEST_F(CoreAcceptanceTest, RejectPointerTypeMismatch) {
+    rejects("reject/pointer_type_mismatch.gloin", "Type mismatch");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredReference) {
-    rejects("reject/deferred_reference.gloin", "Pointer types");
+TEST_F(CoreAcceptanceTest, RejectNullReference) {
+    rejects("reject/null_reference.gloin", "null requires");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredArray) { rejects("reject/deferred_array.gloin", "Array"); }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredSlice) { rejects("reject/deferred_slice.gloin", "Array"); }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredDefer) { rejects("reject/deferred_defer.gloin", "Defer"); }
+TEST_F(CoreAcceptanceTest, RejectDeferOperand) { rejects("reject/defer_operand.gloin", "defer requires"); }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredMember) {
-    rejects("reject/deferred_member.gloin", "Member");
+TEST_F(CoreAcceptanceTest, RejectFunctionMember) {
+    rejects("reject/function_member.gloin", "Function values");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredIndex) { rejects("reject/deferred_index.gloin", "Index"); }
@@ -351,12 +351,12 @@ TEST_F(CoreAcceptanceTest, RejectDeferredPackageImport) {
     rejects("reject/deferred_package_import.gloin", "Unsupported module path");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredStruct) {
-    rejects("reject/deferred_struct.gloin", "Struct");
+TEST_F(CoreAcceptanceTest, RejectDeferredPackedStruct) {
+    rejects("reject/deferred_packed_struct.gloin", "Packed structs");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredPacked) {
-    rejects("reject/deferred_packed.gloin", "Struct");
+    rejects("reject/deferred_packed.gloin", "Packed structs");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredEnum) {
@@ -450,3 +450,13 @@ TEST_F(CoreAcceptanceTest, TrapOverflowF32) { traps("trap/overflow_f32.gloin"); 
 TEST_F(CoreAcceptanceTest, TrapDivisionZeroF64) { traps("trap/division_zero_f64.gloin"); }
 
 TEST_F(CoreAcceptanceTest, TrapOverflowF64) { traps("trap/overflow_f64.gloin"); }
+
+TEST_F(CoreAcceptanceTest, RunOrdinaryStruct) { runs("run/ordinary_struct.gloin", "42"); }
+
+TEST_F(CoreAcceptanceTest, RunPointers) { runs("run/pointers.gloin", "100"); }
+TEST_F(CoreAcceptanceTest, TrapNullDereference) { traps("trap/null_dereference.gloin"); }
+TEST_F(CoreAcceptanceTest, RunMethods) { runs("run/methods.gloin", "42"); }
+TEST_F(CoreAcceptanceTest, RejectMethodReceiver) { rejects("reject/method_receiver.gloin", "receiver"); }
+TEST_F(CoreAcceptanceTest, TrapNullMethod) { traps("trap/null_method.gloin"); }
+TEST_F(CoreAcceptanceTest, RunDefer) { runs("run/defer.gloin", "42"); }
+TEST_F(CoreAcceptanceTest, TrapDeferCleanup) { traps("trap/defer_cleanup.gloin"); }

@@ -1,0 +1,12 @@
+def struct Counter {
+    def mut value: i32,
+    def static make(value: i32) -> Counter { return Counter { value: value }; }
+    def add(self: &Counter, amount: i32) -> void { self.value = self.value + amount; }
+    def read(self: &const Counter) -> i32 { return self.value; }
+}
+
+def main() -> i32 {
+    def mut counter: Counter = Counter.make(40);
+    counter.add(2);
+    return counter.read();
+}

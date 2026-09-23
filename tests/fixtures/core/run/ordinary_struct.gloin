@@ -1,0 +1,14 @@
+def struct Inner { def mut value: i32, }
+def struct Record { def tag: u8, def mut inner: Inner, def count: u64, }
+
+def copy(value: Record) -> Record { return value; }
+
+def main() -> i32 {
+    def initial: Record = Record { count: 18446744073709551615, inner: Inner { value: 1 }, tag: 255 };
+    def mut updated: Record = copy(initial);
+    updated.inner.value = 42;
+    if initial.inner.value != 1 || updated.tag != 255 || updated.count != 18446744073709551615 {
+        return 1;
+    }
+    return updated.inner.value;
+}

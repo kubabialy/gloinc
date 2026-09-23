@@ -18,6 +18,11 @@ void Sema::check_constant(const VariableDeclaration *declaration) {
     auto declared_type = resolve_annotation(declaration->type.get());
     if (!declared_type)
         return;
+    if (dynamic_cast<StructType *>(declared_type.get()) ||
+        dynamic_cast<PointerType *>(declared_type.get())) {
+        log_error("Struct/pointer constants are not supported; use an immutable runtime binding");
+        return;
+    }
     auto errors_before = diagnostics_->all().size();
     bool previous = checking_constant;
     checking_constant = true;
@@ -90,7 +95,7 @@ std::shared_ptr<Type> Sema::check_constant_expression(const Expression *expressi
 
 std::optional<ConstantValue> Sema::evaluate_constant(const Expression *expression) {
     DiagnosticScope location(current_span, expression->span);
-    auto type = recording->types.at(expression);
+    auto type = recording->types.at(expression).builtin();
     if (auto found = recording->literals.find(expression); found != recording->literals.end())
         return found->second;
     if (const auto *boolean = dynamic_cast<const BooleanLiteral *>(expression))

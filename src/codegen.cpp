@@ -1,6 +1,7 @@
 #include "codegen.h"
-#include "standard_runtime.h"
 #include "mlir/IR/Diagnostics.h"
+#include "standard_runtime.h"
+#include "target_layout.h"
 #include <iostream>
 
 // using namespace mlir; // Removed to avoid conflict with gloin::Type
@@ -70,24 +71,13 @@ mlir::LLVM::LLVMStructType CodeGen::string_type() {
 }
 
 int64_t CodeGen::get_type_size(mlir::Type type) {
-    if (type.isInteger(1) || type.isInteger(8))
-        return 1;
-    if (type.isInteger(16))
-        return 2;
-    if (type.isInteger(32))
-        return 4;
-    if (type.isInteger(64))
-        return 8;
-    if (llvm::isa<mlir::LLVM::LLVMPointerType>(type))
-        return 8;
-    if (auto structType = llvm::dyn_cast<mlir::LLVM::LLVMStructType>(type)) {
-        int64_t size = 0;
-        for (auto t : structType.getBody()) {
-            size += get_type_size(t);
-        }
-        return size;
-    }
-    return 8; // Default
+    auto target = native_target_layout();
+    if (!target)
+        fail(llvm::toString(target.takeError()));
+    auto layout = measure_type_layout(type, llvm::DataLayout(target->data_layout));
+    if (!layout)
+        fail(llvm::toString(layout.takeError()));
+    return layout->size;
 }
 
 void CodeGen::create_runtime_functions() {
@@ -159,14 +149,6 @@ void CodeGen::leave_scope() {
     }
 }
 
-void CodeGen::emit_deferred() {
-    for (auto it = current_function_defers.rbegin(); it != current_function_defers.rend(); ++it) {
-        const auto *stmt = *it;
-        if (stmt->call) {
-            gen_expression(stmt->call.get(), true);
-        }
-    }
-}
 
 void CodeGen::declare(const std::string &name, mlir::Value value, bool is_address, mlir::Type type,
                       const std::string &source_type) {
@@ -192,15 +174,30 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
         return mlir::success();
     });
     try {
+        auto target = native_target_layout();
+        if (!target)
+            fail(llvm::toString(target.takeError()));
+        if (checked_data && llvm::DataLayout(target->data_layout).getPointerSizeInBits() !=
+                                checked_data->target.pointer_bits)
+            fail("Native target pointer width disagrees with checked types");
+        theModule->setAttr("llvm.data_layout", builder.getStringAttr(target->data_layout));
+        theModule->setAttr("llvm.target_triple", builder.getStringAttr(target->triple));
         if (!checked_data)
             initialize_unchecked_types();
         builder.setInsertionPointToEnd(theModule.getBody());
         if (checked_data) {
             for (const auto &stmt : program) {
                 if (const auto *import = dynamic_cast<const ImportStatement *>(stmt.get()))
-                    for (const auto &declaration : import->declarations)
+                    for (const auto &declaration : import->declarations) {
                         if (const auto *function = dynamic_cast<const FunctionDefinition *>(declaration.get()))
                             declare_function(function);
+                        if (const auto *structure = dynamic_cast<const StructDefinition *>(declaration.get()))
+                            for (const auto &method : structure->methods)
+                                declare_function(method.get());
+                    }
+                if (const auto *structure = dynamic_cast<const StructDefinition *>(stmt.get()))
+                    for (const auto &method : structure->methods)
+                        declare_function(method.get());
                 if (const auto *function = dynamic_cast<const FunctionDefinition *>(stmt.get()))
                     declare_function(function);
             }
@@ -287,6 +284,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
         if (checked_data)
             checked_return_type = checked_data->symbols[checked_binding(func_def->name.get())].type;
         current_function_defers.clear();
+        defer_record_types.clear();
+        defer_head = {};
         auto funcOp = checked_data ? checked_functions.at(checked_binding(func_def->name.get()))
                                    : declare_function(func_def);
         auto argTypes = funcOp.getFunctionType().getInputs();
@@ -302,14 +301,24 @@ void CodeGen::gen_statement(const Statement *stmt) {
 
         for (size_t i = 0; i < func_def->parameters.size(); ++i) {
             auto argVal = entryBlock->getArgument(i);
-            declare_binding(func_def->parameters[i].name.get(), argVal, false, argTypes[i],
-                            func_def->parameters[i].type->value);
+            const auto *name = func_def->parameters[i].name.get();
+            if (checked_data && checked_data->address_taken.contains(checked_binding(name))) {
+                auto slot = create_entry_alloca(argTypes[i]);
+                builder.create<mlir::LLVM::StoreOp>(location(), argVal, slot);
+                declare_binding(name, slot, true, argTypes[i], func_def->parameters[i].type->value);
+            } else {
+                declare_binding(name, argVal, false, argTypes[i],
+                                func_def->parameters[i].type->value);
+            }
         }
 
+        if (checked_data)
+            prepare_defers(func_def);
         gen_statement(func_def->body.get());
 
         if (has_open_block()) {
             if (funcOp.getFunctionType().getNumResults() == 0) {
+                emit_deferred();
                 builder.create<mlir::func::ReturnOp>(location());
             } else {
                 if (checked_data)
@@ -322,6 +331,12 @@ void CodeGen::gen_statement(const Statement *stmt) {
         leave_scope();
 
     } else if (auto *struct_def = dynamic_cast<const StructDefinition *>(stmt)) {
+        if (checked_data) {
+            (void)checked_type(struct_def);
+            for (const auto &method : struct_def->methods)
+                gen_statement(method.get());
+            return;
+        }
         std::string name = struct_def->name->value;
 
         // If it's a generic template, just store it for later instantiation
@@ -357,74 +372,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
             fail(diagnostic_text("Failed to set body for struct ", name, '\n'));
         }
 
-        // Method Generation
-        for (const auto &method : struct_def->methods) {
-            std::string methodName = method->name->value;
-            std::string mangledName = name + "_" + methodName;
-
-            std::vector<mlir::Type> methodArgTypes;
-            // Implicit 'self' parameter (pointer to struct instance)
-            methodArgTypes.push_back(mlir::LLVM::LLVMPointerType::get(&context));
-
-            std::vector<std::string> argNames;
-            argNames.push_back("self");
-
-            for (const auto &param : method->parameters) {
-                methodArgTypes.push_back(resolve_type(param.type->value));
-                argNames.push_back(param.name->value);
-            }
-
-            mlir::Type retType = builder.getNoneType();
-            if (method->return_type) {
-                retType = resolve_type(method->return_type->value);
-            }
-
-            std::vector<mlir::Type> resultTypes;
-            if (!llvm::isa<mlir::NoneType>(retType)) {
-                resultTypes.push_back(retType);
-            }
-
-            auto funcType = builder.getFunctionType(methodArgTypes, resultTypes);
-            auto funcOp = builder.create<mlir::func::FuncOp>(location(), mangledName, funcType);
-
-            // Register method in table (key: StructName_MethodName)
-            // Note: AST nodes are unique_ptr, so we store the raw pointer.
-            // Be careful about lifetime if AST is destroyed before CodeGen finishes (usually not
-            // the case).
-            function_table[mangledName] = {funcOp, method.get()};
-
-            if (!method->body)
-                continue;
-
-            auto *entryBlock = funcOp.addEntryBlock();
-            mlir::OpBuilder::InsertionGuard guard(builder);
-            builder.setInsertionPointToStart(entryBlock);
-
-            enter_scope();
-            current_function_defers.clear(); // Clear defers for new function scope
-
-            // Declare arguments
-            // self is at index 0
-            auto selfVal = entryBlock->getArgument(0);
-            // declare 'self' as a pointer to the struct
-            // It is an address (pointer), pointing to 'structType'.
-            declare("self", selfVal, true, structType, name + "*");
-
-            for (size_t i = 1; i < argNames.size(); ++i) {
-                auto argVal = entryBlock->getArgument(i);
-                declare(argNames[i], argVal, false, methodArgTypes[i],
-                        method->parameters[i - 1].type->value);
-            }
-
-            gen_statement(method->body.get());
-
-            if (has_open_block()) {
-                builder.create<mlir::func::ReturnOp>(location());
-                builder.clearInsertionPoint();
-            }
-
-            leave_scope();
-        }
+        if (!struct_def->methods.empty())
+            fail("Methods require checked semantic analysis");
 
     } else if (auto *var_decl = dynamic_cast<const VariableDeclaration *>(stmt)) {
         if (var_decl->is_const) {
@@ -445,7 +394,10 @@ void CodeGen::gen_statement(const Statement *stmt) {
             initVal = gen_expression(var_decl->initializer.get());
         }
 
-        if (var_decl->is_mutable || (checked_data && !var_decl->initializer)) {
+        if (var_decl->is_mutable ||
+            (checked_data &&
+             (!var_decl->initializer ||
+              checked_data->address_taken.contains(checked_binding(var_decl->name.get()))))) {
             auto alloca = create_entry_alloca(type);
             if (initVal) {
                 builder.create<mlir::LLVM::StoreOp>(location(), initVal, alloca);
@@ -515,7 +467,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
         for (const auto &declaration : import_stmt->declarations)
             gen_statement(declaration.get());
     } else if (auto *defer_stmt = dynamic_cast<const DeferStatement *>(stmt)) {
-        current_function_defers.push_back(defer_stmt);
+        register_defer(defer_stmt);
     } else {
         fail("Unsupported statement in code generation");
     }
@@ -561,6 +513,10 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         if (!value)
             fail(error);
         return emit_constant(*value);
+    } else if (dynamic_cast<const NullLiteral *>(expr)) {
+        if (!checked_data || !checked_data->types.at(expr).is_pointer())
+            fail("Untyped null literal");
+        return builder.create<mlir::LLVM::ZeroOp>(location(), checked_type(expr));
     } else if (auto *bool_lit = dynamic_cast<const BooleanLiteral *>(expr)) {
         return builder.create<mlir::arith::ConstantIntOp>(location(), bool_lit->value ? 1 : 0, 1);
     } else if (auto *str_lit = dynamic_cast<const StringLiteral *>(expr)) {
@@ -585,13 +541,28 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         return currentArray;
     } else if (auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
-        if (checked_data)
+        if (checked_data) {
+            if (prefix->op == "&")
+                return gen_address(prefix->right.get());
+            if (prefix->op == "*") {
+                auto address = gen_pointer_address(prefix->right.get());
+                return builder.create<mlir::LLVM::LoadOp>(location(), checked_type(prefix),
+                                                          address);
+            }
             return gen_checked_unary(prefix);
+        }
         if (prefix->op == "*") {
             auto ptr = gen_expression(prefix->right.get());
             if (!ptr)
                 fail("Unsupported expression or unresolved value in code generation");
-            return builder.create<mlir::LLVM::LoadOp>(location(), builder.getI32Type(), ptr);
+            const auto *name = dynamic_cast<const Identifier *>(prefix->right.get());
+            auto spelling = name ? lookup_binding(name).source_type : std::string{};
+            if (spelling.empty() || (spelling[0] != '*' && spelling[0] != '&'))
+                fail("Unchecked dereference requires a known pointee type");
+            spelling.erase(0, 1);
+            if (spelling.starts_with("const "))
+                spelling.erase(0, 6);
+            return builder.create<mlir::LLVM::LoadOp>(location(), resolve_type(spelling), ptr);
         } else if (prefix->op == "&") {
             return gen_address(prefix->right.get());
         }
@@ -614,6 +585,18 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         fail("Unsupported expression or unresolved value in code generation");
     } else if (auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
+        if (checked_data) {
+            if (checked_data->indirect_members.contains(member_access)) {
+                auto address = gen_address(member_access);
+                return builder.create<mlir::LLVM::LoadOp>(location(), checked_type(member_access),
+                                                          address);
+            }
+            auto value = gen_expression(member_access->left.get());
+            return builder.create<mlir::LLVM::ExtractValueOp>(
+                location(), value,
+                llvm::ArrayRef<int64_t>{
+                    static_cast<int64_t>(checked_data->field_indices.at(member_access))});
+        }
         // Try to get address of the member if possible (e.g. if base is addressable)
         auto addr = gen_address(expr);
         if (addr) {
@@ -682,8 +665,8 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return builder.create<mlir::arith::CmpIOp>(location(), mlir::arith::CmpIPredicate::sgt,
                                                        left, right);
     } else if (auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
-        auto right = gen_expression(assign->right.get());
         auto lhsAddr = gen_address(assign->left.get());
+        auto right = gen_expression(assign->right.get());
         if (lhsAddr) {
             if (llvm::isa<mlir::LLVM::LLVMPointerType>(lhsAddr.getType())) {
                 builder.create<mlir::LLVM::StoreOp>(location(), right, lhsAddr);
@@ -693,6 +676,18 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return right;
         }
     } else if (auto *struct_lit = dynamic_cast<const StructLiteral *>(expr)) {
+        if (checked_data) {
+            auto type = checked_type(struct_lit);
+            mlir::Value value = builder.create<mlir::LLVM::ZeroOp>(location(), type);
+            const auto &indices = checked_data->literal_fields.at(struct_lit);
+            for (size_t i = 0; i < struct_lit->fields.size(); ++i) {
+                auto field = gen_expression(struct_lit->fields[i].second.get());
+                value = builder.create<mlir::LLVM::InsertValueOp>(
+                    location(), value, field,
+                    llvm::ArrayRef<int64_t>{static_cast<int64_t>(indices.at(i))});
+            }
+            return value;
+        }
         std::string structName = struct_lit->name->value;
         if (!type_table.count(structName))
             fail("Unsupported expression or unresolved value in code generation");
@@ -707,46 +702,17 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             if (!val)
                 fail("Unsupported expression or unresolved value in code generation");
 
-            int index = struct_field_indices[structName][fieldName];
+            auto fields = struct_field_indices.find(structName);
+            if (fields == struct_field_indices.end() || !fields->second.contains(fieldName))
+                fail("Unknown struct field: " + fieldName);
+            int index = fields->second.at(fieldName);
             current = builder.create<mlir::LLVM::InsertValueOp>(location(), current, val,
                                                                 llvm::ArrayRef<int64_t>{index});
         }
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
-        if (checked_data) {
-            if (checked_data->runtime_calls.contains(call)) {
-                auto value = gen_expression(call->arguments.front().get());
-                auto ptr = builder.create<mlir::LLVM::ExtractValueOp>(
-                    location(), value, llvm::ArrayRef<int64_t>{0});
-                auto len = builder.create<mlir::LLVM::ExtractValueOp>(
-                    location(), value, llvm::ArrayRef<int64_t>{1});
-                auto runtime = theModule.lookupSymbol<mlir::LLVM::LLVMFuncOp>(standard_output_symbol);
-                if (!runtime) {
-                    mlir::OpBuilder::InsertionGuard guard(builder);
-                    builder.setInsertionPointToStart(theModule.getBody());
-                    auto type = mlir::LLVM::LLVMFunctionType::get(
-                        mlir::LLVM::LLVMVoidType::get(&context),
-                        {mlir::LLVM::LLVMPointerType::get(&context), builder.getI64Type()}, false);
-                    runtime = builder.create<mlir::LLVM::LLVMFuncOp>(location(), standard_output_symbol, type);
-                }
-                builder.create<mlir::LLVM::CallOp>(location(), runtime,
-                    mlir::ValueRange{ptr, len});
-                return {};
-            }
-            auto *callee = dynamic_cast<const Identifier *>(call->function.get());
-            if (const auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get()))
-                callee = dynamic_cast<const Identifier *>(member->member.get());
-            if (!callee)
-                fail("Checked call has no direct callee");
-            auto found = checked_functions.find(checked_binding(callee));
-            if (found == checked_functions.end())
-                fail("Checked function has not been emitted");
-            std::vector<mlir::Value> args;
-            for (const auto &arg : call->arguments)
-                args.push_back(gen_expression(arg.get()));
-            auto call_op = builder.create<mlir::func::CallOp>(location(), found->second, args);
-            return call_op.getNumResults() ? call_op.getResult(0) : mlir::Value{};
-        }
+        if (checked_data)
+            return emit_checked_call(call, gen_call_arguments(call));
         std::string funcName;
         mlir::Value selfArg = nullptr;
 
@@ -1047,8 +1013,22 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
         if (sym.value && sym.is_address)
             return sym.value;
     } else if (auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
-        auto baseAddr = gen_address(member_access->left.get());
+        if (checked_data) {
+            bool indirect = checked_data->indirect_members.contains(member_access);
+            auto baseAddr = indirect ? gen_pointer_address(member_access->left.get())
+                                     : gen_address(member_access->left.get());
+            if (!baseAddr)
+                return {};
+            auto type = checked_data->types.at(member_access->left.get());
+            if (indirect)
+                type = type.pointee();
+            return builder.create<mlir::LLVM::GEPOp>(
+                location(), mlir::LLVM::LLVMPointerType::get(&context), lower_type(type), baseAddr,
+                llvm::ArrayRef<mlir::LLVM::GEPArg>{
+                    0, static_cast<int32_t>(checked_data->field_indices.at(member_access))});
+        }
 
+        auto baseAddr = gen_address(member_access->left.get());
         // If base is not addressable, check if it is a pointer
         if (!baseAddr) {
             auto val = gen_expression(member_access->left.get());
@@ -1089,7 +1069,10 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
 
             auto ident = dynamic_cast<const Identifier *>(member_access->member.get());
             std::string structName = structType.getName().str();
-            int index = struct_field_indices[structName][ident->value];
+            auto fields = struct_field_indices.find(structName);
+            if (fields == struct_field_indices.end() || !fields->second.contains(ident->value))
+                fail("Unknown struct field: " + ident->value);
+            int index = fields->second.at(ident->value);
 
             return builder.create<mlir::LLVM::GEPOp>(
                 location(), mlir::LLVM::LLVMPointerType::get(&context), structType, baseAddr,
@@ -1097,10 +1080,25 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
         }
     } else if (auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
         if (prefix->op == "*") {
-            return gen_expression(prefix->right.get());
+            return checked_data ? gen_pointer_address(prefix->right.get())
+                                : gen_expression(prefix->right.get());
         }
     }
     return nullptr;
+}
+
+mlir::Value CodeGen::gen_pointer_address(const Expression *expression) {
+    auto value = gen_expression(expression);
+    const auto type = checked_data->types.at(expression);
+    if (!type.is_pointer())
+        fail("Address requires a checked pointer type");
+    if (type.pointers.front().nullable) {
+        auto null = builder.create<mlir::LLVM::ZeroOp>(location(), value.getType());
+        auto nonnull = builder.create<mlir::LLVM::ICmpOp>(location(), mlir::LLVM::ICmpPredicate::ne,
+                                                          value, null);
+        require_runtime(nonnull);
+    }
+    return value;
 }
 
 void CodeGen::handle_import(const std::string &import_path) {
@@ -1142,7 +1140,7 @@ mlir::Type CodeGen::resolve_type(const std::string &type_name) {
         return builder.getNoneType();
 
     // Handle pointer types (*T)
-    if (!type_name.empty() && type_name[0] == '*') {
+    if (!type_name.empty() && (type_name[0] == '*' || type_name[0] == '&')) {
         return mlir::LLVM::LLVMPointerType::get(&context);
     }
 
@@ -1273,7 +1271,24 @@ CodeGen::generate_unchecked_for_testing(const std::vector<std::unique_ptr<Statem
     return generate_impl(program);
 }
 
-mlir::Type CodeGen::lower_type(CoreType type) {
+mlir::Type CodeGen::lower_type(ValueType value_type) {
+    if (value_type.is_pointer())
+        return mlir::LLVM::LLVMPointerType::get(&context);
+    if (value_type.structure) {
+        const auto id = *value_type.structure;
+        if (auto found = checked_struct_types.find(id); found != checked_struct_types.end())
+            return found->second;
+        const auto &structure = checked_data->structures.at(id);
+        llvm::SmallVector<mlir::Type> fields;
+        for (const auto &field : structure.fields)
+            fields.push_back(lower_type(field.type));
+        // Nominality belongs to Sema; literal backend types avoid context-global named-type
+        // collisions.
+        auto type = mlir::LLVM::LLVMStructType::getLiteral(&context, fields, false);
+        checked_struct_types[id] = type;
+        return type;
+    }
+    auto type = value_type.builtin();
     const auto &info = core_type_info(type);
     if (type == CoreType::Void)
         return builder.getNoneType();

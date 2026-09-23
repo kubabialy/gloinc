@@ -2,7 +2,7 @@
 
 `GloinParser` defaults to `ParseMode::Core`. `compile_source` uses this mode and
 requires a successful complete parse before invoking Sema. A source file may
-contain functions and constants. Runtime globals, nested functions, executable
+contain functions, constants, imports, and ordinary structs. Runtime globals, nested functions, executable
 file-scope statements, and deferred syntax receive parsing diagnostics.
 Sema's checked-program path resolves core type identities and rejects unsupported
 scalar types under SPEC-010; SPEC-013 checks contextual numeric literals and
@@ -28,8 +28,9 @@ both semicolons and the body braces are required. Missing components have null
 AST pointers; a missing condition means `true`. Initializers accept local
 bindings/constants or expression/assignment statements, while updates accept
 expressions/assignments (including void calls), without a trailing semicolon.
-Complete-header parentheses, comma updates, ranges, `break`, `continue`, and
-`defer` remain rejected in core mode.
+Complete-header parentheses, comma updates, ranges, `break`, and `continue`
+remain rejected in core mode. `defer` is allowed in a function's loop body,
+but not in a for initializer or update.
 
 ## Token consumption and failure
 
@@ -64,8 +65,8 @@ full-consumption conversion, contextual types, and signed-literal rules.
 
 `ParseMode::SyntaxOnly` explicitly permits the existing deferred grammar and
 statement-fragment lists for stage-isolated tests. It is not a supported compiler
-language mode and is not exposed by `compile_source`. It lets struct, generic,
-pointer, array, string, and concurrency tests continue to inspect their stages
+language mode and is not exposed by `compile_source`. It lets packed-struct, generic,
+array, and concurrency tests continue to inspect their stages
 while core compilation rejects those constructs. Legacy `spawn`/`await`, missing
 annotations, misplaced modifiers, and malformed lists still fail in this mode.
 
@@ -80,3 +81,35 @@ The old struct-method fixture now spells `def pub greet(self: *Person)` and the
 multi-parameter generic fixture includes its missing field comma. Their feature
 assertions are preserved, and negative tests reject the obsolete forms. Existing
 unimplemented feature tests remain visible in the full suite.
+
+## Ordinary structs (SPEC-024)
+
+Core parsing accepts file-scope `def [pub|priv] struct Name { ... }`, comma-separated
+`def [pub|priv] [mut] field: Type` declarations, named literals, member expressions,
+and module-qualified type names/literals. Struct names can be lowercase. Packed/generic definitions, field defaults, and local structs remain
+rejected. Semantic checking validates fields and visibility before codegen.
+
+## Pointers and references (SPEC-025)
+
+Core parsing accepts recursive `*T`/`&T` annotations with optional `const` after
+each pointer marker, unary address-of/dereference, and `null`. In a type annotation
+`&&T` splits into two reference layers; in expressions `&&` remains logical AND.
+Addressability, initialization, qualifier conversions, and contextual null types
+are checked by Sema. No borrow-checker or unsafe-block syntax is introduced.
+
+## Methods (SPEC-026)
+
+Core struct bodies accept `def [pub|priv] [static] name(...) -> Type { ... }`.
+`self` is a reserved expression/parameter name, and its explicit annotation uses
+ordinary pointer/reference syntax. Sema checks receiver position, containing
+struct identity, mutability, visibility, and static versus instance call form.
+Static calls use `Type.method(...)` or `module.Type.method(...)`; no additional
+call operator is introduced. Async methods remain syntax-only/deferred.
+
+## Function-exit defer (SPEC-027)
+
+`defer expression;` parses a `DeferStatement`; semantic analysis requires the
+expression to be an ordinary function or method call inside a function body.
+The call follows the normal receiver/argument/type/visibility rules, including
+checking values at the registration point. Blocks/closures and defer in for
+headers are not added. Async `deferred` declarations remain separate and unsupported.

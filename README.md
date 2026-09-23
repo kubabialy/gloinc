@@ -8,8 +8,8 @@ verification evidence in order.
 ## Current status
 
 Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR 21.1.6.
-The CLI compiles source files and runs scalar programs through the in-process JIT.
-The executable core has 125 source-file acceptance cases covering successful
+The CLI compiles source files and runs scalar and ordinary struct programs through the in-process JIT.
+The executable core has 133 source-file acceptance cases covering successful
 programs, rejected source, and runtime arithmetic traps. Checking and IR inspection
 modes are also available. The scalar-core version is `0.0.1`; installation and
 package validation are documented in [the release guide](docs/release.md).
@@ -18,8 +18,8 @@ package validation are documented in [the release guide](docs/release.md).
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | 491 tests discovered; local parallel run has 486 passes, 5 deferred-feature failures, no unexpected test-process crashes. |
-| Core acceptance | 125 CLI-driven source fixtures: 30 successful programs, 81 expected compiler errors, and 14 runtime traps. |
+| Full test suite | 574 tests discovered; local parallel run has 569 passes, 5 deferred-feature failures, no unexpected test-process crashes. |
+| Core acceptance | 133 CLI-driven source fixtures: 34 successful programs, 82 expected compiler errors, and 17 runtime traps. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
 | Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/unless/while/for execution, loop-variable scope, and omitted for components are verified. |
@@ -28,6 +28,10 @@ package validation are documented in [the release guide](docs/release.md).
 | JIT | All 16 tests pass: native execution, validated entry/signatures, separate results/errors, repeated runs, and integer/float trap behavior. |
 | CLI | All 16 process tests pass: file loading, native results, checking, verified IR output, diagnostics, usage, and exit behavior. |
 | Standard output | `@std` loads `stdlib/std.gloin`, which defines `print` and `println`; all 17 standard-module tests pass. |
+| Ordinary structs | 14 tests cover nested values, field validation/mutation, visibility, nominal types, native execution, and target padding/alignment. |
+| Pointers/references | 18 tests cover typed access, read-only views, recursive links, null traps, and manual lifetimes with no borrow checker. |
+| Methods | 19 tests cover instance/static calls, one explicit receiver, mutability, visibility, evaluation order, recursion, diagnostics, and external execution. |
+| Defer | 24 tests cover registration-time captures, conditional/loop registration, LIFO function-exit cleanup, early returns, traps, native allocation bookkeeping, and external execution. |
 | Other imports, concurrency | Incomplete: SPEC-029/030, SPEC-040/041. |
 
 [Compiler diagnostics](docs/diagnostics.md) now connect parsing, checking, and high-level
@@ -155,8 +159,16 @@ This program returns 42. More runnable examples are in
 Supported types are `bool`, signed and unsigned 8/16/32/64-bit integers,
 `f32`, `f64`, aliases `int` (`i32`) and `usize` (`u64`), and `void` function
 returns. `string`, `import "@std"`, and explicit string output are supported.
+Ordinary structs support named literals, nested fields, value parameters/returns,
+and checked mutation. See [the struct example](tests/fixtures/core/run/ordinary_struct.gloin).
+`*T`/`&T` and read-only `*const T`/`&const T` support manually managed resources;
+see [the pointer fixture](tests/fixtures/core/run/pointers.gloin).
+Ordinary structs also support instance methods with explicit `self` pointers and
+static calls such as `Counter.make(40)`; see [the method fixture](tests/fixtures/core/run/methods.gloin).
+`defer call(...)` captures arguments immediately and runs registered calls in
+reverse order on normal function return; see [the defer fixture](tests/fixtures/core/run/defer.gloin).
 There are no implicit numeric conversions. Other imports, numeric formatting,
-arrays, structs, pointers, concurrency, and native executable output remain
+arrays, packed structs, concurrency, and native executable output remain
 deferred. `examples/hello_world.gloin` is a runnable standard-output example.
 
 For a diagnostic example:
@@ -193,7 +205,7 @@ bash scripts/check-package.sh build build/package-check
 
 CPack writes `build/gloinc-0.0.1-macos-arm64.tar.gz` and its `.sha256` checksum.
 The archive contains `bin/gloinc`, documentation, an example, and the core source
-fixtures. The verification script runs all 158 CLI/standard-output/source acceptance cases against
+fixtures. The verification script runs all 241 CLI/defer/method/pointer/struct/standard-output/source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
 spaces. See [the release guide](docs/release.md) for extraction, dependencies,
 sanitizer checks, and the supported-platform limits.
@@ -207,7 +219,7 @@ ctest --test-dir build -j 1 --output-on-failure
 ctest --test-dir build -j 4 --output-on-failure
 ```
 
-`check-core` runs 443 required scalar and standard-output checks, including frontend,
+`check-core` runs 526 required scalar, defer, method, pointer, struct, and standard-output checks, including frontend,
 lowering, external execution, source acceptance, CLI, JIT, and dialect setup.
 The full suite exits nonzero for the documented
 failures; do not disable those cases to obtain a green run. The CLI suite launches
@@ -223,10 +235,10 @@ lowering, and execution APIs.
 
 [SPEC-006's contract](SPEC.md#first-release-contract-spec-006) selects a scalar
 JIT compiler on Apple Silicon macOS for the first release. SPEC-021 supplies its
-executable-core acceptance suite; SPEC-046 remains the release gate. Strings,
-standard I/O, aggregates, concurrency, and native binaries are deferred. These
-are planned capabilities, not additions to the verified status above. The ordered
-backlog replaces the old phase notes as the implementation plan.
+executable-core acceptance suite; SPEC-046 remains the release gate. Subsequent
+tasks add the strings, standard output, structs, pointers, methods, and defer
+listed above. Arenas, concurrency, and native binaries remain deferred. The
+ordered backlog replaces the old phase notes as the implementation plan.
 
 ## Continuous integration
 

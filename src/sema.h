@@ -80,6 +80,10 @@ struct StructType : public Type {
     std::string name;
     std::vector<Field> fields;
     bool is_packed;
+    std::optional<size_t> identity;
+    const ImportStatement *owner = nullptr;
+    bool is_public = false;
+    std::unordered_map<std::string, const FunctionDefinition *> methods;
 
     StructType(std::string name, std::vector<Field> fields, bool is_packed)
         : name(std::move(name)), fields(std::move(fields)), is_packed(is_packed) {}
@@ -87,7 +91,8 @@ struct StructType : public Type {
     std::string to_string() const override { return "struct " + name; }
     bool equals(const Type &other) const override {
         if (const auto *other_struct = dynamic_cast<const StructType *>(&other)) {
-            return name == other_struct->name;
+            return identity || other_struct->identity ? identity == other_struct->identity
+                                                      : name == other_struct->name;
         }
         return false;
     }
@@ -98,6 +103,23 @@ struct StructType : public Type {
                 return &field;
         }
         return nullptr;
+    }
+};
+
+struct PointerType : public Type {
+    std::shared_ptr<Type> pointee;
+    bool nullable;
+    bool read_only;
+    PointerType(std::shared_ptr<Type> pointee, bool nullable, bool read_only)
+        : pointee(std::move(pointee)), nullable(nullable), read_only(read_only) {}
+    std::string to_string() const override {
+        return std::string(nullable ? "*" : "&") + (read_only ? "const " : "") +
+               pointee->to_string();
+    }
+    bool equals(const Type &other) const override {
+        const auto *pointer = dynamic_cast<const PointerType *>(&other);
+        return pointer && nullable == pointer->nullable && read_only == pointer->read_only &&
+               pointee->equals(*pointer->pointee);
     }
 };
 
@@ -143,6 +165,7 @@ class Scope {
 class Sema {
   public:
     explicit Sema(std::shared_ptr<Diagnostics> diagnostics = std::make_shared<Diagnostics>());
+    ~Sema();
     std::shared_ptr<Diagnostics> diagnostics() const { return diagnostics_; }
 
     // Main entry point
@@ -166,7 +189,8 @@ class Sema {
     bool resolving_callee = false;
     bool checking_constant = false;
     std::optional<CoreType> expected_type;
-    std::optional<CoreType> current_return_type;
+    std::shared_ptr<Type> current_return_type;
+    const FunctionDefinition *current_function = nullptr;
     std::optional<CoreType> numeric_anchor(const Expression *expression);
     std::shared_ptr<Type> check_numeric_literal(const Expression *expression);
     std::pair<std::shared_ptr<Type>, std::shared_ptr<Type>>
@@ -188,6 +212,31 @@ class Sema {
     std::unordered_map<const FunctionDefinition *, std::shared_ptr<FunctionType>>
         collected_functions;
     std::shared_ptr<FunctionType> collect_function(const FunctionDefinition *function);
+    std::optional<ValueType> value_type(const std::shared_ptr<Type> &type) const;
+    std::vector<std::shared_ptr<StructType>> collected_struct_types;
+    void collect_structs(const std::vector<std::unique_ptr<Statement>> &program);
+    void collect_methods(const std::vector<std::unique_ptr<Statement>> &program);
+    void check_methods(const StructDefinition *definition);
+    std::shared_ptr<StructType> method_type_receiver(const Expression *expression);
+    const FunctionDefinition *method_target(const MemberAccessExpression *member);
+    std::shared_ptr<Type> check_method_call(const CallExpression *call, bool &handled);
+    void validate_struct_cycles();
+    std::shared_ptr<Type> expression_type_hint(const Expression *expression);
+    std::shared_ptr<Type> check_struct_literal(const StructLiteral *literal);
+    std::shared_ptr<Type> check_field(const MemberAccessExpression *member);
+    struct Place {
+        std::shared_ptr<Type> type;
+        bool writable = false;
+        bool addressable = false;
+    };
+    std::shared_ptr<PointerType> expected_pointer;
+    Place check_place(const Expression *expression, bool take_address = false);
+    std::shared_ptr<Type> check_pointer_unary(const PrefixExpression *expression);
+    std::shared_ptr<Type> check_indirect_assignment(const AssignmentExpression *assignment);
+    std::shared_ptr<Type> check_typed_expression(const Expression *expression,
+                                                 const std::shared_ptr<Type> &expected);
+    std::shared_ptr<Type> check_pointer_comparison(const InfixExpression *expression);
+    bool pointer_conversion(const PointerType &source, const PointerType &target) const;
     std::shared_ptr<Type> check_expression_impl(const Expression *expr);
     std::shared_ptr<Type> resolve_annotation(const Identifier *annotation, bool allow_void = false);
     bool define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind);

@@ -49,7 +49,7 @@ tests enabled. `make run` defaults to the counter example; use
 | `share/gloinc/examples/core_counter.gloin` | Runnable example returning 42 |
 | `share/gloinc/examples/hello_world.gloin` | Runnable standard-output example |
 | `share/gloinc/stdlib/std.gloin` | Standard utility functions, compiled when imported |
-| `share/gloinc/core-fixtures/` | All 125 source acceptance fixtures and their matrix |
+| `share/gloinc/core-fixtures/` | All 133 source acceptance fixtures and their matrix |
 
 LLVM/MLIR and their Homebrew dependencies are external and are not redistributed
 in this package. The installed executable uses the library installation selected
@@ -72,7 +72,7 @@ tar -xzf gloinc-0.0.1-macos-arm64.tar.gz
 ```
 
 `bash scripts/check-package.sh build build/package-check` validates a staged
-installation and a relocated extraction. Each runs 158 CLI/standard-output/source
+installation and a relocated extraction. Each runs 241 CLI/defer/method/pointer/struct/standard-output/source
 cases against that binary, using the installed fixtures. The script also executes
 the packaged counter and hello-world examples and records shared-library
 dependencies. Removing the relocated `std.gloin` must cause a module
@@ -82,9 +82,9 @@ are explicit test-harness overrides used for this purpose, not compiler options.
 
 ## Release validation
 
-The `check-core` target runs 443 required scalar and standard-output checks, including lower-level
+The `check-core` target runs 526 required scalar, defer, method, pointer, struct, and standard-output checks, including lower-level
 frontend/operator/lowering tests and external execution probes as well as the
-125 source fixtures. No known failure is reclassified as success. Full serial
+133 source fixtures. No known failure is reclassified as success. Full serial
 and parallel runs remain separate. The full suite currently retains five
 deferred-feature failures: spawn codegen, arenas, deferred/spawn generation, and
 async types. Those features are rejected by the source compiler.

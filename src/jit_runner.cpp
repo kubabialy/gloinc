@@ -1,16 +1,16 @@
 #include "jit_runner.h"
 #include "lowering.h"
-#include "standard_runtime.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
+#include "standard_runtime.h"
+#include "target_layout.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/Support/TargetSelect.h"
-#include <mutex>
+#include <cstdlib>
 
 namespace {
 void standard_output(const char *bytes, uint64_t length) {
@@ -27,6 +27,18 @@ bool is_standard_output(mlir::LLVM::LLVMFuncOp function) {
         {mlir::LLVM::LLVMPointerType::get(&context), mlir::IntegerType::get(&context, 64)}, false);
     return function.getName() == standard_output_symbol && function.isExternal() &&
            function.getFunctionType() == type && function.getCConv() == mlir::LLVM::CConv::C &&
+           function.getLinkage() == mlir::LLVM::Linkage::External;
+}
+
+bool is_defer_allocator(mlir::LLVM::LLVMFuncOp function) {
+    auto &context = *function.getContext();
+    const bool allocate = function.getName() == "malloc";
+    mlir::Type pointer = mlir::LLVM::LLVMPointerType::get(&context);
+    auto type = mlir::LLVM::LLVMFunctionType::get(
+        allocate ? pointer : mlir::LLVM::LLVMVoidType::get(&context),
+        {allocate ? mlir::IntegerType::get(&context, 64) : pointer}, false);
+    return function.isExternal() && function.getFunctionType() == type &&
+           function.getCConv() == mlir::LLVM::CConv::C &&
            function.getLinkage() == mlir::LLVM::Linkage::External;
 }
 
@@ -55,8 +67,13 @@ mlir::LLVM::LLVMFuncOp validate_entry(mlir::ModuleOp module, Diagnostics &diagno
                         "convention and emitted linkage");
         return {};
     }
-    // Only the explicitly registered standard output ABI can be external.
+    // Only explicitly registered output and defer bookkeeping ABIs can be external.
     for (auto function : module.getOps<mlir::LLVM::LLVMFuncOp>()) {
+        if (function.getName() == "malloc" || function.getName() == "free") {
+            if (!is_defer_allocator(function))
+                execution_error(diagnostics, function.getLoc(), "Invalid defer allocator runtime ABI");
+            continue;
+        }
         if (function.getName() == standard_output_symbol) {
             if (!is_standard_output(function))
                 execution_error(diagnostics, function.getLoc(), "Invalid standard output runtime ABI");
@@ -119,13 +136,9 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module) {
     if (!verify_module(*lowered, *diagnostics))
         return failure();
 
-    static std::once_flag initialize;
-    static bool target_failed = false;
-    std::call_once(initialize, [] {
-        target_failed = llvm::InitializeNativeTarget() || llvm::InitializeNativeTargetAsmPrinter();
-    });
-    if (target_failed) {
-        execution_error(*diagnostics, main.getLoc(), "Cannot initialize the native JIT target");
+    auto target = native_target_layout();
+    if (!target) {
+        execution_error(*diagnostics, main.getLoc(), llvm::toString(target.takeError()));
         return failure();
     }
     auto &context = *lowered->getContext();
@@ -155,11 +168,17 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module) {
     }
     if (diagnostics->has_errors())
         return failure();
-    if (lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>(standard_output_symbol)) {
+    if (lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>(standard_output_symbol) ||
+        lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>("malloc") ||
+        lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>("free")) {
         (*engine)->registerSymbols([](llvm::orc::MangleAndInterner mangle) {
             llvm::orc::SymbolMap symbols;
             symbols[mangle(standard_output_symbol)] = llvm::orc::ExecutorSymbolDef(
                 llvm::orc::ExecutorAddr::fromPtr(&standard_output), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("malloc")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&std::malloc), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("free")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&std::free), llvm::JITSymbolFlags::Exported);
             return symbols;
         });
     }

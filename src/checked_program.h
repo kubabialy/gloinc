@@ -4,22 +4,74 @@
 #include "AST.h"
 #include "compilation_mode.h"
 #include "numeric.h"
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
 using SymbolId = size_t;
 inline constexpr SymbolId invalid_symbol = static_cast<SymbolId>(-1);
 enum class SymbolKind { Variable, Parameter, Function, Constant };
+// Checked value types retain nominal struct identity independently of builtin types.
+struct PointerLayer {
+    bool nullable;
+    bool read_only;
+    bool operator==(const PointerLayer &) const = default;
+};
+struct ValueType {
+    CoreType scalar = CoreType::Void;
+    std::optional<size_t> structure;
+    std::vector<PointerLayer> pointers; // Outermost first; base retains its nominal identity.
+    ValueType() = default;
+    ValueType(CoreType scalar) : scalar(scalar) {}
+    static ValueType record(size_t id) {
+        ValueType type;
+        type.structure = id;
+        return type;
+    }
+    bool is_pointer() const { return !pointers.empty(); }
+    ValueType pointee() const {
+        if (!is_pointer())
+            throw std::logic_error("Value is not a pointer");
+        auto result = *this;
+        result.pointers.erase(result.pointers.begin());
+        return result;
+    }
+    CoreType builtin() const {
+        if (structure || is_pointer())
+            throw std::logic_error("Aggregate/pointer is not a builtin type");
+        return scalar;
+    }
+    bool operator==(const ValueType &) const = default;
+};
+struct CheckedField {
+    std::string name;
+    ValueType type;
+    bool is_public;
+    bool is_mutable;
+};
+struct CheckedStruct {
+    std::string name;
+    std::vector<CheckedField> fields;
+};
 struct ResolvedSymbol {
     SymbolId id;
     std::string name;
     SymbolKind kind;
-    CoreType type; // Value type, or function return type.
-    std::vector<CoreType> parameters;
+    ValueType type; // Value type, or function return type.
+    std::vector<ValueType> parameters;
     bool is_mutable;
     SourceSpan span;
 };
 struct SemanticData {
+    std::unordered_map<const FunctionDefinition *, std::vector<const DeferStatement *>> defers;
+    // Instance calls pass the receiver once, before explicit arguments.
+    // true takes the address of struct storage; false passes a pointer value.
+    std::unordered_map<const CallExpression *, bool> method_receivers;
+    std::unordered_set<SymbolId> address_taken;
+    std::unordered_set<const MemberAccessExpression *> indirect_members;
+    std::vector<CheckedStruct> structures;
+    std::unordered_map<const MemberAccessExpression *, size_t> field_indices;
+    std::unordered_map<const StructLiteral *, std::vector<size_t>> literal_fields;
     std::unordered_set<const CallExpression *> runtime_calls;
     std::unordered_map<SymbolId, std::string> linkage_names;
     TargetInfo target;
@@ -27,7 +79,7 @@ struct SemanticData {
     std::optional<SymbolId> entry_point;
     std::unordered_map<SymbolId, ConstantValue> constants;
     std::unordered_map<const Expression *, ConstantValue> literals;
-    std::unordered_map<const Node *, CoreType> types;
+    std::unordered_map<const Node *, ValueType> types;
     std::unordered_map<const Identifier *, SymbolId> bindings;
     std::vector<ResolvedSymbol> symbols;
 };

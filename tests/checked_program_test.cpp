@@ -43,7 +43,7 @@ TEST(CheckedProgramTest, EveryCoreScalarHasOneSignatureAndStorageType) {
         ASSERT_EQ(program->symbols().size(), 3u);
         for (const auto &symbol : program->symbols())
             EXPECT_EQ(symbol.type, info.id);
-        EXPECT_EQ(program->symbols()[0].parameters, std::vector<CoreType>{info.id});
+        EXPECT_EQ(program->symbols()[0].parameters, std::vector<ValueType>{info.id});
         EXPECT_GT(program->typed_node_count(), 4u);
         mlir::MLIRContext context;
         CodeGen codegen(context);
@@ -74,9 +74,9 @@ TEST(CheckedProgramTest, AliasesResolveBeforeCodegen) {
                          "def unsigned_value(x: usize) -> u64 { return x; }");
     ASSERT_NE(program, nullptr);
     EXPECT_EQ(program->symbols()[0].type, CoreType::I32);
-    EXPECT_EQ(program->symbols()[0].parameters, std::vector<CoreType>{CoreType::I32});
+    EXPECT_EQ(program->symbols()[0].parameters, std::vector<ValueType>{CoreType::I32});
     EXPECT_EQ(program->symbols()[1].type, CoreType::U64);
-    EXPECT_EQ(program->symbols()[1].parameters, std::vector<CoreType>{CoreType::U64});
+    EXPECT_EQ(program->symbols()[1].parameters, std::vector<ValueType>{CoreType::U64});
     EXPECT_EQ(program->target().pointer_bits, 64u);
     mlir::MLIRContext context;
     CodeGen codegen(context);

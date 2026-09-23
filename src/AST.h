@@ -49,6 +49,10 @@ struct BooleanLiteral : public Expression {
     }
 };
 
+struct NullLiteral : public Expression {
+    std::string to_string() const override { return "null"; }
+};
+
 struct StringLiteral : public Expression {
     std::string value;
     

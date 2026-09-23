@@ -1,4 +1,0 @@
-def struct Point { def x: i32, }
-def main() -> i32 {
-return 42;
-}

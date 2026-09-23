@@ -60,8 +60,31 @@ void Sema::log_error(const std::string &msg) {
 
 std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
     if (recording) {
+        if (name.starts_with("*") || name.starts_with("&")) {
+            auto inner = name.substr(1);
+            bool read_only = inner.starts_with("const ");
+            if (read_only)
+                inner = inner.substr(6);
+            auto pointee = resolve_type_from_string(inner);
+            if (!pointee || dynamic_cast<VoidType *>(pointee.get()))
+                return nullptr;
+            return std::make_shared<PointerType>(pointee, name[0] == '*', read_only);
+        }
         auto core = resolve_core_type(name, recording->target);
-        return core ? get_builtin_type(std::string(core_type_info(*core).name)) : nullptr;
+        if (core)
+            return get_builtin_type(std::string(core_type_info(*core).name));
+        const auto dot = name.find('.');
+        if (dot != std::string::npos && !current_module) {
+            auto found = imports.find(name.substr(0, dot));
+            if (found != imports.end() && module_scopes.contains(found->second)) {
+                auto type = module_scopes.at(found->second)->resolve_type(name.substr(dot + 1));
+                auto structure = std::dynamic_pointer_cast<StructType>(type);
+                if (structure && structure->is_public)
+                    return structure;
+            }
+            return nullptr;
+        }
+        return current_scope->resolve_type(name);
     }
     // Check for generics: Deferred<T>, Result<T, E>, Spawn<T>
     if (name.find("Deferred<") == 0 && name.back() == '>') {
@@ -93,10 +116,14 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         return false;
     current_scope = std::make_shared<Scope>();
     collected_functions.clear();
+    for (auto &structure : collected_struct_types)
+        structure->fields.clear();
+    collected_struct_types.clear();
     initialization.clear();
     falls_through = true;
     loop_depth = 0;
     current_return_type.reset();
+    current_function = nullptr;
     imports.clear();
     module_scopes.clear();
     current_module = nullptr;
@@ -120,6 +147,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
             current_module = import;
             current_scope = std::make_shared<Scope>();
             module_scopes[import] = current_scope;
+            collect_structs(import->declarations);
             for (const auto &declaration : import->declarations) {
                 if (const auto *function = dynamic_cast<const FunctionDefinition *>(declaration.get())) {
                     if (auto type = collect_function(function)) {
@@ -134,9 +162,14 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
                     constant && constant->is_const)
                     check_constant(constant);
             }
+            collect_methods(import->declarations);
         }
         current_module = nullptr;
         current_scope = root_scope;
+        collect_structs(program);
+        validate_struct_cycles();
+        if (has_error())
+            return false;
         for (const auto &stmt : program) {
             if (const auto *function = dynamic_cast<const FunctionDefinition *>(stmt.get())) {
                 if (auto type = collect_function(function))
@@ -144,6 +177,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
             }
         }
         // File constants are evaluated in lexical order before all bodies.
+        collect_methods(program);
         for (const auto &stmt : program) {
             if (const auto *constant = dynamic_cast<const VariableDeclaration *>(stmt.get());
                 constant && constant->is_const)
@@ -176,9 +210,12 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
                 const auto root_scope = current_scope;
                 current_scope = module_scopes.at(import);
                 current_module = import;
-                for (const auto &declaration : import->declarations)
+                for (const auto &declaration : import->declarations) {
                     if (dynamic_cast<const FunctionDefinition *>(declaration.get()))
                         check_statement(declaration.get());
+                    else if (const auto *structure = dynamic_cast<const StructDefinition *>(declaration.get()))
+                        check_methods(structure);
+                }
                 current_module = nullptr;
                 current_scope = root_scope;
                 falls_through = true;
@@ -189,6 +226,10 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
             if (const auto *constant = dynamic_cast<const VariableDeclaration *>(stmt.get());
                 constant && constant->is_const)
                 continue;
+        }
+        if (recording && dynamic_cast<const StructDefinition *>(stmt.get())) {
+            check_methods(static_cast<const StructDefinition *>(stmt.get()));
+            continue;
         }
         if (recording && !dynamic_cast<const FunctionDefinition *>(stmt.get()) &&
             !(dynamic_cast<const VariableDeclaration *>(stmt.get()) &&
@@ -254,6 +295,11 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
     sym.type = func_type;
     if (!define_symbol(func_def->name.get(), sym, SymbolKind::Function))
         return nullptr;
+    // Keep source functions independent of the defer bookkeeping's native ABI.
+    if (recording && !current_module &&
+        (sym.name == "malloc" || sym.name == "free"))
+        recording->linkage_names[recording->bindings.at(func_def->name.get())] =
+            "gloin.user." + sym.name;
     return func_type;
 }
 
@@ -288,9 +334,7 @@ void Sema::check_statement(const Statement *stmt) {
 
         // Check initializer
         if (decl->initializer) {
-            auto init_type = check_expression(decl->initializer.get(),
-                                              var_type ? resolve_core_type(var_type->to_string())
-                                                       : std::nullopt);
+            auto init_type = check_typed_expression(decl->initializer.get(), var_type);
             if (init_type) {
                 if (var_type) {
                     // Type mismatch check
@@ -344,7 +388,8 @@ void Sema::check_statement(const Statement *stmt) {
         // Each body starts with independent control-flow and initialization state.
         falls_through = true;
         loop_depth = 0;
-        current_return_type = resolve_core_type(func_type->return_type->to_string());
+        current_return_type = func_type->return_type;
+        current_function = func_def;
         enter_scope();
         // Register parameters in local scope
         for (size_t i = 0; i < func_def->parameters.size(); ++i) {
@@ -364,12 +409,25 @@ void Sema::check_statement(const Statement *stmt) {
                 check_statement(s.get());
             }
         }
-        if (recording && current_return_type != CoreType::Void && falls_through)
+        if (recording && !current_return_type->equals(*get_builtin_type("void")) && falls_through)
             log_error("Non-void function '" + func_def->name->value +
                       "' can reach the end without returning a value");
         leave_scope();
         current_return_type.reset();
+        current_function = nullptr;
         falls_through = true;
+
+    } else if (const auto *defer = dynamic_cast<const DeferStatement *>(stmt)) {
+        if (!recording || !current_function) {
+            log_error("defer requires a checked function body");
+            return;
+        }
+        if (!dynamic_cast<const CallExpression *>(defer->call.get())) {
+            log_error("defer requires a function or method call");
+            return;
+        }
+        if (check_expression(defer->call.get(), std::nullopt, true))
+            recording->defers[current_function].push_back(defer);
 
     } else if (const auto *ret = dynamic_cast<const ReturnStatement *>(stmt)) {
         if (recording && !current_return_type) {
@@ -377,15 +435,14 @@ void Sema::check_statement(const Statement *stmt) {
             return;
         }
         if (ret->return_value) {
-            if (recording && current_return_type == CoreType::Void)
+            if (recording && current_return_type->equals(*get_builtin_type("void")))
                 log_error("Void function cannot return a value; use return;");
-            auto type = check_expression(ret->return_value.get(), current_return_type);
-            if (recording && type && current_return_type != CoreType::Void &&
-                resolve_core_type(type->to_string()) != current_return_type)
-                log_error("Return type mismatch. Expected " +
-                          std::string(core_type_info(*current_return_type).name) + ", got " +
-                          type->to_string());
-        } else if (recording && current_return_type != CoreType::Void) {
+            auto type = check_typed_expression(ret->return_value.get(), current_return_type);
+            if (recording && type && !current_return_type->equals(*get_builtin_type("void")) &&
+                !type->equals(*current_return_type))
+                log_error("Return type mismatch. Expected " + current_return_type->to_string() +
+                          ", got " + type->to_string());
+        } else if (recording && !current_return_type->equals(*get_builtin_type("void"))) {
             log_error("Non-void function must return a value");
         }
         falls_through = false;
@@ -478,6 +535,13 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
     }
     if (checking_constant)
         return check_constant_expression(expr);
+    if (dynamic_cast<const NullLiteral *>(expr)) {
+        if (!expected_pointer || !expected_pointer->nullable) {
+            log_error("null requires a nullable pointer type (*T), not a reference");
+            return nullptr;
+        }
+        return expected_pointer;
+    }
     if (const auto *ident = dynamic_cast<const Identifier *>(expr)) {
         Symbol *sym = current_scope->resolve(ident->value);
         if (!sym) {
@@ -500,6 +564,8 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
             recording->literals[expr] = ConstantValue{CoreType::String, str_lit->value};
         return get_builtin_type("string");
     } else if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
+        if (recording && (prefix->op == "&" || prefix->op == "*"))
+            return check_pointer_unary(prefix);
         auto operand = check_expression(prefix->right.get(), expected_type);
         if (!operand)
             return nullptr;
@@ -511,6 +577,12 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         }
         return get_builtin_type(std::string(core_type_info(*result).name));
     } else if (const auto *bin = dynamic_cast<const InfixExpression *>(expr)) {
+        if (recording &&
+            (std::dynamic_pointer_cast<PointerType>(expression_type_hint(bin->left.get())) ||
+             std::dynamic_pointer_cast<PointerType>(expression_type_hint(bin->right.get())) ||
+             dynamic_cast<const NullLiteral *>(bin->left.get()) ||
+             dynamic_cast<const NullLiteral *>(bin->right.get())))
+            return check_pointer_comparison(bin);
         auto [left_type, right_type] = check_binary_operands(bin);
 
         if (!left_type || !right_type)
@@ -531,6 +603,8 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         return get_builtin_type(std::string(core_type_info(*result).name));
 
     } else if (const auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
+        if (recording && !dynamic_cast<const Identifier *>(assign->left.get()))
+            return check_indirect_assignment(assign);
         const auto *ident = dynamic_cast<const Identifier *>(assign->left.get());
         if (!ident) {
             log_error("Assignment target must be a local variable name in the scalar core");
@@ -561,8 +635,7 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         if (!writable)
             log_error("Cannot assign to immutable variable '" + ident->value + "'");
         // A target is a write, not a read. Check the RHS before changing its state.
-        auto right_type =
-            check_expression(assign->right.get(), resolve_core_type(left_type->to_string()));
+        auto right_type = check_typed_expression(assign->right.get(), left_type);
         if (left_type && right_type && !left_type->equals(*right_type)) {
             log_error("Error: Type mismatch in assignment\n");
         } else if (recording && writable && right_type) {
@@ -588,8 +661,7 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
                 log_error("Unknown or private member '" + member->value + "' in " + import->path);
                 return nullptr;
             }
-            log_error("Member access requires an imported module and a public function");
-            return nullptr;
+            return check_field(member_access);
         }
         auto obj_type = check_expression(member_access->left.get());
         if (!obj_type)
@@ -618,6 +690,12 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         return nullptr;
 
     } else if (const auto *call = dynamic_cast<const CallExpression *>(expr)) {
+        if (recording) {
+            bool handled = false;
+            auto result = check_method_call(call, handled);
+            if (handled)
+                return result;
+        }
         const auto *direct = dynamic_cast<const Identifier *>(call->function.get());
         if (recording && current_module && direct && direct->value == "__write_stdout") {
             if (call->arguments.size() != 1) {
@@ -661,8 +739,7 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
 
         for (size_t i = 0; i < call->arguments.size(); ++i) {
             auto arg_type =
-                check_expression(call->arguments[i].get(),
-                                 resolve_core_type(func_type->param_types[i]->to_string()));
+                check_typed_expression(call->arguments[i].get(), func_type->param_types[i]);
             if (!arg_type)
                 return nullptr;
 
@@ -675,6 +752,11 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         }
 
         return func_type->return_type;
+    } else if (const auto *literal = dynamic_cast<const StructLiteral *>(expr)) {
+        if (recording)
+            return check_struct_literal(literal);
+        log_error("Struct literals require checked semantic analysis");
+        return nullptr;
     } else if (const auto *spawn = dynamic_cast<const SpawnExpression *>(expr)) {
         // Check inner call
         const auto *call = dynamic_cast<const CallExpression *>(spawn->call.get());
@@ -736,7 +818,7 @@ std::shared_ptr<Type> Sema::resolve_annotation(const Identifier *annotation, boo
     auto type = resolve_type_from_string(annotation->value);
     if (recording) {
         DiagnosticScope location(current_span, annotation->span);
-        auto core = resolve_core_type(annotation->value, recording->target);
+        auto core = value_type(type);
         if (!core) {
             log_error("Unknown or unsupported core type '" + annotation->value + "'");
             return nullptr;
@@ -762,7 +844,8 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
         log_error("Cannot redeclare the native byte-output primitive");
         return false;
     }
-    if (current_scope->symbols.contains(name->value)) {
+    if (current_scope->symbols.contains(name->value) ||
+        current_scope->types.contains(name->value)) {
         log_error("Duplicate declaration '" + name->value + "'");
         return false;
     }
@@ -771,15 +854,14 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
         return false;
     }
     if (recording) {
-        auto value_type = symbol.type;
-        std::vector<CoreType> parameters;
-        if (auto *function = dynamic_cast<FunctionType *>(value_type.get())) {
+        auto symbol_type = symbol.type;
+        std::vector<ValueType> parameters;
+        if (auto *function = dynamic_cast<FunctionType *>(symbol_type.get())) {
             for (auto &param : function->param_types)
-                parameters.push_back(
-                    resolve_core_type(param->to_string(), recording->target).value());
-            value_type = function->return_type;
+                parameters.push_back(value_type(param).value());
+            symbol_type = function->return_type;
         }
-        auto core = resolve_core_type(value_type->to_string(), recording->target);
+        auto core = value_type(symbol_type);
         if (!core) {
             log_error("Unsupported symbol type");
             return false;
@@ -818,7 +900,7 @@ std::shared_ptr<Type> Sema::check_expression(const Expression *expression,
         if (dynamic_cast<FunctionType *>(type.get())) {
             if (!resolving_callee)
                 log_error("Function values are not supported in the core language");
-        } else if (auto core = resolve_core_type(type->to_string(), recording->target)) {
+        } else if (auto core = value_type(type)) {
             if (*core == CoreType::Void && !statement_context) {
                 log_error("A void call cannot be used as a value");
                 return nullptr;

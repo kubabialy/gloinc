@@ -13,7 +13,7 @@ cmake --install "$build_dir" --prefix "$work_dir/install prefix"
 cmake -E env "GLOIN_TEST_CLI=$work_dir/install prefix/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$work_dir/install prefix/share/gloinc/core-fixtures" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/installed.xml"
 
 cpack --config "$build_dir/CPackConfig.cmake" -B "$work_dir/packages"
@@ -28,7 +28,7 @@ package_root="$work_dir/extracted prefix/$archive_name"
 cmake -E env "GLOIN_TEST_CLI=$package_root/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$package_root/share/gloinc/core-fixtures" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/extracted.xml"
 program_status=0
 result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/core_counter.gloin") || program_status=$?
@@ -49,4 +49,4 @@ if grep -F "$build_dir" "$report_dir/dependencies.txt"; then
   exit 1
 fi
 cp "$archive" "$archive.sha256" "$report_dir/"
-echo "Installed and extracted packages passed all 158 CLI/standard-output/source acceptance cases."
+echo "Installed and extracted packages passed all 241 CLI/defer/method/pointer/struct/standard-output/source acceptance cases."

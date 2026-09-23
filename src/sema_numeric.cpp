@@ -22,18 +22,8 @@ std::shared_ptr<Type> Sema::check_numeric_literal(const Expression *expression) 
 }
 
 std::optional<CoreType> Sema::numeric_anchor(const Expression *expression) {
-    if (const auto *identifier = dynamic_cast<const Identifier *>(expression)) {
-        if (auto *symbol = current_scope->resolve(identifier->value))
-            return resolve_core_type(symbol->type->to_string());
-    }
-    if (const auto *call = dynamic_cast<const CallExpression *>(expression)) {
-        if (const auto *identifier = dynamic_cast<const Identifier *>(call->function.get())) {
-            if (auto *symbol = current_scope->resolve(identifier->value)) {
-                if (const auto *function = dynamic_cast<const FunctionType *>(symbol->type.get()))
-                    return resolve_core_type(function->return_type->to_string());
-            }
-        }
-    }
+    if (auto type = expression_type_hint(expression))
+        return resolve_core_type(type->to_string());
     if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expression)) {
         if (prefix->op == "-")
             return numeric_anchor(prefix->right.get());

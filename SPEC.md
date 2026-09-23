@@ -128,8 +128,8 @@ Canonical forms are:
 local binding:      def [mut] name: Type [= expression];
 constant:           def [pub|priv] const name: Type = constant_expression;
 function:           def [pub|priv] name(name: Type, ...) -> ReturnType { ... }
-later struct:       def [pub|priv] struct Name { ... }
-later field:        def [pub|priv] [mut] name: Type,
+struct:             def [pub|priv] struct Name { ... }
+field:              def [pub|priv] [mut] name: Type,
 later method:       def [pub|priv] [static|deferred|spawnable] name(...) -> Type { ... }
 ```
 
@@ -309,8 +309,7 @@ continuing body paths; if none continue, it is checked against the state before
 the body. Like `while`, a `for` alone does not prove a non-void function returns.
 No implicit return or divergence inference is added by omitted components.
 
-`defer` remains outside the core and is rejected. When implemented under
-SPEC-027, its existing function-exit, LIFO contract applies inside these loops;
+`defer` follows SPEC-027's function-exit, LIFO contract inside these loops;
 neither loop iteration nor block exit is a defer execution point.
 
 ### Functions, calls, returns, and entry points (SPEC-014)
@@ -514,9 +513,8 @@ Mutability, scope, and type compatibility are subsequent semantic checks.
 C-style loop headers accept independently omitted components under SPEC-017;
 both header semicolons and body braces remain required.
 
-Deferred syntax tests may construct member/index expressions and struct literals,
-but this does not admit them into the core. In that syntax, postfix member/index
-operations have the same precedence as calls. An unparenthesized condition or
+Ordinary struct literals and member access are supported by SPEC-024; indexing
+remains deferred. Postfix member/index operations have the same precedence as calls. An unparenthesized condition or
 loop update always gives its following brace to the control-flow body. Generic
 struct-literal recognition requires type arguments followed by a literal brace,
 without any capitalization heuristic; generic language acceptance remains
@@ -703,7 +701,11 @@ tests or turn unimplemented features into expected successes.
 | Compound assignment, bitwise operators, shifts, unary `+`, assignment expressions | Reject for the first release (SPEC-015); integer remainder `%` is included, floating remainder is not. |
 | `i128`, `u128`, `f128` | Deferred numeric extension (SPEC-013b); core type resolution rejects them (SPEC-010/SPEC-013). |
 | `@std`, standard I/O and conversions | `@std`, `std.print(string)` and `std.println(string)` are implemented by SPEC-023. Further I/O and conversions remain SPEC-030; `string` is implemented by SPEC-022. |
-| Structs, raw pointers/references, methods, `defer`, arenas | Deferred (SPEC-024 through SPEC-028). |
+| Ordinary structs | Implemented by SPEC-024: named value types, checked fields, and target layout. |
+| Pointers and references | Implemented by SPEC-025 with manual lifetimes, typed access, mutability checks, and null traps. |
+| Instance/static methods | Implemented for ordinary structs (SPEC-026); explicit typed `self`, checked receivers, and file/module visibility. |
+| `defer` | Function-exit LIFO calls with registration-time argument capture (SPEC-027). |
+| Arenas | Deferred (SPEC-028). |
 | Local modules and `#package` imports | Deferred (SPEC-029/SPEC-044). |
 | Generic types/functions, enums, `Result` | Deferred (SPEC-031 through SPEC-034); capitalization must not decide grammar. |
 | `[i32; 3]`, `u8[1024]`, array literals, indexing/slicing | Deferred syntax/layout choice (SPEC-035); neither array spelling is approved for the core. |
@@ -726,6 +728,64 @@ All Gloin programs are written in UTF-8. Gloin is by design explicit, and does n
 The reason for this is that Gloin is designed to be a simple, safe, fast language but most importantly transparent.
 It will not hide complexity from you, but will instead provide you with the tools to understand it.
 
+### Ordinary structs (SPEC-024)
+
+Ordinary structs are nominal value types declared at file scope. All struct names
+and fields are collected before function signatures and bodies, allowing forward
+references and nested records. Each field needs an explicit non-void type. Fields
+may use builtin value types, strings, or other ordinary structs. Duplicate names,
+unknown types, direct or indirect by-value recursion, and conflicts with builtin
+types or other file declarations are errors. Empty structs are permitted.
+
+```gloin
+def struct Point {
+    def pub mut x: i32,
+    def pub mut y: i32,
+}
+
+def main() -> i32 {
+    def mut p: Point = Point { y: 10, x: 30 };
+    def before: Point = p;
+    p.x = p.x + 2;
+    return p.x + before.y;
+}
+```
+
+A literal names every field exactly once. Missing, duplicate, unknown, private,
+or mistyped fields are errors; there are no implicit field defaults. Initializers
+evaluate once in written order, independently of declaration order. The compiler
+places each value at its declared field index. Type identity includes the owning
+file/module: matching field layouts do not allow conversion between named types.
+Structs support value parameters, returns, assignment, and copies. Comparisons,
+arithmetic on whole structs, and compile-time struct constants are not supported.
+
+A struct binding must be initialized as a whole before reading or assigning any
+field. Whole-value assignment follows the existing definite-initialization rules.
+Field writes require a mutable local root and `def mut` on every field traversed,
+including the final field. Parameters, immutable roots/fields, and temporary
+receivers cannot be assigned through. Replacing a whole mutable struct value is
+allowed even if some of its fields are immutable. Nested reads and reads from
+function results evaluate the receiver once.
+
+Private is the default for structs and fields. Private fields are accessible
+within the defining file; cross-module reads, writes, and literal initialization
+require public fields. `import "@records"` can expose a `def pub struct Point` as
+`records.Point`, including in annotations and literals. Module type identities
+and private helpers remain isolated from application declarations.
+
+Ordinary fields retain declaration order. LLVM's target data layout determines
+field offsets, ABI alignment, allocation size, and padding, including nested
+structs and strings. Generated modules carry the native target triple and data
+layout used by lowering/JIT; pointer sizes are not inferred from C++ `sizeof`
+or summed field widths. Padding bytes have no language-visible value. The
+supported execution target remains Apple Silicon macOS; layout tests on synthetic
+32-bit layouts do not add cross-compilation support.
+
+Packed structs, generics, local struct declarations, field
+default initializers, and field-by-field initialization remain unsupported.
+Unparenthesized control-flow headers reserve their opening brace for the body;
+use grouping or a call argument when a struct literal is needed in a condition.
+
 ### Standard output (SPEC-023)
 
 `import "@std";` is a file-scope declaration available throughout the file,
@@ -735,8 +795,8 @@ name cannot be used to call standard members. Import paths decode string escapes
 `@name` loads a lowercase `name.gloin` file from the selected standard-library
 directory. Names match `[a-z][a-z0-9_]*`; other paths are rejected. Currently
 `stdlib/std.gloin` is shipped; adding `math.gloin` or `io.gloin` requires no
-compiler changes. Only declared `pub` functions are accessible as module members.
-Module functions/constants use an isolated scope and cannot see application
+compiler changes. Declared `pub` functions and structs are accessible as module members.
+Module functions/constants/types use an isolated scope and cannot see application
 declarations. Private helpers are callable inside their own module. Imports
 between library files, exported constants, local paths, and package paths remain
 deferred and produce diagnostics.
@@ -880,12 +940,138 @@ Gloin supports pointers and references in the same way as C or C++ does, with so
 
 #### Pointers (`*T` vs `&T`)
 
-- `*T`: A raw, nullable pointer. Equivalent to `T*` in C. It can be null and requires explicit checks or unsafe blocks to dereference (in future versions).
-- `&T`: A non-nullable reference. It is guaranteed to point to a valid object. It cannot be null.
+- `*T`: A nullable raw address interpreted as a pointer to `T` when accessed. The address may be `null`; holding it does not establish that a live resource exists there.
+- `&T`: A non-null reference to a live, initialized `T` resource. It must not be null.
+- `*const T` and `&const T`: The corresponding pointer/reference with read-only access to the pointee.
+
+Gloin uses manually managed memory and **does not use a borrow checker**.
+The programmer must keep the referenced resource alive and obey its storage
+lifetime. Reference creation does not allocate, copy, retain, or own that resource.
+Copies, arguments, returns, and stored pointer/reference fields do not extend its
+lifetime. The compiler checks types, initialization when taking an address,
+mutability, and reference nullability; it does not prove lifetimes or dynamically
+track liveness, ownership, or provenance. A non-null dangling address is not a
+valid reference. Dereferencing dangling or otherwise invalid storage is outside
+these guarantees and is the programmer's responsibility.
+
+SPEC-025 accepts pointer/reference annotations recursively, including fields and
+function signatures. `void` is not an object type, so `*void` and `&void` are not
+supported. Pointer fields can break recursive struct layout cycles; by-value
+cycles still fail. There is no implicit pointee conversion between different
+numeric types or nominal structs.
+
+`&place` takes the address of an initialized runtime variable, parameter,
+addressable field, or dereference. It yields `&T` for writable storage and
+`&const T` for read-only storage. Constants, functions, literals, and temporary
+values are not addressable. Whole-value definite initialization of a local is required
+before taking its address; out-parameter initialization is not implemented.
+Memory behind a raw pointer is not tracked by local initialization analysis.
+The programmer must provide correctly aligned, live storage and initialize it
+before reading; null is the only runtime address-validity check.
+Taking an address gives locals/parameters stable, correctly typed stack storage.
+Loop-local stack slots are allocated at function entry and reused; object lifetime
+still follows the declaration's scope and loop iteration.
+
+`*pointer` accesses the declared pointee type, including non-i32 scalars, strings,
+structs, and other pointers. `p.field` automatically dereferences one pointer or
+reference to a struct, preserving field visibility and mutability. Writable
+access through a pointer requires a writable pointee and `def mut` for each
+struct field traversed. A pointer-valued field is itself a capability: a read-only
+view of its container does not remove access rights from the pointer it contains.
+Pointer binding mutability is independent of pointee mutability:
+`def p: &i32` may write through `*p` but cannot rebind `p`; `def mut p: *const i32`
+may rebind `p` but cannot write through `*p`. Live aliases are permitted; read-only
+access does not freeze the resource against writes through other writable aliases.
+
+Conversions may weaken only the outermost pointer layer: a reference may become
+a nullable pointer to the same pointee, and writable access may become read-only.
+The reverse conversions, arbitrary casts, pointer/integer conversions, and
+nested qualifier covariance are rejected. These rules apply consistently to
+initialization, assignment, fields, arguments, and returns. `&*p` explicitly
+creates a reference from a raw pointer after checking it is non-null; lifetime
+validity remains the programmer's responsibility.
+
+`null` needs a contextual nullable pointer type, including in arguments, returns,
+fields, assignments, or comparisons. It cannot initialize a reference and is not
+an integer zero. Pointers support `==`/`!=` on identical pointee types, ignoring
+outer mutability/nullability differences for comparison. They compare addresses,
+not resource contents. There is no implicit boolean conversion, pointer ordering,
+or pointer arithmetic. `null == null` without a typed pointer operand is rejected.
+
+Every nullable dereference, indirect field access, or `&*p` checks for null and
+traps before accessing memory if null. Explicit checks and short-circuit boolean
+operators can avoid that trap. Indirect assignment evaluates its destination
+address once before its right-hand side; reads and address-taking also evaluate
+the receiver once. These checks do not require an unsafe block. Unsafe-block
+syntax/checking is a separate future design; no such syntax is introduced here.
+Compile-time pointer constants, heap allocation, deallocation, and arenas are
+outside this step; SPEC-028 owns arena allocation and its alignment/lifetime API.
 
 `self` in struct methods is always a pointer.
 
 #### Memory Management
+
+##### Function-exit defer (SPEC-027)
+
+`defer function(arguments);` registers one ordinary function, static-method, or
+instance-method call when execution reaches that statement. It is allowed only
+inside function/method bodies, and its operand must be a call. Normal name,
+visibility, receiver, argument, and initialization checks apply. A non-void
+callee's result is discarded. This statement is unrelated to asynchronous
+`deferred` functions, which remain deferred language work.
+
+Registration evaluates the receiver once (for instance calls), then explicit
+arguments from left to right, immediately. Their values are saved; the callee
+body runs later. Scalars, strings, and structs are captured by value under their
+normal copy rules. Pointers/references, including the implicit address of an
+instance receiver, copy the address, not the resource. Subsequent rebinding of
+the source variable does not change the saved argument. Mutating a resource
+through a saved pointer remains observable by the deferred callee.
+
+Every reached registration is independent, including repeated registrations
+from one loop statement. Untaken branches and zero-iteration loops register
+nothing. On explicit or implicit normal function return, all registered calls
+execute exactly once in reverse registration order. A return expression is
+fully evaluated and its result saved before cleanup; mutating the returned
+local during cleanup does not change an already copied return value. Each
+recursive invocation has its own registrations. A deferred callee runs its own
+defers before the caller proceeds to its next cleanup.
+
+Saved values survive their source bindings' lexical scopes, but capturing an
+address does **not** extend its resource's lifetime. Function-scope locals stay
+alive through that function's cleanup. A caller-owned resource must likewise
+remain live until the deferred call finishes. Deferring a method on a block- or
+iteration-local object past its scope is invalid lifetime usage; use a value
+argument or a resource whose owner outlives cleanup. There is no borrow checker,
+escape analysis, automatic ownership, or automatic resource retention.
+
+Registration records use compiler-managed heap bookkeeping, proportional to the
+number and size of pending captures, and are released during normal cleanup.
+Loop registrations do not allocate a growing stack. Allocation failure traps.
+No user allocator API is introduced (SPEC-028 remains separate).
+
+Arithmetic/null traps and other process termination do not unwind or execute
+pending defers. If argument evaluation traps, the new call is not registered;
+if a cleanup call traps, older pending calls do not run. Returning an error code
+normally still executes cleanup. Existing stdout write-error reporting remains
+at the JIT execution boundary, after normal returns and their cleanup.
+
+```gloin
+import "@std";
+
+def main() -> i32 {
+    def mut message: string = "first";
+    defer std.println(message);
+    message = "second";
+    defer std.println(message);
+    std.println("body");
+    return 42;
+}
+```
+
+This prints `body`, `second`, and `first`, each on its own line, and exits 42.
+
+##### Planned arena API
 
 Gloin does not have garbage collection and expects you to manage memory manually. To assist with this, it provides:
 
@@ -904,29 +1090,23 @@ def main() -> i32 {
 }
 ```
 
-Example of pointer usage:
+Example of pointer usage (executable under SPEC-025):
 
 ```gloin
 import "@std";
 
 def main() -> i32 {
     def mut value: i32 = 42;
-    def ptr: &i32 = &value;  // Get address of value as non-nullable reference
-    
-    std.print("Value: ");
-    std.println(std.to_string(value));
-    
-    std.print("Via pointer: ");
-    std.println(std.to_string(*ptr));  // Dereference pointer
-    
-    *ptr = 100;  // Modify through pointer
-    
-    std.print("New value: ");
-    std.println(std.to_string(value)); // Value was modified too and is now 100
-    
-    return 0;
+    def ptr: &i32 = &value;
+    if *ptr != 42 { return 1; }
+    *ptr = 100;
+    std.println("Value updated through reference");
+    return value;
 }
 ```
+
+This prints one line and exits with status 100. Numeric formatting remains a
+separate standard-library feature; it is not needed for pointer semantics.
 
 ### Strings
 
@@ -946,7 +1126,48 @@ This means passing strings by value is cheap (two words), and slicing is efficie
 
 Gloin supports structs and enums. Structs are similar to Go structs, except that they have methods declared in the same scope.
 
-#### Method Lowering (Syntactic Sugar)
+#### Methods (SPEC-026)
+
+Ordinary structs may contain instance methods and `def static` functions. All
+signatures are collected before bodies, supporting forward and recursive calls.
+Methods and fields share a member namespace: duplicate names and overloading are
+not supported. Method names do not introduce bare functions into file scope.
+
+An instance method declares exactly one receiver, as its first parameter named
+`self`. Its type is `*Struct`, `&Struct`, `*const Struct`, or `&const Struct`, with
+the containing struct's nominal identity. Value receivers, nested pointers, a
+different struct type, omitted receivers, and extra `self` parameters are errors.
+The binding `self` is immutable; a writable pointee allows mutations to mutable
+fields under SPEC-024/025. Static methods have no `self` parameter or implicit
+receiver and are called as `Struct.method(args)` (or `module.Struct.method(args)`
+for an exported type). Static calls through an object and instance calls through
+a type are rejected. Methods cannot be extracted as function values.
+
+For `object.method(args)`, an initialized addressable struct local, parameter,
+field, or dereference supplies its address. A pointer/reference receiver supplies
+its value, never the address of its pointer slot. The resulting pointer must
+convert to the declared `self` type using SPEC-025's outer capability weakening:
+an immutable object requires a read-only receiver; a nullable pointer cannot
+implicitly become a reference. `(&*pointer).method()` explicitly checks for null
+when a reference receiver is required. A method declared with nullable `*Struct`
+may itself test `self == null`; passing null does not trap at the call boundary,
+but dereferencing it in the body traps normally.
+
+Receiver evaluation occurs exactly once, before explicit arguments; arguments
+then evaluate left to right. A struct temporary, such as `make().method()` or
+`(Struct { ... }).method()`, must first be assigned to a named local. No hidden
+temporary receiver storage or lifetime extension is introduced. Returning a
+pointer/reference from a method follows the same manual lifetime contract as an
+ordinary function: there is no borrow checker or escape analysis.
+
+Visibility follows the existing file/module rules. Private methods and fields
+are usable throughout their declaring file; calls from another module require
+public methods. Qualified static calls also require a public type. A public
+constructor may initialize private fields, and a public method may call private
+helpers. Methods have no extra authority over field mutability. All bodies are
+checked even when unused. Async, generic, and packed-struct methods remain deferred.
+
+##### Method lowering
 
 Methods defined inside a struct are purely syntactic sugar. They are lowered to global functions with the struct instance passed as a pointer in the first argument.
 
@@ -955,7 +1176,7 @@ def struct Foo {
     def x: int,
     
     // Instance method
-    def bar(self: *Foo) -> int {
+    def bar(self: *const Foo) -> int {
         return 1; 
     }
 }
@@ -969,8 +1190,8 @@ def struct Foo {
 }
 
 // Lowered global function
-// Naming convention: StructName_MethodName
-def Foo_bar(self: *Foo) -> int {
+// Conceptual name; actual linkage uses a collision-free internal symbol.
+def Foo_bar(self: *const Foo) -> int {
     return 1;
 }
 ```
@@ -986,7 +1207,7 @@ It is compiled as:
 Foo_bar(&f);
 ```
 
-Accessing `self.x` inside the method is simply accessing the field of the pointer passed as the first argument.
+Accessing `self.x` inside the method is simply accessing the field of the pointer passed as the first argument. The declared receiver is the only receiver parameter; lowering never inserts a second `self`. Static methods lower without a receiver. Internal linkage names include nominal struct identity and cannot collide with source-level function names.
 
 To make a method public, you must place `pub` immediately after `def`. The `priv` keyword can be used to make a method private, but since it's the default visibility, it's not necessary to write it.
 
@@ -997,21 +1218,22 @@ def struct Person {
     def pub name: string,
     def pub age: i32,
     
-    def pub greet(self: *Person) -> void {
+    def pub static create(name: string, age: i32) -> Person {
+        return Person { name: name, age: age };
+    }
+
+    def pub greet(self: &const Person) -> void {
         std.print("Hello, I'm ");
         std.println(self.name);
     }
     
-    def pub is_adult(self: *Person) -> bool {
+    def pub is_adult(self: &const Person) -> bool {
         return self.age >= 18;
     }
 }
 
 def main() -> i32 {
-    def person: Person = Person {
-        name: "Alice",
-        age: 25
-    };
+    def person: Person = Person.create("Alice", 25);
     
     person.greet();
     

@@ -100,7 +100,7 @@ TEST(DiagnosticsTest, NonBooleanConditionsFailSemanticChecking) {
 TEST(DiagnosticsTest, UnsupportedStatementsCannotDisappear) {
     mlir::MLIRContext context;
     for (const auto &text : {"def main() -> i32 { import \"@std\"; return 0; }",
-                             "def main() -> i32 { defer f(); return 0; }",
+                             "def main() -> i32 { continue; return 0; }",
                              "def main() -> i32 { for ;; { break; } return 0; }"}) {
         auto result = compile_source(text, "unsupported.gloin", context);
         EXPECT_FALSE(result.success()) << text;
@@ -268,9 +268,9 @@ TEST(DiagnosticsTest, LiteralAndKeywordTokensCannotSubstituteForTypes) {
 TEST(DiagnosticsTest, CorePipelineRejectsDeferredSyntaxBeforeChecking) {
     mlir::MLIRContext context;
     for (const std::string source :
-         {"def struct X { def x: i32 } def main() -> i32 { return 0; }",
-          "def main() -> i32 { defer work(); return 0; }",
-          "def main() -> i32 { def x: *i32; return 0; }", "def main() -> i32 { return x = 1; }"}) {
+         {"def packed struct(u32) X { def x: i32 } def main() -> i32 { return 0; }",
+          "def main() -> i32 { run work(); return 0; }",
+          "def main() -> i32 { def x: [i32; 2]; return 0; }", "def main() -> i32 { return x = 1; }"}) {
         auto result = compile_source(source, "core.gloin", context);
         EXPECT_FALSE(result.success()) << source;
         EXPECT_FALSE(result.module);

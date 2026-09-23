@@ -30,10 +30,16 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 | Precedence and parentheses | [precedence](run/precedence.gloin) |
 | UTF-8 comments, CRLF, multiline expressions | [utf8_comments](run/utf8_comments.gloin) |
 | i32 result mapped to host exit status modulo 256, with no implicit output | [negative](run/negative_result.gloin), [zero](run/zero_result.gloin), [minimum](run/minimum_result.gloin), [maximum](run/maximum_result.gloin) |
+| Function-exit LIFO defer and checked registration (SPEC-027) | [defer](run/defer.gloin), [invalid operand](reject/defer_operand.gloin), [cleanup trap](trap/defer_cleanup.gloin) |
+| Instance/static methods and explicit self (SPEC-026) | [methods](run/methods.gloin), [invalid receiver](reject/method_receiver.gloin), [null method access](trap/null_method.gloin) |
+| Pointers, references, indirect writes, and read-only aliases (SPEC-025) | [pointers](run/pointers.gloin) |
+| Null reference and pointee mismatch diagnostics | [null_reference](reject/null_reference.gloin), [pointer_type_mismatch](reject/pointer_type_mismatch.gloin) |
+| Null dereference traps before loading | [null_dereference](trap/null_dereference.gloin) |
+| Ordinary nested structs, value calls/copies, and field assignment (SPEC-024) | [ordinary_struct](run/ordinary_struct.gloin) |
 | Standard import and exact hello-world output (SPEC-023) | [hello_world](run/hello_world.gloin) |
 | Eleven normative invalid fragments | `reject/canonical_01.gloin` through `canonical_11.gloin`; the unknown-type binding is wrapped in a function to reach type checking |
 | Initialization, immutability, scopes, types, literal ranges, calls, returns, constants | Named files under [reject](reject), including [uninitialized](reject/uninitialized.gloin), [mixed_widths](reject/mixed_widths.gloin), [missing_return](reject/missing_return.gloin) |
-| Deferred syntax/type families and unsupported operators | `reject/deferred_*.gloin`: imports, text, aggregates, pointers/references, generics, concurrency, extended numeric/layout types, legacy syntax, range loops, bitwise/shift/compound operators |
+| Deferred syntax/type families and unsupported operators | `reject/deferred_*.gloin`: local/package imports, unsupported string escapes, packed structs, arrays, generics, concurrency, extended numeric/layout types, legacy syntax, range loops, bitwise/shift/compound operators |
 | Checked integer overflow at every width; zero division and signed-minimum remainder | `trap/overflow_i*.gloin`, `trap/overflow_u*.gloin`, [division_zero](trap/division_zero.gloin), [signed_remainder](trap/signed_remainder.gloin) |
 | Floating zero division and non-finite results at both widths | [f32 division](trap/division_zero_f32.gloin), [f64 division](trap/division_zero_f64.gloin), [f32 overflow](trap/overflow_f32.gloin), [f64 overflow](trap/overflow_f64.gloin) |
 
@@ -52,7 +58,7 @@ trap before the invalid construct: execution before validation cannot pass as a
 compiler rejection. Canonical invalid fragments are retained even where an earlier
 top-level grammar error is the first diagnostic.
 
-The 14 `trap` fixtures must pass checking, then terminate execution with SIGTRAP
+The 17 `trap` fixtures must pass checking, then terminate execution with SIGTRAP
 or SIGILL and no result. Launch errors, ordinary compiler-error exits, and timeouts
 do not count as expected traps. Each invocation has a 10-second timeout; each
 CTest case has a 30-second timeout and independent temporary output files.

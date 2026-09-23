@@ -78,6 +78,9 @@ add_library(gloin_frontend STATIC
     src/lexer.cpp
     src/parser.cpp
     src/sema.cpp
+    src/sema_structs.cpp
+    src/sema_pointers.cpp
+    src/sema_methods.cpp
     src/numeric.cpp
     src/sema_numeric.cpp
     src/sema_constants.cpp
@@ -93,8 +96,10 @@ add_library(gloin_backend STATIC
     src/codegen.cpp
     src/codegen_operators.cpp
     src/codegen_control_flow.cpp
+    src/codegen_defer.cpp
     src/compiler.cpp
     src/module_loader.cpp
+    src/target_layout.cpp
     src/lowering.cpp
     src/dialect/GloinDialect.cpp
     src/jit_runner.cpp
@@ -194,6 +199,10 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/jit_test.cpp
         tests/cli_test.cpp
         tests/standard_module_test.cpp
+        tests/ordinary_struct_test.cpp
+        tests/pointer_test.cpp
+        tests/method_test.cpp
+        tests/defer_test.cpp
         tests/core_acceptance_test.cpp
         tests/codegen_generics_test.cpp
         tests/external_runner_test.cpp
@@ -228,7 +237,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     gtest_discover_tests(gloinc_test PROPERTIES TIMEOUT 30)
 
     # Required scalar-core suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure

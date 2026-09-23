@@ -34,10 +34,13 @@ parameters and a signless i32 result. It must use C calling convention and
 external, internal, or private emitted linkage. Source `priv` does not prevent
 execution. Helper functions also require C calling convention and emitted
 external/internal/private linkage. External function/global declarations are
-rejected before engine creation except for the exact standard-output runtime ABI:
-`gloin.runtime.output(ptr, i64) -> void`, with external linkage and C calling
-convention. The JIT registers that callback explicitly when the module uses it. Its name
-cannot be spelled as a source identifier. This does not provide a general FFI.
+rejected before engine creation except for the exact runtime ABIs:
+`gloin.runtime.output(ptr, i64) -> void`, `malloc(i64) -> ptr`, and `free(ptr) -> void`,
+all with external linkage, C calling convention, and no variadic arguments.
+The JIT registers output and native allocation callbacks explicitly. Allocation
+supports SPEC-027's pending-call records, not a source allocator API or general
+FFI. Source functions named `malloc`/`free` receive separate internal linkage
+names, preserving ordinary source lookup without a runtime symbol collision.
 
 Native target/assembly-printer registration runs once. Builtin and LLVM dialect
 translation interfaces are registered in the caller's context. The translated
@@ -75,3 +78,18 @@ remain deferred. File loading, result/exit conventions, and
 check/IR modes are documented in [the CLI reference](cli.md). Source-file acceptance
 is covered by [SPEC-021's fixtures](../tests/fixtures/core/README.md); installation
 and packaging are documented in [the release guide](release.md).
+
+Codegen and the JIT share one thread-safe native-target initialization and layout
+query. Source-generated modules carry that native triple and data layout, so
+ordinary struct storage and JIT execution use the same target rules (SPEC-024).
+
+Nullable pointer loads, stores, field access, and checked reference creation
+trap on null using the existing runtime-trap mechanism. The JIT does not track
+resource lifetimes or diagnose dangling non-null pointers (manual memory, SPEC-025).
+
+SPEC-027 adds normal-return defer cleanup, including cleanup on functions that
+return a nonzero result. Fatal traps do not unwind. Captures are recorded in
+per-invocation heap records and freed while draining; the JIT explicitly binds
+native allocation functions with the validated ABIs above. No global defer
+state survives an invocation. Output errors still surface after invocation,
+following normal function cleanup.

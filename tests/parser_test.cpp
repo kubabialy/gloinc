@@ -428,18 +428,18 @@ TEST(ParserTest, RejectsTruncatedConstructsAndTrailingTokens) {
 
 TEST(ParserTest, RejectsUnsupportedCoreSyntax) {
     for (const std::string source :
-         {"fn f() {}", "extern def f() -> void;", "struct X {}", "def struct X {}",
+         {"fn f() {}", "extern def f() -> void;", "struct X {}", "def packed struct(u32) X {}",
           "def deferred f() -> void {}", "def spawnable f() -> void {}",
           "def f<T>(x: T) -> T { return x; }"})
         rejected(source);
     for (const std::string expression :
-         {"spawn f()", "await f()", "run f()", "[1, 2]", "X { x: 1 }",
-          "a[0]",      "&a",      "*a",     "+a",        "~a",
+         {"spawn f()", "await f()", "run f()", "[1, 2]", "X<i32> { x: 1 }",
+          "a[0]",      "+a",        "~a",
           "a & b",     "a | b",     "a ^ b",   "a << b", "a >> b",    "a += 1",
-          "a ? b",     "0..3",      "a => b",  "null"})
+          "a ? b",     "0..3",      "a => b"})
         rejected("def main() -> void { " + expression + "; }");
     for (const std::string statement :
-         {"defer f();", "break;", "continue;", "switch x {}", "match x {}", "for x in 0..3 {}"})
+         {"break;", "continue;", "switch x {}", "match x {}", "for x in 0..3 {}"})
         rejected("def main() -> void { " + statement + " }");
 }
 

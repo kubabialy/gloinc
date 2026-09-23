@@ -69,7 +69,7 @@ mlir::Value CodeGen::checked_integer_arithmetic(std::string_view op, mlir::Value
 }
 
 mlir::Value CodeGen::gen_checked_unary(const PrefixExpression *expression) {
-    auto type = checked_data->types.at(expression->right.get());
+    auto type = checked_data->types.at(expression->right.get()).builtin();
     if (!unary_operator_type(expression->op, type))
         fail("Invalid checked unary operator");
     auto operand = gen_expression(expression->right.get());
@@ -104,7 +104,15 @@ mlir::Value CodeGen::gen_short_circuit(const InfixExpression *expression) {
 }
 
 mlir::Value CodeGen::gen_checked_binary(const InfixExpression *expression) {
-    auto type = checked_data->types.at(expression->left.get());
+    if (checked_data->types.at(expression->left.get()).is_pointer()) {
+        auto left = gen_expression(expression->left.get());
+        auto right = gen_expression(expression->right.get());
+        return builder.create<mlir::LLVM::ICmpOp>(
+            location(),
+            expression->op == "==" ? mlir::LLVM::ICmpPredicate::eq : mlir::LLVM::ICmpPredicate::ne,
+            left, right);
+    }
+    auto type = checked_data->types.at(expression->left.get()).builtin();
     const auto &op = expression->op;
     if (type != checked_data->types.at(expression->right.get()) || !binary_operator_type(op, type))
         fail("Invalid checked binary operator");

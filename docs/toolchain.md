@@ -101,7 +101,7 @@ make clean BUILD_DIR=build-no-tests
 `BUILD_ARGS` passes build options; `CTEST_ARGS` passes test filters/options.
 `make test` explicitly enables tests and preserves CTest's failure exit status.
 `make run` defaults to `examples/core_counter.gloin`; `RUN_ARGS` overrides its CLI
-arguments. `check-core` requires a tests-enabled build and runs the 443 required
+arguments. `check-core` requires a tests-enabled build and runs the 526 required
 scalar and standard-output checks. Installation, CPack archives, external runtime dependencies,
 and the sanitizer build option are described in [release.md](release.md).
 `make clean` invokes CMake's clean target in an already configured directory,

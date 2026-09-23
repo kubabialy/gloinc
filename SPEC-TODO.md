@@ -2,9 +2,9 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-024 (ordinary structs and target-correct layout).** SPEC-001 through SPEC-023 are complete. Deferred features resume after the selected first release, as specified below. Completed items have verification evidence in the completion log.
+**Next item: SPEC-028 (arena runtime and ABI).** SPEC-001 through SPEC-027 are complete. Deferred features resume after the selected first release, as specified below. Completed items have verification evidence in the completion log.
 
-The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-024 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
+The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-028 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
 
 ## How to use this checklist
 
@@ -159,21 +159,27 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Done when:** the specification's basic hello-world runs through the CLI and prints exactly `Hello World!` plus a newline. A missing module or member never succeeds through an empty stub.
   **Verified:** `@name` loads the lowercase `name.gloin` file, and `stdlib/std.gloin` implements `print`/`println` as ordinary checked functions over the native byte-output primitive. Seventeen standard-module regressions and the CLI hello-world fixture pass, including editable signatures/bodies, isolated scopes, source locations, missing/unreadable files, exact UTF-8/NUL bytes, evaluation order, and write errors. Per the agreed CLI contract, main's return sets the host exit status (low eight bits), without implicit stdout and independently of imports/output. A fresh Release build passes all **443 required checks**; the full suite has **486/491 passes** with the same five deferred failures. All **158 package checks pass twice**, against installed and relocated binaries.
 
-- [ ] **SPEC-024 — Complete ordinary structs and target-correct layout.**
+- [x] **SPEC-024 — Complete ordinary structs and target-correct layout.**
   Check field declarations, initializers, visibility, duplicate/missing/unknown fields, and field assignments. Use target data layout for size/alignment rather than adding field sizes or hardcoding pointer size.
-  **Done when:** mixed-size structs have correct layout, valid literals/field access execute correctly, and invalid fields cannot become index zero or leave unintended undefined values. Packed bitfields are handled separately in SPEC-038/039.
+  **Implemented:** nominal checked struct identities, forward/nested declarations, exact named initialization, value copies/parameters/returns, checked member indices, field mutation and file/module visibility. Recursive by-value types and unsupported packed/method/generic forms fail before codegen. LLVM target data layout supplies allocation sizes, alignments, and padding; emitted modules carry that layout and target triple. Whole-value initialization is required before member reads/writes; compile-time struct constants remain unsupported. Packed bitfields remain SPEC-038/039.
+  **Verified:** all 14 ordinary-struct tests and the new maintained source fixture pass. A fresh Release build passes **458/458 required checks**; installed and relocated packages each pass **173/173 checks**. The full suite reports **501/506 passes**, retaining only the five SPEC-028/040/041 failures. See the SPEC-024 verification record below.
 
-- [ ] **SPEC-025 — Implement pointer/reference types and addressability.**
+- [x] **SPEC-025 — Implement pointer/reference types and addressability.**
   Specify nullability, pointee mutability, conversions, lifetime responsibilities, and the boundary between current guarantees and future unsafe-block checks. Preserve pointee types through address-of, dereference, assignment, and calls.
-  **Done when:** the spec's pointer example works; non-i32 pointees load/store with correct types; invalid references and writes through immutable storage are rejected according to the documented rules; allocation sizes match accesses.
+  **Implemented:** recursive typed `*T`/`&T` and read-only pointees, addressability and whole-value initialization checks, capability weakening at value boundaries, typed dereferences/indirect fields and assignments, recursive pointer fields, address comparisons, and null traps before nullable memory access or reference creation. Addressed locals/parameters receive correctly typed entry-block slots. Gloin uses manual lifetimes and no borrow checker; non-null references must identify live resources, and keeping them alive is the programmer's responsibility. No automatic ownership, escape/lifetime checking, arbitrary casts, pointer arithmetic, unsafe blocks, or allocator API is introduced.
+  **Verified:** the executable spec example and all 18 pointer tests pass, including native/external execution, non-i32 storage, read-only aliases, nested pointer conversions, null traps, evaluation order, privacy, and native layout. A fresh Release build passes **478/478 required checks**; the full suite reports **521/526 passes**, with the same five deferred failures. Installed and relocated packages each pass **193/193 checks**.
 
-- [ ] **SPEC-026 — Implement instance/static methods and access rules.**
+- [x] **SPEC-026 — Implement instance/static methods and access rules.**
   Lower instance methods with exactly one self pointer, support the chosen static-call syntax, and check method bodies and visibility. Define addressability and lifetime rules for temporary receivers.
   **Done when:** `person.greet()`, self-field access, and static construction work; signatures do not duplicate self; invalid methods and private access fail in Sema rather than crashing codegen.
+  **Implemented:** ordinary instance methods declare exactly one typed self pointer/reference, static methods use `Type.method(...)` (including module-qualified types), and checked call metadata distinguishes object addresses from pointer values. Receiver evaluation precedes explicit arguments and occurs once. Forward/recursive methods, field mutation, private helpers, public constructors, and module visibility share ordinary checking/lowering. Temporary struct receivers require named storage, pointer capabilities cannot strengthen implicitly, and lifetimes remain manual with no borrow checker. Internal symbols are isolated by nominal type identity; the obsolete unchecked duplicate-self lowering is removed.
+  **Verified:** all 19 method tests and three source fixtures pass. The normative Person example prints the expected output, and the million-tick particle lab retains checksum 680620. A fresh Release build passes **500/500 required checks**; the full suite reports **543/548 passes**, retaining the five SPEC-028/040/041 failures. Installed and relocated packages each pass **215/215 checks**. See the verification record below.
 
-- [ ] **SPEC-027 — Define and implement defer across runtime paths.**
+- [x] **SPEC-027 — Define and implement defer across runtime paths.**
   Keep the spec's function-exit, LIFO contract. Decide when call arguments are evaluated, how captured bindings remain valid, repeated registration in loops, return-value evaluation order, and cleanup on runtime failure. Implement registration only when execution reaches the defer.
   **Done when:** untaken branches register nothing; repeated registrations execute in reverse order; explicit/implicit/early returns run cleanup; exited lexical scopes retain the required captured values; nested control flow never duplicates or drops cleanup.
+  **Implemented:** reached calls capture their receiver and arguments immediately, then register independent typed heap records in a per-invocation LIFO log. Explicit, implicit, and early returns evaluate their result before draining cleanup. Values survive source scopes; captured pointers retain manual lifetime responsibilities without extending resources or introducing borrow checking. Traps do not unwind. Shared ordinary/deferred call lowering preserves types, privacy, receiver order, and non-void result discarding. Records are freed before invoking cleanup; checked native allocator ABIs have no collision with source functions and add no user allocator API.
+  **Verified:** all 24 defer tests pass, including native allocation/release instrumentation, forced allocation failure, 100,000 reverse-order registrations, and external LLVM execution. One million pending registrations also pass with a 2 MiB stack. A fresh Release build passes **526/526 required checks**; the full suite reports **569/574 passes**, retaining only the five SPEC-028/040/041 failures. Installed and relocated packages each pass **241/241 checks**. See the verification record below.
 
 - [ ] **SPEC-028 — Implement the arena runtime and ABI.**
   Specify allocation, alignment, growth, reset/free behavior, failure behavior, and pointer invalidation. Implement and link the declared arena functions and expose a coherent language API.
@@ -311,6 +317,144 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-020 | 2026-09-17 | Replaces hardcoded lexer input with file-reading run/check/IR commands using the shared compiler and JIT. Documents full i32 stdout results, separate exit statuses/diagnostics, standalone help/version, source locations, and process-terminating traps. All **16 CLI tests and 261 focused tests pass**, including the runnable repository counter example. Incremental Debug build succeeds; serial/parallel suites report **338/345 passes**, the same seven deferred-language failures, and no unexpected test-process crashes/skips. |
 | SPEC-021 | 2026-09-22 | Adds 125 source-file fixtures (28 successful, 83 rejected, 14 traps), a shared CLI process fixture, and a separate core CI gate. All **161 focused tests pass** from fresh local and hosted builds. Both CI build configurations pass; the compiler-only example returns 42. Full local/CI serial and parallel suites agree on **463/470 passes**, seven unchanged deferred-feature failures, and no unexpected test-process crashes/skips. README examples execute successfully; usage instructions and a feature-to-fixture matrix are documented. [Hosted evidence](https://github.com/kubabialy/gloinc/actions/runs/35736970025). |
 | SPEC-022 | 2026-09-22 | Adds canonical checked `string` support across parsing, semantic type identities, constants, function signatures, local storage, and MLIR/LLVM code generation. String literals decode `\\`, quotes, control escapes, and `\\0`; lengths count UTF-8 bytes and embedded NULs; globals include a private terminator without counting it; identical literals share one global. Targeted string tests pass, including empty, escaped/non-ASCII/NUL bytes, checked signatures, and reuse. The full CTest run reports **469/474 passes**, with the five existing deferred-feature failures and no new string-related failures; the inventory increased by two maintained string regressions. |
+
+### SPEC-027 verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+A fresh Release/Ninja build at `/tmp/gloinc-spec027-fresh` reused the pinned
+GoogleTest source cache and rebuilt all compiler and test objects.
+
+```sh
+cmake --build /tmp/gloinc-spec027-fresh --target check-core
+ctest --test-dir /tmp/gloinc-spec027-fresh -j 4 --output-on-failure
+bash scripts/check-package.sh /tmp/gloinc-spec027-fresh /tmp/gloinc-spec027-package
+```
+
+Results: **526/526 required checks**, **569/574 full-suite passes**, and
+**241/241 package checks** for both staged installation and relocated extraction.
+The full suite retains only `CodeGenTest.GenerateSpawn`,
+`ArenaTest.ArenaAllocation`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-028/040/041).
+No tests were disabled or marked as expected successes. Hosted CI was not run.
+
+All 24 `DeferTest` cases pass. They cover conditional/loop registration,
+registration-time capture and receiver evaluation, all scalar widths and
+aggregate/string/pointer arguments, LIFO execution, explicit/implicit/early
+returns, return-value copies, recursion and nested logs, module methods/native
+output, discarded results, invalid calls/captures, null and arithmetic traps,
+and external LLVM execution. A 100,000-record test checks every reverse-order
+value. Instrumented allocator calls observe 220 records allocated and zero
+remaining after cleanup; an injected null allocation triggers the expected trap.
+Malformed allocator ABIs fail before JIT invocation. Source functions named
+`malloc` and `free` retain their independent identities.
+
+The normative defer example prints `body`, `second`, `first` and exits 42.
+A separate one-million-record run succeeds under a 2 MiB stack limit and
+verifies sum 499999500000. Both existing methods and particle example labs pass
+with the fresh compiler; the particle checksum remains 680620.
+
+The initial full run exposed an obsolete parser expectation for loop-body defer
+and twelve timeouts with long elapsed-time gaps. The parser test now rejects
+defer in a for initializer (still unsupported). The complete fresh rerun had no
+timeouts or additional failures. Its results above are the final validation.
+
+Logs: `/tmp/gloinc-spec027-core.log`, `/tmp/gloinc-spec027-full.log`, and
+`/tmp/gloinc-spec027-package.log`; the initial run is preserved in
+`/tmp/gloinc-spec027-initial-full.log`. Package reports/artifacts are under
+`/tmp/gloinc-spec027-package`. New C++ files pass clang-format checks;
+`git diff --check` and the package script's shell syntax check pass.
+
+### SPEC-026 verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+A fresh Release/Ninja build at `/tmp/gloinc-spec026-fresh` reused the pinned
+GoogleTest source cache and rebuilt all compiler and test objects.
+
+```sh
+cmake --build /tmp/gloinc-spec026-fresh --target check-core
+ctest --test-dir build -j 4 --output-on-failure
+bash scripts/check-package.sh /tmp/gloinc-spec026-fresh /tmp/gloinc-spec026-package
+```
+
+Results: **500/500 required checks**, **543/548 full-suite passes**, and
+**215/215 package checks** against both the staged installation and relocated
+extraction. The full suite retains only `CodeGenTest.GenerateSpawn`,
+`ArenaTest.ArenaAllocation`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-028/040/041).
+No tests were disabled or marked as expected successes. Hosted CI was not run.
+
+All 19 `MethodTest` cases and three new maintained source fixtures pass. They
+cover instance/static calls, exact self arity in IR, readonly and mutable
+receivers, field capability, receiver/argument evaluation order, pointer-slot
+rebinding during argument evaluation, forward/mutual recursion, aggregate and
+pointer results, null handling, private helpers and constructors, cross-module
+nominal identity, invalid signatures/bodies/calls, rejected temporary receivers,
+million-iteration entry storage, and external LLVM execution. The complete
+Person example in SPEC.md has verified stdout and exit status; the existing
+million-tick particle lab still passes with checksum 680620.
+
+Logs: `/tmp/gloinc-spec026-full.log`, `/tmp/gloinc-spec026-core.log`, and
+`/tmp/gloinc-spec026-package.log`; package reports/artifacts are under
+`/tmp/gloinc-spec026-package`. New C++ files pass clang-format checks;
+`git diff --check` and the package script's shell syntax check pass.
+
+### SPEC-025 verification
+
+Verified locally on 2026-09-22 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+A fresh Release/Ninja build at `/tmp/gloinc-spec025-fresh` reused the pinned
+GoogleTest source cache; all compiler and test objects were rebuilt.
+
+```sh
+cmake --build /tmp/gloinc-spec025-fresh --target check-core
+ctest --test-dir build -j 4 --output-on-failure
+bash scripts/check-package.sh /tmp/gloinc-spec025-fresh /tmp/gloinc-spec025-package
+```
+
+Results: **478/478 required checks**, **521/526 full-suite passes**, and
+**193/193 package checks** for both staged installation and relocated extraction.
+The five full-suite failures remain `CodeGenTest.GenerateSpawn`,
+`ArenaTest.ArenaAllocation`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-028/040/041).
+No tests were disabled or marked as expected successes. Hosted CI was not run.
+
+All 18 `PointerTest` cases pass. They exercise every scalar pointee, strings and
+structs, readonly local/parameter storage, nested pointer qualifiers, capability
+weakening, null comparisons/traps, recursive links, indirect field writes,
+privacy, receiver evaluation order, live aliases and caller-reference returns,
+loop-local entry allocations, native layout, and external LLVM execution.
+`run/pointers.gloin` and `trap/null_dereference.gloin` provide maintained CLI
+acceptance; former blanket pointer/reference rejections now test a mismatched
+pointee and an invalid null reference. Manual lifetime management is explicit:
+these checks do not implement a borrow checker, ownership, or dangling-pointer
+detection.
+
+### SPEC-024 verification
+
+Verified locally on 2026-09-22 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+The fresh Release/Ninja build at `/tmp/gloinc-spec024-fresh` reused the pinned
+GoogleTest source cache; all compiler and test objects were rebuilt. The final
+native-target setup is shared by codegen and the JIT.
+
+```sh
+cmake --build /tmp/gloinc-spec024-fresh --target check-core
+ctest --test-dir /tmp/gloinc-spec024-fresh -j 4 --output-on-failure
+bash scripts/check-package.sh /tmp/gloinc-spec024-fresh /tmp/gloinc-spec024-package
+```
+
+Results: **458/458 required checks**, **501/506 full-suite passes**, and
+**173/173 package checks** for both staged installation and relocated extraction.
+The five full-suite failures remain `CodeGenTest.GenerateSpawn`,
+`ArenaTest.ArenaAllocation`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-028/040/041).
+No tests were disabled or marked as expected successes. Hosted CI was not run.
+
+Fourteen `OrdinaryStructTest` cases cover nested value copies, parameters/returns,
+field mutation, whole-value initialization, exact field types, strings/empty
+records, source evaluation order, module privacy, invalid declarations/literals,
+nominal type mismatches, context reuse, and external LLVM execution. Layout probes
+assert native padding/offsets/alignment and explicit 32/64-bit pointer layouts.
+`run/ordinary_struct.gloin` adds maintained CLI acceptance; packed/generic/method
+rejections continue to cover features deferred beyond ordinary structs.
 
 ### SPEC-023 verification
 

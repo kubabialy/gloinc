@@ -29,7 +29,7 @@ ID when present. Entry validation does not itself run or lower the module.
 ## Types and declarations
 
 [numeric.h](../src/numeric.h) defines canonical `CoreType` IDs for
-`void`, `bool`, signed/unsigned 8/16/32/64-bit integers, and `f32`/`f64`. The type
+`void`, `bool`, signed/unsigned 8/16/32/64-bit integers, `f32`/`f64`, and `string`. The type
 descriptor records storage width, integer category, and signedness. `bool` has
 its own identity. MLIR stores signed and unsigned language integers in signless
 integer types; semantic data preserves the distinction for operator selection.
@@ -38,7 +38,7 @@ Sema resolves `int` to `i32` and `usize` to `u64` for the selected 64-bit Apple
 Silicon target. Target information belongs to the checked program; a different
 pointer width is rejected instead of using the host process's `sizeof(void*)`.
 This is not a cross-compilation implementation. Unknown and deferred types,
-including `String`, `string`, 128-bit/custom-width/endian types, fail even in
+including undeclared names and 128-bit/custom-width/endian types, fail even in
 unused parameters, bindings, or return annotations. `void` is restricted to
 return annotations.
 
@@ -54,8 +54,14 @@ codegen declares all corresponding MLIR functions before emitting their bodies.
 Direct, forward, and mutually recursive calls therefore use the same resolved
 IDs. Function IDs are allocated first in source order; IDs are opaque and local
 to one program, not persistent indexes clients should infer from AST traversal.
-The predefined core types are available before collection. User-defined type
-collection remains deferred with aggregate support; core checking rejects it.
+The predefined core types are available before collection. SPEC-024 collects
+ordinary structs before signatures and rejects by-value layout cycles. `ValueType`
+represents a builtin identity or a program-local nominal struct ID, plus any
+pointer/reference layers preserving nullability and pointee read-only access. Checked struct
+tables retain ordered fields, their types, visibility, and mutability. Literal
+field mappings and member indices are resolved once in Sema; codegen consumes
+those indices rather than performing field-name lookup. Backend literal LLVM
+struct types avoid named-type state leaking between compilations in one context.
 
 Parameters share the function body's outer scope and are explicitly immutable.
 Nested blocks may shadow outer variables, parameters, and functions; duplicate
@@ -238,8 +244,8 @@ Codegen executes the initializer once, branches to the condition, and emits an
 update/backedge only from a continuing body path. Missing conditions emit `true`;
 missing initializers/updates emit no operations. Expression guards and boolean
 short-circuiting retain their final continuation throughout the header. Returning
-paths skip the update and further condition checks. Defer stays unsupported;
-SPEC-027 will retain its function-exit semantics inside loops.
+paths skip the update and further condition checks. SPEC-027 registers defers
+only on reached paths and drains them on function return, not iteration exit.
 
 ## Ownership
 
@@ -278,15 +284,91 @@ SPEC-015 implements checked scalar operators, including floating arithmetic and
 unsigned division/ordering. SPEC-018 verifies source-generated IR and supplies
 [one LLVM lowering pipeline](lowering.md), with explicit module ownership and
 operation/type legality checks. SPEC-019 adds [validated in-process execution](jit.md)
-with separate results/errors and owned engine lifetimes. Aggregate and concurrency contracts stay
+with separate results/errors and owned engine lifetimes. Packed aggregates and concurrency stay
 deferred. A checked object establishes resolved identities and the checks currently
 implemented, not full release readiness.
 
 SPEC-023 loads standard module files before semantic checking. Each import owns
-its parsed declarations and source spans. Sema collects module functions and
+its parsed declarations and source spans. Sema collects module functions, structs, and
 constants in a separate scope, resolves public qualified calls to ordinary
 `SymbolId`s, and records collision-free emitted names in `SemanticData`.
 Codegen declares and compiles those function bodies through the same path as
 application functions. Only library calls to `__write_stdout` receive a separate
 runtime-call marker; `print` and `println` have no special compiler handling.
 Local/package imports and dependencies between standard files remain deferred.
+
+## Ordinary struct layout
+
+Generated modules carry the native LLVM target triple and data layout.
+[target_layout.cpp](../src/target_layout.cpp) translates storage types to LLVM
+and queries allocation size, ABI alignment, and field offsets, including padding.
+The legacy allocation-size helper uses the same calculation. Struct literals
+require all fields and preserve source evaluation order; member writes use checked
+GEP indices. The [SPEC-024 contract](../SPEC.md#ordinary-structs-spec-024) defines
+mutability, privacy, and whole-value initialization requirements.
+
+## Pointers and references (SPEC-025)
+
+`ValueType` retains every pointer layer and the ultimate scalar/nominal pointee.
+Only outermost capability weakening is allowed; Sema records the converted type
+at value boundaries. Numeric operators retain builtin IDs; pointer comparisons
+use LLVM address comparison. Nullable accesses branch to a trap before a load,
+store, or reference creation. GEPs and loads use the checked pointee type.
+
+Address-taking records declaration IDs so even immutable locals and value
+parameters receive stable entry-block stack slots when necessary. Struct fields
+retain their checked indices through pointer access. Pointer edges break layout
+cycles; temporary semantic type graphs are released after checking.
+
+Gloin has manually managed lifetimes and no borrow checker. References must
+identify live resources, but lifetime/provenance tracking, escape analysis, and
+ownership enforcement are not performed. Aliases are permitted. See the
+[normative rules](../SPEC.md#pointers-t-vs-t) for conversions and responsibilities.
+
+## Methods (SPEC-026)
+
+Sema collects each struct's method signatures in an isolated member namespace,
+then checks their bodies as ordinary functions. A single explicit typed `self`
+parameter determines receiver capability. Static methods have no receiver.
+Call metadata binds the selected method's symbol ID and records whether the
+receiver supplies a struct address or a pointer value. Codegen evaluates that
+receiver once before the explicit arguments, then uses ordinary call lowering.
+Internal names include the nominal struct ID, keeping source functions and
+same-named methods in different types/modules independent.
+
+Read-only locals/parameters used as struct receivers receive entry-block storage
+through the existing address-taking mechanism. Temporary struct receivers are
+rejected; pointer results of calls remain usable as receivers under manual
+lifetime rules. A nullable receiver can be passed to a nullable `self`; null
+traps occur on actual access, not on the function call. Both bodies and calls
+enforce field mutability and file/module privacy. The old unchecked method
+backend is rejected explicitly instead of generating duplicate self parameters.
+
+## Function-exit defer (SPEC-027)
+
+Sema validates a defer operand as an ordinary checked call and records each
+function's registration sites. Calls are checked at the registration point,
+including definite initialization and receiver capability. No deferred assignment
+is treated as immediate initialization. Non-void results may be discarded.
+
+[codegen_defer.cpp](../src/codegen_defer.cpp) shares argument evaluation and call
+emission with ordinary calls. A function with defer has one entry-block head
+slot. Every reached site captures the receiver/arguments immediately, allocates
+a typed native-layout record with `malloc`, writes its previous-link and site
+ID, stores the captured values, then pushes it onto that invocation's log.
+Allocation failure traps before linking. Each repeated loop registration gets a
+separate record; there is no dynamic stack growth.
+
+Normal returns evaluate their result first, then drain the log. The generated
+cleanup loop pops a record, loads its captures, frees it, invokes the selected
+callee, and repeats. Each record is released before entering user cleanup code.
+Implicit void returns use the same path. No cleanup is emitted on arithmetic or
+null trap paths. Functions without defer introduce neither a head slot nor
+allocator dependencies. This uses the exact native `malloc(i64) -> ptr` and
+`free(ptr) -> void` ABIs; source functions with those names are independently
+mangled. Both the JIT and external LLVM runner execute the emitted code.
+
+Value captures outlive lexical source bindings; pointer captures do not retain
+resources or extend their lifetime. Function-scope storage stays live through
+cleanup. Scope/iteration-local pointer escapes remain the programmer's
+responsibility under manual lifetimes. No borrow checker or arena API is added.

@@ -159,6 +159,11 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         advance_token();
         return node;
     }
+    case GLOIN_TOKEN_NULL: {
+        auto node = located_node<NullLiteral>();
+        advance_token();
+        return node;
+    }
     case GLOIN_TOKEN_STRING_LITERAL: {
         auto node = located_node<StringLiteral>(decode_string_literal(current_token.literal));
         advance_token();
@@ -170,14 +175,19 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         return std::make_unique<ArrayLiteral>(parse_expression_list(GLOIN_TOKEN_RBRACKET));
     }
     case GLOIN_TOKEN_SELF:
-        require_extended("Receiver expressions");
         return parse_name(true);
     case GLOIN_TOKEN_IDENTIFIER: {
         bool generic = generic_literal_ahead();
-        auto name = generic ? parse_type() : parse_name();
+        size_t end = cursor;
+        while (end + 2 < tokens.size() && tokens[end + 1].type == GLOIN_TOKEN_DOT &&
+               tokens[end + 2].type == GLOIN_TOKEN_IDENTIFIER)
+            end += 2;
+        bool qualified_literal = allow_struct_literal && end != cursor && end + 1 < tokens.size() &&
+                                 tokens[end + 1].type == GLOIN_TOKEN_LBRACE;
+        auto name = generic || qualified_literal ? parse_type() : parse_name();
         if (!allow_struct_literal || current_token.type != GLOIN_TOKEN_LBRACE)
             return name;
-        require_extended("Struct literals");
+
         advance_token();
         std::vector<std::pair<std::string, std::unique_ptr<Expression>>> fields;
         while (current_token.type != GLOIN_TOKEN_RBRACE) {
@@ -203,7 +213,6 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         fail("Character literals are not supported in the core language");
     case GLOIN_TOKEN_AMPERSAND:
     case GLOIN_TOKEN_MULTIPLY:
-        require_extended("Pointer expressions");
         [[fallthrough]];
     case GLOIN_TOKEN_MINUS:
     case GLOIN_TOKEN_NOT: {
@@ -307,7 +316,8 @@ std::unique_ptr<Statement> GloinParser::parse_def_statement_impl() {
     }
     if (!is_const && !spawnable && !deferred &&
         (current_token.type == GLOIN_TOKEN_STRUCT || current_token.type == GLOIN_TOKEN_PACKED)) {
-        require_extended("Struct declarations");
+        if (mode == ParseMode::Core && block_depth)
+            fail("Structs are only allowed at file scope");
         bool packed = accept(GLOIN_TOKEN_PACKED);
         auto definition = parse_struct_definition(packed);
         static_cast<StructDefinition *>(definition.get())->is_public = is_public;
@@ -350,7 +360,6 @@ std::unique_ptr<Statement> GloinParser::parse_statement_impl() {
     case GLOIN_TOKEN_FOR:
         return parse_for_statement();
     case GLOIN_TOKEN_DEFER:
-        require_extended("Defer statements");
         return parse_defer_statement();
     case GLOIN_TOKEN_IMPORT:
         return parse_import_statement();
@@ -391,10 +400,19 @@ void GloinParser::consume_type_close() {
 std::unique_ptr<Identifier> GloinParser::parse_type_impl() {
     std::string text;
     while (current_token.type == GLOIN_TOKEN_MULTIPLY ||
-           current_token.type == GLOIN_TOKEN_AMPERSAND) {
-        require_extended("Pointer types");
+           current_token.type == GLOIN_TOKEN_AMPERSAND || current_token.type == GLOIN_TOKEN_AND) {
+        if (current_token.type == GLOIN_TOKEN_AND) {
+            text += "&";
+            ++current_token.span.begin;
+            ++current_token.column;
+            current_token.literal.remove_prefix(1);
+            current_token.type = GLOIN_TOKEN_AMPERSAND;
+            continue;
+        }
         text += current_token.literal;
         advance_token();
+        if (accept(GLOIN_TOKEN_CONST))
+            text += "const ";
     }
     if (accept(GLOIN_TOKEN_LBRACKET)) {
         require_extended("Array types");
@@ -413,7 +431,7 @@ std::unique_ptr<Identifier> GloinParser::parse_type_impl() {
         text += current_token.literal;
         advance_token();
         while (accept(GLOIN_TOKEN_DOT)) {
-            require_extended("Qualified types");
+
             text += "." + parse_name()->value;
         }
         if (accept(GLOIN_TOKEN_LT)) {
@@ -521,7 +539,6 @@ std::unique_ptr<UnlessStatement> GloinParser::parse_unless_statement_impl() {
 }
 
 std::unique_ptr<DeferStatement> GloinParser::parse_defer_statement_impl() {
-    require_extended("Defer statements");
     expect(GLOIN_TOKEN_DEFER, "Expected 'defer'");
     auto call = parse_expression(0);
     expect(GLOIN_TOKEN_SEMICOLON, "Expected semicolon after defer");
@@ -535,7 +552,8 @@ std::unique_ptr<ExpressionStatement> GloinParser::parse_expression_statement_imp
 }
 
 std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed) {
-    require_extended("Struct declarations");
+    if (packed)
+        require_extended("Packed structs");
     expect(GLOIN_TOKEN_STRUCT, "Expected 'struct'");
     std::unique_ptr<Identifier> backing;
     if (packed && accept(GLOIN_TOKEN_LPAREN)) {
@@ -562,6 +580,8 @@ std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed
             (next_token.type == GLOIN_TOKEN_LPAREN || next_token.type == GLOIN_TOKEN_LT)) {
             if (mut)
                 fail("'mut' is only allowed on fields");
+            if (deferred || spawnable)
+                require_extended("Async struct methods");
             Restore method(in_method, true);
             auto function = parse_function_definition(spawnable, deferred);
             function->is_public = pub;
@@ -651,10 +671,12 @@ std::vector<std::unique_ptr<Statement>> GloinParser::parse_program() {
         if (mode == ParseMode::Core) {
             auto *variable = dynamic_cast<VariableDeclaration *>(statement.get());
             if (!dynamic_cast<FunctionDefinition *>(statement.get()) &&
+                !dynamic_cast<StructDefinition *>(statement.get()) &&
                 !dynamic_cast<ImportStatement *>(statement.get()) &&
                 !(variable && variable->is_const)) {
-                diagnostics()->error(DiagnosticStage::Parsing, start,
-                                     "Only functions and constants are allowed at file scope");
+                diagnostics()->error(
+                    DiagnosticStage::Parsing, start,
+                    "Only functions, structs, and constants are allowed at file scope");
                 return {};
             }
         }

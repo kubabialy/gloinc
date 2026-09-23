@@ -45,11 +45,12 @@ class CodeGen {
     bool generated = false;
     bool module_transferred = false;
     const SemanticData *checked_data = nullptr;
-    CoreType checked_return_type = CoreType::Void;
+    ValueType checked_return_type = CoreType::Void;
     mlir::func::FuncOp declare_function(const FunctionDefinition *function);
     mlir::ModuleOp generate_impl(const std::vector<std::unique_ptr<Statement>> &program);
     void initialize_unchecked_types();
-    mlir::Type lower_type(CoreType type);
+    mlir::Type lower_type(ValueType type);
+    std::unordered_map<size_t, mlir::Type> checked_struct_types;
     mlir::Value emit_constant(const ConstantValue &constant);
     mlir::Value gen_checked_unary(const PrefixExpression *expression);
     mlir::Value gen_checked_binary(const InfixExpression *expression);
@@ -73,7 +74,6 @@ class CodeGen {
 
     struct GenScope {
         std::map<std::string, SymbolInfo> values;
-        std::vector<const DeferStatement *> deferred;
         std::shared_ptr<GenScope> parent;
     };
     std::shared_ptr<GenScope> current_scope;
@@ -90,6 +90,14 @@ class CodeGen {
     std::map<std::string, FunctionInfo> function_table;
     std::map<std::string, const StructDefinition *> generic_struct_defs;
     std::vector<const DeferStatement *> current_function_defers;
+    mlir::Value defer_head;
+    std::vector<mlir::LLVM::LLVMStructType> defer_record_types;
+    std::vector<mlir::Value> gen_call_arguments(const CallExpression *call);
+    mlir::Value emit_checked_call(const CallExpression *call, mlir::ValueRange arguments);
+    void prepare_defers(const FunctionDefinition *function);
+    void register_defer(const DeferStatement *statement);
+    mlir::LLVM::LLVMFuncOp defer_allocator(bool allocate);
+    mlir::Value defer_field(mlir::Type record, mlir::Value pointer, unsigned index);
 
     // Type registry
     std::map<std::string, mlir::Type> type_table;
@@ -126,6 +134,7 @@ class CodeGen {
     mlir::Value gen_expression(const Expression *expr, bool allow_void = false);
     mlir::Value gen_expression_impl(const Expression *expr);
     mlir::Value gen_address(const Expression *expr);
+    mlir::Value gen_pointer_address(const Expression *expr);
     mlir::Type get_expression_type(const Expression *expr);
 
     // Helper to resolve type from AST/String to MLIR Type

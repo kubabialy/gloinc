@@ -6,7 +6,7 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases.
 
-At SPEC-023, maintained source definitions and CTest discovery both contain **491 tests**:
+At SPEC-027, maintained source definitions and CTest discovery both contain **574 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -38,7 +38,11 @@ At SPEC-023, maintained source definitions and CTest discovery both contain **49
 | JitRunnerTest | 16 |
 | CliTest | 16 |
 | StandardModuleTest | 17 |
-| CoreAcceptanceTest | 125 |
+| OrdinaryStructTest | 14 |
+| PointerTest | 18 |
+| MethodTest | 19 |
+| DeferTest | 24 |
+| CoreAcceptanceTest | 133 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -69,8 +73,70 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. The local parallel SPEC-023 run reports
-**486 passes, 5 failures, no unexpected test-process crashes or skipped tests**.
+as expected successes. The local parallel SPEC-027 run reports
+**569 passes, 5 failures, no unexpected test-process crashes or skipped tests**.
+
+## Function-exit defer (SPEC-027)
+
+Twenty-four `DeferTest` cases cover registration-time capture of all scalar
+widths, strings, structs, pointers, and method receivers; conditional/zero-loop
+registration; repeated mixed loop sites; reverse ordering; explicit, implicit,
+and nested early returns; return-value preservation; recursive and nested logs;
+module/native-output calls; invalid operands/captures; no unwinding on traps;
+nullable receivers; and native allocator-name isolation. A stress test retains
+100,000 registrations and checks every reverse-order value. External LLVM
+execution verifies the same result independently. Instrumented native calls
+count 220 allocations and zero pending records at completion; a forced null
+allocation traps. Malformed allocator ABIs are rejected before JIT invocation.
+
+The suite and source fixtures participate in required and installed/relocated
+package checks. The former blanket defer rejection now tests a non-call operand.
+`run/defer.gloin` verifies conditional and loop cleanup; `trap/defer_cleanup.gloin`
+verifies a failure inside cleanup. The old loop-header rejection now targets
+`defer` in an initializer, since defer in the body is valid.
+
+## Methods (SPEC-026)
+
+Nineteen `MethodTest` cases cover static construction, explicit instance receivers,
+mutation, readonly local/parameter storage, forward/recursive calls, receiver and
+argument evaluation order, aggregate/pointer results, numeric literal context,
+null handling, isolated member namespaces, module exports and private helpers,
+nominal type mismatches, malformed signatures/bodies/calls, rejected temporary
+receivers, loop storage, and external LLVM execution. IR assertions require one
+self pointer for instance methods and none for static methods. The suite and
+three source fixtures (successful methods, invalid receiver, null access in a
+method) participate in both required and package checks.
+
+## Pointers and references (SPEC-025)
+
+Eighteen `PointerTest` cases cover all scalar pointees, whole structs/strings,
+stable local/parameter addresses, read-only views, nested pointer qualifiers,
+reference/raw-pointer conversions, recursive struct links, privacy, null traps,
+evaluation order, invalid addresses, live aliases, caller-reference returns,
+entry-block allocation in loops, native field layout, and external LLVM execution.
+`run/pointers.gloin` and `trap/null_dereference.gloin` add maintained source
+acceptance. Former blanket pointer rejections now assert pointee mismatches and
+null-reference errors. All these cases are in the required gate and package checks.
+Lifetimes remain manual; these tests do not claim borrow checking or dangling
+pointer detection.
+
+## Ordinary structs (SPEC-024)
+
+Fourteen `OrdinaryStructTest` cases exercise nested value copies, forward types,
+parameters/returns, field writes, strings and empty records, literal evaluation
+order, signedness and floating fields, exact initialization, and loop-local
+storage. Negative cases cover unknown/duplicate/missing/private fields,
+recursive layouts, wrong nominal types, uninitialized reads/writes, immutable
+roots and nested fields, temporary receivers, invalid method receivers, and deferred packed/generic
+forms. Context reuse checks prevent backend type names leaking between programs.
+Layout tests assert padding, field offsets, and ABI alignment using both the
+native layout and explicit 32/64-bit pointer layouts. An external LLVM runner
+independently executes an aggregate call and field mutation.
+
+The required gate and package checks include this suite and the maintained
+`run/ordinary_struct.gloin` source fixture. Prior ordinary-struct rejection
+fixtures now cover packed structs; invalid member access on a function remains
+an error. These updates preserve deferred-feature rejection coverage.
 
 ## Standard modules and output (SPEC-023)
 
@@ -428,7 +494,7 @@ skipped `unless` body condition. Eight other programs return 42.
 
 Parser tests now accept omitted header components and keep rejecting missing
 separators. The diagnostic test that previously rejected `unless`/`for` now
-checks still-deferred imports, `defer`, and `break`; the new suite verifies the
+checks still-deferred imports, `continue`, and `break`; the new suite verifies the
 supported constructs execute instead of disappearing. No deferred-feature
 assertions are disabled or weakened.
 

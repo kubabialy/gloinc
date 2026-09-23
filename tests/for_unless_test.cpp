@@ -59,7 +59,7 @@ TEST(ForUnlessTest, RejectsMalformedHeadersAndUnsupportedVariants) {
          {"for ; {}", "for (def mut i: i32 = 0; i < 3; i = i + 1) {}", "for ;; def i: i32 = 0 {}",
           "for ;; f(), g() {}", "for ;; i = j = 1 {}", "for def f() -> void {} ;; {}",
           "for ;; return;", "unless false {} else {}", "for x in 0..3 {}", "for ;; { continue; }",
-          "for ;; { defer f(); }"})
+          "for defer f();; {}"})
         reject(body + " return 0;", DiagnosticStage::Parsing);
 }
 

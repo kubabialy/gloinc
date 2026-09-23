@@ -6,10 +6,18 @@ does not supply their names, signatures, or bodies.
 
 For a future `@math` module, add `math.gloin` here and declare its public functions
 with `def pub`. The loader maps `@name` directly to `name.gloin`; names use lowercase
-ASCII letters, digits, and underscores, starting with a letter. Public functions
+ASCII letters, digits, and underscores, starting with a letter. Public structs are available as `name.Type`; their private fields stay within
+the defining module. Public functions
 are called as `name.function(...)`. Private helpers and file constants stay in
 the module's own scope. Files are read and checked on every compilation.
 Imports between library files and exported constant access remain deferred.
+
+Public structs can expose static constructors (`name.Type.create(...)`) and
+instance methods (`value.method(...)`). Export methods with `def pub` or
+`def pub static`; instance methods declare one typed `self` pointer/reference.
+Public methods may use private fields/helpers inside the module. Callers still
+need the receiver capability required by the signature, and cannot call private
+methods directly. See [SPEC-026](../SPEC.md#methods-spec-026).
 
 `__write_stdout(value: string) -> void` is the only native primitive provided to
 these modules. It writes the string's exact bytes and flushes stdout. `println`
