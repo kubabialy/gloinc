@@ -1,9 +1,9 @@
 # Language examples
 
 `core_counter.gloin` is a runnable core example, tested through the actual CLI.
-After building, run `./build/gloinc examples/core_counter.gloin`: it exits 42
+After building, run `./build/gloinc --jit examples/core_counter.gloin`: it exits 42
 without printing. It uses a helper call, mutation, a for-loop, and unless.
-`./build/gloinc examples/hello_world.gloin` prints `Hello World!` and exits 0.
+`./build/gloinc --jit examples/hello_world.gloin` prints `Hello World!` and exits 0.
 The arena and module labs below also run in maintained tests. Other files are
 design examples and manual inputs; their execution is not
 established by the maintained suite.
@@ -35,7 +35,7 @@ checks parsing and explicit integer-to-float conversion, computes an incremental
 mean, and prints fixed decimal output. Scratch bytes are reused by arena reset.
 
 ```sh
-printf '1.25\n2.75\n3.5\n' | ./build/gloinc examples/numbers_lab.gloin
+printf '1.25\n2.75\n3.5\n' | ./build/gloinc --jit examples/numbers_lab.gloin
 # count=3
 # mean=2.50
 ```
@@ -53,8 +53,8 @@ checks flush and close, and prints the byte count. Existing destinations are
 preserved; failures can leave a partial newly-created file.
 
 ```sh
-printf '/tmp/source.bin\n/tmp/new-copy.bin\n' | build/gloinc examples/io_copy.gloin
-printf ' hello\r\n# skip\n world \n' | build/gloinc examples/io_filter.gloin
+printf '/tmp/source.bin\n/tmp/new-copy.bin\n' | build/gloinc --jit examples/io_copy.gloin
+printf ' hello\r\n# skip\n world \n' | build/gloinc --jit examples/io_filter.gloin
 # HELLO
 # WORLD
 ```
@@ -71,9 +71,9 @@ output. It composes explicit argument parsing, bounded cwd/path joining, metadat
 stream I/O, arena reuse, checked close, and numeric formatting.
 
 ```sh
-build/gloinc examples/file_tool.gloin -- --copy 'source file.bin' 'new copy.bin'
-GLOIN_COPY_LABEL=saved build/gloinc examples/file_tool.gloin -- --copy source.bin copy.bin
-build/gloinc examples/file_tool.gloin -- --help
+build/gloinc --jit examples/file_tool.gloin -- --copy 'source file.bin' 'new copy.bin'
+GLOIN_COPY_LABEL=saved build/gloinc --jit examples/file_tool.gloin -- --copy source.bin copy.bin
+build/gloinc --jit examples/file_tool.gloin -- --help
 ```
 
 A missing label uses `copied`; an empty label omits it. Paths are relative to the
@@ -86,7 +86,7 @@ tool from another directory. See [filesystem and process contracts](../docs/file
 ## Streaming geometry and statistics
 
 ```sh
-printf '3,4\n0,0\n6,8\n' | ./build/gloinc examples/math_lab.gloin
+printf '3,4\n0,0\n6,8\n' | ./build/gloinc --jit examples/math_lab.gloin
 ```
 
 `math_lab.gloin` composes `@math` radius/bearing calculations and Welford statistics
@@ -99,7 +99,7 @@ documents bounds, ownership, cost, error rules, and numerical tolerances.
 ## Seeded simulation with monotonic timing
 
 ```sh
-./build/gloinc examples/simulation_lab.gloin -- 42 1000
+./build/gloinc --jit examples/simulation_lab.gloin -- 42 1000
 ```
 
 `simulation_lab.gloin` uses `@random` for two point coordinates and a die roll
@@ -114,8 +114,8 @@ See [contracts and reproducible fixtures](../docs/time-random.md).
 ## Integrated library programs (SPEC-030h)
 
 ```sh
-./build/gloinc examples/config_reader.gloin -- examples/data/simulation.conf
-./build/gloinc examples/statistics_tool.gloin -- examples/data/measurements.txt /tmp/new-statistics-report.txt 1,2
+./build/gloinc --jit examples/config_reader.gloin -- examples/data/simulation.conf
+./build/gloinc --jit examples/statistics_tool.gloin -- examples/data/measurements.txt /tmp/new-statistics-report.txt 1,2
 ```
 
 `config_reader.gloin` validates required keys, borrows per-line slices, and copies

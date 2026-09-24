@@ -5,7 +5,7 @@ BUILD_TESTING ?= ON
 CMAKE_ARGS ?=
 BUILD_ARGS ?=
 CTEST_ARGS ?=
-RUN_ARGS ?= examples/core_counter.gloin
+RUN_ARGS ?= --jit examples/core_counter.gloin
 INSTALL_PREFIX ?= $(HOME)/.local
 
 all: build

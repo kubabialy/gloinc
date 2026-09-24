@@ -1,4 +1,4 @@
-// Strict key=value configuration. Run: build/gloinc examples/config_reader.gloin -- FILE
+// Strict key=value configuration. Run: build/gloinc --jit examples/config_reader.gloin -- FILE
 // Lines <=1024 bytes; <=1,000,000 lines. Blank lines and whole-line # comments are ignored.
 import "@arena";
 import "@io";

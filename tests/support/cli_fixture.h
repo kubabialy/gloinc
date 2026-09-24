@@ -46,6 +46,42 @@ class CliFixture : public testing::Test {
     }
     ProcessResult invoke(const std::vector<std::string> &arguments,
                          const std::string &stdin_path = "") {
+        // Existing source acceptance cases exercise JIT execution. Keep that
+        // choice explicit after native executable emission became the CLI default.
+        bool has_mode = false;
+        bool has_output = false;
+        bool has_file = false;
+        bool options = true;
+        for (size_t i = 0; i < arguments.size(); ++i) {
+            const auto &argument = arguments[i];
+            if (has_file && argument == "--")
+                break;
+            if (options && argument == "--") {
+                options = false;
+                continue;
+            }
+            if (options && argument == "-o") {
+                has_output = true;
+                ++i;
+            } else if (options && argument == "--stdlib-dir") {
+                ++i;
+            } else if (options && (argument == "--jit" || argument == "--run" ||
+                                   argument == "--check" || argument == "--emit-ir" ||
+                                   argument == "--emit-llvm" || argument == "--emit-object" ||
+                                   argument == "--emit-exe" || argument == "--help" ||
+                                   argument == "-h" || argument == "--version" || argument == "-V")) {
+                has_mode = true;
+            } else if (!has_file && (!options || argument.empty() || argument[0] != '-')) {
+                has_file = true;
+            }
+        }
+        auto effective = arguments;
+        if (!has_mode && !has_output)
+            effective.insert(effective.begin(), "--jit");
+        return invoke_raw(effective, stdin_path);
+    }
+    ProcessResult invoke_raw(const std::vector<std::string> &arguments,
+                             const std::string &stdin_path = "") {
         // Release validation reuses every CLI assertion against installed/extracted binaries.
         const char *override_path = std::getenv("GLOIN_TEST_CLI");
         const std::string executable = override_path ? override_path : gloin_test::gloinc;

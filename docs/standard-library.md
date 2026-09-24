@@ -132,7 +132,7 @@ and relocated packages.
 Run the complete example:
 
 ```sh
-printf '10\n-3\n+35\n' | ./build/gloinc examples/standard_library.gloin
+printf '10\n-3\n+35\n' | ./build/gloinc --jit examples/standard_library.gloin
 ```
 
 It prints each accepted number, then `count: 3` and `sum: 42`, and exits zero.

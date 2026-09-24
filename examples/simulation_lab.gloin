@@ -1,5 +1,5 @@
 // Reproducible Monte Carlo inputs and dice checksum; elapsed time measures the loop only.
-// build/gloinc examples/simulation_lab.gloin -- 42 10000
+// build/gloinc --jit examples/simulation_lab.gloin -- 42 10000
 import "@random";
 import "@time";
 import "@math";

@@ -162,7 +162,7 @@ def main() -> i32 {
 
 This prints `42`. [numbers_lab.gloin](../examples/numbers_lab.gloin) combines bounded
 stdin, trimming, parsing, checked conversion, an incremental mean, and formatting.
-Run `printf '1.25\n2.75\n3.5\n' | build/gloinc examples/numbers_lab.gloin` to get
+Run `printf '1.25\n2.75\n3.5\n' | build/gloinc --jit examples/numbers_lab.gloin` to get
 `count=3` and `mean=2.50`. Input and formatting storage is reused explicitly via arena reset.
 
 ## Implementation and verification

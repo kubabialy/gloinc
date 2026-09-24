@@ -1,5 +1,5 @@
 // Read finite decimal measurements, then print their count and mean.
-// Example: printf '1.25\n2.75\n3.5\n' | gloinc examples/numbers_lab.gloin
+// Example: printf '1.25\n2.75\n3.5\n' | gloinc --jit examples/numbers_lab.gloin
 // Output: count=3, mean=2.50 (on separate lines).
 // One reusable arena bounds scratch storage. Nothing borrows bytes across reset.
 import "@std";

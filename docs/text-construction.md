@@ -163,7 +163,7 @@ append/clear themselves retain only the original fixed storage.
 Run the [escaped configuration report](../examples/text_lab.gloin):
 
 ```sh
-./build/gloinc examples/text_lab.gloin
+./build/gloinc --jit examples/text_lab.gloin
 ```
 
 It combines borrowed line/field cursors, trimming, bounded replacement and case

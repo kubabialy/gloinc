@@ -8,7 +8,7 @@ for local-module composition and embedding.
 ## Configuration reader
 
 ```sh
-build/gloinc examples/config_reader.gloin -- examples/data/simulation.conf
+build/gloinc --jit examples/config_reader.gloin -- examples/data/simulation.conf
 ```
 
 Output:
@@ -65,7 +65,7 @@ buffer/metadata allocations return checked errors.
 ## Streaming selected-column statistics
 
 ```sh
-build/gloinc examples/statistics_tool.gloin -- examples/data/measurements.txt /tmp/new-measurements-report.txt 1,2
+build/gloinc --jit examples/statistics_tool.gloin -- examples/data/measurements.txt /tmp/new-measurements-report.txt 1,2
 cat /tmp/new-measurements-report.txt
 ```
 
@@ -122,7 +122,7 @@ generic containers, or automatic lifetime management.
 ## Numerical simulation and composition
 
 ```sh
-build/gloinc examples/simulation_lab.gloin -- 42 1000
+build/gloinc --jit examples/simulation_lab.gloin -- 42 1000
 ```
 
 [simulation_lab.gloin](../examples/simulation_lab.gloin) retains its seeded

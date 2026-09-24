@@ -8,12 +8,13 @@ verification evidence in order.
 ## Current status
 
 Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR 21.1.6.
-The CLI compiles source files and runs scalar and ordinary struct programs through the in-process JIT.
+The CLI builds native executables by default and can run scalar and ordinary struct
+programs through the in-process JIT with `--jit`.
 The executable core has 142 source-file acceptance cases covering successful
 programs, rejected source, and runtime arithmetic traps. Checking and IR inspection
-modes are also available. The scalar-core version is `0.0.1`; installation and
+modes are also available. The current version is `0.0.2`; installation and
 package validation are documented in [the release guide](docs/release.md).
-The [versioned HTML guide](docs/site/0.0.1/index.html) documents the 0.0.1
+The [versioned HTML guide](docs/site/0.0.2/index.html) documents the 0.0.2
 language and compiler. Native object and executable output are supported on
 Apple Silicon macOS.
 
@@ -97,19 +98,20 @@ def main() -> i32 {
 }
 ```
 
-Compile and execute it with the in-process JIT:
+Compile a native executable, then run it:
 
 ```sh
-./build/gloinc main.gloin
+./build/gloinc -o main main.gloin
+./main
 # Exits with status 42; no implicit stdout output.
 ```
 
-The compiler reads the file, checks types, lowers it to LLVM, and executes `main`.
-It does not create a standalone binary. You can also run the included example,
-which uses a helper function, a mutable counter, `for`, and `unless`:
+Without `-o`, `gloinc main.gloin` writes `a.out`. Use `--jit` or its `--run`
+alias to compile and execute in process without creating a binary. The included
+example uses a helper function, a mutable counter, `for`, and `unless`:
 
 ```sh
-./build/gloinc examples/core_counter.gloin               # Exits 42; no stdout.
+./build/gloinc --jit examples/core_counter.gloin         # Exits 42; no stdout.
 ./build/gloinc --check examples/core_counter.gloin        # Checks without running.
 ./build/gloinc --emit-ir examples/core_counter.gloin      # High-level MLIR.
 ./build/gloinc --emit-llvm examples/core_counter.gloin    # LLVM-dialect MLIR.
@@ -117,8 +119,8 @@ which uses a helper function, a mutable counter, `for`, and `unless`:
 ./build/gloinc --version
 ```
 
-Run mode requires `def main() -> i32`. Its low eight bits become the process exit
-status; the result is never printed automatically. Compiler/file/JIT errors use status 1
+JIT run mode requires `def main() -> i32`. Its low eight bits become the compiler
+process exit status; the result is never printed automatically. Compiler/file/JIT errors use status 1
 and stderr; usage errors use status 2. Runtime arithmetic traps terminate the
 process with a signal. See [the CLI reference](docs/cli.md) for the complete interface.
 
@@ -146,20 +148,20 @@ arena; input and parsing report errors through result structs. Conversion is i32
 only. See [the API and lifetime rules](docs/standard-library.md), or run:
 
 ```sh
-printf '10\n-3\n+35\n' | ./build/gloinc examples/standard_library.gloin
+printf '10\n-3\n+35\n' | ./build/gloinc --jit examples/standard_library.gloin
 ```
 
 SPEC-030a adds `@strings` and shared `@status` constants. Byte-string queries,
 slices, search, comparison, and ASCII trimming allocate nothing; `strings.copy`
 takes an explicit arena and reports allocation failure. Every function documents
 usage, ownership, and cost in the [API guide](docs/strings.md) and
-[library source](stdlib/strings.gloin). Run `./build/gloinc examples/strings_lab.gloin`
+[library source](stdlib/strings.gloin). Run `./build/gloinc --jit examples/strings_lab.gloin`
 for a configuration parser and an arena-lifetime example.
 
 SPEC-030b adds split/line cursors, bounded text transformations, and a fixed-capacity
 `StringBuilder`. Cursors allocate nothing; appends copy into preallocated storage;
 snapshots take an explicit destination arena. See [usage and costs](docs/text-construction.md)
-or run `./build/gloinc examples/text_lab.gloin` for an escaped report.
+or run `./build/gloinc --jit examples/text_lab.gloin` for an escaped report.
 
 SPEC-030c adds typed integer/float/bool parsers, arena-backed formatters, and
 explicit checked numeric conversions. See [examples, costs, and rounding rules](docs/numbers.md)
@@ -251,7 +253,7 @@ after validating input. See [formats, usage, costs, and verification](docs/integ
 To produce a standalone executable or object on Apple Silicon macOS:
 
 ```sh
-./build/gloinc --emit-exe -o hello examples/hello_world.gloin
+./build/gloinc -o hello examples/hello_world.gloin
 ./hello
 ./build/gloinc --emit-object -o hello.o examples/hello_world.gloin
 ```
@@ -265,7 +267,7 @@ After building and passing `check-core`, install into your user prefix:
 ```sh
 cmake --install build --prefix "$HOME/.local"
 "$HOME/.local/bin/gloinc" --version
-"$HOME/.local/bin/gloinc" "$HOME/.local/share/gloinc/examples/core_counter.gloin"
+"$HOME/.local/bin/gloinc" --jit "$HOME/.local/share/gloinc/examples/core_counter.gloin"
 ```
 
 Add `$HOME/.local/bin` to your `PATH` to use `gloinc` from any directory.
@@ -280,7 +282,7 @@ cmake --build build --target package
 bash scripts/check-package.sh build build/package-check
 ```
 
-CPack writes `build/gloinc-0.0.1-macos-arm64.tar.gz` and its `.sha256` checksum.
+CPack writes `build/gloinc-0.0.2-macos-arm64.tar.gz` and its `.sha256` checksum.
 The archive contains `bin/gloinc`, standard modules, native arena libraries and header,
 documentation, runnable examples, and the core source fixtures. The verification script runs all 443 CLI/standard-library/module/arena/defer/method/pointer/struct/standard-output/source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
@@ -312,15 +314,15 @@ executables link these libraries. The CLI and tests use the same compilation,
 lowering, and execution APIs. `gloin_runtime` supplies the LLVM-independent
 native arena allocator and standard input/conversions; a shared variant is installed for external LLVM execution.
 
-[SPEC-006's contract](https://github.com/kubabialy/gloinc/wiki/Language-Spec#first-release-contract-spec-006) selects a scalar
-JIT compiler on Apple Silicon macOS for the first release. SPEC-021 supplies its
-executable-core acceptance suite; SPEC-046 remains the release gate. Subsequent
-tasks add the strings, standard output, structs, pointers, methods, and defer
-listed above, followed by arenas, local modules, and input/i32 conversions.
-Native output is included in 0.0.1; concurrency remains deferred. The ordered
+[SPEC-006's contract](https://github.com/kubabialy/gloinc/wiki/Language-Spec#first-release-contract-spec-006) originally selected a scalar
+JIT compiler on Apple Silicon macOS. Completed later specifications added the
+standard library, structs, pointers, methods, defer, arenas, and native output.
+SPEC-021 supplies the executable-core acceptance suite; SPEC-046 completed the
+0.0.1 release gate.
+Native output is the default in 0.0.2; concurrency remains deferred. The ordered
 backlog replaces the old phase notes as the implementation plan.
 
-Version 0.0.1 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
+Version 0.0.2 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
 support is not planned, although contributions are welcome. See
 [contributing rules](CONTRIBUTING.md) for the manual verification and deterministic
 change requirements.

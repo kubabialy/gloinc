@@ -1,5 +1,5 @@
 // Read source and destination paths as two stdin lines; create a NEW destination.
-// printf '/tmp/source.bin\n/tmp/copy.bin\n' | build/gloinc examples/io_copy.gloin
+// printf '/tmp/source.bin\n/tmp/copy.bin\n' | build/gloinc --jit examples/io_copy.gloin
 // Existing destinations are preserved. A failed copy can leave a partial new file.
 import "@io";
 import "@arena";

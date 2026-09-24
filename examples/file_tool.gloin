@@ -1,5 +1,5 @@
 // Copy a regular file to a NEW destination, using CLI arguments and optional label.
-// build/gloinc examples/file_tool.gloin -- --copy 'source.bin' 'new copy.bin'
+// build/gloinc --jit examples/file_tool.gloin -- --copy 'source.bin' 'new copy.bin'
 // GLOIN_COPY_LABEL absent -> "copied"; empty -> no label; otherwise use its bytes.
 import "@fs";
 import "@process";

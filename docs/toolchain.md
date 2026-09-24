@@ -73,7 +73,7 @@ for timeouts, tool-path overrides, and failure classifications.
 | --- | --- |
 | `gloin_frontend` | Static library containing lexer, parser, and semantic analysis; links shared LLVM for APInt/APFloat numeric values, with no MLIR dependency. |
 | `gloin_backend` | Static library containing codegen, the Gloin dialect, and JIT; links the frontend and shared LLVM/MLIR libraries. |
-| `gloinc` | File-reading CLI linked against `gloin_backend`; supports run, check, and verified IR inspection. See [CLI reference](cli.md). |
+| `gloinc` | File-reading CLI linked against `gloin_backend`; emits native executables by default and supports explicit JIT run, check, object output, and verified IR inspection. See [CLI reference](cli.md). |
 | `gloinc_test` | Test sources linked against the same backend and GoogleTest; present only with `BUILD_TESTING=ON`. |
 | `gloin_test_process` | Controlled child-process fixture for harness tests; present only with `BUILD_TESTING=ON`. |
 
