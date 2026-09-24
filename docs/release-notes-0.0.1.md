@@ -18,10 +18,11 @@ runnable examples, and versioned HTML documentation.
 ## Install and use
 
 Install the pinned LLVM/MLIR 21.1.6 toolchain described in
-[the toolchain guide](toolchain.md), then extract the macOS arm64 archive and run
+[the toolchain guide](https://github.com/kubabialy/gloinc/blob/v0.0.1/docs/toolchain.md), then extract the macOS arm64 archive and run
 `bin/gloinc --version`. The compiler and native linking need that toolchain;
-programs built with `--emit-exe` do not. See the
-[0.0.1 HTML guide](site/0.0.1/index.html) and [release guide](release.md).
+programs built with `--emit-exe` do not. Open the packaged HTML guide at
+`share/doc/gloinc/docs/site/0.0.1/index.html` and see the
+[release guide](https://github.com/kubabialy/gloinc/blob/v0.0.1/docs/release.md).
 
 Linux support is planned for 0.1.0. Windows support is not planned, but
 contributions are welcome. Cross compilation and Intel macOS are not supported
@@ -30,5 +31,5 @@ in 0.0.1.
 The supported-feature gate has 820 passing tests. The unfiltered suite retains
 four documented failures for deferred concurrency syntax and code generation;
 release CI audits their exact names and rejects new failures or skipped tests.
-See [the test inventory](../tests/README.md) and
-[contributing rules](../CONTRIBUTING.md).
+See [the test inventory](https://github.com/kubabialy/gloinc/blob/v0.0.1/tests/README.md) and
+[contributing rules](https://github.com/kubabialy/gloinc/blob/v0.0.1/CONTRIBUTING.md).
