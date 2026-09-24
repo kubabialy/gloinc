@@ -13,12 +13,16 @@ def struct Statistics {
     def mut m2: f64,
     def mut minimum: f64,
     def mut maximum: f64,
+
     // O(1), no allocation. Welford's population variance, at most one million samples.
     def add(self: &Statistics, value: f64) -> i32 {
         if self.count == 1000000 { return status.TOO_LONG; }
         def n: std.F64Result = std.f64_from_u64_exact(self.count + 1);
         if n.status != status.OK { return n.status; }
-        if self.count == 0 { self.minimum = value; self.maximum = value; }
+        if self.count == 0 {
+            self.minimum = value;
+            self.maximum = value;
+        }
         self.minimum = math.min_f64(self.minimum, value);
         self.maximum = math.max_f64(self.maximum, value);
         def delta: f64 = value - self.mean;
@@ -27,41 +31,72 @@ def struct Statistics {
         self.count = self.count + 1;
         return status.OK;
     }
+
 }
+
 def error(message: string) -> i32 {
-    def mut stream: io.Stream = io.stderr(); stream.write_line(message); stream.flush(); return 2;
+    def mut stream: io.Stream = io.stderr();
+    stream.write_line(message);
+    stream.flush();
+    return 2;
 }
+
 // Fixed precision is explicit; each result belongs to the supplied scratch arena.
 def emit(output: &io.Stream, memory: &arena.GeneralArena, key: string, value: f64) -> bool {
     def text: std.FormatResult = std.format_f64_fixed(memory, value, 3);
     if text.status != status.OK { return false; }
     return output.write_all(key).status == status.OK && output.write_line(text.value).status == status.OK;
 }
+
 def main() -> i32 {
-    def mut scratch: arena.GeneralArena = arena.GeneralArena.create(); defer scratch.free();
-    def mut input: io.Stream = io.stdin(); def mut output: io.Stream = io.stdout();
-    def mut stats: Statistics = Statistics { count: 0, mean: 0.0, m2: 0.0, minimum: 0.0, maximum: 0.0 };
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+    def mut input: io.Stream = io.stdin();
+    def mut output: io.Stream = io.stdout();
+    def mut stats: Statistics = Statistics {
+        count: 0,
+        mean: 0.0,
+        m2: 0.0,
+        minimum: 0.0,
+        maximum: 0.0
+    };
     def mut last_angle: f64 = 0.0;
     def mut reading: bool = true;
     while reading {
         scratch.reset();
         def line: io.ReadResult = input.read_line(&scratch, 256);
-        if line.status == status.END { reading = false; }
-        else {
-            if line.status != status.OK { return error("input read failed or line exceeds 256 bytes"); }
+        if line.status == status.END {
+            reading = false;
+        } else {
+            if line.status != status.OK {
+                return error("input read failed or line exceeds 256 bytes");
+            }
             def split: strings.SplitCursorResult = strings.SplitCursor.create(line.value, ",");
             if split.status != status.OK { return error("invalid point"); }
             def mut fields: strings.SplitCursor = split.value;
-            def first: strings.StringResult = fields.next(); def second: strings.StringResult = fields.next();
-            if first.status != status.OK || second.status != status.OK || fields.next().status != status.END { return error("invalid point"); }
+            def first: strings.StringResult = fields.next();
+            def second: strings.StringResult = fields.next();
+            if first.status != status.OK
+                || second.status != status.OK
+                || fields.next().status != status.END {
+                return error("invalid point");
+            }
             def x: std.F64Result = std.parse_f64(strings.trim_ascii(first.value));
             def y: std.F64Result = std.parse_f64(strings.trim_ascii(second.value));
             if x.status != status.OK || y.status != status.OK { return error("invalid point"); }
-            def ax: math.F64Result = math.abs_f64(x.value); def ay: math.F64Result = math.abs_f64(y.value);
-            if ax.status != status.OK || ay.status != status.OK || ax.value > 1000000.0 || ay.value > 1000000.0 { return error("invalid point"); }
+            def ax: math.F64Result = math.abs_f64(x.value);
+            def ay: math.F64Result = math.abs_f64(y.value);
+            if ax.status != status.OK
+                || ay.status != status.OK
+                || ax.value > 1000000.0
+                || ay.value > 1000000.0 {
+                return error("invalid point");
+            }
             def radius: math.F64Result = math.hypot_f64(x.value, y.value);
             def angle: math.F64Result = math.atan2_f64(y.value, x.value);
-            if radius.status != status.OK || angle.status != status.OK { return error("geometry failed"); }
+            if radius.status != status.OK || angle.status != status.OK {
+                return error("geometry failed");
+            }
             if stats.add(radius.value) != status.OK { return error("statistics limit exceeded"); }
             last_angle = angle.value;
         }
@@ -74,10 +109,18 @@ def main() -> i32 {
     if spread.status != status.OK { return error("variance failed"); }
     scratch.reset();
     def count: std.FormatResult = std.format_u64(&scratch, stats.count);
-    if count.status != status.OK || output.write_all("count=").status != status.OK || output.write_line(count.value).status != status.OK { return 3; }
-    if !emit(&output, &scratch, "min=", stats.minimum) || !emit(&output, &scratch, "max=", stats.maximum)
-        || !emit(&output, &scratch, "mean=", stats.mean) || !emit(&output, &scratch, "stddev=", spread.value)
-        || !emit(&output, &scratch, "last_angle=", last_angle) { return 3; }
+    if count.status != status.OK
+        || output.write_all("count=").status != status.OK
+        || output.write_line(count.value).status != status.OK {
+        return 3;
+    }
+    if !emit(&output, &scratch, "min=", stats.minimum)
+        || !emit(&output, &scratch, "max=", stats.maximum)
+        || !emit(&output, &scratch, "mean=", stats.mean)
+        || !emit(&output, &scratch, "stddev=", spread.value)
+        || !emit(&output, &scratch, "last_angle=", last_angle) {
+        return 3;
+    }
     if output.flush().status != status.OK { return 3; }
     return 0;
 }

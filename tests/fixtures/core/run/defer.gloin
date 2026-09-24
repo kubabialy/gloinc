@@ -1,9 +1,13 @@
-def append(value: i32, out: &i32) -> void { *out = *out * 10 + value; }
+def append(value: i32, out: &i32) -> void {
+    *out = *out * 10 + value;
+}
 
 def work(out: &i32) -> i32 {
     defer append(2, out);
     if false { defer append(9, out); }
-    for def mut i: i32 = 4; i < 5; i = i + 1 { defer append(i, out); }
+    for def mut i: i32 = 4; i < 5; i = i + 1 {
+        defer append(i, out);
+    }
     return 100;
 }
 

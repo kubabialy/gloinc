@@ -19,7 +19,11 @@ def main() -> i32 {
         if line.status == status.END {
             reading = false;
         } else {
-            if line.status != status.OK { errors.write_line("line read failed"); errors.flush(); return 2; }
+            if line.status != status.OK {
+                errors.write_line("line read failed");
+                errors.flush();
+                return 2;
+            }
             def trimmed: string = strings.trim_ascii(line.value);
             if !strings.is_empty(trimmed) && !strings.starts_with(trimmed, "#") {
                 def upper: strings.StringResult = strings.upper_ascii(&scratch, trimmed, 256);

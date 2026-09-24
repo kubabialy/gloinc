@@ -50,6 +50,9 @@ jobs:
       - name: Check versioned documentation links
         run: python3 scripts/check-doc-links.py
 
+      - name: Check Gloin source style
+        run: python3 scripts/format-gloin.py --check
+
       - name: Build without test dependencies
         run: |
           cmake -S . -B build-ci-no-tests -G Ninja \

@@ -1,66 +1,157 @@
 // Monotonic instants and durations, not calendar timestamps. See docs/time-random.md.
 import "@status";
 import "@std";
+
 // Raw ticks are meaningful only within one clock domain/epoch. Zero is valid.
-def pub struct Instant { def pub ticks_ns: u64, }
+def pub struct Instant {
+    def pub ticks_ns: u64,
+}
+
 // Failed readings have value.ticks_ns=0; only IO_ERROR carries nonzero os_error.
-def pub struct InstantResult { def pub status: i32, def pub os_error: i32, def pub value: Instant, }
+def pub struct InstantResult {
+    def pub status: i32,
+    def pub os_error: i32,
+    def pub value: Instant,
+}
+
 // Failed duration results contain zero nanoseconds, never a wrapped difference.
-def pub struct DurationResult { def pub status: i32, def pub value: Duration, }
+def pub struct DurationResult {
+    def pub status: i32,
+    def pub value: Duration,
+}
 
 def pub struct Duration {
     def pub nanoseconds: u64,
+
     // Example: time.Duration.from_milliseconds(1500) -> OK/1500000000 ns.
     // O(1), no allocation; overflow -> OVERFLOW/zero before multiplication.
     def pub static from_milliseconds(value: u64) -> DurationResult {
-        if value > 18446744073709 { return DurationResult { status: status.OVERFLOW, value: Duration { nanoseconds: 0 } }; }
-        return DurationResult { status: status.OK, value: Duration { nanoseconds: value * 1000000 } };
+        if value > 18446744073709 {
+            return DurationResult {
+                status: status.OVERFLOW,
+                value: Duration {
+                    nanoseconds: 0
+                }
+            };
+        }
+        return DurationResult {
+            status: status.OK,
+            value: Duration {
+                nanoseconds: value * 1000000
+            }
+        };
     }
+
     // Example: time.Duration.from_seconds(2) -> OK/2000000000 ns.
     // O(1), no allocation; overflow -> OVERFLOW/zero before multiplication.
     def pub static from_seconds(value: u64) -> DurationResult {
-        if value > 18446744073 { return DurationResult { status: status.OVERFLOW, value: Duration { nanoseconds: 0 } }; }
-        return DurationResult { status: status.OK, value: Duration { nanoseconds: value * 1000000000 } };
+        if value > 18446744073 {
+            return DurationResult {
+                status: status.OVERFLOW,
+                value: Duration {
+                    nanoseconds: 0
+                }
+            };
+        }
+        return DurationResult {
+            status: status.OK,
+            value: Duration {
+                nanoseconds: value * 1000000000
+            }
+        };
     }
+
     // Example: Duration { nanoseconds: 1500999 }.whole_microseconds() -> 1500.
     // O(1), no allocation/failure; floors fractional microseconds explicitly.
-    def pub whole_microseconds(self: &const Duration) -> u64 { return self.nanoseconds / 1000; }
+    def pub whole_microseconds(self: &const Duration) -> u64 {
+        return self.nanoseconds / 1000;
+    }
+
     // Example: Duration { nanoseconds: 1500999 }.whole_milliseconds() -> 1.
     // O(1), no allocation/failure; floors fractional milliseconds explicitly.
-    def pub whole_milliseconds(self: &const Duration) -> u64 { return self.nanoseconds / 1000000; }
+    def pub whole_milliseconds(self: &const Duration) -> u64 {
+        return self.nanoseconds / 1000000;
+    }
+
     // Example: Duration { nanoseconds: 1500000000 }.seconds_f64_rounded() -> 1.5.
     // O(1), no allocation/failure; rounded u64->f64 then divide by 1e9; large values lose ns precision.
     def pub seconds_f64_rounded(self: &const Duration) -> f64 {
         return std.f64_from_u64_rounded(self.nanoseconds).value / 1000000000.0;
     }
+
     // Example: a.checked_add(b); both operands are durations in ns.
     // O(1), no allocation; unrepresentable sum -> OVERFLOW/zero, no mutation.
     def pub checked_add(self: &const Duration, other: Duration) -> DurationResult {
         if other.nanoseconds > 18446744073709551615 - self.nanoseconds {
-            return DurationResult { status: status.OVERFLOW, value: Duration { nanoseconds: 0 } };
+            return DurationResult {
+                status: status.OVERFLOW,
+                value: Duration {
+                    nanoseconds: 0
+                }
+            };
         }
-        return DurationResult { status: status.OK, value: Duration { nanoseconds: self.nanoseconds + other.nanoseconds } };
+        return DurationResult {
+            status: status.OK,
+            value: Duration {
+                nanoseconds: self.nanoseconds + other.nanoseconds
+            }
+        };
     }
+
     // Example: a.checked_sub(b); equal durations give OK/zero.
     // O(1), no allocation; negative result -> OVERFLOW/zero, no mutation.
     def pub checked_sub(self: &const Duration, other: Duration) -> DurationResult {
-        if other.nanoseconds > self.nanoseconds { return DurationResult { status: status.OVERFLOW, value: Duration { nanoseconds: 0 } }; }
-        return DurationResult { status: status.OK, value: Duration { nanoseconds: self.nanoseconds - other.nanoseconds } };
+        if other.nanoseconds > self.nanoseconds {
+            return DurationResult {
+                status: status.OVERFLOW,
+                value: Duration {
+                    nanoseconds: 0
+                }
+            };
+        }
+        return DurationResult {
+            status: status.OK,
+            value: Duration {
+                nanoseconds: self.nanoseconds - other.nanoseconds
+            }
+        };
     }
+
 }
+
 // Example: start = time.monotonic_now(); check status before using start.value.
 // O(1) host clock read, no allocation; an injected host callback supplies its own cost.
 // Failure has zero ticks; IO_ERROR preserves errno, OVERFLOW/INVALID have os_error=0.
 // Nanoseconds are storage units, not a guarantee of nanosecond clock resolution.
 def pub monotonic_now() -> InstantResult {
-    def mut ticks: u64 = 0; def mut error: i32 = 0;
+    def mut ticks: u64 = 0;
+    def mut error: i32 = 0;
     def code: i32 = __time_monotonic(&ticks, &error);
-    return InstantResult { status: code, os_error: error, value: Instant { ticks_ns: ticks } };
+    return InstantResult {
+        status: code,
+        os_error: error,
+        value: Instant {
+            ticks_ns: ticks
+        }
+    };
 }
+
 // Example: time.elapsed(start.value, end.value). Both must belong to the SAME clock domain.
 // O(1), no allocation; backwards ticks -> INVALID/zero. Equal instants are OK/zero.
 // Explicit inputs permit deterministic arithmetic tests; no hidden read or clock identity inference.
 def pub elapsed(start: Instant, end: Instant) -> DurationResult {
-    if end.ticks_ns < start.ticks_ns { return DurationResult { status: status.INVALID, value: Duration { nanoseconds: 0 } }; }
-    return DurationResult { status: status.OK, value: Duration { nanoseconds: end.ticks_ns - start.ticks_ns } };
+    if end.ticks_ns < start.ticks_ns {
+        return DurationResult {
+            status: status.INVALID,
+            value: Duration {
+                nanoseconds: 0
+            }
+        };
+    }
+    return DurationResult {
+        status: status.OK,
+        value: Duration {
+            nanoseconds: end.ticks_ns - start.ticks_ns
+        }
+    };
 }

@@ -14,16 +14,32 @@ def main() -> i32 {
     def mut input: io.Stream = io.stdin();
     def mut errors: io.Stream = io.stderr();
     def source: io.ReadResult = input.read_line(&scratch, 4096);
-    if source.status != status.OK { errors.write_line("source path required"); errors.flush(); return 1; }
+    if source.status != status.OK {
+        errors.write_line("source path required");
+        errors.flush();
+        return 1;
+    }
     def opened: io.FileResult = io.File.open_read(&owner, source.value);
-    if opened.status != status.OK { errors.write_line("cannot open source"); errors.flush(); return 2; }
+    if opened.status != status.OK {
+        errors.write_line("cannot open source");
+        errors.flush();
+        return 2;
+    }
     def mut reader: io.File = opened.value;
     defer reader.close();
     scratch.reset();
     def target: io.ReadResult = input.read_line(&scratch, 4096);
-    if target.status != status.OK { errors.write_line("destination path required"); errors.flush(); return 3; }
+    if target.status != status.OK {
+        errors.write_line("destination path required");
+        errors.flush();
+        return 3;
+    }
     def created: io.FileResult = io.File.create_new(&owner, target.value);
-    if created.status != status.OK { errors.write_line("cannot create new destination"); errors.flush(); return 4; }
+    if created.status != status.OK {
+        errors.write_line("cannot create new destination");
+        errors.flush();
+        return 4;
+    }
     def mut writer: io.File = created.value;
     defer writer.close();
     def mut copying: bool = true;
@@ -34,9 +50,17 @@ def main() -> i32 {
         if chunk.status == status.END {
             copying = false;
         } else {
-            if chunk.status != status.OK { errors.write_line("read failed"); errors.flush(); return 5; }
+            if chunk.status != status.OK {
+                errors.write_line("read failed");
+                errors.flush();
+                return 5;
+            }
             def written: io.WriteResult = writer.write_all(chunk.value);
-            if written.status != status.OK { errors.write_line("write failed"); errors.flush(); return 6; }
+            if written.status != status.OK {
+                errors.write_line("write failed");
+                errors.flush();
+                return 6;
+            }
             count = count + written.written;
         }
     }

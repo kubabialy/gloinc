@@ -1,4 +1,8 @@
-def enum Choice { First, Second }
+def enum Choice {
+    First,
+    Second
+}
+
 def main() -> i32 {
-return 42;
+    return 42;
 }

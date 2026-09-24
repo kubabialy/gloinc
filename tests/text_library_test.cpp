@@ -41,7 +41,8 @@ class TextLibraryTest : public gloin_test::CliFixture {
             }
         };
         replace("def mut state: *u8,", "def mut state: *u8, def mut requests: u64,");
-        replace("GeneralArena { state: state }", "GeneralArena { state: state, requests: 0 }");
+        replace("GeneralArena {\n            state: state\n        }",
+                "GeneralArena {\n            state: state,\n            requests: 0\n        }");
         replace("__arena_general_alloc(self.state, size, alignment)",
                 "self.test_allocate(size, alignment)");
         replace("__arena_general_alloc(self.state, size, 1)", "self.test_allocate(size, 1)");

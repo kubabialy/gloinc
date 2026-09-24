@@ -8,16 +8,34 @@ def pub const DIRECTORY: i32 = 2;
 def pub const SYMLINK: i32 = 3;
 def pub const OTHER: i32 = 4;
 // Failed text is static empty; successful lexical views borrow input, join owns arena bytes.
-def pub struct PathResult { def pub status: i32, def pub value: string, }
-def pub struct FsResult { def pub status: i32, def pub os_error: i32, }
+def pub struct PathResult {
+    def pub status: i32,
+    def pub value: string,
+}
+
+def pub struct FsResult {
+    def pub status: i32,
+    def pub os_error: i32,
+}
+
 // lstat result: final symlinks are not followed. Failed kind/size are zero.
 // size is logical file bytes or symlink target-text bytes, zero for directory/other.
-def pub struct MetadataResult { def pub status: i32, def pub os_error: i32, def pub kind: i32, def pub size: u64, }
+def pub struct MetadataResult {
+    def pub status: i32,
+    def pub os_error: i32,
+    def pub kind: i32,
+    def pub size: u64,
+}
 
-def valid(path: string) -> bool { return !strings.contains(path, "\0"); }
+def valid(path: string) -> bool {
+    return !strings.contains(path, "\0");
+}
+
 def trimmed_end(path: string) -> u64 {
     def mut end: u64 = strings.byte_length(path);
-    while end > 1 && strings.byte_at(path, end - 1).value == 47 { end = end - 1; }
+    while end > 1 && strings.byte_at(path, end - 1).value == 47 {
+        end = end - 1;
+    }
     return end;
 }
 
@@ -25,31 +43,76 @@ def trimmed_end(path: string) -> u64 {
 // O(path bytes), no allocation; result borrows input (or is static . or /). NUL -> INVALID/empty.
 // Only '/' separates; . and .. are literal components; no filesystem lookup or normalization.
 def pub basename(path: string) -> PathResult {
-    if !valid(path) { return PathResult { status: status.INVALID, value: "" }; }
+    if !valid(path) {
+        return PathResult {
+            status: status.INVALID,
+            value: ""
+        };
+    }
     def end: u64 = trimmed_end(path);
-    if end == 0 { return PathResult { status: status.OK, value: "." }; }
-    if end == 1 && strings.byte_at(path, 0).value == 47 { return PathResult { status: status.OK, value: "/" }; }
+    if end == 0 {
+        return PathResult {
+            status: status.OK,
+            value: "."
+        };
+    }
+    if end == 1 && strings.byte_at(path, 0).value == 47 {
+        return PathResult {
+            status: status.OK,
+            value: "/"
+        };
+    }
     def mut start: u64 = end;
-    while start > 0 && strings.byte_at(path, start - 1).value != 47 { start = start - 1; }
-    return PathResult { status: status.OK, value: strings.slice_bytes(path, start, end - start).value };
+    while start > 0 && strings.byte_at(path, start - 1).value != 47 {
+        start = start - 1;
+    }
+    return PathResult {
+        status: status.OK,
+        value: strings.slice_bytes(path, start, end - start).value
+    };
 }
 
 // Example: fs.dirname("/work/report.txt/") -> OK/"/work"; no slash/empty -> "."; root -> "/".
 // O(path bytes), no allocation; borrowed/static result. NUL -> INVALID/empty.
 // Ignores trailing separators, trims the separator run before basename, preserves interior runs/dots.
 def pub dirname(path: string) -> PathResult {
-    if !valid(path) { return PathResult { status: status.INVALID, value: "" }; }
+    if !valid(path) {
+        return PathResult {
+            status: status.INVALID,
+            value: ""
+        };
+    }
     def mut end: u64 = trimmed_end(path);
-    while end > 0 && strings.byte_at(path, end - 1).value != 47 { end = end - 1; }
-    if end == 0 { return PathResult { status: status.OK, value: "." }; }
-    while end > 1 && strings.byte_at(path, end - 1).value == 47 { end = end - 1; }
-    return PathResult { status: status.OK, value: strings.slice_bytes(path, 0, end).value };
+    while end > 0 && strings.byte_at(path, end - 1).value != 47 {
+        end = end - 1;
+    }
+    if end == 0 {
+        return PathResult {
+            status: status.OK,
+            value: "."
+        };
+    }
+    while end > 1 && strings.byte_at(path, end - 1).value == 47 {
+        end = end - 1;
+    }
+    return PathResult {
+        status: status.OK,
+        value: strings.slice_bytes(path, 0, end).value
+    };
 }
 
 def copied(memory: &arena.GeneralArena, text: string, max_bytes: u64) -> PathResult {
-    if strings.byte_length(text) > max_bytes { return PathResult { status: status.TOO_LONG, value: "" }; }
+    if strings.byte_length(text) > max_bytes {
+        return PathResult {
+            status: status.TOO_LONG,
+            value: ""
+        };
+    }
     def result: strings.StringResult = strings.copy(memory, text);
-    return PathResult { status: result.status, value: result.value };
+    return PathResult {
+        status: result.status,
+        value: result.value
+    };
 }
 
 // Example: fs.join(&memory, "/work/", "report.txt", 1024) -> OK/"/work/report.txt".
@@ -59,49 +122,95 @@ def copied(memory: &arena.GeneralArena, text: string, max_bytes: u64) -> PathRes
 // empty result allocates nothing. NO_MEMORY is recoverable. Result expires on memory reset/free.
 // Strips trailing base separators at the join only; does not resolve . or .. or access the filesystem.
 def pub join(memory: &arena.GeneralArena, base: string, child: string, max_bytes: u64) -> PathResult {
-    if !valid(base) || !valid(child) { return PathResult { status: status.INVALID, value: "" }; }
+    if !valid(base) || !valid(child) {
+        return PathResult {
+            status: status.INVALID,
+            value: ""
+        };
+    }
     if strings.is_empty(base) { return copied(memory, child, max_bytes); }
     if strings.is_empty(child) { return copied(memory, base, max_bytes); }
     if strings.byte_at(child, 0).value == 47 { return copied(memory, child, max_bytes); }
     def end: u64 = trimmed_end(base);
     def left: string = strings.slice_bytes(base, 0, end).value;
     def right_size: u64 = strings.byte_length(child);
-    if end > max_bytes { return PathResult { status: status.TOO_LONG, value: "" }; }
-    if right_size > max_bytes - end { return PathResult { status: status.TOO_LONG, value: "" }; }
+    if end > max_bytes {
+        return PathResult {
+            status: status.TOO_LONG,
+            value: ""
+        };
+    }
+    if right_size > max_bytes - end {
+        return PathResult {
+            status: status.TOO_LONG,
+            value: ""
+        };
+    }
     if strings.byte_at(left, end - 1).value == 47 {
         def made: strings.StringResult = strings.concat(memory, left, child, max_bytes);
-        return PathResult { status: made.status, value: made.value };
+        return PathResult {
+            status: made.status,
+            value: made.value
+        };
     }
-    if right_size == max_bytes - end { return PathResult { status: status.TOO_LONG, value: "" }; }
+    if right_size == max_bytes - end {
+        return PathResult {
+            status: status.TOO_LONG,
+            value: ""
+        };
+    }
     def prefix: strings.StringResult = strings.concat(memory, left, "/", max_bytes);
-    if prefix.status != status.OK { return PathResult { status: prefix.status, value: "" }; }
+    if prefix.status != status.OK {
+        return PathResult {
+            status: prefix.status,
+            value: ""
+        };
+    }
     def result: strings.StringResult = strings.concat(memory, prefix.value, child, max_bytes);
-    return PathResult { status: result.status, value: result.value };
+    return PathResult {
+        status: result.status,
+        value: result.value
+    };
 }
 
 // Example: fs.metadata("report.bin"); check status, then kind/size. Missing -> NOT_FOUND; access -> PERMISSION_DENIED.
 // O(path bytes) plus native lstat; temporary native path length+1 allocation, freed before return.
 // Empty/NUL -> INVALID; no retained path/storage. Final symlinks are reported, not followed.
 def pub metadata(path: string) -> MetadataResult {
-    def mut kind: i32 = 0; def mut size: u64 = 0; def mut error: i32 = 0;
+    def mut kind: i32 = 0;
+    def mut size: u64 = 0;
+    def mut error: i32 = 0;
     def code: i32 = __fs_metadata(path, &kind, &size, &error);
-    return MetadataResult { status: code, os_error: error, kind: kind, size: size };
+    return MetadataResult {
+        status: code,
+        os_error: error,
+        kind: kind,
+        size: size
+    };
 }
 
 // Example: fs.mkdir("output"). Create ONE directory, mode 0777 filtered by host umask; no parent creation.
 // O(path bytes) plus blocking native mkdir; temporary native length+1 path bytes, freed on return.
 // Existing entry -> ALREADY_EXISTS (not proof of a directory); empty/NUL -> INVALID; errno retained.
 def pub mkdir(path: string) -> FsResult {
-    def mut error: i32 = 0; def code: i32 = __fs_mkdir(path, &error);
-    return FsResult { status: code, os_error: error };
+    def mut error: i32 = 0;
+    def code: i32 = __fs_mkdir(path, &error);
+    return FsResult {
+        status: code,
+        os_error: error
+    };
 }
 
 // Example: fs.remove_file("old.bin"). Unlink one file or symlink itself; never remove a directory or recurse.
 // O(path bytes) plus native unlink; temporary native length+1 path bytes, freed on return.
 // Missing -> NOT_FOUND; empty/NUL -> INVALID; other failures preserve errno. No retained input reference.
 def pub remove_file(path: string) -> FsResult {
-    def mut error: i32 = 0; def code: i32 = __fs_remove_file(path, &error);
-    return FsResult { status: code, os_error: error };
+    def mut error: i32 = 0;
+    def code: i32 = __fs_remove_file(path, &error);
+    return FsResult {
+        status: code,
+        os_error: error
+    };
 }
 
 // Example: fs.rename_replace("draft.txt", "report.txt"). Explicit POSIX replacement of a compatible target.
@@ -109,6 +218,10 @@ def pub remove_file(path: string) -> FsResult {
 // Both paths validate before allocation/mutation. Cross-filesystem rename fails (IO_ERROR/EXDEV); no copy fallback.
 // Existing regular file or empty compatible directory can be replaced; symlinks themselves are renamed.
 def pub rename_replace(from: string, to: string) -> FsResult {
-    def mut error: i32 = 0; def code: i32 = __fs_rename_replace(from, to, &error);
-    return FsResult { status: code, os_error: error };
+    def mut error: i32 = 0;
+    def code: i32 = __fs_rename_replace(from, to, &error);
+    return FsResult {
+        status: code,
+        os_error: error
+    };
 }

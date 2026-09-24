@@ -1,4 +1,7 @@
-def packed struct(u32) Point { def x: u8, }
+def packed struct(u32) Point {
+    def x: u8,
+}
+
 def main() -> i32 {
-return 42;
+    return 42;
 }

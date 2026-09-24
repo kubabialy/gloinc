@@ -1,4 +1,7 @@
-def helper() -> i32 { return 1; }
+def helper() -> i32 {
+    return 1;
+}
+
 def main() -> i32 {
     def x: string = "hello";
     return 42;

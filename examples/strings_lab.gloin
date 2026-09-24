@@ -8,15 +8,26 @@ import "@strings";
 def parse_count(line: string) -> std.IntResult {
     def text: string = strings.trim_ascii(line);
     def separator: strings.FindResult = strings.find(text, "=");
-    if !separator.found { return std.IntResult { status: status.INVALID, value: 0 }; }
+    if !separator.found {
+        return std.IntResult {
+            status: status.INVALID,
+            value: 0
+        };
+    }
     def left: strings.StringResult = strings.slice_bytes(text, 0, separator.offset);
     def start: u64 = separator.offset + 1;
     def right: strings.StringResult = strings.slice_bytes(text, start, strings.byte_length(text) - start);
     if left.status != status.OK || right.status != status.OK {
-        return std.IntResult { status: status.INVALID, value: 0 };
+        return std.IntResult {
+            status: status.INVALID,
+            value: 0
+        };
     }
     if !strings.equal(strings.trim_ascii(left.value), "count") {
-        return std.IntResult { status: status.INVALID, value: 0 };
+        return std.IntResult {
+            status: status.INVALID,
+            value: 0
+        };
     }
     return std.to_int(strings.trim_ascii(right.value));
 }
@@ -39,9 +50,13 @@ def main() -> i32 {
     // Exercise counted bytes and explicit failures: NUL is data, not the end.
     def nul: strings.ByteResult = strings.byte_at("a\0b", 1);
     def beyond: strings.StringResult = strings.slice_bytes("abc", 2, 18446744073709551615);
-    if nul.status != status.OK || nul.value != 0 || beyond.status != status.OUT_OF_RANGE { return 5; }
+    if nul.status != status.OK || nul.value != 0 || beyond.status != status.OUT_OF_RANGE {
+        return 5;
+    }
     if strings.byte_length("café") != 5 || strings.is_empty(saved.value) { return 6; }
-    if !strings.starts_with(saved.value, "count") || !strings.ends_with(saved.value, "42") { return 7; }
+    if !strings.starts_with(saved.value, "count") || !strings.ends_with(saved.value, "42") {
+        return 7;
+    }
     if !strings.contains(saved.value, "=") || strings.compare("a", "ab") != -1 { return 8; }
     if !strings.equal(strings.trim_start_ascii(" x "), "x ") { return 9; }
     if !strings.equal(strings.trim_end_ascii(" x "), " x") { return 10; }

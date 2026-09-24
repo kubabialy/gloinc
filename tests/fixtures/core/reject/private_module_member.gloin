@@ -1,2 +1,5 @@
 import "../modules/utils";
-def main() -> i32 { return utils.hidden(); }
+
+def main() -> i32 {
+    return utils.hidden();
+}

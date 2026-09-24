@@ -1,6 +1,9 @@
-def helper() -> i32 { return 1; }
+def helper() -> i32 {
+    return 1;
+}
+
 def main() -> i32 {
-def sentinel: i32 = 1 / 0;
-defer 42;
-return 42;
+    def sentinel: i32 = 1 / 0;
+    defer 42;
+    return 42;
 }

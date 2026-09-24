@@ -1,4 +1,7 @@
-def identity(x: i16) -> i16 { return x; }
+def identity(x: i16) -> i16 {
+    return x;
+}
+
 def arithmetic(x: i16, y: i16) -> bool {
     if x + y != 10 || x - y != 4 || x * y != 21 { return false; }
     if x / y != 2 || x % y != 1 { return false; }
@@ -7,6 +10,7 @@ def arithmetic(x: i16, y: i16) -> bool {
     if -x != -7 || -x / y != -2 || -x % y != -1 { return false; }
     return true;
 }
+
 def main() -> i32 {
     def low: i16 = identity(-32768);
     def high: i16 = identity(32767);

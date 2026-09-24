@@ -1,3 +1,11 @@
-def hidden() -> i32 { return 10; }
-def pub calculate(x: i32, y: i32) -> i32 { return x * y + hidden(); }
-def main() -> i32 { return calculate(5, 3); }
+def hidden() -> i32 {
+    return 10;
+}
+
+def pub calculate(x: i32, y: i32) -> i32 {
+    return x * y + hidden();
+}
+
+def main() -> i32 {
+    return calculate(5, 3);
+}

@@ -39,7 +39,10 @@ def pub struct InputResult {
 def pub to_int(value: string) -> IntResult {
     def mut number: i32 = 0;
     def status: i32 = __std_parse_i32(value, &number);
-    return IntResult { status: status, value: number };
+    return IntResult {
+        status: status,
+        value: number
+    };
 }
 
 // Example: std.to_string(&memory, 42) -> "42". Bounded O(1) formatting plus arena allocation.
@@ -57,14 +60,30 @@ def pub to_string(memory: &arena.GeneralArena, value: i32) -> string {
 def pub input(memory: &arena.GeneralArena, max_bytes: u64) -> InputResult {
     // Leave room for the terminator without wrapping the requested size.
     if max_bytes > 9223372036854775806 {
-        return InputResult { status: NO_MEMORY, value: "" };
+        return InputResult {
+            status: NO_MEMORY,
+            value: ""
+        };
     }
     def bytes: *u8 = memory.try_alloc_bytes(max_bytes + 1);
-    if bytes == null { return InputResult { status: NO_MEMORY, value: "" }; }
+    if bytes == null {
+        return InputResult {
+            status: NO_MEMORY,
+            value: ""
+        };
+    }
     def mut length: u64 = 0;
     def status: i32 = __std_input(&*bytes, max_bytes, &length);
-    if status != OK { return InputResult { status: status, value: "" }; }
-    return InputResult { status: OK, value: __std_string_view(bytes, length) };
+    if status != OK {
+        return InputResult {
+            status: status,
+            value: ""
+        };
+    }
+    return InputResult {
+        status: OK,
+        value: __std_string_view(bytes, length)
+    };
 }
 
 // Numeric APIs: failure payloads are zero/false, formatted failures are static "".
@@ -72,21 +91,46 @@ def pub input(memory: &arena.GeneralArena, max_bytes: u64) -> InputResult {
 def pub const INEXACT: i32 = status.INEXACT;
 def pub const UNDERFLOW: i32 = status.UNDERFLOW;
 // Inspect status before value; failed i64 results contain zero. No owned storage.
-def pub struct I64Result { def pub status: i32, def pub value: i64, }
+def pub struct I64Result {
+    def pub status: i32,
+    def pub value: i64,
+}
+
 // Inspect status before value; failed u64 results contain zero. No owned storage.
-def pub struct U64Result { def pub status: i32, def pub value: u64, }
+def pub struct U64Result {
+    def pub status: i32,
+    def pub value: u64,
+}
+
 // Inspect status before value; failed f32 results contain positive zero. No owned storage.
-def pub struct F32Result { def pub status: i32, def pub value: f32, }
+def pub struct F32Result {
+    def pub status: i32,
+    def pub value: f32,
+}
+
 // Inspect status before value; failed f64 results contain positive zero. No owned storage.
-def pub struct F64Result { def pub status: i32, def pub value: f64, }
+def pub struct F64Result {
+    def pub status: i32,
+    def pub value: f64,
+}
+
 // Inspect status before value; failed bool results contain false. No owned storage.
-def pub struct BoolResult { def pub status: i32, def pub value: bool, }
+def pub struct BoolResult {
+    def pub status: i32,
+    def pub value: bool,
+}
+
 // OK borrows arena bytes; failure is static empty text. No individual free.
-def pub struct FormatResult { def pub status: i32, def pub value: string, }
+def pub struct FormatResult {
+    def pub status: i32,
+    def pub value: string,
+}
 
 // Example: parse_i32("-42") -> OK/-42. O(n), no allocation; identical to to_int.
 // Complete signed ASCII decimal; INVALID/OVERFLOW return zero.
-def pub parse_i32(value: string) -> IntResult { return to_int(value); }
+def pub parse_i32(value: string) -> IntResult {
+    return to_int(value);
+}
 
 // Example: parse_i64("-9223372036854775808") returns OK and that value.
 // Signed ASCII decimal; INVALID precedes OVERFLOW.
@@ -94,7 +138,10 @@ def pub parse_i32(value: string) -> IntResult { return to_int(value); }
 def pub parse_i64(text: string) -> I64Result {
     def mut value: i64 = 0;
     def code: i32 = __std_parse_i64(text, &value);
-    return I64Result { status: code, value: value };
+    return I64Result {
+        status: code,
+        value: value
+    };
 }
 
 // Example: parse_u64("18446744073709551615") returns OK and that value.
@@ -103,7 +150,10 @@ def pub parse_i64(text: string) -> I64Result {
 def pub parse_u64(text: string) -> U64Result {
     def mut value: u64 = 0;
     def code: i32 = __std_parse_u64(text, &value);
-    return U64Result { status: code, value: value };
+    return U64Result {
+        status: code,
+        value: value
+    };
 }
 
 // Example: parse_f32("1.25") returns OK and that value.
@@ -112,7 +162,10 @@ def pub parse_u64(text: string) -> U64Result {
 def pub parse_f32(text: string) -> F32Result {
     def mut value: f32 = 0.0;
     def code: i32 = __std_parse_f32(text, &value);
-    return F32Result { status: code, value: value };
+    return F32Result {
+        status: code,
+        value: value
+    };
 }
 
 // Example: parse_f64("1.25") returns OK and that value.
@@ -121,7 +174,10 @@ def pub parse_f32(text: string) -> F32Result {
 def pub parse_f64(text: string) -> F64Result {
     def mut value: f64 = 0.0;
     def code: i32 = __std_parse_f64(text, &value);
-    return F64Result { status: code, value: value };
+    return F64Result {
+        status: code,
+        value: value
+    };
 }
 
 // Example: parse_bool("true") -> OK/true; "TRUE" -> INVALID/false.
@@ -129,12 +185,17 @@ def pub parse_f64(text: string) -> F64Result {
 def pub parse_bool(text: string) -> BoolResult {
     def mut byte: u8 = 0;
     def code: i32 = __std_parse_bool(text, &byte);
-    return BoolResult { status: code, value: byte != 0 };
+    return BoolResult {
+        status: code,
+        value: byte != 0
+    };
 }
 
 // Example: format_bool(false) -> "false". O(1), no allocation, cannot fail.
 // Returns a static string valid for the program's lifetime; no arena required.
-def pub format_bool(value: bool) -> string { if value { return "true"; } return "false"; }
+def pub format_bool(value: bool) -> string {
+    if value { return "true"; } return "false";
+}
 
 // Example: format_i32(&memory, 42) -> OK/"42".
 // Canonical decimal, no implicit printing.
@@ -142,10 +203,18 @@ def pub format_bool(value: bool) -> string { if value { return "true"; } return 
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
 def pub format_i32(memory: &arena.GeneralArena, value: i32) -> FormatResult {
     def bytes: *u8 = memory.try_alloc_bytes(12);
-    if bytes == null { return FormatResult { status: status.NO_MEMORY, value: "" }; }
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
     def mut length: u64 = 0;
     __std_format_i32(value, &*bytes, &length);
-    return FormatResult { status: status.OK, value: __std_string_view(bytes, length) };
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
 }
 
 // Example: format_i64(&memory, 42) -> OK/"42".
@@ -154,11 +223,24 @@ def pub format_i32(memory: &arena.GeneralArena, value: i32) -> FormatResult {
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
 def pub format_i64(memory: &arena.GeneralArena, value: i64) -> FormatResult {
     def bytes: *u8 = memory.try_alloc_bytes(21);
-    if bytes == null { return FormatResult { status: status.NO_MEMORY, value: "" }; }
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
     def mut length: u64 = 0;
     def code: i32 = __std_format_i64(value, &*bytes, &length);
-    if code != status.OK { return FormatResult { status: code, value: "" }; }
-    return FormatResult { status: status.OK, value: __std_string_view(bytes, length) };
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
 }
 
 // Example: format_u64(&memory, 42) -> OK/"42".
@@ -167,11 +249,24 @@ def pub format_i64(memory: &arena.GeneralArena, value: i64) -> FormatResult {
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
 def pub format_u64(memory: &arena.GeneralArena, value: u64) -> FormatResult {
     def bytes: *u8 = memory.try_alloc_bytes(21);
-    if bytes == null { return FormatResult { status: status.NO_MEMORY, value: "" }; }
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
     def mut length: u64 = 0;
     def code: i32 = __std_format_u64(value, &*bytes, &length);
-    if code != status.OK { return FormatResult { status: code, value: "" }; }
-    return FormatResult { status: status.OK, value: __std_string_view(bytes, length) };
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
 }
 
 // Example: format_f32(&memory, 1.25) -> OK/"1.25".
@@ -180,11 +275,24 @@ def pub format_u64(memory: &arena.GeneralArena, value: u64) -> FormatResult {
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
 def pub format_f32(memory: &arena.GeneralArena, value: f32) -> FormatResult {
     def bytes: *u8 = memory.try_alloc_bytes(32);
-    if bytes == null { return FormatResult { status: status.NO_MEMORY, value: "" }; }
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
     def mut length: u64 = 0;
     def code: i32 = __std_format_f32(value, &*bytes, &length);
-    if code != status.OK { return FormatResult { status: code, value: "" }; }
-    return FormatResult { status: status.OK, value: __std_string_view(bytes, length) };
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
 }
 
 // Example: format_f64(&memory, 1.25) -> OK/"1.25".
@@ -193,11 +301,24 @@ def pub format_f32(memory: &arena.GeneralArena, value: f32) -> FormatResult {
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
 def pub format_f64(memory: &arena.GeneralArena, value: f64) -> FormatResult {
     def bytes: *u8 = memory.try_alloc_bytes(32);
-    if bytes == null { return FormatResult { status: status.NO_MEMORY, value: "" }; }
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
     def mut length: u64 = 0;
     def code: i32 = __std_format_f64(value, &*bytes, &length);
-    if code != status.OK { return FormatResult { status: code, value: "" }; }
-    return FormatResult { status: status.OK, value: __std_string_view(bytes, length) };
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
 }
 
 // Example: format_f32_fixed(&memory, 1.25, 2) -> OK/"1.25".
@@ -205,13 +326,31 @@ def pub format_f64(memory: &arena.GeneralArena, value: f64) -> FormatResult {
 // Bounded O(1) byte work plus arena allocation; requests 64 bytes including NUL.
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
 def pub format_f32_fixed(memory: &arena.GeneralArena, value: f32, precision: u32) -> FormatResult {
-    if precision > 18 { return FormatResult { status: status.INVALID, value: "" }; }
+    if precision > 18 {
+        return FormatResult {
+            status: status.INVALID,
+            value: ""
+        };
+    }
     def bytes: *u8 = memory.try_alloc_bytes(64);
-    if bytes == null { return FormatResult { status: status.NO_MEMORY, value: "" }; }
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
     def mut length: u64 = 0;
     def code: i32 = __std_format_f32_fixed(value, precision, &*bytes, &length);
-    if code != status.OK { return FormatResult { status: code, value: "" }; }
-    return FormatResult { status: status.OK, value: __std_string_view(bytes, length) };
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
 }
 
 // Example: format_f64_fixed(&memory, 1.25, 2) -> OK/"1.25".
@@ -219,13 +358,31 @@ def pub format_f32_fixed(memory: &arena.GeneralArena, value: f32, precision: u32
 // Bounded O(1) byte work plus arena allocation; requests 352 bytes including NUL.
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
 def pub format_f64_fixed(memory: &arena.GeneralArena, value: f64, precision: u32) -> FormatResult {
-    if precision > 18 { return FormatResult { status: status.INVALID, value: "" }; }
+    if precision > 18 {
+        return FormatResult {
+            status: status.INVALID,
+            value: ""
+        };
+    }
     def bytes: *u8 = memory.try_alloc_bytes(352);
-    if bytes == null { return FormatResult { status: status.NO_MEMORY, value: "" }; }
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
     def mut length: u64 = 0;
     def code: i32 = __std_format_f64_fixed(value, precision, &*bytes, &length);
-    if code != status.OK { return FormatResult { status: code, value: "" }; }
-    return FormatResult { status: status.OK, value: __std_string_view(bytes, length) };
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
 }
 
 // Example: i64_from_i32(42) -> OK/42.
@@ -234,7 +391,10 @@ def pub format_f64_fixed(memory: &arena.GeneralArena, value: f64, precision: u32
 def pub i64_from_i32(value: i32) -> I64Result {
     def mut output: i64 = 0;
     def code: i32 = __std_i64_from_i32(value, &output);
-    return I64Result { status: code, value: output };
+    return I64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: i32_from_i64(42) -> OK/42.
@@ -243,7 +403,10 @@ def pub i64_from_i32(value: i32) -> I64Result {
 def pub i32_from_i64(value: i64) -> IntResult {
     def mut output: i32 = 0;
     def code: i32 = __std_i32_from_i64(value, &output);
-    return IntResult { status: code, value: output };
+    return IntResult {
+        status: code,
+        value: output
+    };
 }
 
 // Example: u64_from_i64(42) -> OK/42.
@@ -252,7 +415,10 @@ def pub i32_from_i64(value: i64) -> IntResult {
 def pub u64_from_i64(value: i64) -> U64Result {
     def mut output: u64 = 0;
     def code: i32 = __std_u64_from_i64(value, &output);
-    return U64Result { status: code, value: output };
+    return U64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: i64_from_u64(42) -> OK/42.
@@ -261,7 +427,10 @@ def pub u64_from_i64(value: i64) -> U64Result {
 def pub i64_from_u64(value: u64) -> I64Result {
     def mut output: i64 = 0;
     def code: i32 = __std_i64_from_u64(value, &output);
-    return I64Result { status: code, value: output };
+    return I64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: f64_from_i64_exact(42) -> OK/42.
@@ -270,7 +439,10 @@ def pub i64_from_u64(value: u64) -> I64Result {
 def pub f64_from_i64_exact(value: i64) -> F64Result {
     def mut output: f64 = 0.0;
     def code: i32 = __std_f64_from_i64(value, 0, &output);
-    return F64Result { status: code, value: output };
+    return F64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: f64_from_i64_rounded(42) -> OK/42.
@@ -279,7 +451,10 @@ def pub f64_from_i64_exact(value: i64) -> F64Result {
 def pub f64_from_i64_rounded(value: i64) -> F64Result {
     def mut output: f64 = 0.0;
     def code: i32 = __std_f64_from_i64(value, 1, &output);
-    return F64Result { status: code, value: output };
+    return F64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: f64_from_u64_exact(42) -> OK/42.
@@ -288,7 +463,10 @@ def pub f64_from_i64_rounded(value: i64) -> F64Result {
 def pub f64_from_u64_exact(value: u64) -> F64Result {
     def mut output: f64 = 0.0;
     def code: i32 = __std_f64_from_u64(value, 0, &output);
-    return F64Result { status: code, value: output };
+    return F64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: f64_from_u64_rounded(42) -> OK/42.
@@ -297,7 +475,10 @@ def pub f64_from_u64_exact(value: u64) -> F64Result {
 def pub f64_from_u64_rounded(value: u64) -> F64Result {
     def mut output: f64 = 0.0;
     def code: i32 = __std_f64_from_u64(value, 1, &output);
-    return F64Result { status: code, value: output };
+    return F64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: i64_from_f64_exact(42.0) -> OK/42.
@@ -306,7 +487,10 @@ def pub f64_from_u64_rounded(value: u64) -> F64Result {
 def pub i64_from_f64_exact(value: f64) -> I64Result {
     def mut output: i64 = 0;
     def code: i32 = __std_i64_from_f64(value, 0, &output);
-    return I64Result { status: code, value: output };
+    return I64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: i64_from_f64_trunc(42.9) -> OK/42.
@@ -315,7 +499,10 @@ def pub i64_from_f64_exact(value: f64) -> I64Result {
 def pub i64_from_f64_trunc(value: f64) -> I64Result {
     def mut output: i64 = 0;
     def code: i32 = __std_i64_from_f64(value, 1, &output);
-    return I64Result { status: code, value: output };
+    return I64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: u64_from_f64_exact(42.0) -> OK/42.
@@ -324,7 +511,10 @@ def pub i64_from_f64_trunc(value: f64) -> I64Result {
 def pub u64_from_f64_exact(value: f64) -> U64Result {
     def mut output: u64 = 0;
     def code: i32 = __std_u64_from_f64(value, 0, &output);
-    return U64Result { status: code, value: output };
+    return U64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: u64_from_f64_trunc(42.9) -> OK/42.
@@ -333,7 +523,10 @@ def pub u64_from_f64_exact(value: f64) -> U64Result {
 def pub u64_from_f64_trunc(value: f64) -> U64Result {
     def mut output: u64 = 0;
     def code: i32 = __std_u64_from_f64(value, 1, &output);
-    return U64Result { status: code, value: output };
+    return U64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: f64_from_f32(1.25) -> OK/1.25.
@@ -342,7 +535,10 @@ def pub u64_from_f64_trunc(value: f64) -> U64Result {
 def pub f64_from_f32(value: f32) -> F64Result {
     def mut output: f64 = 0.0;
     def code: i32 = __std_f64_from_f32(value, &output);
-    return F64Result { status: code, value: output };
+    return F64Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: f32_from_f64_exact(1.25) -> OK/1.25.
@@ -351,7 +547,10 @@ def pub f64_from_f32(value: f32) -> F64Result {
 def pub f32_from_f64_exact(value: f64) -> F32Result {
     def mut output: f32 = 0.0;
     def code: i32 = __std_f32_from_f64(value, 0, &output);
-    return F32Result { status: code, value: output };
+    return F32Result {
+        status: code,
+        value: output
+    };
 }
 
 // Example: f32_from_f64_rounded(1.25) -> OK/1.25.
@@ -360,5 +559,8 @@ def pub f32_from_f64_exact(value: f64) -> F32Result {
 def pub f32_from_f64_rounded(value: f64) -> F32Result {
     def mut output: f32 = 0.0;
     def code: i32 = __std_f32_from_f64(value, 1, &output);
-    return F32Result { status: code, value: output };
+    return F32Result {
+        status: code,
+        value: output
+    };
 }

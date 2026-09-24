@@ -1,15 +1,15 @@
 // Shared result statuses. Constants cost no allocation or runtime lookup.
 // Inspect a result's status before using its payload; each API documents failures.
-def pub const OK: i32 = 0;           // Operation succeeded; payload is valid.
-def pub const END: i32 = 1;          // End of input/iteration, not an empty item.
-def pub const INVALID: i32 = 2;      // Input does not satisfy the required grammar.
-def pub const OVERFLOW: i32 = 3;     // Value is outside the representable range.
-def pub const IO_ERROR: i32 = 4;     // Input/output operation failed.
-def pub const TOO_LONG: i32 = 5;     // Input exceeds the documented byte limit.
-def pub const NO_MEMORY: i32 = 6;    // Requested storage could not be allocated.
+def pub const OK: i32 = 0; // Operation succeeded; payload is valid.
+def pub const END: i32 = 1; // End of input/iteration, not an empty item.
+def pub const INVALID: i32 = 2; // Input does not satisfy the required grammar.
+def pub const OVERFLOW: i32 = 3; // Value is outside the representable range.
+def pub const IO_ERROR: i32 = 4; // Input/output operation failed.
+def pub const TOO_LONG: i32 = 5; // Input exceeds the documented byte limit.
+def pub const NO_MEMORY: i32 = 6; // Requested storage could not be allocated.
 def pub const OUT_OF_RANGE: i32 = 7; // Byte index or slice is outside the string.
-def pub const INEXACT: i32 = 8;      // Exact conversion would lose precision/fraction.
-def pub const UNDERFLOW: i32 = 9;    // Nonzero float input would round to zero.
+def pub const INEXACT: i32 = 8; // Exact conversion would lose precision/fraction.
+def pub const UNDERFLOW: i32 = 9; // Nonzero float input would round to zero.
 
 // File lookup, access, exclusive creation, and consumed handles (SPEC-030d).
 def pub const NOT_FOUND: i32 = 10;

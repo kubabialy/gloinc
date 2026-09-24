@@ -1,4 +1,6 @@
-def update(value: &i64) -> void { *value = 100; }
+def update(value: &i64) -> void {
+    *value = 100;
+}
 
 def main() -> i32 {
     def mut value: i64 = 42;

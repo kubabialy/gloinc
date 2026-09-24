@@ -22,3 +22,6 @@ For language behavior, update the specification, source acceptance fixtures, and
 versioned user documentation together. Keep unsupported features rejected with
 clear diagnostics. Run the relevant targeted tests and the `check-core` target
 before proposing a release change.
+
+Follow the [Gloin source style](docs/gloin-style.md) for `.gloin` files and run
+`python3 scripts/format-gloin.py --check` before submitting them.

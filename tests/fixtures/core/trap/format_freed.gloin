@@ -1,5 +1,6 @@
 import "@std";
 import "@arena";
+
 def main() -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     memory.free();

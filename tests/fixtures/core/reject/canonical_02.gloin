@@ -1,1 +1,2 @@
-pub def work() -> void {}
+pub def work() -> void {
+}

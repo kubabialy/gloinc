@@ -1,5 +1,5 @@
 def main() -> i32 {
-def x: i64 = 9223372036854775807;
-def y: i64 = x + 1;
-return 42;
+    def x: i64 = 9223372036854775807;
+    def y: i64 = x + 1;
+    return 42;
 }

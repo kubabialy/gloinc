@@ -1,5 +1,6 @@
 import "./model";
 import "./settings.gloin";
+
 def pub advance(particle: &model.Particle) -> void {
     particle.step(settings.STEP);
 }

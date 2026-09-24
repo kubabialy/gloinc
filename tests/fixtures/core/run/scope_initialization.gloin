@@ -1,11 +1,21 @@
 def priv const BASE: i32 = 40;
 def pub const ANSWER: int = BASE + 2;
-def priv identity(x: int) -> i32 { return x; }
+def priv identity(x: int) -> i32 {
+    return x;
+}
+
 def pub main() -> int {
     def x: i32;
     def mut total: i32 = 0;
-    if true { x = identity(ANSWER); } else { x = -1; }
-    { def x: i32 = x + 1; total = x; }
+    if true {
+        x = identity(ANSWER);
+    } else {
+        x = -1;
+    }
+    {
+        def x: i32 = x + 1;
+        total = x;
+    }
     def const OFFSET: i32 = 1;
     if total != 43 { return -2; }
     return total - OFFSET;

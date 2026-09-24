@@ -1,5 +1,10 @@
-def helper() -> i32 { return 1; }
+def helper() -> i32 {
+    return 1;
+}
+
 def main() -> i32 {
     def sentinel: i32 = 1 / 0;
-    for def mut i: i32 = 0; i < 1; i = i + 1 {} return i;
+    for def mut i: i32 = 0; i < 1; i = i + 1 {
+    }
+    return i;
 }

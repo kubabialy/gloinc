@@ -1,6 +1,10 @@
 def struct Counter {
     def value: i32,
-    def read(self: *const Counter) -> i32 { return self.value; }
+
+    def read(self: *const Counter) -> i32 {
+        return self.value;
+    }
+
 }
 
 def main() -> i32 {

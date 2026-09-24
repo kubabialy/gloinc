@@ -1,5 +1,5 @@
 def main() -> i32 {
-def sentinel: i32 = 1 / 0;
-def x: u16_be;
-return 42;
+    def sentinel: i32 = 1 / 0;
+    def x: u16_be;
+    return 42;
 }

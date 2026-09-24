@@ -1,1 +1,3 @@
-def work() { return; }
+def work() {
+    return;
+}

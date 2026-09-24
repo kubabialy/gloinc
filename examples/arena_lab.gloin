@@ -16,6 +16,7 @@ def struct Particle {
     def step(self: &Particle) -> void {
         self.position = self.position + self.velocity;
     }
+
 }
 
 def struct Frame {
@@ -25,15 +26,26 @@ def struct Frame {
 
 def build_frame(memory: &arena.GeneralArena) -> Frame {
     def first: &Particle = memory.alloc(Particle {
-        tag: 7, id: 0, position: 1.25, velocity: 0.5, next: null
+        tag: 7,
+        id: 0,
+        position: 1.25,
+        velocity: 0.5,
+        next: null
     });
     def mut head: &Particle = first;
     for def mut id: i64 = 1; id < PARTICLES; id = id + 1 {
         head = memory.alloc(Particle {
-            tag: 7, id: id, position: 1.25, velocity: 0.5, next: head
+            tag: 7,
+            id: id,
+            position: 1.25,
+            velocity: 0.5,
+            next: head
         });
     }
-    return Frame { first: first, head: head };
+    return Frame {
+        first: first,
+        head: head
+    };
 }
 
 def verify_frame(frame: Frame) -> bool {

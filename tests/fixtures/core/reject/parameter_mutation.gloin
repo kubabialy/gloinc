@@ -1,4 +1,8 @@
-def change(x: i32) -> i32 { x = 2; return x; }
+def change(x: i32) -> i32 {
+    x = 2;
+    return x;
+}
+
 def main() -> i32 {
-return change(1);
+    return change(1);
 }

@@ -4,7 +4,7 @@ import "./modules/world";
 import "./modules/settings";
 
 def const EXPECTED: i64 = settings.COUNT * (settings.COUNT - 1) / 2
-    + settings.COUNT * settings.STEP;
++ settings.COUNT * settings.STEP;
 
 def main() -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();

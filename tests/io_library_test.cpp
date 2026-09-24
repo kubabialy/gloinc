@@ -186,8 +186,8 @@ TEST_F(IoLibraryTest, ReadAllocationFailureConsumesNothingAndScratchCanBeReused)
     copy_modules();
     auto arena = read((library() / "arena.gloin").string());
     replace(arena, "def mut state: *u8,", "def mut state: *u8, def mut byte_requests: u64,");
-    replace(arena, "GeneralArena { state: state }",
-            "GeneralArena { state: state, byte_requests: 0 }");
+    replace(arena, "GeneralArena {\n            state: state\n        }",
+            "GeneralArena {\n            state: state,\n            byte_requests: 0\n        }");
     replace(arena, "def bytes: *u8 = __arena_general_alloc(self.state, size, 1);",
             "self.byte_requests = self.byte_requests + 1; if self.byte_requests == 1 { return "
             "null; } def bytes: *u8 = __arena_general_alloc(self.state, size, 1);");

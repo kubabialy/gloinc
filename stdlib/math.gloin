@@ -1,11 +1,32 @@
 // Concrete finite numerical utilities. See docs/math.md for domains and accuracy.
 import "@status";
+
 // Every checked failure has value +0 (integer zero); successful signed zero is preserved.
-def pub struct I32Result { def pub status: i32, def pub value: i32, }
-def pub struct I64Result { def pub status: i32, def pub value: i64, }
-def pub struct U64Result { def pub status: i32, def pub value: u64, }
-def pub struct F32Result { def pub status: i32, def pub value: f32, }
-def pub struct F64Result { def pub status: i32, def pub value: f64, }
+def pub struct I32Result {
+    def pub status: i32,
+    def pub value: i32,
+}
+
+def pub struct I64Result {
+    def pub status: i32,
+    def pub value: i64,
+}
+
+def pub struct U64Result {
+    def pub status: i32,
+    def pub value: u64,
+}
+
+def pub struct F32Result {
+    def pub status: i32,
+    def pub value: f32,
+}
+
+def pub struct F64Result {
+    def pub status: i32,
+    def pub value: f64,
+}
+
 // Nearest f32 constants; scalar loads, no allocation; angles are radians.
 def pub const PI_F32: f32 = 3.14159265358979323846264338327950288;
 def pub const TAU_F32: f32 = 6.28318530717958647692528676655900576;
@@ -15,103 +36,239 @@ def pub const TAU_F64: f64 = 6.28318530717958647692528676655900576;
 
 // Example: math.min_i32(2, 3) selects the minimum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub min_i32(a: i32, b: i32) -> i32 { if b < a { return b; } return a; }
+def pub min_i32(a: i32, b: i32) -> i32 {
+    if b < a { return b; } return a;
+}
 
 // Example: math.max_i32(2, 3) selects the maximum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub max_i32(a: i32, b: i32) -> i32 { if b > a { return b; } return a; }
+def pub max_i32(a: i32, b: i32) -> i32 {
+    if b > a { return b; } return a;
+}
 
 // Example: math.clamp_i32(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
 def pub clamp_i32(value: i32, low: i32, high: i32) -> I32Result {
-    if low > high { return I32Result { status: status.INVALID, value: 0 }; }
-    if value < low { return I32Result { status: status.OK, value: low }; }
-    if value > high { return I32Result { status: status.OK, value: high }; }
-    return I32Result { status: status.OK, value: value };
+    if low > high {
+        return I32Result {
+            status: status.INVALID,
+            value: 0
+        };
+    }
+    if value < low {
+        return I32Result {
+            status: status.OK,
+            value: low
+        };
+    }
+    if value > high {
+        return I32Result {
+            status: status.OK,
+            value: high
+        };
+    }
+    return I32Result {
+        status: status.OK,
+        value: value
+    };
 }
 
 // Example: math.min_i64(2, 3) selects the minimum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub min_i64(a: i64, b: i64) -> i64 { if b < a { return b; } return a; }
+def pub min_i64(a: i64, b: i64) -> i64 {
+    if b < a { return b; } return a;
+}
 
 // Example: math.max_i64(2, 3) selects the maximum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub max_i64(a: i64, b: i64) -> i64 { if b > a { return b; } return a; }
+def pub max_i64(a: i64, b: i64) -> i64 {
+    if b > a { return b; } return a;
+}
 
 // Example: math.clamp_i64(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
 def pub clamp_i64(value: i64, low: i64, high: i64) -> I64Result {
-    if low > high { return I64Result { status: status.INVALID, value: 0 }; }
-    if value < low { return I64Result { status: status.OK, value: low }; }
-    if value > high { return I64Result { status: status.OK, value: high }; }
-    return I64Result { status: status.OK, value: value };
+    if low > high {
+        return I64Result {
+            status: status.INVALID,
+            value: 0
+        };
+    }
+    if value < low {
+        return I64Result {
+            status: status.OK,
+            value: low
+        };
+    }
+    if value > high {
+        return I64Result {
+            status: status.OK,
+            value: high
+        };
+    }
+    return I64Result {
+        status: status.OK,
+        value: value
+    };
 }
 
 // Example: math.min_u64(2, 3) selects the minimum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub min_u64(a: u64, b: u64) -> u64 { if b < a { return b; } return a; }
+def pub min_u64(a: u64, b: u64) -> u64 {
+    if b < a { return b; } return a;
+}
 
 // Example: math.max_u64(2, 3) selects the maximum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub max_u64(a: u64, b: u64) -> u64 { if b > a { return b; } return a; }
+def pub max_u64(a: u64, b: u64) -> u64 {
+    if b > a { return b; } return a;
+}
 
 // Example: math.clamp_u64(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
 def pub clamp_u64(value: u64, low: u64, high: u64) -> U64Result {
-    if low > high { return U64Result { status: status.INVALID, value: 0 }; }
-    if value < low { return U64Result { status: status.OK, value: low }; }
-    if value > high { return U64Result { status: status.OK, value: high }; }
-    return U64Result { status: status.OK, value: value };
+    if low > high {
+        return U64Result {
+            status: status.INVALID,
+            value: 0
+        };
+    }
+    if value < low {
+        return U64Result {
+            status: status.OK,
+            value: low
+        };
+    }
+    if value > high {
+        return U64Result {
+            status: status.OK,
+            value: high
+        };
+    }
+    return U64Result {
+        status: status.OK,
+        value: value
+    };
 }
 
 // Example: math.min_f32(2.0, 3.0) selects the minimum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub min_f32(a: f32, b: f32) -> f32 { if b < a { return b; } return a; }
+def pub min_f32(a: f32, b: f32) -> f32 {
+    if b < a { return b; } return a;
+}
 
 // Example: math.max_f32(2.0, 3.0) selects the maximum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub max_f32(a: f32, b: f32) -> f32 { if b > a { return b; } return a; }
+def pub max_f32(a: f32, b: f32) -> f32 {
+    if b > a { return b; } return a;
+}
 
 // Example: math.clamp_f32(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
 def pub clamp_f32(value: f32, low: f32, high: f32) -> F32Result {
-    if low > high { return F32Result { status: status.INVALID, value: 0.0 }; }
-    if value < low { return F32Result { status: status.OK, value: low }; }
-    if value > high { return F32Result { status: status.OK, value: high }; }
-    return F32Result { status: status.OK, value: value };
+    if low > high {
+        return F32Result {
+            status: status.INVALID,
+            value: 0.0
+        };
+    }
+    if value < low {
+        return F32Result {
+            status: status.OK,
+            value: low
+        };
+    }
+    if value > high {
+        return F32Result {
+            status: status.OK,
+            value: high
+        };
+    }
+    return F32Result {
+        status: status.OK,
+        value: value
+    };
 }
 
 // Example: math.min_f64(2.0, 3.0) selects the minimum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub min_f64(a: f64, b: f64) -> f64 { if b < a { return b; } return a; }
+def pub min_f64(a: f64, b: f64) -> f64 {
+    if b < a { return b; } return a;
+}
 
 // Example: math.max_f64(2.0, 3.0) selects the maximum.
 // O(1), no allocation/failure. Equal operands select FIRST, including signed zeros.
-def pub max_f64(a: f64, b: f64) -> f64 { if b > a { return b; } return a; }
+def pub max_f64(a: f64, b: f64) -> f64 {
+    if b > a { return b; } return a;
+}
 
 // Example: math.clamp_f64(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
 def pub clamp_f64(value: f64, low: f64, high: f64) -> F64Result {
-    if low > high { return F64Result { status: status.INVALID, value: 0.0 }; }
-    if value < low { return F64Result { status: status.OK, value: low }; }
-    if value > high { return F64Result { status: status.OK, value: high }; }
-    return F64Result { status: status.OK, value: value };
+    if low > high {
+        return F64Result {
+            status: status.INVALID,
+            value: 0.0
+        };
+    }
+    if value < low {
+        return F64Result {
+            status: status.OK,
+            value: low
+        };
+    }
+    if value > high {
+        return F64Result {
+            status: status.OK,
+            value: high
+        };
+    }
+    return F64Result {
+        status: status.OK,
+        value: value
+    };
 }
 
 // Example: math.abs_i32(-42) -> OK/42. Minimum signed value -> OVERFLOW/0, never negate it.
 // O(1), no allocation; all other inputs succeed.
 def pub abs_i32(value: i32) -> I32Result {
-    if value == -2147483648 { return I32Result { status: status.OVERFLOW, value: 0 }; }
-    if value < 0 { return I32Result { status: status.OK, value: -value }; }
-    return I32Result { status: status.OK, value: value };
+    if value == -2147483648 {
+        return I32Result {
+            status: status.OVERFLOW,
+            value: 0
+        };
+    }
+    if value < 0 {
+        return I32Result {
+            status: status.OK,
+            value: -value
+        };
+    }
+    return I32Result {
+        status: status.OK,
+        value: value
+    };
 }
 
 // Example: math.abs_i64(-42) -> OK/42. Minimum signed value -> OVERFLOW/0, never negate it.
 // O(1), no allocation; all other inputs succeed.
 def pub abs_i64(value: i64) -> I64Result {
-    if value == -9223372036854775808 { return I64Result { status: status.OVERFLOW, value: 0 }; }
-    if value < 0 { return I64Result { status: status.OK, value: -value }; }
-    return I64Result { status: status.OK, value: value };
+    if value == -9223372036854775808 {
+        return I64Result {
+            status: status.OVERFLOW,
+            value: 0
+        };
+    }
+    if value < 0 {
+        return I64Result {
+            status: status.OK,
+            value: -value
+        };
+    }
+    return I64Result {
+        status: status.OK,
+        value: value
+    };
 }
 
 // Example: math.abs_f32(-2.0) -> OK/2; -0 becomes +0.
@@ -121,7 +278,10 @@ def pub abs_i64(value: i64) -> I64Result {
 def pub abs_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(0, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.floor_f32(-1.25) -> OK/-2; toward negative infinity.
@@ -131,7 +291,10 @@ def pub abs_f32(value: f32) -> F32Result {
 def pub floor_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(1, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.ceil_f32(-1.25) -> OK/-1; toward positive infinity.
@@ -141,7 +304,10 @@ def pub floor_f32(value: f32) -> F32Result {
 def pub ceil_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(2, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.trunc_f32(-1.75) -> OK/-1; toward zero.
@@ -151,7 +317,10 @@ def pub ceil_f32(value: f32) -> F32Result {
 def pub trunc_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(3, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.round_f32(-2.5) -> OK/-3; nearest, ties AWAY from zero.
@@ -161,7 +330,10 @@ def pub trunc_f32(value: f32) -> F32Result {
 def pub round_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(4, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.sqrt_f32(4.0) -> OK/2; negative input INVALID, sqrt(-0) is -0.
@@ -171,7 +343,10 @@ def pub round_f32(value: f32) -> F32Result {
 def pub sqrt_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(5, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.exp_f32(0.0) -> OK/1; overflow OVERFLOW, nonzero rounded to zero UNDERFLOW.
@@ -181,7 +356,10 @@ def pub sqrt_f32(value: f32) -> F32Result {
 def pub exp_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(6, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.log_f32(1.0) -> OK/+0; natural logarithm, input <= 0 INVALID.
@@ -191,7 +369,10 @@ def pub exp_f32(value: f32) -> F32Result {
 def pub log_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(7, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.log10_f32(100.0) -> OK/2; base ten, input <= 0 INVALID.
@@ -201,7 +382,10 @@ def pub log_f32(value: f32) -> F32Result {
 def pub log10_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(8, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.sin_f32(0.0) -> OK/+0; radians, preserves input signed zero.
@@ -211,7 +395,10 @@ def pub log10_f32(value: f32) -> F32Result {
 def pub sin_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(9, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.cos_f32(0.0) -> OK/1; radians.
@@ -221,7 +408,10 @@ def pub sin_f32(value: f32) -> F32Result {
 def pub cos_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(10, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.tan_f32(0.0) -> OK/+0; radians; rounded pi/2 is not an exact pole.
@@ -231,7 +421,10 @@ def pub cos_f32(value: f32) -> F32Result {
 def pub tan_f32(value: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_unary_f32(11, value, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.pow_f32(2.0, 3.0) -> OK/8; 0**0=1, zero to negative power INVALID; negative base needs integral exponent.
@@ -241,7 +434,10 @@ def pub tan_f32(value: f32) -> F32Result {
 def pub pow_f32(base: f32, exponent: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_binary_f32(0, base, exponent, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.atan2_f32(1.0, 0.0) -> OK/pi/2; arguments (y,x), radians; signed-zero axes/origin choose quadrant.
@@ -251,7 +447,10 @@ def pub pow_f32(base: f32, exponent: f32) -> F32Result {
 def pub atan2_f32(y: f32, x: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_binary_f32(1, y, x, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.hypot_f32(3.0, 4.0) -> OK/5; scaled host hypot avoids intermediate squared overflow; zeros give +0.
@@ -261,7 +460,10 @@ def pub atan2_f32(y: f32, x: f32) -> F32Result {
 def pub hypot_f32(x: f32, y: f32) -> F32Result {
     def mut result: f32 = 0.0;
     def code: i32 = __math_binary_f32(2, x, y, &result);
-    return F32Result { status: code, value: result };
+    return F32Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.abs_f64(-2.0) -> OK/2; -0 becomes +0.
@@ -271,7 +473,10 @@ def pub hypot_f32(x: f32, y: f32) -> F32Result {
 def pub abs_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(0, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.floor_f64(-1.25) -> OK/-2; toward negative infinity.
@@ -281,7 +486,10 @@ def pub abs_f64(value: f64) -> F64Result {
 def pub floor_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(1, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.ceil_f64(-1.25) -> OK/-1; toward positive infinity.
@@ -291,7 +499,10 @@ def pub floor_f64(value: f64) -> F64Result {
 def pub ceil_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(2, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.trunc_f64(-1.75) -> OK/-1; toward zero.
@@ -301,7 +512,10 @@ def pub ceil_f64(value: f64) -> F64Result {
 def pub trunc_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(3, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.round_f64(-2.5) -> OK/-3; nearest, ties AWAY from zero.
@@ -311,7 +525,10 @@ def pub trunc_f64(value: f64) -> F64Result {
 def pub round_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(4, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.sqrt_f64(4.0) -> OK/2; negative input INVALID, sqrt(-0) is -0.
@@ -321,7 +538,10 @@ def pub round_f64(value: f64) -> F64Result {
 def pub sqrt_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(5, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.exp_f64(0.0) -> OK/1; overflow OVERFLOW, nonzero rounded to zero UNDERFLOW.
@@ -331,7 +551,10 @@ def pub sqrt_f64(value: f64) -> F64Result {
 def pub exp_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(6, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.log_f64(1.0) -> OK/+0; natural logarithm, input <= 0 INVALID.
@@ -341,7 +564,10 @@ def pub exp_f64(value: f64) -> F64Result {
 def pub log_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(7, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.log10_f64(100.0) -> OK/2; base ten, input <= 0 INVALID.
@@ -351,7 +577,10 @@ def pub log_f64(value: f64) -> F64Result {
 def pub log10_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(8, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.sin_f64(0.0) -> OK/+0; radians, preserves input signed zero.
@@ -361,7 +590,10 @@ def pub log10_f64(value: f64) -> F64Result {
 def pub sin_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(9, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.cos_f64(0.0) -> OK/1; radians.
@@ -371,7 +603,10 @@ def pub sin_f64(value: f64) -> F64Result {
 def pub cos_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(10, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.tan_f64(0.0) -> OK/+0; radians; rounded pi/2 is not an exact pole.
@@ -381,7 +616,10 @@ def pub cos_f64(value: f64) -> F64Result {
 def pub tan_f64(value: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_unary_f64(11, value, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.pow_f64(2.0, 3.0) -> OK/8; 0**0=1, zero to negative power INVALID; negative base needs integral exponent.
@@ -391,7 +629,10 @@ def pub tan_f64(value: f64) -> F64Result {
 def pub pow_f64(base: f64, exponent: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_binary_f64(0, base, exponent, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.atan2_f64(1.0, 0.0) -> OK/pi/2; arguments (y,x), radians; signed-zero axes/origin choose quadrant.
@@ -401,7 +642,10 @@ def pub pow_f64(base: f64, exponent: f64) -> F64Result {
 def pub atan2_f64(y: f64, x: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_binary_f64(1, y, x, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }
 
 // Example: math.hypot_f64(3.0, 4.0) -> OK/5; scaled host hypot avoids intermediate squared overflow; zeros give +0.
@@ -411,5 +655,8 @@ def pub atan2_f64(y: f64, x: f64) -> F64Result {
 def pub hypot_f64(x: f64, y: f64) -> F64Result {
     def mut result: f64 = 0.0;
     def code: i32 = __math_binary_f64(2, x, y, &result);
-    return F64Result { status: code, value: result };
+    return F64Result {
+        status: code,
+        value: result
+    };
 }

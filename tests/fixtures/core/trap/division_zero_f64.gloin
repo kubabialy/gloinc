@@ -1,5 +1,5 @@
 def main() -> i32 {
-def x: f64 = 1.0;
-def y: f64 = x / -0.0;
-return 42;
+    def x: f64 = 1.0;
+    def y: f64 = x / -0.0;
+    return 42;
 }

@@ -1,9 +1,17 @@
 import "@arena";
-def struct Value { def tag: u8, def mut count: i64, }
+
+def struct Value {
+    def tag: u8,
+    def mut count: i64,
+}
+
 def main() -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
-    def value: &Value = memory.alloc(Value { tag: 255, count: 40 });
+    def value: &Value = memory.alloc(Value {
+        tag: 255,
+        count: 40
+    });
     value.count = value.count + 2;
     if value.tag != 255 || value.count != 42 { return 1; }
     memory.reset();

@@ -1,10 +1,16 @@
-def identity(x: f64) -> f64 { return x; }
+def identity(x: f64) -> f64 {
+    return x;
+}
+
 def arithmetic(x: f64, y: f64) -> bool {
-    if x + y != 10.0 || x - y != 4.0 || x * y != 21.0 || x / y != 2.3333333333333335 { return false; }
+    if x + y != 10.0 || x - y != 4.0 || x * y != 21.0 || x / y != 2.3333333333333335 {
+        return false;
+    }
     if -x != -7.0 || !(x > y) || !(x >= y) || !(y < x) || !(y <= x) { return false; }
     if x == y || x != x || !(x >= x) || !(y <= y) { return false; }
     return true;
 }
+
 def main() -> i32 {
     def large: f64 = identity(1e300);
     def small: f64 = identity(4.9406564584124654e-324);

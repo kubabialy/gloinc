@@ -6,7 +6,10 @@ import "./settings";
 def pub simulate(memory: &arena.GeneralArena) -> i64 {
     def mut head: *model.Particle = null;
     for def mut i: i64 = 0; i < settings.COUNT; i = i + 1 {
-        head = memory.alloc(model.Particle { position: i, next: head });
+        head = memory.alloc(model.Particle {
+            position: i,
+            next: head
+        });
     }
     def mut sum: i64 = 0;
     while head != null {

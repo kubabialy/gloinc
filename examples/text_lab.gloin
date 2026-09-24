@@ -17,7 +17,7 @@ def main() -> i32 {
     def mut report: strings.StringBuilder = made.value;
     def mut alias: strings.StringBuilder = report;
     def mut lines: strings.LineCursor = strings.LineCursor.create(
-        " name = Gloin & friends \r\n# ignored\n empty = \n count = 42\n");
+    " name = Gloin & friends \r\n# ignored\n empty = \n count = 42\n");
     def mut line: strings.StringResult = lines.next();
     while line.status == status.OK {
         def text: string = strings.trim_ascii(line.value);
@@ -28,13 +28,17 @@ def main() -> i32 {
             def key: strings.StringResult = fields.next();
             def value: strings.StringResult = fields.next();
             def end: strings.StringResult = fields.next();
-            if key.status != status.OK || value.status != status.OK || end.status != status.END { return 3; }
+            if key.status != status.OK || value.status != status.OK || end.status != status.END {
+                return 3;
+            }
             def name: strings.StringResult = strings.upper_ascii(&scratch, strings.trim_ascii(key.value), 32);
             def escaped: strings.StringResult = strings.replace_all(&scratch,
-                strings.trim_ascii(value.value), "&", "&amp;", 64);
+            strings.trim_ascii(value.value), "&", "&amp;", 64);
             if name.status != status.OK || escaped.status != status.OK { return 4; }
             if alias.append(name.value) != status.OK || report.append("=") != status.OK
-                || report.append(escaped.value) != status.OK || alias.append_byte(10) != status.OK { return 5; }
+                || report.append(escaped.value) != status.OK || alias.append_byte(10) != status.OK {
+                return 5;
+            }
             scratch.reset(); // Builder owns copies, so its report remains valid.
         }
         line = lines.next();

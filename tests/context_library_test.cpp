@@ -135,8 +135,8 @@ TEST_F(ContextLibraryTest, BothJoinAllocationsFailRecoverably) {
         copy_modules();
         auto arena = read((library() / "arena.gloin").string());
         replace(arena, "def mut state: *u8,", "def mut state: *u8, def mut requests: u64,");
-        replace(arena, "GeneralArena { state: state }",
-                "GeneralArena { state: state, requests: 0 }");
+        replace(arena, "GeneralArena {\n            state: state\n        }",
+                "GeneralArena {\n            state: state,\n            requests: 0\n        }");
         replace(
             arena, "def bytes: *u8 = __arena_general_alloc(self.state, size, 1);",
             "self.requests = self.requests + 1; if self.requests == " + std::to_string(failure) +
