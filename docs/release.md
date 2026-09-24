@@ -1,16 +1,18 @@
-# Gloinc 0.0.1 release
+# Gloinc 0.0.2 release
 
-Version 0.0.1 includes SPEC-001 through SPEC-030 and the SPEC-030a through
+Version 0.0.2 includes SPEC-001 through SPEC-030 and the SPEC-030a through
 SPEC-030h standard-library expansion. It runs on Apple Silicon macOS with
 LLVM/MLIR 21.1.6. The compiler checks source, runs `main() -> i32` through the
 JIT, and can emit native arm64 objects and standalone executables.
+Executable output is the default: `gloinc -o hello hello.gloin` names the output,
+while `gloinc hello.gloin` writes `a.out`. Use `--jit` or `--run` to execute in process.
 Since SPEC-023, execution returns main's low eight bits as its process exit
 status. Only explicit `std.print`/`std.println` calls write to stdout.
 Compiler/file/JIT errors exit 1, usage errors exit 2, and arithmetic traps
 terminate with SIGTRAP or SIGILL. `--check`, `--emit-ir`, and `--emit-llvm` do
 not execute the program; LLVM inspection prints LLVM-dialect MLIR.
 
-The [versioned HTML guide](site/0.0.1/index.html) teaches the 0.0.1 language and
+The [versioned HTML guide](site/0.0.2/index.html) teaches the 0.0.2 language and
 compiler. Later minor and major versions receive their own immutable directory
 under `docs/site/`; update `versions.js` and the site root to select the latest.
 The source README also teaches build commands. The maintained matrix
@@ -34,10 +36,10 @@ cmake --build build -j 2
 cmake --build build --target check-core
 cmake --install build --prefix "$HOME/.local"
 "$HOME/.local/bin/gloinc" --version
-"$HOME/.local/bin/gloinc" "$HOME/.local/share/gloinc/examples/core_counter.gloin"
+"$HOME/.local/bin/gloinc" --jit "$HOME/.local/share/gloinc/examples/core_counter.gloin"
 ```
 
-The last commands report `gloinc 0.0.1 (LLVM/MLIR 21.1.6)` and `42`.
+The last commands report `gloinc 0.0.2 (LLVM/MLIR 21.1.6)` and `42`.
 `BUILD_TESTING=OFF` builds/installs without GoogleTest; validation targets require
 tests enabled. `make run` defaults to the counter example; use
 `make run RUN_ARGS='--check examples/core_counter.gloin'` for another command.
@@ -46,12 +48,12 @@ tests enabled. `make run` defaults to the counter example; use
 ## Package contents and external dependencies
 
 `cmake --build build --target package` creates
-`gloinc-0.0.1-macos-arm64.tar.gz` and a SHA-256 checksum. The archive contains:
+`gloinc-0.0.2-macos-arm64.tar.gz` and a SHA-256 checksum. The archive contains:
 
 | Path below the archive root | Contents |
 | --- | --- |
 | `bin/gloinc` | Compiler and in-process JIT client |
-| `share/doc/gloinc/docs/site/0.0.1/` | Versioned HTML language and usage guide |
+| `share/doc/gloinc/docs/site/0.0.2/` | Versioned HTML language and usage guide |
 | `share/doc/gloinc/CONTRIBUTING.md` | Contribution guidelines |
 | `share/doc/gloinc/` | README and technical guides; the specification and checklist are in the GitHub wiki |
 | `share/doc/gloinc/third_party/fast_float/` | MIT license, pinned provenance, and header checksums for compiled-in decimal parsing |
@@ -92,10 +94,11 @@ contributors may propose and maintain it.
 
 ```sh
 cd build
-LC_ALL=C shasum -a 256 -c gloinc-0.0.1-macos-arm64.tar.gz.sha256
-tar -xzf gloinc-0.0.1-macos-arm64.tar.gz
-./gloinc-0.0.1-macos-arm64/bin/gloinc \
-  ./gloinc-0.0.1-macos-arm64/share/gloinc/examples/core_counter.gloin
+LC_ALL=C shasum -a 256 -c gloinc-0.0.2-macos-arm64.tar.gz.sha256
+tar -xzf gloinc-0.0.2-macos-arm64.tar.gz
+./gloinc-0.0.2-macos-arm64/bin/gloinc \
+  --jit \
+  ./gloinc-0.0.2-macos-arm64/share/gloinc/examples/core_counter.gloin
 ```
 
 `bash scripts/check-package.sh build build/package-check` validates a staged

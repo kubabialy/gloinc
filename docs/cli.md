@@ -4,7 +4,7 @@ Build instructions are in [the README](../README.md). The supported development
 platform is Apple Silicon macOS with LLVM/MLIR 21.1.6.
 
 ```text
-gloinc [--run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
+gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
 gloinc --help
 gloinc --version
 ```
@@ -20,9 +20,9 @@ Help (`-h`) and version (`-V`) must be used alone.
 
 SPEC-030e forwards program arguments only after `FILE --`. Argument zero is the
 exact source filename spelling; compiler flags are excluded. For example,
-`gloinc tool.gloin -- --copy "source file" "new file"` gives four arguments.
+`gloinc --jit tool.gloin -- --copy "source file" "new file"` gives four arguments.
 A pre-FILE delimiter still escapes dash-prefixed filenames:
-`gloinc -- -tool.gloin -- --help`. Empty arguments are preserved. A forwarding
+`gloinc --jit -- -tool.gloin -- --help`. Empty arguments are preserved. A forwarding
 delimiter in any non-run mode is a usage error, including an empty trailing one.
 See [process APIs and embedding ownership](filesystem-process.md).
 
@@ -33,32 +33,36 @@ exists (build layout), otherwise `../share/gloinc/stdlib/` relative to the actua
 executable (installed layout). It never falls back to compiled-in standard functions
 or the source checkout if a selected file is missing. Scalar programs with no
 imports do not need this directory. To edit library functions without rebuilding,
-run `./build/gloinc --stdlib-dir stdlib examples/hello_world.gloin`.
+run `./build/gloinc --jit --stdlib-dir stdlib examples/hello_world.gloin`.
 
 | Mode | Behavior on success |
 | --- | --- |
-| `--run` (default) | Compile and execute `def main() -> i32`; return its low eight bits as the process exit status. Only explicit output calls write to stdout. |
+| Default / `--emit-exe` | Compile and link a standalone macOS arm64 executable. Write `a.out` unless `-o PATH` is supplied. |
+| `--jit` / `--run` | Compile and execute `def main() -> i32` in process; return its low eight bits as the compiler process exit status. Only explicit output calls write to stdout. |
 | `--check` | Compile and verify high-level IR without execution; stdout is empty. |
 | `--emit-ir` | Print verified high-level MLIR with source locations without execution. |
 | `--emit-llvm` | Lower and print verified LLVM-dialect MLIR with source locations without execution. This is MLIR syntax, not native LLVM `.ll` syntax. |
 | `--emit-object -o PATH` | Compile a macOS arm64 object file with a native entry point. |
-| `--emit-exe -o PATH` | Link a standalone macOS arm64 executable against the static Gloin runtime. |
+| `--emit-exe` | Explicit spelling for the default executable mode. |
 
 Checking and inspection accept helper-only and empty modules. If `main` is
 present, its signature must still be valid. These modes do not execute trapping
 or non-terminating source programs.
-Native output requires `main() -> i32` and `-o PATH`. The output must differ from
+Native output requires `main() -> i32`; object output requires `-o PATH`.
+Executable output defaults to `a.out` when no output path is given. The output must differ from
 the source path. Successful emission replaces the named output atomically; source
 and link errors leave it untouched. Native programs receive their own executable
 path as argument zero, followed by ordinary process arguments. Unlike the JIT
 CLI, they do not use the `FILE -- ARG...` forwarding delimiter.
 
 ```sh
-./build/gloinc examples/core_counter.gloin
+./build/gloinc --jit examples/core_counter.gloin
 # stdout is empty; exit status: 42
 ./build/gloinc --check examples/core_counter.gloin
 ./build/gloinc --emit-llvm examples/core_counter.gloin > core_counter.mlir
-./build/gloinc --emit-exe -o hello examples/hello_world.gloin
+./build/gloinc examples/hello_world.gloin
+./a.out
+./build/gloinc -o hello examples/hello_world.gloin
 ./hello
 ./build/gloinc --emit-object -o hello.o examples/hello_world.gloin
 /opt/homebrew/opt/llvm/bin/clang++ hello.o build/libgloin_runtime.a -o hello-from-object
@@ -86,7 +90,7 @@ supported platform, following [the JIT contract](jit.md). They produce no result
 shells may describe the signal and map it to a shell-specific status. The CLI
 does not add signal recovery or execution timeouts.
 
-`--version` reports `gloinc 0.0.1 (LLVM/MLIR 21.1.6)`. This identifies the
+`--version` reports `gloinc 0.0.2 (LLVM/MLIR 21.1.6)`. This identifies the
 scalar-core compiler. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
 core acceptance; [the release guide](release.md) documents installation,
 packaging, and validation. `import "@std";` enables `std.print(string)` and
@@ -96,8 +100,9 @@ println appends LF. Both return void. Missing modules/members fail before execut
 ## Shared compiler path and verification
 
 The executable reads every source byte and calls `compile_source` with the
-original filename. Run selects executable mode and invokes `JitRunner::run`;
-check/inspection select module mode. LLVM inspection uses the same verified
+original filename. Native and JIT modes select executable compilation; JIT
+invokes `JitRunner::run`, while native mode emits an object or links an
+executable. Check/inspection select module mode. LLVM inspection uses the same verified
 [lowering pipeline](lowering.md) as execution. Structured compiler diagnostics
 are rendered once at the CLI boundary.
 
@@ -115,7 +120,7 @@ independent of the CLI working directory. Dependencies use their own directories
 and imports. Only public declarations are accessible through the filename namespace.
 All CLI modes load and check dependencies, including unused code.
 See [module paths, visibility, and cycles](modules.md), and run
-`gloinc examples/module_lab.gloin` for a complete multi-file example.
+`gloinc --jit examples/module_lab.gloin` for a complete multi-file example.
 
 
 SPEC-030 reads stdin only when executed code calls `std.input(&memory, max_bytes)`.

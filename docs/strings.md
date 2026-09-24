@@ -30,7 +30,7 @@ strings are small descriptors over the original literal. The
 copying between arenas and scratch reuse across 10,000 iterations:
 
 ```sh
-./build/gloinc examples/strings_lab.gloin
+./build/gloinc --jit examples/strings_lab.gloin
 # count = 42
 # strings lab: ok
 ```

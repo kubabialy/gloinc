@@ -1,5 +1,5 @@
 // Bounded streaming unquoted comma-delimited statistics, not CSV.
-// build/gloinc examples/statistics_tool.gloin -- INPUT NEW_OUTPUT 1,2
+// build/gloinc --jit examples/statistics_tool.gloin -- INPUT NEW_OUTPUT 1,2
 import "@arena";
 import "@io";
 import "@process";

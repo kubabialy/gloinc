@@ -110,8 +110,8 @@ OS diagnostic separately if desired.
 ## CLI forwarding and argument ownership
 
 ```sh
-gloinc program.gloin -- --copy 'source file.bin' 'new copy.bin'
-gloinc -- -program.gloin -- --help
+gloinc --jit program.gloin -- --copy 'source file.bin' 'new copy.bin'
+gloinc --jit -- -program.gloin -- --help
 ```
 
 Only arguments after the delimiter **following FILE** reach the program. Argument
@@ -212,8 +212,8 @@ exclusively, and checks flush/close before reporting a byte count. Existing targ
 are preserved. A failed copy can leave a partial newly-created destination.
 
 ```sh
-build/gloinc examples/file_tool.gloin -- --copy 'source file.bin' 'new copy.bin'
-GLOIN_COPY_LABEL=saved build/gloinc examples/file_tool.gloin -- --copy source.bin copy.bin
+build/gloinc --jit examples/file_tool.gloin -- --copy 'source file.bin' 'new copy.bin'
+GLOIN_COPY_LABEL=saved build/gloinc --jit examples/file_tool.gloin -- --copy source.bin copy.bin
 ```
 
 Missing `GLOIN_COPY_LABEL` uses `copied`; an empty value omits the label; a nonempty

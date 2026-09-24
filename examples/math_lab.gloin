@@ -1,5 +1,5 @@
 // Streaming radial statistics. Input: one bounded x,y pair per line, |x|,|y| <= 1e6.
-// printf '3,4\n0,0\n6,8\n' | build/gloinc examples/math_lab.gloin
+// printf '3,4\n0,0\n6,8\n' | build/gloinc --jit examples/math_lab.gloin
 import "@math";
 import "@std";
 import "@strings";

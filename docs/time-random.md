@@ -208,7 +208,7 @@ integers; use `below` for that purpose.
 ## Seeded simulation and validation
 
 ```sh
-build/gloinc examples/simulation_lab.gloin -- 42 1000
+build/gloinc --jit examples/simulation_lab.gloin -- 42 1000
 ```
 
 Expected reproducible prefix:

@@ -41,7 +41,7 @@ runs it while the arena is still live. Arenas have no internal synchronization.
 Run the larger example with:
 
 ```sh
-./build/gloinc examples/arena_lab.gloin
+./build/gloinc --jit examples/arena_lab.gloin
 ```
 
 It checks 10,000 linked particles per frame over four reset cycles, stable

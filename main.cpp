@@ -13,7 +13,8 @@
 namespace {
 enum class Mode { Run, Check, EmitIR, EmitLLVM, EmitObject, EmitExecutable };
 constexpr std::string_view usage =
-    "Usage: gloinc [--run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] "
+    "Usage: gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | "
+    "--emit-exe] "
     "[-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]\n"
     "       gloinc --help\n"
     "       gloinc --version\n";
@@ -42,13 +43,14 @@ int main(int argc, char *argv[]) {
             llvm::outs()
                 << usage
                 << "\n"
-                   "  --run        Compile and run main() -> i32 (default).\n"
+                   "  --jit        Compile and run main() -> i32 in the JIT.\n"
+                   "  --run        Alias for --jit.\n"
                    "  --check      Compile and verify without execution; main is optional.\n"
                    "  --emit-ir    Print verified high-level MLIR without execution.\n"
                    "  --emit-llvm  Print verified LLVM-dialect MLIR without execution.\n"
                    "  --emit-object  Write a native macOS arm64 object file.\n"
-                   "  --emit-exe     Link a standalone macOS arm64 executable.\n"
-                   "  -o PATH        Output path for --emit-object or --emit-exe.\n"
+                   "  --emit-exe     Link a standalone macOS arm64 executable (default).\n"
+                   "  -o PATH        Set native output path (default: a.out for executables).\n"
                    "  --stdlib-dir DIR  Load standard module files from DIR.\n"
                    "  --           Before FILE: end compiler options; after FILE: forward program "
                    "arguments.\n"
@@ -56,7 +58,7 @@ int main(int argc, char *argv[]) {
                    "  -V, --version  Show compiler and LLVM/MLIR versions.\n\n"
                    "Run returns main's low eight bits as the process exit status.\n"
                    "Only explicit output calls write to stdout during execution.\n"
-                   "Exit status: main's result for run; 0 for other successful modes;\n"
+                   "Exit status: main's result for --jit/--run; 0 for other successful modes;\n"
                    "1 compiler/I/O/JIT error, 2 usage error (with stderr diagnostics).\n"
                    "Runtime arithmetic traps terminate the process with a signal.\n";
             return finish_output();
@@ -67,7 +69,7 @@ int main(int argc, char *argv[]) {
             return finish_output();
         }
     }
-    Mode mode = Mode::Run;
+    Mode mode = Mode::EmitExecutable;
     bool has_mode = false;
     bool options = true;
     bool forwarded = false;
@@ -102,7 +104,7 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             Mode selected;
-            if (argument == "--run")
+            if (argument == "--jit" || argument == "--run")
                 selected = Mode::Run;
             else if (argument == "--check")
                 selected = Mode::Check;
@@ -129,8 +131,12 @@ int main(int argc, char *argv[]) {
     if (!filename || filename->empty())
         return usage_error("expected one input file");
     const bool native = mode == Mode::EmitObject || mode == Mode::EmitExecutable;
-    if (native != output_path.has_value())
-        return usage_error("-o PATH is required exactly for native output modes");
+    if (mode == Mode::EmitObject && !output_path)
+        return usage_error("-o PATH is required for object output");
+    if (!native && output_path)
+        return usage_error("-o PATH is only valid for native output modes");
+    if (mode == Mode::EmitExecutable && !output_path)
+        output_path = "a.out";
     if (native &&
         (*output_path == *filename || (llvm::sys::fs::exists(*output_path) &&
                                        llvm::sys::fs::equivalent(*filename, *output_path))))

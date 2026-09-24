@@ -1,5 +1,5 @@
 // Trim ASCII whitespace, omit empty/comment lines, uppercase the rest.
-// printf '  hello\r\n# comment\n world \n' | build/gloinc examples/io_filter.gloin
+// printf '  hello\r\n# comment\n world \n' | build/gloinc --jit examples/io_filter.gloin
 // Lines are limited to 256 bytes; output and stderr are separate borrowed streams.
 import "@io";
 import "@arena";

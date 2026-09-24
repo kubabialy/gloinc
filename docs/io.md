@@ -207,7 +207,7 @@ stdin lines, uses exclusive creation, copies binary chunks with bounded scratch
 reuse, and checks flush/close before reporting the byte count. For example:
 
 ```sh
-printf '/tmp/source.bin\n/tmp/new-copy.bin\n' | build/gloinc examples/io_copy.gloin
+printf '/tmp/source.bin\n/tmp/new-copy.bin\n' | build/gloinc --jit examples/io_copy.gloin
 ```
 
 Existing destinations are preserved. A copy failure may leave a partial new file.

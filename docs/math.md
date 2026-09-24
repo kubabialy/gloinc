@@ -164,7 +164,7 @@ or implicit conversion are introduced by SPEC-030f.
 ## Streaming geometry and statistics example
 
 ```sh
-printf '3,4\n0,0\n6,8\n' | build/gloinc examples/math_lab.gloin
+printf '3,4\n0,0\n6,8\n' | build/gloinc --jit examples/math_lab.gloin
 ```
 
 Expected output:

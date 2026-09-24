@@ -26,7 +26,7 @@ def main():
 
     def execute(example, *arguments, status=0):
         result = subprocess.run(
-            [compiler, str(ROOT / "examples" / example), "--", *map(str, arguments)],
+            [compiler, "--jit", str(ROOT / "examples" / example), "--", *map(str, arguments)],
             capture_output=True, text=True, preexec_fn=stack_limit, timeout=60,
         )
         assert result.returncode == status, (result.returncode, result.stdout, result.stderr)

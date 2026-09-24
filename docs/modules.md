@@ -18,7 +18,7 @@ def main() -> i32 {
 }
 ```
 
-Running `gloinc /path/to/main.gloin` from any directory returns exit status 25,
+Running `gloinc --jit /path/to/main.gloin` from any directory returns exit status 25,
 without printing. `"./utils.gloin"` is equivalent. Paths must start with
 `./` or `../`; the filename supplies the namespace and must be a non-reserved
 Gloin identifier. Directory names can contain spaces. Bare paths, absolute paths,
@@ -73,7 +73,7 @@ public constants, shared particle types, methods, 10,000 linked arena allocation
 and three reset/reuse rounds. Run:
 
 ```sh
-./build/gloinc examples/module_lab.gloin
+./build/gloinc --jit examples/module_lab.gloin
 # module lab: ok
 ```
 

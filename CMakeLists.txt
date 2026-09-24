@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gloinc VERSION 0.0.1)
+project(gloinc VERSION 0.0.2)
 
 option(GLOIN_ENABLE_SANITIZERS "Instrument project C++ code with AddressSanitizer and UBSan" OFF)
 if(GLOIN_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")

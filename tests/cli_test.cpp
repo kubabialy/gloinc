@@ -13,12 +13,12 @@ TEST_F(CliTest, HelpAndVersionAreStandaloneSuccessfulCommands) {
         auto result = invoke({option});
         EXPECT_EQ(result.status, 0);
         EXPECT_TRUE(result.err.empty());
-        for (const std::string word : {"Usage:", "--run", "--check", "--emit-ir", "--emit-llvm",
+        for (const std::string word : {"Usage:", "--jit", "--run", "--check", "--emit-ir", "--emit-llvm",
                                        "--emit-object", "--emit-exe", "Exit status:"})
             EXPECT_NE(result.out.find(word), std::string::npos);
     }
     for (const std::string option : {"--version", "-V"})
-        expect_success(invoke({option}), "gloinc 0.0.1 (LLVM/MLIR 21.1.6)\n");
+        expect_success(invoke({option}), "gloinc 0.0.2 (LLVM/MLIR 21.1.6)\n");
 }
 
 TEST_F(CliTest, NativeExecutableRunsWithoutJitAndReceivesArguments) {
@@ -26,7 +26,7 @@ TEST_F(CliTest, NativeExecutableRunsWithoutJitAndReceivesArguments) {
                              "def main() -> i32 { std.println(\"native output\"); "
                              "if process.arg_count() == 2 { return 23; } return 1; }");
     const auto executable = directory + "/native program";
-    expect_success(invoke({"--emit-exe", "-o", executable, file}), "");
+    expect_success(invoke_raw({"-o", executable, file}), "");
     const auto out = directory + "/native.stdout";
     const auto err = directory + "/native.stderr";
     const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
@@ -49,13 +49,15 @@ TEST_F(CliTest, NativeObjectAndFailurePaths) {
     ASSERT_TRUE(buffer);
     EXPECT_GT((*buffer)->getBufferSize(), 4u);
     EXPECT_EQ((*buffer)->getBuffer().substr(0, 4), "\xcf\xfa\xed\xfe");
-    expect_error(invoke({"--emit-exe", file}), 2, "-o PATH");
+    expect_error(invoke({"--emit-object", file}), 2, "-o PATH");
+    expect_error(invoke_raw({"--jit", "-o", object, file}), 2, "-o PATH");
     expect_error(invoke({"--run", "-o", object, file}), 2, "-o PATH");
     expect_error(invoke({"--emit-exe", "-o", file, file}), 2, "must differ");
     expect_error(invoke({"--emit-exe", "-o", directory + "/./program.gloin", file}), 2,
                  "must differ");
     const auto invalid = source("def main() -> i32 { return missing; }", "invalid.gloin");
     const auto absent = directory + "/absent";
+    expect_error(invoke_raw({invalid}), 1, "missing");
     expect_error(invoke({"--emit-exe", "-o", absent, invalid}), 1, "missing");
     EXPECT_FALSE(llvm::sys::fs::exists(absent));
     const auto collision = source("def gloin_process_arguments_push() -> i32 { return 0; } "
@@ -91,6 +93,8 @@ TEST_F(CliTest, UsageErrorsDoNotReadOrExecuteInput) {
                                                {""},
                                                {"a", "b"},
                                                {"--run", "--run", "missing"},
+                                               {"--jit", "--jit", "missing"},
+                                               {"--jit", "--run", "missing"},
                                                {"--run", "--check", "missing"},
                                                {"--emit-ir", "--emit-llvm", "missing"},
                                                {"--help", "missing"},
@@ -99,10 +103,10 @@ TEST_F(CliTest, UsageErrorsDoNotReadOrExecuteInput) {
         expect_error(invoke(arguments), 2, "Usage:");
 }
 
-TEST_F(CliTest, InputFilesControlDefaultAndExplicitRun) {
+TEST_F(CliTest, JitAndRunAliasesExecuteSource) {
     auto first = source("def main() -> i32 { return 17; }", "first.gloin");
-    expect_run(invoke({first}), 17);
-    expect_run(invoke({"--run", gloin_test::core_example}), 42);
+    expect_run(invoke_raw({"--jit", first}), 17);
+    expect_run(invoke_raw({"--run", gloin_test::core_example}), 42);
 }
 
 TEST_F(CliTest, EveryI32ResultUsesHostExitStatusWithoutPrinting) {
