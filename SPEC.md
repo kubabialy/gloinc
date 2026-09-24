@@ -1,17 +1,33 @@
 # Gloin Language Spec
 
-This document defines the intended language. It does not claim that the current
-compiler implements it. [README.md](README.md) records measured implementation
-status; [SPEC-TODO.md](SPEC-TODO.md) tracks implementation and verification.
+This document defines the intended language, including future designs. The
+[versioned 0.0.1 language guide](docs/site/0.0.1/index.html) is the release
+boundary. [README.md](README.md) records measured implementation status;
+[SPEC-TODO.md](SPEC-TODO.md) tracks implementation and verification.
+
+## Version 0.0.1 release profile
+
+Apple Silicon macOS is the supported host and native target. The release includes
+SPEC-001 through SPEC-030, plus SPEC-030a through SPEC-030h standard-library
+expansion. It supports the in-process JIT, native object emission, and standalone
+native executables on that host. Native output uses the same checked and verified
+LLVM lowering as JIT execution and links the installed Gloin runtime. Linux
+support is planned for 0.1.0; Windows support is not planned. Cross-compilation
+and Intel macOS are outside 0.0.1.
+
+The original SPEC-006 scalar milestone below records the initial scope decision.
+Completed later specifications expanded the 0.0.1 release profile. Sections
+covering generics, arrays, enums, concurrency, packed bitfields, external
+packages, and other unchecked tasks remain design proposals.
 
 ## First release contract (SPEC-006)
 
-The first release is the **executable scalar core**, with an in-process JIT on
-**Apple Silicon macOS**, using the supported LLVM/MLIR 21.1.6 toolchain. Native
-object/executable output, cross-compilation, Linux, Windows, and Intel macOS are
-outside this release. This is a scope decision, not a release announcement.
+SPEC-006 originally selected an **executable scalar core** with an in-process JIT
+on **Apple Silicon macOS**, using LLVM/MLIR 21.1.6. Its original scope deferred
+native output and the later library work; the 0.0.1 release profile above includes
+the subsequently completed items.
 
-| Required for the first release | Implementation and acceptance |
+| Original SPEC-006 scalar baseline | Implementation and acceptance |
 | --- | --- |
 | Valid UTF-8 source, the declaration/type/terminator rules below, source-aware errors, rejection of unsupported constructs | SPEC-007 through SPEC-010 |
 | Local immutable/mutable variables, compile-time scalar constants, lexical scopes, definite initialization | SPEC-011/SPEC-012 |
@@ -30,9 +46,9 @@ semantics, scope rules, and CLI exit conventions must be settled under their
 listed tasks before their implementation is accepted. The feature list above is
 fixed for this release; those tasks must not silently expand it.
 
-The first release has no imports, standard library, text output, strings,
-aggregates, pointers/references, allocation, `defer`, or concurrency. Its minimal
-complete program is:
+The original SPEC-006 scalar baseline had no imports, standard library, text
+output, strings, aggregates, pointers/references, allocation, `defer`, or
+concurrency. Its minimal complete program is:
 
 ```gloin
 def main() -> i32 {
@@ -399,6 +415,8 @@ The first release has no numeric cast syntax. Function-like casts (`i32(x)`),
 and integer/float conversion are rejected. No cast silently truncates, wraps,
 saturates, or reinterprets bits. Explicit conversion facilities require a future
 specification decision; the fixed first-release feature list is unchanged.
+SPEC-030c later adds named runtime library conversions below, without cast syntax,
+implicit promotions, or conversion of typed operands by context.
 
 ### Built-in type spellings
 
@@ -700,20 +718,20 @@ tests or turn unimplemented features into expected successes.
 | `fn`, `extern`, `switch`/`match`/`case`/`default`, `=>`, `?`, character literals | No accepted core extension. Reject under SPEC-008/SPEC-009/SPEC-015; any future syntax requires a separate contract before implementation. |
 | Compound assignment, bitwise operators, shifts, unary `+`, assignment expressions | Reject for the first release (SPEC-015); integer remainder `%` is included, floating remainder is not. |
 | `i128`, `u128`, `f128` | Deferred numeric extension (SPEC-013b); core type resolution rejects them (SPEC-010/SPEC-013). |
-| `@std`, standard I/O and conversions | `@std`, `std.print(string)` and `std.println(string)` are implemented by SPEC-023. Further I/O and conversions remain SPEC-030; `string` is implemented by SPEC-022. |
+| `@std`, standard I/O and conversions | `@std`, `std.print(string)` and `std.println(string)` are implemented by SPEC-023. SPEC-030 adds bounded input and explicit i32 conversions; `string` is implemented by SPEC-022. |
 | Ordinary structs | Implemented by SPEC-024: named value types, checked fields, and target layout. |
 | Pointers and references | Implemented by SPEC-025 with manual lifetimes, typed access, mutability checks, and null traps. |
 | Instance/static methods | Implemented for ordinary structs (SPEC-026); explicit typed `self`, checked receivers, and file/module visibility. |
 | `defer` | Function-exit LIFO calls with registration-time argument capture (SPEC-027). |
 | Arenas | Initialized-value allocation through `@arena` / `arena.GeneralArena` (SPEC-028). |
-| Local modules and `#package` imports | Deferred (SPEC-029/SPEC-044). |
+| Local modules | SPEC-029: file-relative imports and explicit exports. `#package` imports remain deferred (SPEC-044). |
 | Generic types/functions, enums, `Result` | Deferred (SPEC-031 through SPEC-034); capitalization must not decide grammar. |
 | `[i32; 3]`, `u8[1024]`, array literals, indexing/slicing | Deferred syntax/layout choice (SPEC-035); neither array spelling is approved for the core. |
 | `for ... in ...`, `..`, `break`, `continue` | Deferred (SPEC-036); lex as reserved syntax and diagnose unsupported use. |
 | Endian spellings, custom-width integers, packed layouts | Deferred (SPEC-037 through SPEC-039). |
 | `deferred`, `spawnable`, `run`, `Deferred`, `Spawn`, joins | Deferred contract/runtime (SPEC-040 through SPEC-043). |
 | Implementation-only `spawn` and `await` | Reject for the first release; SPEC-040 decides whether to retain any later compatibility syntax. |
-| Native object/executable emission and additional targets | Explicitly deferred (SPEC-045). |
+| Native object/executable emission | Implemented for Apple Silicon macOS in SPEC-045; additional targets remain deferred. |
 
 ## Later language design
 
@@ -793,13 +811,12 @@ including functions preceding the import. Duplicate imports and file-scope
 declarations named `std` conflict. Local bindings may shadow `std`; a shadowed
 name cannot be used to call standard members. Import paths decode string escapes.
 `@name` loads a lowercase `name.gloin` file from the selected standard-library
-directory. Names match `[a-z][a-z0-9_]*`; other paths are rejected. Currently
-`stdlib/std.gloin` is shipped; adding `math.gloin` or `io.gloin` requires no
+directory. Names match `[a-z][a-z0-9_]*`; local paths follow SPEC-029 below.
+`stdlib/std.gloin` and `stdlib/arena.gloin` are shipped; adding `math.gloin` or `io.gloin` requires no
 compiler changes. Declared `pub` functions and structs are accessible as module members.
 Module functions/constants/types use an isolated scope and cannot see application
-declarations. Private helpers are callable inside their own module. Imports
-between library files, exported constants, local paths, and package paths remain
-deferred and produce diagnostics.
+declarations. Private helpers are callable inside their own module. SPEC-029 adds imports between files, local paths, and exported constants.
+Package paths remain deferred and produce diagnostics.
 
 Module files are parsed and type-checked on every compilation, retaining their
 own diagnostic locations. Missing/unreadable files and missing/private members
@@ -838,6 +855,552 @@ def main() -> i32 {
 }
 ```
 
+### Standard input and integer conversions (SPEC-030)
+
+The public functions and result structs below are ordinary declarations in
+`stdlib/std.gloin`, which imports `@arena`. `print` and `println` retain their
+single-string signatures; numeric formatting is always explicit.
+
+| API | Result |
+| --- | --- |
+| `std.input(memory: &arena.GeneralArena, max_bytes: u64)` | `std.InputResult { status: i32, value: string }` |
+| `std.to_int(value: string)` | `std.IntResult { status: i32, value: i32 }` |
+| `std.to_string(memory: &arena.GeneralArena, value: i32)` | `string` |
+
+Result fields are public and immutable. The status constants exported by `@std`
+are `OK = 0`, `END = 1`, `INVALID = 2`, `OVERFLOW = 3`, `IO_ERROR = 4`,
+`TOO_LONG = 5`, and `NO_MEMORY = 6`. These are i32 constants, not enums or generic
+`Result` values; those type features retain their later SPEC tasks.
+
+The caller supplies the owning arena explicitly. Successful input and formatted
+strings are counted, non-owning views over its bytes and become invalid on
+reset/free. Copying, returning, storing, or deferring a view does not extend its
+lifetime or copy bytes. There is no implicit cleanup or per-string free. Register
+arena cleanup before deferred uses so LIFO cleanup keeps the arena alive.
+
+`input` attempts `max_bytes + 1` zero-initialized bytes before reading stdin.
+Unrepresentable size or allocation failure returns `NO_MEMORY`, an empty value,
+and consumes no input. Every attempted buffer remains in the arena until reset
+or free, including on EOF/error. Callers may reset after consuming a line.
+Input consumes one line through LF or EOF, removing LF and one immediately
+preceding CR. Other CR bytes, embedded NULs, UTF-8, and non-UTF-8 bytes are preserved.
+The byte limit counts payload after line-ending removal, not Unicode characters.
+Runtime strings therefore do not guarantee UTF-8; source syntax still does.
+
+An empty line succeeds with `OK` and an empty value. EOF before any new line byte
+returns `END`; a final unterminated nonempty line succeeds once. A zero limit
+accepts only empty payload. Oversized input is drained through LF/EOF and returns
+`TOO_LONG`; the next call starts on the next line. Read failure returns `IO_ERROR`,
+even while draining. Every non-OK input result has the static empty string value,
+never a partial line. Consumed input is not rolled back. Input itself prints
+nothing; output calls flush prompts before reading. Callers explicitly choose
+how statuses affect control flow and return values.
+
+`to_int` accepts the complete counted byte sequence matching `[+-]?[0-9]+`, with
+ASCII digits, optional sign and leading zeroes, and range
+`[-2147483648, 2147483647]`. It allocates nothing. It neither trims whitespace nor
+accepts radix prefixes, separators, fractions, exponents, or NUL terminators.
+Malformed syntax returns `INVALID`; valid decimal text outside the range returns
+`OVERFLOW`. Malformed syntax takes precedence if both occur. Failures always
+return value zero; successful zero is distinguished by `OK`.
+
+`to_string` allocates 12 zeroed arena bytes and returns locale-independent decimal
+ASCII with only necessary digits and a minus for negative values. Zero is `"0"`;
+minimum i32 is supported without signed overflow. The buffer has a trailing NUL
+excluded from the string length. Allocation failure traps without unwinding,
+matching `GeneralArena.alloc`; the function returns a string, not an error result.
+No conversion/output function prints an implicit return value. Wider integers,
+floats, booleans, interpolation, and printf-style arguments are not supported by
+these i32 conversion functions. General exceptions/generic results remain deferred.
+
+Variable-length library buffers use `GeneralArena.alloc_bytes(size: u64) -> *u8`
+and `try_alloc_bytes(size: u64) -> *u8`. They request alignment-1 storage and zero
+all requested bytes before exposing it, including reused storage after reset.
+The first traps on failure; the second returns null. Zero-size success returns a
+non-null address but does not grant any bytes to access. Handle lifetime, aliasing,
+growth, and reset/free rules match SPEC-028. These methods supplement initialized
+value allocation; no pointer arithmetic or array indexing is introduced.
+
+Private `@std` primitives lower to these native C signatures:
+
+- `i32 gloin_std_parse_i32(const char *bytes, u64 length, i32 *value)`
+- `void gloin_std_format_i32(i32 value, char *bytes, u64 *length)` (12-byte destination)
+- `i32 gloin_std_input(char *bytes, u64 limit, u64 *length)` (`limit + 1`-byte destination)
+
+The byte-view primitive builds the existing string descriptor, rejecting null
+with nonzero length; it does not copy data or prove pointer bounds/lifetimes.
+Only canonical `@std` source may invoke these conversion/input/view primitives.
+The `@arena` zeroing primitive uses `void gloin_arena_zero_bytes(void *, u64)`
+after successful allocation. JIT execution validates exact external signatures,
+calling conventions, and linkage before registering native routines. Native
+aggregate-return ABI assumptions are avoided through scalar/output-pointer calls.
+Application function names are emitted separately from native symbols. The shared
+runtime exports these routines and the byte-output ABI for external LLVM execution;
+external byte-output failure aborts, while the compiler JIT reports its existing
+execution error. See [the standard-library guide](docs/standard-library.md) for
+runnable programs and ownership examples.
+
+### Byte-string library (SPEC-030a)
+
+`import "@strings";` loads ordinary source in `stdlib/strings.gloin`. All offsets,
+lengths, and ordering refer to unsigned bytes, not Unicode characters. NUL and
+invalid UTF-8 are ordinary data; no operation depends on a terminator or locale.
+Borrowed views require their source storage to remain live and unchanged.
+
+`@status` is a dependency-free module defining `OK=0`, `END=1`, `INVALID=2`,
+`OVERFLOW=3`, `IO_ERROR=4`, `TOO_LONG=5`, `NO_MEMORY=6`, and `OUT_OF_RANGE=7`
+as i32 constants. Existing `std` constants remain compatible aliases. Concrete
+`strings.ByteResult { status: i32, value: u8 }`,
+`strings.StringResult { status: i32, value: string }`, and
+`strings.FindResult { found: bool, offset: u64 }` expose outcomes explicitly.
+Failed byte/string results contain zero/static empty text; an absent match has
+`found=false, offset=0`. Callers must inspect status/found, not the payload alone.
+
+| Function | Contract | Worst-case time; allocation |
+| --- | --- | --- |
+| `byte_length(text) -> u64` | Descriptor length | O(1); none |
+| `is_empty(text) -> bool` | Length is zero | O(1); none |
+| `equal(a, b) -> bool` | Exact counted-byte equality | O(min(n,m)); none |
+| `compare(a, b) -> i32` | Unsigned lexicographic order, exactly -1/0/1; shorter equal prefix sorts first | O(min(n,m)); none |
+| `byte_at(text, index: u64) -> ByteResult` | OK iff index < length, otherwise OUT_OF_RANGE | O(1); none |
+| `slice_bytes(text, start: u64, length: u64) -> StringResult` | Borrowed view; require start <= size and length <= size-start, otherwise OUT_OF_RANGE | O(1); none |
+| `starts_with(text, prefix) -> bool` | Empty prefix always matches | O(m); none |
+| `ends_with(text, suffix) -> bool` | Empty suffix always matches | O(m); none |
+| `find(text, needle) -> FindResult` | First match; empty needle matches offset zero | O(1+n*m); none |
+| `contains(text, needle) -> bool` | Whether find succeeds | O(1+n*m); none |
+| `trim_start_ascii(text) -> string` | Remove leading ASCII whitespace; borrowed view | O(n); none |
+| `trim_end_ascii(text) -> string` | Remove trailing ASCII whitespace; borrowed view | O(n); none |
+| `trim_ascii(text) -> string` | Remove both ends; borrowed view | O(n); none |
+| `copy(memory: &arena.GeneralArena, text) -> StringResult` | Independent arena bytes on OK, NO_MEMORY on allocation failure | O(n) byte work plus arena allocation; n requested bytes |
+
+Here n is the first text's byte length and m the second's. Constant overhead is
+implicit in O(n) bounds. Whitespace is exactly bytes 9–13 and 32. Slicing may cut
+a UTF-8 sequence. Empty slices at the end are valid; bounds checks must not add
+start and length before validating them. Search is a simple bounded scan, not a
+linear-time promise. Comparison/equality are not constant-time security APIs.
+
+Empty copy returns OK with static empty text, without inspecting/allocating from
+the arena. Nonempty copy requires a live arena, requests exactly n initialized
+bytes, and copies the payload without a terminator. Arena block overhead and
+retained capacity follow SPEC-028. Failure returns static empty text and does
+not change the source. Copying into the source's arena is allowed, but resetting
+that arena invalidates both; use a different arena for independent lifetime.
+Successful destination bytes remain valid until destination reset/free.
+
+Only canonical `@strings` source can use its private descriptor-length, checked
+byte-load, checked borrowed-slice, and copy primitives. Even private byte/slice
+access traps on invalid bounds before memory access. Copy lowers to
+`void gloin_strings_copy(const char *source, u64 length, char *destination)`;
+the caller supplies nonoverlapping storage of at least length bytes. Zero length
+does not access either pointer. The JIT validates and registers its exact native
+ABI, and the installed shared runtime exports it. No application pointer
+arithmetic, casts, generic operations, or string operator changes are introduced.
+See [the string API guide](docs/strings.md) for examples and ownership costs.
+
+### String traversal and construction (SPEC-030b)
+
+These APIs extend ordinary `@strings` source. Strings and delimiters are counted
+bytes; NUL and invalid UTF-8 remain data. All new public functions/methods document
+examples, failures, ownership, worst-case time, and allocation costs at their
+definitions and in [the text construction guide](docs/text-construction.md).
+
+`SplitCursor.create(text, delimiter) -> SplitCursorResult { status: i32,
+value: SplitCursor }` borrows both arguments without allocating. An empty delimiter
+returns INVALID; otherwise OK. `next(self: &SplitCursor) -> StringResult` returns
+each borrowed token with OK and finally repeated END/empty text. Splitting uses
+leftmost nonoverlapping delimiters, preserving leading, adjacent, and trailing
+empty tokens. Empty input yields one empty token. Invalid cursors return INVALID
+from next. Each call scans at most the remaining input times delimiter length;
+complete traversal is O(1+n*m), with O(1) auxiliary space and no allocation.
+
+`LineCursor.create(text) -> LineCursor` borrows input without allocating.
+`next(self: &LineCursor) -> StringResult` returns lines with OK, removes LF and
+one immediately preceding CR, and preserves a final unterminated line including
+any standalone CR. Empty input yields no lines; terminal LF adds no extra line.
+END/empty text repeats after exhaustion. Complete traversal is O(n) byte work,
+O(1) auxiliary space, and no allocation. Cursor constructors take O(1). Copying
+either cursor copies its position independently, but never copies/extends the
+lifetime of its borrowed bytes. Previously returned views remain valid while
+the original bytes remain live and unchanged.
+
+The following functions return `StringResult` and require an explicit u64 output
+limit: `concat(memory, a, b, max_bytes)`, `repeat(memory, text, count: u64,
+max_bytes)`, `replace_all(memory, text, needle, replacement, max_bytes)`,
+`lower_ascii(memory, text, max_bytes)`, and `upper_ascii(memory, text, max_bytes)`.
+Here memory is `&arena.GeneralArena` and text arguments are strings. Each
+nonempty successful result is an independent allocation of exactly the output
+byte count, with no terminator; lifetime ends on destination reset/free.
+Empty output returns OK/static empty text without touching the arena.
+NO_MEMORY reports allocation failure; TOO_LONG reports exceeding max_bytes,
+including an output count that cannot fit u64. Checks avoid arithmetic overflow
+and precede allocation/writes. Any error result contains static empty text.
+
+Repeat with zero count or empty input is empty, even with a huge other argument.
+Replacement rejects an empty needle with INVALID before other checks. Matches
+are leftmost, nonoverlapping, and drawn only from the original input; replacement
+bytes are not searched again. An empty replacement deletes matches. Size checks
+apply to final output, so shrinking/deleting a large input can succeed under a
+small limit. ASCII case conversion changes only A–Z/a–z and always copies a
+nonempty result, even if unchanged. All operations leave their inputs unchanged.
+Concat/repeat take O(1+output size) byte work; case conversion O(n); replacement
+O(1+n*m+output size), using a sizing pass followed by a filling pass. All use
+O(1) auxiliary space, plus output and arena overhead. Arena allocation cost is
+additional as in SPEC-028. Nonempty output requires a live destination arena.
+
+`StringBuilder.create(memory, capacity: u64) -> BuilderResult { status: i32,
+value: StringBuilder }` creates a fixed-capacity builder or returns NO_MEMORY
+with an invalid handle. It allocates one initialized state object first, then
+capacity zeroed bytes if capacity is nonzero. Buffer allocation failure retains
+the state object's arena space until reset/free; there is no rollback. A zero
+capacity builder still allocates state. Construction costs O(1+capacity) byte
+work plus up to two arena allocations. Builder copies alias the complete state,
+including length. Reset/free of the owning arena invalidates every alias.
+
+- `append(self: &StringBuilder, text) -> i32`: OK on complete append, TOO_LONG if
+  insufficient remaining capacity. Checks precede writes; failure leaves length
+  and contents unchanged. O(1+text size), no allocation; empty append succeeds.
+- `append_byte(self: &StringBuilder, byte: u8) -> i32`: append one arbitrary byte
+  or return TOO_LONG without mutation. O(1), no allocation.
+- `clear(self: &StringBuilder) -> void`: set shared length to zero, retaining
+  storage. O(1), no allocation, no secure erasure of previous bytes.
+- `byte_length(self: &const StringBuilder) -> u64` and
+  `capacity(self: &const StringBuilder) -> u64`: O(1), no allocation.
+- `to_string(self: &const StringBuilder, memory) -> StringResult`: independent
+  snapshot under the existing copy contract; O(length) byte work plus allocation,
+  exactly length requested bytes (none for empty). Source stays unchanged on
+  allocation failure. A snapshot survives builder reuse; surviving source arena
+  reset/free requires a different destination arena.
+
+There is no borrowed public view or automatic growth/free. Failed-construction
+handles trap on method use through their null state; non-null dangling handles
+remain a manual lifetime error. Mutating methods require writable receivers.
+Private state/buffer fields cannot be accessed or constructed by callers.
+
+Three additional `@strings`-only primitives provide a private buffer view,
+checked byte store, and checked counted write. Stores/writes validate unsigned
+capacity/index/range and null pointers before accessing bytes; range checks use
+subtraction after validating the offset. A null buffer is valid only with zero
+capacity (and zero write count). Actual storage size/lifetime remains the private
+caller's responsibility. Writes reuse the existing native byte-copy ABI with
+nonoverlapping ranges; no new native ABI, public pointer arithmetic, mutable
+string API, or generic feature is introduced.
+
+### Numeric library (SPEC-030c)
+
+Ordinary `std.gloin` source defines the APIs in [the numeric guide](docs/numbers.md).
+Existing `to_int`, trapping `to_string`, input, and string-only output contracts
+remain unchanged. New parse and conversion calls return concrete status/value
+structs: IntResult (i32), I64Result, U64Result, F32Result, F64Result, BoolResult.
+New fallible format calls return FormatResult with a string value. Every failed
+numeric payload is zero/false (positive floating zero); failed text is static
+empty text. Shared statuses add INEXACT=8 and UNDERFLOW=9. They are available
+through `@status` and new std aliases; existing values remain stable.
+
+`parse_i32`, `parse_i64`, `parse_u64`, `parse_f32`, `parse_f64`, and `parse_bool`
+each take a string. Signed integers require `[+-]?[0-9]+`; u64 permits optional
+`+` but rejects any minus, including -0. Float grammar is
+`[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?`. Boolean text is exactly
+`true` or `false`. All require complete ASCII input; no whitespace trimming,
+prefixes, separators, NUL termination, NaN, infinity, or locale-dependent forms.
+Malformed grammar returns INVALID before range checks. Numeric range failure
+returns OVERFLOW. Floats round directly to their width, nearest/ties-even;
+subnormals are accepted, negative zero is preserved, and nonzero input rounding
+to zero returns UNDERFLOW. There is no fixed text-length limit, heap allocation,
+or retained storage: parsing is O(n) with bounded auxiliary storage (bool O(1)).
+
+`format_i32`, `format_i64`, `format_u64`, `format_f32`, and `format_f64` take an
+explicit `&arena.GeneralArena` followed by a value of the named type. They use
+fallible byte allocations of 12, 21, 21, 32, and 32 bytes respectively, including
+one uncounted NUL. Integers use canonical decimal. Floats use locale-independent
+shortest round-trip decimal, lowercase e for scientific notation, explicit
+exponent sign and at least two exponent digits; negative zero formats as -0.
+There is no implicit .0 suffix. `format_bool(bool) -> string` returns static
+`true`/`false`, with no allocation or failure. Other formatters return FormatResult;
+NO_MEMORY is recoverable. Results borrow the supplied arena until reset/free.
+
+`format_f32_fixed(memory, value: f32, precision: u32)` and
+`format_f64_fixed(memory, value: f64, precision: u32)` return FormatResult with
+exactly precision digits after the decimal point (no point for zero precision),
+rounded nearest/ties-even. Precision must be 0..18; INVALID is returned before
+allocation otherwise. They request 64/352 bytes including NUL. These bounds
+include the largest finite values at maximum precision. Rounded negative zero
+keeps its minus. Native formatting rejects non-finite arguments with INVALID;
+valid Gloin programs cannot produce them. Fixed-width formatting has bounded
+O(1) work/storage plus arena allocation; retained allocation sizes are explicit.
+
+Named conversions return the corresponding concrete result without allocation:
+
+- `i64_from_i32`, `i32_from_i64`, `u64_from_i64`, `i64_from_u64`: exact integral
+  conversion; widening always succeeds, out-of-range narrowing/signedness changes
+  return OVERFLOW. Never wrap or saturate.
+- `f64_from_i64_exact`, `f64_from_u64_exact`: INEXACT unless f64 represents the
+  integer exactly. The `_rounded` variants instead choose nearest/ties-even.
+- `i64_from_f64_exact`, `u64_from_f64_exact`: reject fractional values with INEXACT.
+  The `_trunc` variants explicitly discard the fraction toward zero. Check the
+  truncated candidate's range first; outside range is OVERFLOW. Thus unsigned
+  truncation of -0.5 succeeds as zero, while exact conversion is INEXACT.
+- `f64_from_f32`: exact widening, preserving negative zero.
+- `f32_from_f64_exact`, `f32_from_f64_rounded`: check the input magnitude against
+  finite f32 maximum before narrowing; larger magnitude is OVERFLOW. Nonzero
+  values rounding to zero are UNDERFLOW, including in rounded mode. Exact mode
+  reports INEXACT when a nonzero finite rounded result differs from the input;
+  rounded mode accepts it. Both preserve negative zero and representable subnormals.
+
+Every conversion takes only its value; type suffixes determine input/output.
+All have O(1) time and auxiliary storage and use the core's nearest/ties-even
+execution environment. Native non-finite inputs return INVALID. Safe range
+checks precede any native float-to-integer cast. No exception, trap, automatic
+printing, or implicit conversion is used for these recoverable errors.
+
+Canonical `@std` alone may invoke the new typed private primitives. Native calls
+use scalar values and explicit output pointers, never native aggregate returns;
+the compiler validates types and the JIT checks exact ABIs before binding them.
+The LLVM-independent runtime vendors fast_float at a pinned commit under MIT
+for allocation-free direct-width parsing; formatting uses the selected platform's
+`to_chars`. Tests cover correctly rounded boundaries, precision loss, decimal
+round trips, allocation failure, external execution, and installed documentation.
+
+### Streams and files (SPEC-030d)
+
+`@io` is ordinary [io.gloin](stdlib/io.gloin) source with concrete File, Stream,
+IoResult, FileResult, ReadResult, WriteResult, and MessageResult types. Complete
+signatures, examples, costs, and error precedence are in [the I/O guide](docs/io.md).
+Seven private typed native primitives provide host operations; only canonical
+`@io` may call them. Native ABIs use scalar returns and explicit output pointers.
+
+`io.stdin()`, `io.stdout()`, and `io.stderr()` produce borrowed Stream handles
+without allocation. Standard streams retain host buffering and share position
+with the legacy `std` routines, whose contracts remain unchanged. Stream exposes
+read/write/flush and is_open, but no close. I/O methods require mutable receivers;
+is_open and File.stream allow read-only receivers. Stdin is read-only; stdout
+and stderr are write-only. Wrong-direction operations return INVALID.
+
+`File.open_read`, `File.create_new`, `File.open_truncate`, and `File.open_append`
+take an explicit metadata arena and counted path. Empty/NUL-containing paths are
+INVALID before allocation or filesystem access. Metadata allocation precedes the
+native open, so its failure cannot create or truncate a file. Exclusive create
+uses native exclusivity, not an existence precheck. Owned streams are unbuffered;
+opening temporarily allocates a terminated native path copy and retains native
+FILE state until close. Metadata retained after a failed open is reclaimed with
+the arena. File contents preserve all bytes, including NUL.
+
+File copies and streams obtained by File.stream alias one arena-owned control
+record and one cursor. File.close clears the shared native handle and consumes
+it exactly once, including on close failure. Subsequent alias operations and
+repeated close return CLOSED. Failed opens supply closed File values. Close
+must occur before owner arena reset/free; arena cleanup does not close files.
+All metadata aliases expire with that arena. A separate scratch arena supports
+bounded read loops. Deferred close discards its result; check an explicit close
+when output success matters. No borrow checker, reference count, automatic file
+destruction, implicit flush on write, or implicit filesystem rollback is added.
+
+Both Stream and File provide read_line, read_chunk, and read_all with an explicit
+scratch arena and u64 max_bytes. Each valid call requests max_bytes+1 bytes,
+zeroed by the arena; one uncounted NUL is reserved. Requests above
+9223372036854775806 return NO_MEMORY before allocation. Allocation failure
+consumes nothing. Returned bytes and any retained prefix borrow scratch until
+reset/free; allocated storage is retained even on EOF/error.
+
+- read_line strips LF/CRLF, preserves standalone CR, accepts final partial lines,
+  and returns END only for empty EOF. Oversized lines drain through LF/EOF then
+  return TOO_LONG/empty. I/O failure also returns empty; consumed bytes are lost.
+- read_chunk requires a positive bound. It reads up to that bound, potentially
+  blocking until enough bytes or EOF/error. Final partial EOF is OK; subsequent
+  empty EOF is END. I/O errors preserve the received prefix.
+- read_all returns OK even for empty EOF. At its bound it probes one byte, pushes
+  excess back, and returns TOO_LONG with the bound-sized prefix. It never drains
+  unbounded excess. A zero bound checks for empty input without losing a byte.
+  I/O errors preserve progress. The EOF probe may block.
+
+Read work includes O(max_bytes) zeroing; line draining adds O(bytes consumed).
+Storage is bounded by the caller, independently of input length. Preflight order
+is closed handle, direction, bound, allocation. Native read/write error indicators
+are cleared for each new attempt; no automatic EINTR retry conceals progress.
+
+write performs one native fwrite and may succeed short. write_all repeats short
+successful writes, stops on error, and reports zero progress as IO_ERROR/EIO.
+write_line performs write_all(text), then write_all(LF); failure before LF
+suppresses it. Every WriteResult reports bytes accepted, including partial
+progress and any LF. Writes allocate no Gloin storage and retain no input view;
+byte work is O(bytes accepted), plus blocking I/O. Host standard-stream buffering
+can allocate internally. Multi-call output, including append lines, is not atomic.
+Flush reports buffered errors and does not promise disk durability. Broken pipes
+return recoverable EPIPE through per-thread SIGPIPE masking; prior mask,
+disposition, and already-pending signals are preserved.
+
+Shared status values append NOT_FOUND=10, PERMISSION_DENIED=11, ALREADY_EXISTS=12,
+and CLOSED=13. Results carry errno for OS failures; library preflight/allocation
+failures carry zero. ENOENT/ENOTDIR map to NOT_FOUND, EACCES/EPERM to
+PERMISSION_DENIED, EEXIST to ALREADY_EXISTS, ENOMEM to NO_MEMORY; other OS errors
+map to IO_ERROR. No OS code is fabricated except EIO when stdio reports an error
+without errno. Error text is separate: error_message(&arena, code) reserves 256
+bytes for bounded localized text, or returns static "no OS error" for zero.
+Negative codes/failed lookup return INVALID, long messages TOO_LONG, and failed
+allocation NO_MEMORY. Diagnostic strings are not stable error categories.
+
+The maintained copier and filter examples verify bounded scratch reuse, separate
+stderr, binary data, exclusive creation, checked flush/close, and cleanup. Tests
+inject partial reads/writes, zero progress, permission, flush, and close errors;
+check metadata allocation before destructive opens and invalidated aliases; and
+exercise native, external LLVM, installed, and relocated execution.
+
+### Filesystem and process context (SPEC-030e)
+
+Ordinary [fs.gloin](stdlib/fs.gloin) and [process.gloin](stdlib/process.gloin)
+provide concrete APIs documented with complete costs and examples in the
+[filesystem/process guide](docs/filesystem-process.md). Eight private typed native
+operations handle metadata/mutations and host context; a guarded string-view
+primitive supports immediate arena copies. No generic dispatch is introduced.
+
+Path extraction is lexical and uses only `/` as a separator. basename/dirname
+ignore trailing separators; empty/no-parent cases yield `.`, all-separator roots
+yield `/`, and dirname removes only its final separator run. Results borrow input
+or static literals, with O(path bytes) work and no allocation. Dot components,
+backslashes, and interior separator runs are preserved. NUL gives INVALID.
+join(&arena, base, child, max_bytes) validates both inputs; absolute child replaces
+base unchanged, an empty side copies the other, both empty returns static empty.
+Otherwise trailing base separators are reduced at the boundary before joining.
+No filesystem lookup, symlink resolution, or `..` normalization occurs. Bounds
+and overflow yield TOO_LONG before allocation. Ordinary joins allocate a prefix
+and final copy; root/single-side joins allocate once. Both retained requests and
+NO_MEMORY failures are explicit; outputs expire on arena reset/free.
+
+metadata(path) returns status/errno/kind/size from native lstat: FILE=1,
+DIRECTORY=2, SYMLINK=3, OTHER=4. Terminal symlinks are reported, including broken
+links; trailing separators retain host directory-resolution rules. Size is
+logical file bytes or link-target text bytes, zero for other kinds. Failed kind
+and size are zero. mkdir creates one directory with 0777 filtered by umask;
+remove_file unlinks a file/symlink itself and cannot remove directories;
+rename_replace uses native POSIX replacement rules, with no cross-filesystem
+copy fallback. Filesystem operations reject empty/NUL paths, preserve errno
+categories from SPEC-030d, and use temporary native terminated path copies freed
+on return. Queries do not conflate permission failures with missing paths.
+
+The CLI forwards only values after FILE --, preserving empty/raw bytes. Argument
+zero is the exact supplied source filename spelling; compiler flags are excluded.
+The pre-FILE -- delimiter continues to escape filenames beginning with `-`.
+Forwarding (even empty) in non-run modes is a usage error; bare extra filenames
+remain errors. Program arguments do not change main's signature or exit behavior.
+
+JitRunner::run(module, arguments) takes an optional string vector and owns a copy
+for synchronous invocation. Embedding defaults to zero arguments and supplies no
+implicit argv[0]; embedded NUL is rejected. Thread-local scopes restore previous
+bindings on every returning path. External runners see zero arguments unless the
+host uses the installed native push/pop scope API; it deep-copies C argument
+strings, requires same-thread LIFO cleanup, and never exposes host tool flags.
+
+process.arg_count() is O(1), allocation-free. arg(&arena, index:u64) gives
+OUT_OF_RANGE without allocation for absent indices and copies nonempty values
+with one exact-size arena request. env(&arena, name) rejects empty/NUL/equals names,
+distinguishes NOT_FOUND from OK/empty, and copies nonempty values immediately;
+it uses a temporary native name copy plus host lookup. Arguments and environment
+values are counted bytes without encoding conversion. Successful empty values
+need no arena storage; other copies expire on arena reset/free. Environment
+mutation is externally coordinated, not globally snapshotted.
+
+cwd(&arena, max_bytes:u64) requests max_bytes+1 bytes for bounded native getcwd.
+It returns absolute host cwd or status/errno/empty text; too-small bounds are
+TOO_LONG/ERANGE, never truncation. Oversized bounds and failed allocation return
+NO_MEMORY. Storage remains until reset/free, including on native failure. There
+is no implicit chdir. Host environment and cwd remain process-wide resources.
+
+The maintained file tool combines CLI options, cwd/join, metadata, binary copying,
+explicit cleanup, and missing/empty/populated environment labels. Tests cover
+native and external execution, argument ownership/isolation, exact CLI forwarding,
+filesystem errors, allocation failures, and installed/relocated execution from a
+different working directory. Directory traversal, recursion, subprocesses, and
+a general option parser remain follow-ups.
+
+
+### Concrete numerical utilities (SPEC-030f)
+
+`@math` loads `math.gloin`, with only `@status` as a source dependency. It provides
+concrete `min_T`, `max_T`, and `clamp_T` for i32/i64/u64/f32/f64; `abs_T` for
+signed integers and floats; PI/TAU constants for each float width; and f32/f64
+floor/ceil/trunc/round/sqrt/pow/exp/log/log10/sin/cos/tan/atan2/hypot functions.
+Min/max return their scalar type and select the first operand on equality.
+Clamps and absolute values return checked concrete results. All rounding and
+other floating functions return checked results of the input width; rounding
+retains that floating width and ties are away from zero. No implicit conversion,
+generics, arena storage, or hidden allocation is introduced.
+
+`math.I32Result`, `I64Result`, `U64Result`, `F32Result`, and `F64Result` have
+`status: i32` and a corresponding scalar `value`. Every failed result is zero
+(positive floating zero). Invalid clamp bounds or math domains use INVALID;
+minimum signed-integer abs and unrepresentable large float results use OVERFLOW;
+nonzero results rounded to zero use UNDERFLOW. Nonzero subnormals succeed.
+Approximate finite math does not report INEXACT. Ordinary arithmetic and checked
+conversion contracts are unchanged, including unary minus in typed initializers.
+
+Angles are radians; atan2 argument order is (y,x), including signed-zero quadrants.
+Sqrt accepts -0 and preserves its sign, but rejects negative numbers. Log/log10
+reject inputs <=0. Pow rejects negative bases with nonintegral exponents and
+zero bases with negative exponents; 0**0 is defined as 1. Float abs and hypot
+canonicalize zero to +0; rounding and sin/tan preserve signed zero. Min/max use
+the first equal operand; clamp preserves an in-range operand unchanged.
+
+Native math isolates each operation in the default floating environment and
+restores caller errno, rounding mode and exception flags. Nonfinite native inputs
+and unsupported private operation selectors fail INVALID/+0. Four typed native
+ABIs are accessible only from canonical `math.gloin`. Floating overloads execute
+at the requested width. Accuracy follows host libm; no universal ULP bound or
+bit-identical portability is promised. The full API, signed-zero/domain rules,
+usage, cost, ownership, and validation tolerances are normative in
+[the numerical utilities guide](docs/math.md).
+
+
+### Monotonic timing and seeded randomness (SPEC-030g)
+
+`@time` provides explicit u64 nanosecond `Instant { ticks_ns }` and
+`Duration { nanoseconds }` values, checked monotonic readings/elapsed differences,
+checked whole-unit constructors and duration arithmetic, flooring whole-unit
+accessors, and an explicitly approximate f64 seconds conversion. Clock ticks have
+an unspecified epoch and may only be compared within the same clock domain.
+Equal readings succeed; backwards elapsed inputs fail INVALID/zero. Duration
+construction/addition overflow and negative duration subtraction fail OVERFLOW/zero.
+Clock readings fail with zero ticks; only IO_ERROR carries a native errno. Units
+do not promise clock resolution, suspend behavior, wall-clock meaning, or CPU time.
+
+The JIT accepts an optional copied clock descriptor with borrowed userdata for a
+synchronous invocation. Null explicitly selects the OS clock. Invalid descriptors
+or binding allocation failure are setup errors; scopes restore prior thread-local
+providers on every returning path. The installed native push/pop API supports
+same-thread LIFO scopes and external execution. Native reads preserve errno and
+normalize callback failures. Callbacks must not throw or recurse through the same
+provider. No wall clock, sleep, or timer API is introduced.
+
+`@random` provides a value-state `SplitMix64` with explicit u64 seed, version 1,
+`next_u64`, unbiased half-open `below(bound)` using rejection, and an exact
+53-bit `[0,1)` `unit_f64` mapping. All seeds, including zero, are valid; copied
+states advance independently. Bound zero fails INVALID/0 without consuming state;
+bound one consumes one word. Rejection imposes no retry cap or small fixed draw budget.
+There is no global generator, implicit entropy, or cryptographic guarantee.
+The fixed-increment SplitMix64-v1 transition and sampling mappings are a versioned
+reproducibility contract. One private native transition supplies the wrapping and
+bit operations; general source overflow/bitwise rules remain unchanged.
+
+Both modules use ordinary source types/functions, no generics or per-operation
+allocation. Clock invocation/host scope binding has one explicit native context
+allocation; userdata remains host-owned. All 13 public functions/methods, error
+payloads, units, ownership, costs, deterministic vectors, embedding contracts,
+and acceptance cases are specified in [the time/random guide](docs/time-random.md).
+
+### Integrated pre-generics library acceptance (SPEC-030h)
+
+The maintained examples compose concrete source-library APIs without new language
+features: a strict key/value configuration reader, a one-pass selected-column
+statistics tool over an explicitly unquoted format, and a seeded numerical
+simulation. Their formats, bounds, ownership, costs, side effects, and error
+behavior are documented in [the integration guide](docs/integrated-examples.md).
+CLI programs also expose ordinary module functions for embedding/composition.
+
+Acceptance requires successful and rejected source inputs, independent numerical
+oracles, bounded long runs, allocation-failure handling, normal-return resource
+cleanup, JIT and external execution, native sanitizers, and installed/relocated
+package checks. Actual arena backing allocations and descriptor counts verify
+resource behavior; a low stack limit checks long-loop storage. These examples
+do not enable implicit ownership, generic collections, or deferred concurrency.
+
 ### Def keyword
 
 Every declarable item in Gloin must be preceded by the `def` keyword. Whether it's a variable, function, struct, or type you can declare it with the `def` keyword.
@@ -850,12 +1413,14 @@ Each variable must be declared with a type.
 
 ```gloin
 def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
     def x: i32 = 5;
     x = 6; // Error: cannot assign to immutable variable
     
     def mut y: i32 = 5;
     y = 6;
-    std.println(y); // Prints 6
+    // y is now 6. Printing an i32 requires std.to_string(&memory, y).
     return 0;
 }
 ```
@@ -866,7 +1431,7 @@ Constants are declared with `def const`. They are immutable and must be initiali
 
 ```gloin
     def const PI: f64 = 3.14159;
-    std.println(PI); // Prints 3.14159
+    // PI is f64. Floating-point formatting is not part of SPEC-030.
 ```
 
 ### Endianness
@@ -887,49 +1452,119 @@ Gloin supports three types of imports:
 
 ```gloin
 import "@std";
+import "@arena";
 
 def main() -> i32 {
     std.println("Hello World");           // Print with newline
-    std.print("Enter name: ");           // Print without newline
+    std.print("Enter integer: ");        // Print without newline
 
-    def input: string = std.input();     // Read user input
-    def number: i32 = std.to_int("123"); // Convert string to int
-    def text: string = std.to_string(42); // Convert int to string
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+    def line: std.InputResult = std.input(&memory, 128);
+    if line.status == std.END { return 0; }
+    if line.status != std.OK { return 1; }
+    def number: std.IntResult = std.to_int(line.value);
+    if number.status != std.OK { return 2; }
+    def text: string = std.to_string(&memory, number.value);
+    std.println(text);
     
     return 0;
 }
 ```
 
-##### Local Modules (./module)
+##### Local modules and exports (SPEC-029)
+
+`import "./utils";` loads `utils.gloin` relative to the importing source file,
+not the process working directory. `./` and `../` paths are supported, with an
+optional explicit `.gloin` extension. Other extensions, absolute paths, bare
+paths, embedded NULs, and `#package` imports are rejected. The last filename
+component without the extension becomes the namespace and must be a non-reserved
+Gloin identifier. Directory names need not be identifiers. There are no import
+aliases, wildcard imports, directory entry files, or implicit extensions other
+than `.gloin`.
+
+Files are canonicalized, including symlinks, and loaded, parsed, checked, and
+emitted once per compilation. An imported file resolves its own relative imports
+from its canonical directory. A shared dependency reached through multiple files
+has one nominal type identity and one set of definitions. Different files with
+the same basename remain distinct and have distinct linkage names. All imports
+in one file must have distinct namespaces and distinct canonical target files;
+repeating a file through another spelling or symlink in that same file is an
+error. A canonical file reached under distinct `@name` spellings is rejected.
+
+Imports are file-scoped and visible throughout their file, regardless of order.
+Each file has its own namespace bindings. Imports are not re-exported and a file
+cannot use another file's dependencies without importing them itself. File-scope
+functions, structs, and constants cannot collide with an import namespace.
+Local variables may shadow it; the shadowed name resolves to that local value.
+
+Only `pub` functions, ordinary structs, and constants are accessible through a
+module namespace. Omitted visibility and `priv` are private. Struct fields and
+methods retain their independent visibility and receiver rules. Module functions
+and methods may use their own private declarations, but cannot see caller scopes.
+Imported functions named `main` are ordinary module functions; only the root file
+provides the executable entry point. Functions are not first-class values and
+constants have no addressable storage.
+
+Modules have no runtime initialization or implicit cleanup. File-scope runtime
+variables and executable statements are rejected, including in unused modules.
+Dependencies are checked before importers; constants are evaluated in lexical
+order within their declaring file and may use already evaluated exported
+constants from dependencies. Forward references to constants within one file
+remain errors. Bodies are checked even if never called. Importing a module does
+not call its functions or change the program's exit status.
+
+All cycles are rejected, including self-imports, cycles through symlinks, cycles
+through the root file, and otherwise unused cycles. The error points to the
+import closing the cycle and includes the canonical path chain. Dependency
+traversal is limited to 128 simultaneously active files (including the root),
+with a diagnostic rather than unbounded recursion. Failed loads or checks do not
+produce an executable or partial IR. A new compilation reloads its dependencies;
+there is no persistent module cache.
+
+Standard `@name` imports use the same dependency graph, resolving names in the
+selected standard-library directory. Standard files may import standard modules
+or relative helpers. Native primitives are available only to files reached via
+standard imports, not to arbitrary local files with matching basenames. The
+`GeneralArena` typed bridge belongs specifically to the `@arena` module. A local
+file may call ordinary standard-library functions by explicitly importing them.
+
+The compiler API uses its source filename to determine the root directory; for
+an in-memory source, callers must still supply the intended filename when using
+relative imports. CLI use from another directory needs no special search path.
 
 ```gloin
 // utils.gloin
 def pub calculate(x: i32, y: i32) -> i32 {
     return x * y + 10;
 }
+```
 
+```gloin
 // main.gloin
-import "@std";
 import "./utils";
 
 def main() -> i32 {
-    def result: i32 = utils.calculate(5, 3);
-    std.println(std.to_string(result));
-    return 0;
+    return utils.calculate(5, 3);
 }
-
 ```
+
+This program exits with status 25 and produces no implicit output. To print an
+i32 result, format it explicitly with the arena-backed SPEC-030 API.
 
 ##### External Packages (#package)
 
 ```gloin
 import "@std";
+import "@arena";
 import "#math";      // External package
 import "#http";      // Another external package
 
 def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
     def sqrt_val: i32 = math.sqrt(16);
-    std.println(std.to_string(sqrt_val));
+    std.println(std.to_string(&memory, sqrt_val));
     return 0;
 }
 ```
@@ -1259,8 +1894,8 @@ def main() -> i32 {
 }
 ```
 
-This prints one line and exits with status 100. Numeric formatting remains a
-separate standard-library feature; it is not needed for pointer semantics.
+This prints one line and exits with status 100. Numeric output requires an
+explicit call to std.to_string with caller-owned arena storage.
 
 ### Strings
 
@@ -1405,6 +2040,7 @@ Functions are declared with the `def` keyword. Every parameter and return type i
 
 ```gloin
 import "@std";
+import "@arena";
 
 // Function with parameters and return value
 def add(a: i32, b: i32) -> i32 {
@@ -1418,8 +2054,10 @@ def greet(name: string) -> void {
 }
 
 def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
     def sum: i32 = add(10, 20);
-    std.println(std.to_string(sum));
+    std.println(std.to_string(&memory, sum));
     greet("Developer");
     return 0;
 }
@@ -1432,8 +2070,11 @@ Gloin supports control flow statements like `if`, `unless`, `while`, and `for` l
 
 ```gloin
 import "@std";
+import "@arena";
 
 def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
     def x: i32 = 10;
 
     // If statement (no parentheses around condition)
@@ -1449,14 +2090,14 @@ def main() -> i32 {
     // While loop
     def mut counter: i32 = 0;
     while counter < 3 {
-        std.println(std.to_string(counter));
+        std.println(std.to_string(&memory, counter));
         counter = counter + 1;
     }
     
     // For loop
     for def mut i: i32 = 0; i < 5; i = i + 1 {
         std.print("Iteration: ");
-        std.println(std.to_string(i));
+        std.println(std.to_string(&memory, i));
     }
     
     return 0;
@@ -1485,7 +2126,7 @@ import "@std";
 import "#http";
 // Define the async function
 def deferred fetch_config(url: string) -> Deferred<Result<string, AppError>> {
-    println("Fetching from {}...", url);
+    std.print("Fetching from "); std.println(url);
     // Simulated async I/O call
     return http.Client::get(url);
 }
@@ -1499,9 +2140,9 @@ def main() -> i32 {
     def result: Result<string, AppError> = handle.join();
     
     if result.is_ok() {
-        std.println("Config: {}", result.ok().value());
+        std.print("Config: "); std.println(result.ok().value());
     } else {
-        std.println("Error: {}", result.err().value());
+        std.print("Error: "); std.println(result.err().value());
     }
 
     // Unsafe retrieval (if you are certain it won't fail)
@@ -1555,7 +2196,7 @@ def main() -> i32 {
     def result: Result<f32, err> = thread_handle.join();
 
     if result.is_ok() {
-        std.println("Computation Result: {}", result.ok().value());
+        std.println("Computation finished"); // f32 formatting remains deferred.
     }
 
     return 0;

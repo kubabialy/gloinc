@@ -1,0 +1,78 @@
+// Copy a regular file to a NEW destination, using CLI arguments and optional label.
+// build/gloinc examples/file_tool.gloin -- --copy 'source.bin' 'new copy.bin'
+// GLOIN_COPY_LABEL absent -> "copied"; empty -> no label; otherwise use its bytes.
+import "@fs";
+import "@process";
+import "@io";
+import "@strings";
+import "@std";
+import "@arena";
+import "@status";
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create(); defer owner.free();
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create(); defer scratch.free();
+    def mut output: io.Stream = io.stdout();
+    def mut errors: io.Stream = io.stderr();
+    if process.arg_count() == 2 {
+        def flag: process.TextResult = process.arg(&owner, 1);
+        if flag.status == status.OK && strings.equal(flag.value, "--help") {
+            if output.write_line("usage: --copy SOURCE NEW_DESTINATION").status != status.OK { return 1; }
+            return output.flush().status;
+        }
+    }
+    if process.arg_count() != 4 { errors.write_line("expected --copy SOURCE NEW_DESTINATION"); errors.flush(); return 2; }
+    def flag: process.TextResult = process.arg(&owner, 1);
+    if flag.status != status.OK || !strings.equal(flag.value, "--copy") {
+        errors.write_line("unknown option"); errors.flush(); return 2;
+    }
+    def source: process.TextResult = process.arg(&owner, 2);
+    def target: process.TextResult = process.arg(&owner, 3);
+    def cwd: process.TextResult = process.cwd(&owner, 4096);
+    if source.status != status.OK || target.status != status.OK || cwd.status != status.OK { return 3; }
+    if strings.is_empty(source.value) || strings.is_empty(target.value) { return 2; }
+    def from: fs.PathResult = fs.join(&owner, cwd.value, source.value, 65536);
+    def to: fs.PathResult = fs.join(&owner, cwd.value, target.value, 65536);
+    if from.status != status.OK || to.status != status.OK { return 3; }
+    def info: fs.MetadataResult = fs.metadata(from.value);
+    if info.status != status.OK || info.kind != fs.FILE {
+        errors.write_line("source must be a regular file"); errors.flush(); return 4;
+    }
+    def opened: io.FileResult = io.File.open_read(&owner, from.value);
+    if opened.status != status.OK { return 5; }
+    def mut reader: io.File = opened.value; defer reader.close();
+    def made: io.FileResult = io.File.create_new(&owner, to.value);
+    if made.status != status.OK { errors.write_line("cannot create new destination"); errors.flush(); return 6; }
+    def mut writer: io.File = made.value; defer writer.close();
+    def mut copying: bool = true;
+    def mut total: u64 = 0;
+    while copying {
+        scratch.reset();
+        def chunk: io.ReadResult = reader.read_chunk(&scratch, 4096);
+        if chunk.status == status.END { copying = false; }
+        else {
+            if chunk.status != status.OK { return 7; }
+            def written: io.WriteResult = writer.write_all(chunk.value);
+            if written.status != status.OK { return 8; }
+            total = total + written.written;
+        }
+    }
+    if writer.flush().status != status.OK { return 9; }
+    def closed: io.IoResult = writer.close();
+    def read_closed: io.IoResult = reader.close();
+    if closed.status != status.OK || read_closed.status != status.OK { return 9; }
+    scratch.reset();
+    def setting: process.TextResult = process.env(&scratch, "GLOIN_COPY_LABEL");
+    def mut label: string = "copied";
+    if setting.status == status.OK { label = setting.value; }
+    else { if setting.status != status.NOT_FOUND { return 10; } }
+    def name: fs.PathResult = fs.basename(to.value);
+    def count: std.FormatResult = std.format_u64(&scratch, total);
+    if name.status != status.OK || count.status != status.OK { return 10; }
+    if !strings.is_empty(label) {
+        if output.write_all(label).status != status.OK || output.write_all(" ").status != status.OK { return 11; }
+    }
+    if output.write_all(name.value).status != status.OK || output.write_all(": ").status != status.OK { return 11; }
+    if output.write_line(count.value).status != status.OK { return 11; }
+    return output.flush().status;
+}

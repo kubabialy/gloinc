@@ -101,8 +101,8 @@ make clean BUILD_DIR=build-no-tests
 `BUILD_ARGS` passes build options; `CTEST_ARGS` passes test filters/options.
 `make test` explicitly enables tests and preserves CTest's failure exit status.
 `make run` defaults to `examples/core_counter.gloin`; `RUN_ARGS` overrides its CLI
-arguments. `check-core` requires a tests-enabled build and runs the 559 required
-scalar, arena, and standard-output checks. Installation, CPack archives, external runtime dependencies,
+arguments. `check-core` requires a tests-enabled build and runs the 817 required
+scalar, module, arena, and standard-output checks. Installation, CPack archives, external runtime dependencies,
 and the sanitizer build option are described in [release.md](release.md).
 `make clean` invokes CMake's clean target in an already configured directory,
 removing build products while retaining the configuration and downloaded sources.
@@ -137,3 +137,13 @@ constructor and checks that Gloin, Func, Arith, ControlFlow, MemRef, SCF, and LL
 dialects all load into one context. This is a toolchain/linkage check. The JIT
 uses SPEC-018's shared lowering and SPEC-019's validated translation/invocation;
 [the JIT tests](../tests/README.md#in-process-jit-execution-spec-019) verify execution.
+
+## Decimal runtime dependency
+
+SPEC-030c vendors the public headers of fast_float v8.3.0 at immutable commit
+`b0ab987b3dfdde13fa1915f65ef2a5c068d9208c` under MIT. See
+[provenance and checksums](../third_party/fast_float/README.md). CMake includes them
+privately in the LLVM-independent runtime; no build-time fetch or additional shared
+library is needed. The pinned macOS C++ library lacks floating `from_chars`, so
+this supplies direct-width, allocation-free parsing. Floating formatting uses its
+supported `to_chars` implementation. Release packages include the dependency license.

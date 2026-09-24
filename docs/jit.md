@@ -95,3 +95,57 @@ per-invocation heap records and freed while draining; the JIT explicitly binds
 native allocation functions with the validated ABIs above. No global defer
 state survives an invocation. Output errors still surface after invocation,
 following normal function cleanup.
+
+
+SPEC-030 also registers and validates the exact parse-i32, format-i32, bounded
+stdin, and zero-byte-initialization ABIs. Source declarations with native symbol
+spellings are mangled separately. Standard input statuses stay in program values;
+they do not turn into JIT errors or replace `main`'s result. The shared runtime
+supplies byte output for external runners, while the JIT retains its existing
+flush/error-reporting callback. See [standard-library APIs](standard-library.md).
+
+SPEC-030a additionally validates and binds the void native byte-copy ABI
+`gloin_strings_copy(pointer, i64, pointer)`. Length queries and guarded byte/slice
+access lower directly; string library result statuses do not alter JIT entry
+results. The shared runtime exports the same copy routine for external execution.
+See [byte-string usage, ownership, and costs](strings.md).
+
+SPEC-030c adds 21 numeric native routines for wide integer/float/bool parsing,
+formatting, and checked conversion. `stdlib_abi.h` shares their primitive
+signatures; `stdlib_lowering.h` derives exact LLVM function types for JIT validation.
+All return i32 status with explicit output pointers, avoiding native aggregate
+return ABI differences; parsed booleans use a u8 output. Float arguments retain
+their f32/f64 width, and conversion modes are i32. Wrong widths, varargs, or
+user-supplied bodies for reserved runtime symbols are rejected before binding.
+The static JIT runtime and shared external runtime use the same implementation.
+See [numeric API semantics and costs](numbers.md).
+
+SPEC-030d extends the same signature validation and explicit symbol binding to
+seven I/O routines. Opaque FILE pointers never become public language-level raw
+handles. `io.gloin` owns shared close-state records in a caller arena; native
+operations return statuses/errno/progress through scalars and output references.
+Descriptor construction is guarded in lowering. Standard streams remain process
+resources shared with existing `std` calls; no JIT-wide registry or cleanup list
+silently closes application files. See [I/O ownership and errors](io.md).
+
+SPEC-030e adds `JitRunner::run(module, arguments)` with a default empty vector.
+An invocation-owned copy supplies the thread-local argument context only for entry
+execution; previous bindings restore on return. Embedded NUL is rejected before
+invocation. The CLI inserts the exact supplied source filename at index zero and
+forwards only values after FILE --. External hosts can bind explicit scopes via
+installed `context_runtime.h`; unconfigured external execution sees zero arguments.
+The runtime never imports host/compiler argv implicitly. Environment and cwd are
+host process resources; argument scopes do not isolate them. See
+[ownership and native scope APIs](filesystem-process.md).
+
+SPEC-030g extends the entry API to `JitRunner::run(module, arguments, clock)`.
+The optional `const GloinClockSource*` defaults to null, explicitly selecting the
+OS monotonic clock for that invocation. A non-null descriptor is copied, while
+its userdata remains borrowed until the synchronous call returns. The callback
+must not throw. A thread-local scope restores the previous host binding on
+normal return and host exception unwinding; invalid providers fail before entry
+execution. Binding allocates one small native record per invocation; reads do
+not allocate in the runtime. Fatal traps retain the process-termination behavior
+above. Installed `time_runtime.h` exposes the same LIFO scope API to native hosts.
+The JIT validates and binds both the monotonic-read and SplitMix64 native ABIs;
+random state stays entirely caller-owned. See [clock contracts and injection](time-random.md).

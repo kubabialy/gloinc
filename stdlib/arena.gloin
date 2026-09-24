@@ -25,6 +25,21 @@ def pub struct GeneralArena {
         return __arena_general_alloc(self.state, size, alignment);
     }
 
+    // Variable-length storage is initialized to zero before it is exposed.
+    // A zero-sized request still returns a distinct non-null address on success.
+    def pub try_alloc_bytes(self: &GeneralArena, size: u64) -> *u8 {
+        __arena_require(self.state);
+        def bytes: *u8 = __arena_general_alloc(self.state, size, 1);
+        if bytes != null { __arena_zero_bytes(bytes, size); }
+        return bytes;
+    }
+
+    def pub alloc_bytes(self: &GeneralArena, size: u64) -> *u8 {
+        def bytes: *u8 = self.try_alloc_bytes(size);
+        __arena_require(bytes);
+        return bytes;
+    }
+
     def pub reset(self: &GeneralArena) -> void {
         __arena_require(self.state);
         __arena_general_reset(self.state);

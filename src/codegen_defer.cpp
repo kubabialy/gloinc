@@ -16,6 +16,9 @@ std::vector<mlir::Value> CodeGen::gen_call_arguments(const CallExpression *call)
 }
 
 mlir::Value CodeGen::emit_checked_call(const CallExpression *call, mlir::ValueRange arguments) {
+    if (auto primitive = checked_data->standard_calls.find(call);
+        primitive != checked_data->standard_calls.end())
+        return emit_standard_primitive(primitive->second, arguments);
     if (auto primitive = checked_data->arena_runtime_calls.find(call);
         primitive != checked_data->arena_runtime_calls.end())
         return emit_arena_primitive(primitive->second, arguments);

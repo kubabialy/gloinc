@@ -32,7 +32,7 @@ std::shared_ptr<Type> Sema::check_typed_expression(const Expression *expression,
 
 Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
     auto type = check_expression(expression);
-    if (!type)
+    if (!type || dynamic_cast<FunctionType *>(type.get()))
         return {};
     if (const auto *identifier = dynamic_cast<const Identifier *>(expression)) {
         auto *symbol = current_scope->resolve(identifier->value);
@@ -51,6 +51,10 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
         return {type, !pointer.pointers.front().read_only, true};
     }
     if (const auto *member = dynamic_cast<const MemberAccessExpression *>(expression)) {
+        if (recording->module_constants.contains(member)) {
+            log_error("Address or assignment requires runtime storage, not a constant");
+            return {};
+        }
         auto base_type = recording->types.at(member->left.get());
         Place base;
         if (recording->indirect_members.contains(member)) {

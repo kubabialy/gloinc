@@ -1,0 +1,54 @@
+// Read source and destination paths as two stdin lines; create a NEW destination.
+// printf '/tmp/source.bin\n/tmp/copy.bin\n' | build/gloinc examples/io_copy.gloin
+// Existing destinations are preserved. A failed copy can leave a partial new file.
+import "@io";
+import "@arena";
+import "@status";
+import "@std";
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+    def mut input: io.Stream = io.stdin();
+    def mut errors: io.Stream = io.stderr();
+    def source: io.ReadResult = input.read_line(&scratch, 4096);
+    if source.status != status.OK { errors.write_line("source path required"); errors.flush(); return 1; }
+    def opened: io.FileResult = io.File.open_read(&owner, source.value);
+    if opened.status != status.OK { errors.write_line("cannot open source"); errors.flush(); return 2; }
+    def mut reader: io.File = opened.value;
+    defer reader.close();
+    scratch.reset();
+    def target: io.ReadResult = input.read_line(&scratch, 4096);
+    if target.status != status.OK { errors.write_line("destination path required"); errors.flush(); return 3; }
+    def created: io.FileResult = io.File.create_new(&owner, target.value);
+    if created.status != status.OK { errors.write_line("cannot create new destination"); errors.flush(); return 4; }
+    def mut writer: io.File = created.value;
+    defer writer.close();
+    def mut copying: bool = true;
+    def mut count: u64 = 0;
+    while copying {
+        scratch.reset();
+        def chunk: io.ReadResult = reader.read_chunk(&scratch, 4096);
+        if chunk.status == status.END {
+            copying = false;
+        } else {
+            if chunk.status != status.OK { errors.write_line("read failed"); errors.flush(); return 5; }
+            def written: io.WriteResult = writer.write_all(chunk.value);
+            if written.status != status.OK { errors.write_line("write failed"); errors.flush(); return 6; }
+            count = count + written.written;
+        }
+    }
+    if writer.flush().status != status.OK { return 7; }
+    // Explicit results matter; deferred cleanup alone does not certify successful output.
+    def output_close: io.IoResult = writer.close();
+    def input_close: io.IoResult = reader.close();
+    if output_close.status != status.OK || input_close.status != status.OK { return 8; }
+    scratch.reset();
+    def text: std.FormatResult = std.format_u64(&scratch, count);
+    if text.status != status.OK { return 9; }
+    def mut output: io.Stream = io.stdout();
+    if output.write_line(text.value).status != status.OK { return 10; }
+    return output.flush().status;
+}

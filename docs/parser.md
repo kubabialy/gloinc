@@ -19,8 +19,8 @@ execution checks in [SPEC-021's source fixtures](../tests/fixtures/core/README.m
 `const` and visibility are preserved in the AST. SPEC-012 evaluates pure
 constant expressions in Sema and gives codegen folded values. The unchecked
 backend rejects constants because it has no evaluated semantic data.
-Private is the default; public/private metadata
-does not impose cross-module access restrictions in the single-file core.
+Private is the default. Semantic checking enforces public/private access across
+files under [SPEC-029 module rules](modules.md).
 
 SPEC-017 accepts `unless condition { ... }` without an `else`, and C-style
 `for initializer; condition; update { ... }`. Each header component is optional;

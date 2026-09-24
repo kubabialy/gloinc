@@ -156,21 +156,21 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
             initialize_unchecked_types();
         builder.setInsertionPointToEnd(theModule.getBody());
         if (checked_data) {
-            for (const auto &stmt : program) {
-                if (const auto *import = dynamic_cast<const ImportStatement *>(stmt.get()))
-                    for (const auto &declaration : import->declarations) {
-                        if (const auto *function = dynamic_cast<const FunctionDefinition *>(declaration.get()))
-                            declare_function(function);
-                        if (const auto *structure = dynamic_cast<const StructDefinition *>(declaration.get()))
-                            for (const auto &method : structure->methods)
-                                declare_function(method.get());
-                    }
-                if (const auto *structure = dynamic_cast<const StructDefinition *>(stmt.get()))
-                    for (const auto &method : structure->methods)
-                        declare_function(method.get());
-                if (const auto *function = dynamic_cast<const FunctionDefinition *>(stmt.get()))
-                    declare_function(function);
-            }
+            auto declare_unit = [&](const auto &statements) {
+                for (const auto &statement : statements) {
+                    if (const auto *structure = dynamic_cast<const StructDefinition *>(statement.get()))
+                        for (const auto &method : structure->methods)
+                            declare_function(method.get());
+                    if (const auto *function = dynamic_cast<const FunctionDefinition *>(statement.get()))
+                        declare_function(function);
+                }
+            };
+            for (const auto *module : checked_data->modules)
+                declare_unit(module->declarations);
+            declare_unit(program);
+            for (const auto *module : checked_data->modules)
+                for (const auto &declaration : module->declarations)
+                    gen_statement(declaration.get());
         }
         for (const auto &stmt : program) {
             DiagnosticScope source(current_span, stmt ? stmt->span : SourceSpan{});
@@ -432,10 +432,9 @@ void CodeGen::gen_statement(const Statement *stmt) {
         gen_expression(expr_stmt->expression.get(), true);
 
     } else if (auto *import_stmt = dynamic_cast<const ImportStatement *>(stmt)) {
-        if (!checked_data || !import_stmt->loaded)
+        if (!checked_data || !import_stmt->module)
             handle_import(import_stmt->path);
-        for (const auto &declaration : import_stmt->declarations)
-            gen_statement(declaration.get());
+        // Dependencies are emitted once from checked_data->modules.
     } else if (auto *defer_stmt = dynamic_cast<const DeferStatement *>(stmt)) {
         register_defer(defer_stmt);
     } else {
@@ -556,6 +555,9 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         fail("Unsupported expression or unresolved value in code generation");
     } else if (auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
         if (checked_data) {
+            if (auto constant = checked_data->module_constants.find(member_access);
+                constant != checked_data->module_constants.end())
+                return emit_constant(checked_data->constants.at(constant->second));
             if (checked_data->indirect_members.contains(member_access)) {
                 auto address = gen_address(member_access);
                 return builder.create<mlir::LLVM::LoadOp>(location(), checked_type(member_access),

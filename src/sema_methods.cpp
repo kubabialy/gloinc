@@ -66,7 +66,7 @@ std::shared_ptr<StructType> Sema::method_type_receiver(const Expression *express
     if (const auto *qualified = dynamic_cast<const MemberAccessExpression *>(expression)) {
         const auto *module = dynamic_cast<const Identifier *>(qualified->left.get());
         const auto *name = dynamic_cast<const Identifier *>(qualified->member.get());
-        if (module && name && !current_module && imports.contains(module->value) &&
+        if (module && name && imports.contains(module->value) &&
             !current_scope->resolve(module->value))
             return std::dynamic_pointer_cast<StructType>(
                 resolve_type_from_string(module->value + "." + name->value));

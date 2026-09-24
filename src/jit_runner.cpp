@@ -9,6 +9,14 @@
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "standard_runtime.h"
+#include "stdlib_lowering.h"
+#include "stdlib_runtime.h"
+#include "io_runtime.h"
+#include "context_runtime.h"
+#include "math_runtime.h"
+#include "time_runtime_internal.h"
+#include "random_runtime.h"
+#include "context_runtime_internal.h"
 #include "target_layout.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -71,6 +79,14 @@ mlir::LLVM::LLVMFuncOp validate_entry(mlir::ModuleOp module, Diagnostics &diagno
     }
     // Only explicitly registered output, defer, and arena ABIs can be external.
     for (auto function : module.getOps<mlir::LLVM::LLVMFuncOp>()) {
+        if (auto kind = standard_operation(function.getName().str(), standard_runtime_names)) {
+            if (!function.isExternal() ||
+                function.getFunctionType() != standard_runtime_type(*module.getContext(), *kind) ||
+                function.getCConv() != mlir::LLVM::CConv::C ||
+                function.getLinkage() != mlir::LLVM::Linkage::External)
+                execution_error(diagnostics, function.getLoc(), "Invalid standard-library runtime ABI");
+            continue;
+        }
         if (auto kind = arena_operation(function.getName().str(), arena_runtime_names)) {
             if (!function.isExternal() ||
                 function.getFunctionType() != arena_runtime_type(*module.getContext(), *kind) ||
@@ -129,7 +145,7 @@ std::string add_entry_adapter(mlir::ModuleOp module, mlir::LLVM::LLVMFuncOp main
 }
 } // namespace
 
-ExecutionResult JitRunner::run(mlir::ModuleOp module) {
+ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::string> &arguments, const GloinClockSource *clock) {
     auto diagnostics = std::make_shared<Diagnostics>();
     auto failure = [&]() -> ExecutionResult {
         return {std::nullopt, diagnostics, diagnostics->all().back().stage};
@@ -199,12 +215,75 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module) {
             symbols[mangle("gloin_arena_general_destroy")] = llvm::orc::ExecutorSymbolDef(
                 llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_general_destroy),
                 llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_arena_zero_bytes")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_zero_bytes),
+                llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_parse_i32")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_std_parse_i32), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_format_i32")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_std_format_i32), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_input")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_std_input), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_strings_copy")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_strings_copy), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_parse_i64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_parse_i64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_parse_u64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_parse_u64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_parse_f32")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_parse_f32), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_parse_f64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_parse_f64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_parse_bool")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_parse_bool), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_format_i64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_format_i64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_format_u64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_format_u64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_format_f32")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_format_f32), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_format_f64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_format_f64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_format_f32_fixed")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_format_f32_fixed), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_format_f64_fixed")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_format_f64_fixed), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_i64_from_i32")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_i64_from_i32), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_i32_from_i64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_i32_from_i64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_u64_from_i64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_u64_from_i64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_i64_from_u64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_i64_from_u64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_f64_from_i64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_f64_from_i64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_f64_from_u64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_f64_from_u64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_i64_from_f64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_i64_from_f64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_u64_from_f64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_u64_from_f64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_f64_from_f32")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_f64_from_f32), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_std_f32_from_f64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_std_f32_from_f64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_io_standard")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_standard), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_io_open")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_open), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_io_read")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_read), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_io_write")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_write), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_io_flush")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_flush), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_io_close")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_close), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_io_error_message")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_error_message), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_fs_metadata")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_fs_metadata), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_fs_mkdir")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_fs_mkdir), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_fs_remove_file")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_fs_remove_file), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_fs_rename_replace")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_fs_rename_replace), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_process_arg_count")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_process_arg_count), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_process_arg")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_process_arg), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_process_env")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_process_env), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_process_cwd")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_process_cwd), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_math_unary_f32")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_math_unary_f32), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_math_unary_f64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_math_unary_f64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_math_binary_f32")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_math_binary_f32), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_math_binary_f64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_math_binary_f64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_time_monotonic")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_time_monotonic), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_random_splitmix64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_random_splitmix64), llvm::JITSymbolFlags::Exported);
             return symbols;
         });
     }
+    gloin::process::ArgumentsScope scope(arguments);
+    if (!scope.valid()) {
+        execution_error(*diagnostics, main.getLoc(), "Cannot bind program arguments: embedded NUL or allocation failure");
+        return failure();
+    }
+    gloin::time::ClockScope clock_scope(clock);
+    if (!clock_scope.valid()) {
+        execution_error(*diagnostics, main.getLoc(), "Cannot bind clock source: invalid callback or allocation failure");
+        return failure();
+    }
     int32_t value = 0;
-    void *arguments[] = {&value};
-    if (auto error = (*engine)->invokePacked(entry, arguments)) {
+    void *entry_arguments[] = {&value};
+    if (auto error = (*engine)->invokePacked(entry, entry_arguments)) {
         execution_error(*diagnostics, main.getLoc(),
                         "Cannot invoke JIT entry: " + llvm::toString(std::move(error)));
         return failure();

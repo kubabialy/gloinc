@@ -14,7 +14,7 @@ cmake -E env "GLOIN_TEST_CLI=$work_dir/install prefix/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$work_dir/install prefix/share/gloinc/core-fixtures" \
   "GLOIN_TEST_ARENA_RUNTIME=$work_dir/install prefix/lib/libgloin_runtime.dylib" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/installed.xml"
 
 cpack --config "$build_dir/CPackConfig.cmake" -B "$work_dir/packages"
@@ -22,6 +22,10 @@ archives=("$work_dir/packages/"*.tar.gz)
 [[ ${#archives[@]} == 1 && -f "${archives[0]}" ]]
 archive=${archives[0]}
 archive_name=$(basename "$archive" .tar.gz)
+if tar -tzf "$archive" | grep -F '/.DS_Store'; then
+  echo "Package contains Finder metadata" >&2
+  exit 1
+fi
 (cd "$work_dir/packages" && LC_ALL=C shasum -a 256 -c "$(basename "$archive").sha256")
 mkdir "$work_dir/extracted prefix"
 tar -xzf "$archive" -C "$work_dir/extracted prefix"
@@ -30,7 +34,7 @@ cmake -E env "GLOIN_TEST_CLI=$package_root/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$package_root/share/gloinc/core-fixtures" \
   "GLOIN_TEST_ARENA_RUNTIME=$package_root/lib/libgloin_runtime.dylib" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/extracted.xml"
 program_status=0
 result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/core_counter.gloin") || program_status=$?
@@ -39,7 +43,14 @@ result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/hello_w
 [[ "$result" == 'Hello World!' ]]
 result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/arena_lab.gloin")
 [[ "$result" == 'arena lab: ok' ]]
-[[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" ]]
+result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/module_lab.gloin")
+[[ "$result" == 'module lab: ok' ]]
+[[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" && -f "$package_root/include/gloin/stdlib_runtime.h" && -f "$package_root/include/gloin/io_runtime.h" && -f "$package_root/include/gloin/context_runtime.h" && -f "$package_root/include/gloin/math_runtime.h" && -f "$package_root/include/gloin/time_runtime.h" && -f "$package_root/include/gloin/random_runtime.h" ]]
+[[ -f "$package_root/share/doc/gloinc/third_party/fast_float/LICENSE-MIT" && -f "$package_root/share/doc/gloinc/third_party/fast_float/README.md" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/site/0.0.1/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
+"$package_root/bin/gloinc" --emit-exe -o "$work_dir/extracted prefix/native-hello" \
+  "$package_root/share/gloinc/examples/hello_world.gloin"
+[[ "$("$work_dir/extracted prefix/native-hello")" == 'Hello World!' ]]
 # A relocated compiler must depend on its installed module, never a source fallback.
 mv "$package_root/share/gloinc/stdlib/std.gloin" "$work_dir/std.gloin.saved"
 module_status=0
@@ -61,4 +72,4 @@ if grep -F "$build_dir" "$report_dir/dependencies.txt"; then
   exit 1
 fi
 cp "$archive" "$archive.sha256" "$report_dir/"
-echo "Installed and extracted packages passed all CLI/arena/defer/method/pointer/struct/standard-output/source acceptance cases."
+echo "Installed and extracted packages passed all CLI/standard-library/module/arena/defer/method/pointer/struct/standard-output/source acceptance cases."

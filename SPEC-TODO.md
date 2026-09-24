@@ -2,9 +2,9 @@
 
 This is the implementation backlog for [SPEC.md](SPEC.md), based on the architecture audit of `mlir` at `8e25383` on 2026-09-07. Work through the numbered items in order. Each item has a stable ID so we can discuss, implement, and verify it separately.
 
-**Next item: SPEC-029 (local modules and exported symbols).** SPEC-001 through SPEC-028 are complete. Deferred features resume after the selected first release, as specified below. Completed items have verification evidence in the completion log.
+**Next item: SPEC-046 (0.0.1 release verification).** SPEC-001 through SPEC-030, SPEC-030a through SPEC-030h, and SPEC-045 are implemented. SPEC-013b remains deferred. The pre-generics library expansion is verified; see the [standard-library roadmap](docs/standard-library-roadmap.md). SPEC-031 follows the release gate. Completed items have verification evidence in the completion log.
 
-The first milestone is a reproducible build. SPEC-006 selects the first release as the scalar core with an in-process JIT on Apple Silicon macOS. SPEC-021 is its executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-029 through SPEC-045 and SPEC-013b are deferred from that release, with explicit unsupported-feature diagnostics required in the core. Their implementation work remains open.
+The first milestone is a reproducible build. SPEC-006 selected a scalar JIT core on Apple Silicon macOS; subsequent completed work expands version 0.0.1 through SPEC-030h and includes SPEC-045 native output. SPEC-021 is the original executable acceptance milestone; SPEC-046 remains the packaging/release gate. SPEC-031 through SPEC-044 and SPEC-013b remain deferred, with unsupported-feature diagnostics required in the core.
 
 ## How to use this checklist
 
@@ -188,13 +188,72 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
   **Implemented:** `stdlib/arena.gloin` defines `GeneralArena` lifecycle and allocation policies. Resolved typed allocation bridges pass native size/alignment and store initialized values only on success. The LLVM-independent native runtime uses stable aligned blocks, checked arithmetic, lazy growth, retained reset storage, and explicit destruction. JIT ABI validation and symbol registration, external shared-runtime execution, installed static/shared libraries and C header, and the runnable `examples/arena_lab.gloin` are included. Other module types retain their own ordinary method behavior.
   **Verified:** 21 source/compiler arena cases and nine native runtime cases pass. A fresh Release build passes **559/559 required checks** and **602/606 full-suite checks**, retaining only the four SPEC-040/041 failures. A fresh ASan/UBSan build passes **559/559 required checks**, including instrumented native runtime and external execution. Installed and relocated packages each pass **265/265 checks**. One million particles over two reset cycles pass under a 2 MiB stack. See the verification record below.
 
-- [ ] **SPEC-029 — Implement local modules and exported symbols.**
+- [x] **SPEC-029 — Implement local modules and exported symbols.**
   Define module-relative paths, exported/private declarations, duplicate imports, cycles, and initialization rules. Load and check dependencies once and resolve qualified calls across files.
   **Done when:** the `utils.calculate` example works from a different working directory; missing files/symbols, illegal private access, and unsupported import cycles produce deterministic diagnostics.
+  **Implemented:** source-relative paths with optional `.gloin` extensions feed a canonical dependency graph shared with standard imports. Files retain isolated imports/private declarations, public functions/structs/constants, one nominal type identity per file, and unique emitted definitions. Duplicate files/namespaces, symlink cycles, excessive depth, runtime globals, and illegal access produce located diagnostics. Only the root supplies the entry point; imports perform no runtime initialization. Standard-file identity controls native primitives and the arena bridge. The [module guide](docs/modules.md) and [multi-file example](examples/module_lab.gloin) document and exercise the contract.
+  **Verified:** all 25 module tests and 139 source acceptance tests pass. Fresh Release and ASan/UBSan builds each pass **587/587 required checks**. The full Release suite passes **630/634 checks**, with only the four existing SPEC-040/041 failures. Installed and relocated packages each pass **293/293 checks**. See the verification record below.
 
-- [ ] **SPEC-030 — Complete the documented basic standard-library functions.**
+- [x] **SPEC-030 — Complete the documented basic standard-library functions.**
   Implement `std.input`, `std.to_int`, and `std.to_string`; define EOF, invalid input, overflow, formatting, allocation, and returned-string ownership. Reconcile examples that pass numeric values directly to printing functions.
   **Done when:** the standard-library examples run with asserted output and input fixtures; conversion/EOF failures follow the specified API; allocations have a defined cleanup path.
+  **Implemented:** `std.gloin` defines bounded `input(&memory, max_bytes)`, strict decimal `to_int(string)`, and arena-backed `to_string(&memory, i32)`. Public result structs distinguish EOF, malformed text, overflow, I/O failure, line limits, and input allocation failure. Returned strings borrow caller-owned arena storage; formatting allocation traps on failure. GeneralArena byte allocations initialize all requested bytes to zero. Native ABIs use scalar/output-pointer calls, exact JIT validation, isolated symbols, and installed static/shared runtimes and headers. The [guide](docs/standard-library.md), [interactive example](examples/standard_library.gloin), and normative examples document ownership and explicit output.
+  **Verified:** 24 compiler/API cases and 15 native runtime cases pass. Fresh Release and ASan/UBSan builds each pass **629/629 required checks**; the full Release suite passes **672/676**, retaining only the four SPEC-040/041 failures. Installed and relocated packages each pass **320/320 checks**. The large multi-file compiler lab also passes its independent checks, small-stack workloads, fault injections, and external LLVM execution. See the verification record below.
+
+### Standard-library expansion before generics
+
+These new tasks extend the completed SPEC-030 without changing its acceptance
+record. The [roadmap](docs/standard-library-roadmap.md) defines proposed scope,
+ownership/error conventions, dependencies, and exclusions. Finalize each API in
+SPEC.md before implementing it; the roadmap does not declare new features supported.
+
+- [x] **SPEC-030a — Byte-string foundations and shared status conventions.**
+  Add counted-byte queries, checked access/slicing, comparison/search, ASCII trimming, and explicit arena copies in `strings.gloin`, with shared statuses in `status.gloin`.
+  **Done when:** a configuration-line parser works using borrowed slices; boundaries, NUL, arbitrary bytes, search failures, allocation failure, and copied-string lifetimes are verified.
+  **Implemented:** `strings.gloin` provides 14 documented functions for byte length/access, checked borrowed slices, unsigned comparison/equality, first-match search, ASCII trimming, and fallible arena copies. Dependency-free `status.gloin` preserves existing std status aliases and adds OUT_OF_RANGE. Public algorithms stay in Gloin; four module-private primitives provide guarded descriptor/byte operations and native copying. Every function documents examples, ownership, errors, and time/allocation costs in source and the [guide](docs/strings.md). The [configuration example](examples/strings_lab.gloin) exercises independent retention and repeated scratch reuse.
+  **Verified:** 18 compiler/API tests and two additional native copy tests pass. Release and ASan/UBSan builds each pass **649/649 required checks**; the full Release suite passes **692/696**, retaining only the four SPEC-040/041 failures. Installed and relocated packages each pass **338/338 checks**. Both guide programs execute verbatim, external LLVM execution passes, and one million configuration parse/copy/reset iterations pass with a 2 MiB stack. See the verification record below.
+
+- [x] **SPEC-030b — String traversal and construction.**
+  Add concrete split/line cursors, bounded arena text transformations, and a fixed-capacity StringBuilder with explicit copy-out and aliasing rules.
+  **Done when:** tokenization and repeated construction handle empty tokens, line endings, capacity/size failures, and builder reuse without corrupting retained output.
+  **Implemented:** `strings.gloin` adds borrowed SplitCursor/LineCursor types, five explicitly bounded transformations, and StringBuilder with shared arena-owned metadata, fixed capacity, allocation-free atomic appends/clear, and independent snapshots. All 16 new public functions/methods document usage, ownership, failure effects, and time/allocation costs in source and the [guide](docs/text-construction.md). Three guarded module-private primitives supply buffer views/stores/writes using the existing native copy ABI. The [report example](examples/text_lab.gloin) composes the APIs with scratch reuse and retained output.
+  **Verified:** 17 new compiler/API tests pass, including all byte values, independent cursor/replacement oracles, both construction allocation failures, snapshot failure, alias consistency, capacity/size boundaries, private primitive guards, guide programs, and external LLVM execution. Release and ASan/UBSan builds each pass **666/666 required checks**; the full Release suite passes **709/713**, retaining only the four SPEC-040/041 failures. Installed and relocated packages each pass **355/355 checks**. A million composed text-processing iterations pass with a 2 MiB stack. See the verification record below.
+
+- [x] **SPEC-030c — Numeric parsing, formatting, and explicit conversions.**
+  Add concrete wide-integer, float, and boolean parse/format APIs and a documented checked numeric conversion matrix. Preserve SPEC-030 compatibility and finite-float rules.
+  **Done when:** boundary and round-trip tests cover grammar, locale independence, precision/rounding, allocation failure, and explicit integer-to-float conversion in a real program.
+  **Implemented:** 29 ordinary `std.gloin` functions add six concrete parsers, eight formatters, and fifteen named checked conversions. Numeric text is locale independent, direct-width float parsing preserves signed zero and subnormals, and recoverable range/precision failures have defined zero payloads. New INEXACT/UNDERFLOW statuses extend stable shared codes. Numeric formatting uses caller-supplied arenas with explicit fixed requests; boolean formatting is static. Narrow private typed primitives share exact validated native ABIs across JIT/external execution. Pinned MIT-licensed fast_float headers supply allocation-free parsing without a build-time download. Every API documents usage, ownership, failures, rounding, and cost in source and the [guide](docs/numbers.md); [numbers_lab.gloin](examples/numbers_lab.gloin) computes a streaming mean with bounded scratch reuse.
+  **Verified:** All 28 new numeric tests pass (12 compiler/API, 16 independent native runtime). Release and ASan/UBSan each pass **694/694 required checks**; the full Release suite passes **737/741**, retaining only the same four SPEC-040/041 failures. Installed and relocated packages each pass **367/367 checks**, including verbatim guide programs, the example, and external LLVM execution. One million composed numeric iterations pass with a 2 MiB stack. See the verification record below.
+
+- [x] **SPEC-030d — Streams and file I/O.**
+  Add borrowed standard streams, owned files, explicit open modes, bounded arena reads, counted writes, flush/close, and recoverable errors in `io.gloin`.
+  **Done when:** a bounded-memory copier and line filter pass binary/empty/error fixtures, including injected partial I/O and flush/close failures, with resource cleanup verified.
+  **Implemented:** [io.gloin](stdlib/io.gloin) adds 26 documented functions/methods: borrowed standard streams, explicit read/exclusive-create/truncate/append file opens, shared arena-owned close state, bounded line/chunk/all reads, counted write/write_all/write_line, flush/close, handle queries, and separately allocated OS messages. Concrete results preserve defined progress and errno. File copies and borrowed streams observe alias close, even on failure; metadata allocation precedes destructive open operations. Owned files are unbuffered; standard buffering is preserved. Seven typed native primitives and a guarded string-view primitive keep public policy in Gloin. The line reader is shared with unchanged std.input. Broken pipes return recoverable EPIPE while preserving prior signal state. Every API documents examples, ownership, failures, and costs in source and the [guide](docs/io.md). The [copier](examples/io_copy.gloin) and [filter](examples/io_filter.gloin) compose existing features with explicit cleanup.
+  **Verified:** All **29 new tests** pass (15 compiler/API, 14 independent native). Release and ASan/UBSan each pass **723/723 required checks**; the full Release suite passes **766/770**, retaining only the four SPEC-040/041 failures. Installed and relocated packages each pass **382/382 checks**. Tests inject partial read/write progress, zero-progress writes, permission errors, flush/close failures, allocation failures, and failed-close alias invalidation. A million-line filter and 4 MB binary copy pass with a 2 MiB stack. See the verification record below.
+
+- [x] **SPEC-030e — Paths, filesystem operations, and process context.**
+  Add a small `fs.gloin` API and `process.gloin` argument/environment access with explicit arena storage; specify CLI forwarding and embedding behavior.
+  **Done when:** a tool accepts paths and options independently of its working directory, preserves missing/empty/error distinctions, and runs from installed and relocated packages.
+  **Implemented:** [fs.gloin](stdlib/fs.gloin) adds seven documented functions for borrowed lexical basename/dirname, bounded arena join, symlink-aware metadata, mkdir, file/symlink removal, and explicit replacement rename. [process.gloin](stdlib/process.gloin) adds argument count, checked arena copies of arguments/environment values, and bounded cwd. CLI forwarding uses `FILE -- ARG...`, with the source filename at argument zero; JIT invocation-owned, thread-local snapshots restore enclosing contexts. The installed C host API supports nested argument scopes. Eight typed native operations and one guarded view primitive retain public policy in Gloin. Every API documents usage, ownership, errors, and costs in source and the [guide](docs/filesystem-process.md); [file_tool.gloin](examples/file_tool.gloin) composes paths, environment labels, binary I/O, and explicit cleanup.
+  **Verified:** All **23 new tests** pass (14 compiler/API, nine independent native). Release passes **746/746 required checks**; all **746 sanitizer checks** pass after an isolated retry of one existing string test affected by timeout/process supervision. The full Release suite passes **789/793**, retaining only the four SPEC-040/041 failures. Installed and relocated packages each pass **396/396 checks**, including the tool from another working directory. See the verification record below for timeout details.
+
+- [x] **SPEC-030f — Concrete numerical utilities.**
+  Add typed min/max/clamp/abs, constants, rounding, and common finite floating math functions in `math.gloin`, with explicit domain/range failures.
+  **Done when:** geometry and statistics examples pass independent numeric checks, documented tolerances, and boundary/error tests.
+  **Implemented:** [math.gloin](stdlib/math.gloin) adds 47 documented concrete functions and four typed pi/tau constants: min/max/clamp for i32/i64/u64/f32/f64, signed/float absolute value, float rounding with ties away from zero, and sqrt/pow/exp/log/log10/sin/cos/tan/atan2/hypot at both float widths. Concrete results preserve finite values and explicit INVALID/OVERFLOW/UNDERFLOW failures with zero payloads. Signed zero, 0**0, subnormals, bounds, and host accuracy are specified. Simple policy remains Gloin; four canonical-module-only native ABIs call width-specific host math while restoring caller errno and floating environment. Every API documents examples, failures, and costs in source and the [guide](docs/math.md). [math_lab.gloin](examples/math_lab.gloin) combines streaming coordinates, stable hypot, atan2, Welford statistics, checked conversion/formatting, and bounded scratch reuse. Ordinary unary negation in typed initializers was already supported and now has an explicit regression.
+  **Verified:** All **24 new tests** pass (12 compiler/API, 12 independent native). Release and ASan/UBSan each pass **770/770 required checks**; the full Release suite passes **813/817**, retaining only the four SPEC-040/041 failures. Installed and relocated packages each pass **408/408 checks**. One million geometry/statistics records pass with a 2 MiB stack. See the verification record below.
+
+- [x] **SPEC-030g — Monotonic timing and seeded randomness.**
+  Add explicit-unit clock/duration APIs in `time.gloin` and a concrete deterministic PRNG in `random.gloin`, including narrowly specified runtime operations where necessary.
+  **Done when:** clock tests use controlled inputs, published PRNG vectors reproduce, bounded sampling respects its contract, and a seeded simulation uses the public APIs.
+  **Implemented:** [time.gloin](stdlib/time.gloin) provides monotonic readings, explicit nanosecond durations, checked arithmetic, and unit conversions. [random.gloin](stdlib/random.gloin) provides versioned SplitMix64 value state, unbiased bounded sampling, and exact 53-bit unit floats, without global state or implicit seeding. All 13 APIs document usage, failure, ownership, and cost in source and the [guide](docs/time-random.md). Two canonical-module-only native operations support source policy; JIT/native hosts can inject scoped clocks. [simulation_lab.gloin](examples/simulation_lab.gloin) combines seeded inputs, math, CLI parameters, timing, explicit formatting storage, and checked output.
+  **Verified:** All **28 new tests** pass (15 compiler/API, 13 independent native). Release and ASan/UBSan each pass **798/798 required checks**; the full Release suite passes **841/845**, retaining only the four SPEC-040/041 failures. Installed and relocated packages each pass **423/423 checks**. A million-sample simulation with a 2 MiB stack matches an independent integer oracle. See the verification record below for initial Release timeout details and final isolated results.
+
+- [x] **SPEC-030h — Integrated pre-generics library acceptance.**
+  Deliver a configuration reader, streaming delimited-data statistics tool, and numerical simulation composing the public modules.
+  **Done when:** examples assert results and failure behavior; long runs verify bounded memory/resource cleanup; relevant sanitizer, JIT/external, and installed/relocated checks pass with evidence recorded. Only then resume SPEC-031.
+  **Implemented:** [config_reader.gloin](examples/config_reader.gloin) validates bounded key/value input, borrows line slices, and copies retained labels into an explicit owner. [statistics_tool.gloin](examples/statistics_tool.gloin) streams 1–16 selected numeric columns through concrete linked accumulators, checks count/min/max/mean, and creates a new report only after successful input validation/close. [simulation_lab.gloin](examples/simulation_lab.gloin) exports an explicit seed/count entry for composition with configuration. Both sample inputs ship with packages. The [guide](docs/integrated-examples.md) documents formats, ownership, costs, bounds, errors, and side effects. Internal scoped allocator instrumentation counts actual backing blocks and injects failures without adding a language primitive.
+  **Verified:** All **19 new tests** pass (17 integrated, two native). Release and ASan/UBSan each pass **817/817 required checks**; the full suite passes **860/864**, with the same four SPEC-040/041 failures. Installed and relocated packages each pass **440/440 checks**. Long streams use two backing blocks with peak arena storage below 140 KB, return with zero live arena allocations, and preserve descriptor counts. A checked-in stress script validates million-line/record/sample runs under a 2 MiB stack and rejects one-over-limit inputs. See the verification record below.
 
 ## 6. Resolve and implement the remaining type/syntax features
 
@@ -258,15 +317,15 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 
 ## 8. Validate and package the chosen release
 
-- [ ] **SPEC-045 — Implement native output if included in the release scope.**
+- [x] **SPEC-045 — Implement native output for Apple Silicon macOS.**
   Add LLVM export, target selection/data layout, object emission, runtime linkage, and executable generation through the shared compiler pipeline. Define the supported host/target matrix and diagnostic behavior for unsupported combinations.
-  **Done when:** the selected native targets compile and run fixture programs without the JIT, with results matching the reference execution mode. If SPEC-006 selects a JIT-only first release, mark native output explicitly deferred and keep its implementation work open.
-  **SPEC-006 disposition:** native object/executable output and additional host/target platforms are explicitly deferred from the first release. This implementation item stays open; the in-process JIT is the required execution mode.
+  **Done when:** the selected native targets compile and run fixture programs without the JIT, with results matching the reference execution mode.
+  **Implemented:** `--emit-object -o PATH` and `--emit-exe -o PATH` use verified LLVM-dialect lowering, LLVM IR export, the host target machine, Mach-O arm64 emission, and static runtime linkage through pinned clang++. Native entry binds process arguments and retains `main() -> i32` exit semantics. Output replaces the destination only after success. 0.0.1 supports Apple Silicon macOS only; cross-compilation and other hosts receive diagnostics.
 
 - [ ] **SPEC-046 — Verify specification coverage and prepare the release.**
   Turn normative spec examples into complete executable or expected-error fixtures. Clearly identify conceptual examples and external dependencies. Finish installation/packaging, version/help information, platform setup instructions, and a feature matrix linked to acceptance tests.
   **Done when:** a fresh checkout can build/test/install by following the README; all tests required by the chosen release scope pass; every advertised feature has end-to-end evidence; remaining unsupported features are documented and rejected. Record serial/parallel results and applicable runtime sanitizer checks. No temporary audit patch, cached old binary, or machine-specific path is required.
-  **SPEC-006 scope:** publish only after SPEC-001 through SPEC-021 and this release gate are verified for the scalar JIT contract. Deferred tasks need not be complete, but their unsupported behavior must be diagnosed. Report targeted core acceptance separately from the unfiltered suite, retaining every unresolved failure and its task ID.
+  **0.0.1 scope:** publish after SPEC-001 through SPEC-030, SPEC-030a through SPEC-030h, SPEC-045, and this release gate are verified on Apple Silicon macOS. SPEC-013b and other deferred tasks need not be complete, but their unsupported behavior must be diagnosed. Report targeted core acceptance separately from the unfiltered suite, retaining every unresolved failure and its task ID.
   **Local verification:** the Release and ASan/UBSan Debug builds pass 424 core checks; installed and extracted packages each pass 141 CLI/source cases. Version 0.0.1, installation, CPack archive/checksum generation, dependencies, usage, and the acceptance matrix are documented. Full Release runs retain 463/470 passes and the same seven deferred-feature failures. Fresh-checkout hosted release checks are pending before completing this gate.
 
 ### Deferred numeric extension
@@ -280,11 +339,12 @@ These measurements used Apple Silicon, AppleClang 16, LLVM/MLIR 21.1.6, and CMak
 | Specification area | Checklist items |
 | --- | --- |
 | UTF-8, declarations, explicit typing, entry point | SPEC-006 through SPEC-014, SPEC-020 |
-| Variables, constants, numeric types | SPEC-012, SPEC-013, SPEC-013b |
+| Variables, constants, numeric types | SPEC-012, SPEC-013, SPEC-013b, SPEC-030c |
 | Functions and operators | SPEC-011, SPEC-013 through SPEC-015 |
 | If, unless, while, for | SPEC-016, SPEC-017, SPEC-036 |
-| Strings | SPEC-022, SPEC-030, SPEC-035 |
-| Standard/local/external imports | SPEC-023, SPEC-029, SPEC-030, SPEC-044 |
+| Strings | SPEC-022, SPEC-030, SPEC-030a, SPEC-030b, SPEC-035 |
+| Standard/local/external imports | SPEC-023, SPEC-029, SPEC-030, SPEC-030a, SPEC-044 |
+| Streams, files, paths, and process context | SPEC-030d, SPEC-030e |
 | Pointers, references, arenas, defer | SPEC-024 through SPEC-028 |
 | Structs, methods, enums | SPEC-024, SPEC-026, SPEC-031 through SPEC-034 |
 | Endianness and packed bitfields | SPEC-037 through SPEC-039 |
@@ -320,6 +380,589 @@ For each completed item, add its date, a short outcome, relevant repository path
 | SPEC-020 | 2026-09-17 | Replaces hardcoded lexer input with file-reading run/check/IR commands using the shared compiler and JIT. Documents full i32 stdout results, separate exit statuses/diagnostics, standalone help/version, source locations, and process-terminating traps. All **16 CLI tests and 261 focused tests pass**, including the runnable repository counter example. Incremental Debug build succeeds; serial/parallel suites report **338/345 passes**, the same seven deferred-language failures, and no unexpected test-process crashes/skips. |
 | SPEC-021 | 2026-09-22 | Adds 125 source-file fixtures (28 successful, 83 rejected, 14 traps), a shared CLI process fixture, and a separate core CI gate. All **161 focused tests pass** from fresh local and hosted builds. Both CI build configurations pass; the compiler-only example returns 42. Full local/CI serial and parallel suites agree on **463/470 passes**, seven unchanged deferred-feature failures, and no unexpected test-process crashes/skips. README examples execute successfully; usage instructions and a feature-to-fixture matrix are documented. [Hosted evidence](https://github.com/kubabialy/gloinc/actions/runs/35736970025). |
 | SPEC-022 | 2026-09-22 | Adds canonical checked `string` support across parsing, semantic type identities, constants, function signatures, local storage, and MLIR/LLVM code generation. String literals decode `\\`, quotes, control escapes, and `\\0`; lengths count UTF-8 bytes and embedded NULs; globals include a private terminator without counting it; identical literals share one global. Targeted string tests pass, including empty, escaped/non-ASCII/NUL bytes, checked signatures, and reuse. The full CTest run reports **469/474 passes**, with the five existing deferred-feature failures and no new string-related failures; the inventory increased by two maintained string regressions. |
+
+### SPEC-045 and expanded 0.0.1 release-candidate verification
+
+On 2026-09-24, Apple Silicon macOS with LLVM/MLIR 21.1.6 produced Mach-O
+arm64 objects and standalone executables through [native output](src/native_output.cpp).
+The compiler and [CLI guide](docs/cli.md) expose `--emit-object -o PATH` and
+`--emit-exe -o PATH`; the native entry binds process arguments, and the executable
+links [the static runtime](src/context_runtime.cpp). An object linked manually
+with the pinned `clang++` returned 42, while a standalone hello-world printed
+exactly `Hello World!`. `otool -L` showed only macOS system libraries for that
+executable. Three new CLI cases cover output formats, native arguments,
+module/arena linkage, collision diagnostics, usage errors, and failed-output
+preservation.
+
+The Release `check-core` gate passed **820/820** tests. The full serial and
+parallel JUnit reports each show **863/867** passes with exactly the four
+documented deferred concurrency failures and no skips; the
+[exact-failure audit](scripts/check-full-suite.py) accepts both reports. A fresh
+ASan/UBSan Debug build passed **820/820** required checks, including native
+executable linking with its own instrumented runtime. The release CI repeats
+these checks from a fresh checkout. Hosted results and publication are recorded
+when SPEC-046 is completed.
+
+### SPEC-030h verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+
+```sh
+ctest --test-dir /tmp/gloinc-spec030-fresh -j2 \
+  -R '^(IntegratedExamplesTest|ArenaRuntimeTest|TimeRandomLibraryTest)\.' \
+  --output-on-failure --output-junit /tmp/gloinc-spec030h-focused.xml
+cmake --build /tmp/gloinc-spec030-fresh --target check-core
+ctest --test-dir /tmp/gloinc-spec030-fresh -j4 --output-on-failure \
+  --output-junit /tmp/gloinc-spec030h-full.xml
+bash scripts/check-package.sh /tmp/gloinc-spec030-fresh /tmp/gloinc-spec030h-package
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec030-sanitize --target check-core
+cmake --build build --target gloinc -j2
+python3 scripts/check-integrated-examples.py build/gloinc
+```
+
+Results: **43/43 focused checks**, including all **19 new tests** (17 integrated
+and two native allocator-scope cases); **817/817 required Release checks**;
+**817/817 required ASan/UBSan checks**; **860/864 full-suite passes**; and
+**440/440 installed and relocated checks each**. The only failures remain
+`CodeGenTest.GenerateSpawn`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-040/041).
+No test was disabled, no assertion weakened, and no timeout increased. An initial
+external-runner fixture reused a redirect file without truncation; unique capture
+paths fixed the fixture, and all three externally executed examples pass.
+
+The configuration reader covers required/unknown/duplicate/missing keys, line and
+label bounds, decimal overflow, NUL, UTF-8 labels, CRLF/unterminated lines, and
+retained string copies after scratch destruction. The statistics tool checks
+multiple columns in requested order, exact field/selection/line/magnitude bounds,
+malformed rows, uniform width, existing destination/input preservation, and an
+independent integer-sum oracle over 1000 varied records. A composed program loads
+configuration and passes its seed/count to the simulation. All three examples
+execute through the CLI/JIT and external LLVM runner, including installed and
+relocated files/runtime. Existing injected-clock and PRNG oracle tests still pass.
+
+A native thread-local `AllocatorScope` selects backing callbacks for newly created
+arenas during embedded tests; existing arenas retain their allocator/context.
+Two native tests verify nested restoration, retained context, allocation failure,
+and thread isolation. This internal host facility adds no Gloin primitive or
+public installed ABI. Instrumented whole-program runs require **zero live arena
+allocations** and unchanged **file-descriptor counts** on success and failure.
+Backing block failure, repeated invalid input, stdout/report write, flush, close,
+and simulated clock failures exercise cleanup. Close-failure injection consumes
+the actual resource before returning failure, so cleanup checks remain meaningful.
+
+The 100,000-record statistics run and 100,000-comment configuration run each use
+**two native backing blocks**, with peak arena storage **below 140,000 bytes**
+and a hard **512 KiB test allocator budget**. Small and large simulations retain
+identical arena backing peaks. Counts cover program arenas/descriptors, not LLVM
+or compiler allocations. Address/undefined instrumentation covers both static and
+shared arena runtime implementations; prebuilt LLVM and JIT machine code retain
+the limitations in [release.md](docs/release.md). Captured sanitizer output has
+no ASan/UBSan findings. The sanitizer gate ran without competing builds/tests.
+
+The checked-in [stress script](scripts/check-integrated-examples.py) compiles and
+runs all three programs with a **2 MiB stack**. It accepts exactly **1,000,000**
+configuration lines and statistics records, rejects **1,000,001**, and checks
+that rejected statistics input does not create a report. The retained config
+label survives scratch reuse. A million simulation samples match the independent
+integer oracle: **785115 circle hits**, **3503215 dice sum**, **3.140460 pi**,
+and **0.001133 absolute error**. Temporary inputs/reports are cleaned up. This is
+correctness/stack evidence, not a controlled performance benchmark.
+
+Source definitions, the documented suite inventory, and CTest discovery agree on
+**864 tests**. C++ formatting, Python syntax, shell syntax, local documentation
+links, and `git diff --check` pass. The normal local compiler is rebuilt. The
+final CPack archive/checksum include all three examples, both sample data files,
+the integration guide, and this completion record.
+
+Logs: `/tmp/gloinc-spec030h-{build,final-build,focused,core,full,package,sanitize-build,sanitize-refresh,sanitize-core,local-build,stress}.log`.
+Reports/archive/checksum: `/tmp/gloinc-spec030h-package`; full JUnit report:
+`/tmp/gloinc-spec030h-full.xml`; required reports are `core.xml` in each build.
+SPEC-030a through SPEC-030h are complete; SPEC-031 is next.
+
+### SPEC-030g verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+
+```sh
+cmake --build /tmp/gloinc-spec030-fresh --target check-core
+ctest --test-dir /tmp/gloinc-spec030-fresh -j4 --output-on-failure \
+  --output-junit /tmp/gloinc-spec030g-full.xml
+bash scripts/check-package.sh /tmp/gloinc-spec030-fresh /tmp/gloinc-spec030g-package
+cmake --build build --target gloinc -j2
+python3 /tmp/gloinc-spec030g-stress.py
+cmake --build /tmp/gloinc-spec030-sanitize --target check-core -j2
+build/gloinc examples/simulation_lab.gloin -- 42 1000
+```
+
+Results: all **28 new tests** pass (15 compiler/API and 13 native),
+**798/798 required Release checks**, **798/798 required ASan/UBSan checks**,
+**841/845 full-suite passes**, and **423/423 installed and relocated checks each**.
+The only full-suite failures remain `CodeGenTest.GenerateSpawn`,
+`AsyncTest.DeferredFunctionGeneration`, `AsyncTest.SpawnGeneration`, and
+`SemaAsyncTest.AsyncTypes` (SPEC-040/041).
+
+The first Release gate overlapped a local compiler build and timed out in four
+cases: `NumericTest.FloatBitPatternsSurviveExternalExecution`,
+`OperatorsTest.FloatingRoundingSubnormalsAndSignedZeroPreserveExactBits`,
+`TimeRandomLibraryTest.PackagedSimulationHasReproducibleInputsAndCheckedCliBounds`,
+and `ModuleTest.PrivateFunctionsStructsFieldsAndMethodsStayInTheirFile`. The
+isolated rerun passed all 798 cases in 20.50 seconds; the subsequent full suite
+also passed those cases. No timeout or assertion was relaxed. An initial focused
+fixture needed an explicit u64 binding around its private primitive result; it
+passes in both final gates. Sanitizer validation ran after package/stress work,
+without concurrent builds. Its captured test output contains no ASan/UBSan
+findings. Both static/shared timing and random runtimes have address/undefined
+instrumentation; prebuilt LLVM and JIT machine code retain the limitations in
+[release.md](docs/release.md).
+
+All nine time functions/methods and four random methods have documented examples,
+failure rules, ownership, and costs. Tests cover exact duration limits, backwards
+and equal instants, preserved errno, normalized callback failures, nested scope
+restoration, descriptor copying, borrowed userdata, invalid/foreign-thread pops,
+and concurrent providers. PRNG coverage includes four published seed sequences,
+state copies/counter wrap, zero/MAX word outputs, rejection sampling and invalid
+bounds without advancement, and both 53-bit unit-float endpoints. Module privacy,
+replaceable source policy, malformed ABIs, and external LLVM execution are checked.
+Both guide programs execute verbatim; the complete simulation reports exactly
+5,000,000 ns when run through the JIT with its injected clock.
+
+The normal `build/gloinc` successfully compiles and executes one million samples
+with a **2 MiB stack**. An independent Python oracle uses exact integer squared
+53-bit mantissas for circle membership and obtains **785115 inside** and
+**3503215 dice sum**, matching the Gloin program. Its pi/error reports are
+**3.140460 / 0.001133**. The loop has constant storage and no per-sample allocation;
+output formatting uses an explicit arena. Reported elapsed time excludes compiler,
+argument parsing, formatting, and output work. This is correctness/stress evidence,
+not a controlled performance benchmark.
+
+Maintained source and CTest discovery agree on **845 tests**. Both new public
+native headers compile as C11. C++ formatting, shell syntax, local guide links,
+and `git diff --check` pass. The local compiler is rebuilt. The final CPack
+archive/checksum include both modules, both ABI headers, the simulation, guide,
+and this completion record.
+
+Logs: `/tmp/gloinc-spec030g-{refresh,focused,core,core-isolated,full,sanitize-build,sanitize-core,package,local-build,stress}.log`.
+Reports/archive/checksum: `/tmp/gloinc-spec030g-package`; full JUnit report:
+`/tmp/gloinc-spec030g-full.xml`; required JUnit reports are `core.xml` in each
+build directory. SPEC-030h is next; generics remain deferred.
+
+### SPEC-030f verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+
+```sh
+ctest --test-dir /tmp/gloinc-spec030-fresh -j2 \
+  -R '^Math(Library|Runtime)Test\.' --output-on-failure \
+  --output-junit /tmp/gloinc-spec030f-focused.xml
+cmake --build /tmp/gloinc-spec030-fresh --target check-core -j3
+ctest --test-dir /tmp/gloinc-spec030-fresh -j4 --output-on-failure \
+  --output-junit /tmp/gloinc-spec030f-full.xml
+bash scripts/check-package.sh /tmp/gloinc-spec030-fresh /tmp/gloinc-spec030f-package
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec030-sanitize --target check-core -j3
+cmake --build build --target gloinc -j2
+printf '3,4\n0,0\n6,8\n' | build/gloinc examples/math_lab.gloin
+```
+
+Results: **24/24 focused math tests**, **770/770 required Release checks**,
+**770/770 required ASan/UBSan checks**, **813/817 full-suite passes**, and
+**408/408 installed and relocated checks each**. The only failures remain
+`CodeGenTest.GenerateSpawn`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-040/041).
+The sanitizer gate ran after package verification, without concurrent builds.
+No new sanitizer diagnostics were reported. Both static/shared math runtimes
+have address/undefined instrumentation; prebuilt LLVM and JIT machine code retain
+the limitations documented in [release.md](docs/release.md).
+
+All 47 functions and four constants execute through the public module. Coverage
+includes every float width and native selector; signed integer minima; clamp
+bounds and zero ties; halfway rounding neighbors and large integral floats;
+independent decimal math references (4 scaled machine epsilons) and numerical
+identities (16 scaled epsilons); domain/nonfinite input; signed-zero axes; powers
+at the smallest subnormal; zero underflow versus successful subnormals; stable
+hypot at extreme magnitudes; errno/rounding/exception preservation; and concurrent
+host environments. Compiler tests check signatures, canonical module privacy,
+replaceable source behavior, symbol collisions, malformed ABIs, external LLVM
+execution, unary-negation initializers, and the verbatim guide/example programs.
+A generated fixture initially used integer zero in a float comparison; correcting
+it to 0.0 made the intended assertion valid without changing language conversion rules.
+
+The streaming example independently checks radii 5/0/10: mean 5, population
+standard deviation 4.082 (three-place formatting), and final bearing 0.927 radians.
+A separate **one-million-record** run with **2 MiB stack** checks count 1000000,
+min/max/mean 5, standard deviation 0, and bearing 0.927. It completed in **3.440 s
+including compilation** (stress evidence, not a controlled performance comparison).
+The bounded input was generated and checked by `/tmp/gloin-math-stress.py`;
+results are in `/tmp/gloinc-spec030f-stress.log`.
+
+Maintained source and CTest discovery agree on **817 tests**. All public function
+comments have examples and allocation/cost contracts; relative documentation links,
+targeted C++ formatting, shell syntax, and `git diff --check` pass. The normal CLI
+is refreshed and the exact `def foo: int = -some_val;` initializer executes.
+
+Logs: `/tmp/gloinc-spec030f-{build,test-build,focused,native,core,full,sanitize-build,sanitize-core,package,local-build,stress}.log`.
+Reports/archive/checksum: `/tmp/gloinc-spec030f-package`; full JUnit report:
+`/tmp/gloinc-spec030f-full.xml`; required JUnit reports are `core.xml` in each
+build directory. SPEC-030g is next; generics remain deferred.
+
+### SPEC-030e verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+
+```sh
+cmake --build /tmp/gloinc-spec030-fresh --target check-core -j4
+ctest --test-dir /tmp/gloinc-spec030-fresh -j4 --output-on-failure \
+  --output-junit /tmp/gloinc-spec030e-full.xml
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec030-sanitize --target check-core -j3
+# Isolated retry outside the sandbox, after the other builds/tests finished:
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  ctest --test-dir /tmp/gloinc-spec030-sanitize -j1 \
+  -R '^StringLibraryTest.DeterministicSearchAndOrderingAgreeWithIndependentOracle$' \
+  --output-on-failure --output-junit /tmp/gloinc-spec030e-sanitize-retry.xml
+bash scripts/check-package.sh /tmp/gloinc-spec030-fresh /tmp/gloinc-spec030e-package
+cmake --build build --target gloinc -j3
+build/gloinc examples/file_tool.gloin -- --help
+```
+
+Results: **23/23 focused context tests**, **746/746 required Release checks**,
+**789/793 full-suite passes**, and **396/396 installed and relocated checks each**.
+The only full-suite failures remain `CodeGenTest.GenerateSpawn`,
+`AsyncTest.DeferredFunctionGeneration`, `AsyncTest.SpawnGeneration`, and
+`SemaAsyncTest.AsyncTypes` (SPEC-040/041).
+
+The sanitizer gate initially passed **745/746**, including all 23 new tests.
+The existing deterministic string oracle hit its 10-second child timeout during
+concurrent builds. An isolated sandbox retry reported successful assertions but
+timed out in CTest with blocked process inspection. The authorized isolated retry
+outside the sandbox passed in **2.44 seconds** without source or timeout changes.
+Thus all 746 required cases have passing sanitizer results, with that retry
+recorded separately rather than claiming a clean initial gate. No new sanitizer
+diagnostics were reported. Both static and shared context runtimes are compiled
+with `-fsanitize=address,undefined`; JIT-generated code and prebuilt LLVM retain
+the instrumentation limitations documented in [release.md](docs/release.md).
+
+Coverage includes roots/separator runs/dots/NULs, bounded joins and failure of
+either allocation, binary paths, regular files/directories/broken symlinks/FIFOs,
+real permission errors, defined rename/unlink effects, missing versus empty/raw
+environment values, cwd bounds and deleted cwd, literal option/empty argument
+forwarding, embedding isolation/restoration, thread-local host scopes, recoverable
+allocation failures, canonical primitive privacy, malformed native ABIs, and
+external LLVM execution. The packaged tool copies 20,000 binary bytes under paths
+with spaces from a different cwd; label variants and invalid options are verified.
+Both guide programs execute verbatim.
+
+Maintained source and CTest discovery agree on **793 tests**. Relative documentation
+links, targeted C++ formatting, shell syntax, and `git diff --check` pass. The normal
+`build/gloinc` is refreshed. Public APIs document ownership, errors, and costs.
+
+Logs: `/tmp/gloinc-spec030e-{focused,core,full,sanitize-core,sanitize-retry,package,local-build}.log`.
+Reports/archive/checksum: `/tmp/gloinc-spec030e-package`; full JUnit report:
+`/tmp/gloinc-spec030e-full.xml`; sanitizer retry:
+`/tmp/gloinc-spec030e-sanitize-retry.xml` (initial gate: `/tmp/gloinc-spec030-sanitize/core.xml`).
+SPEC-030f is next; generics remain deferred.
+
+### SPEC-030d verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+
+```sh
+cmake --build /tmp/gloinc-spec030-fresh --target gloinc_test gloin_standard_test -j4
+ctest --test-dir /tmp/gloinc-spec030-fresh -j4 \
+  -R '^(IoLibraryTest|IoRuntimeTest)\.' --output-on-failure
+cmake --build /tmp/gloinc-spec030-fresh --target check-core -j4
+ctest --test-dir /tmp/gloinc-spec030-fresh -j4 --output-on-failure \
+  --output-junit /tmp/gloinc-spec030d-full.xml
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec030-sanitize --target check-core -j3
+bash scripts/check-package.sh /tmp/gloinc-spec030-fresh /tmp/gloinc-spec030d-package
+cmake --build build --target gloinc -j3
+printf ' hello\r\n# skip\n world \n' | build/gloinc examples/io_filter.gloin
+```
+
+Results: **29/29 focused I/O tests**, **723/723 required Release checks**,
+**723/723 required ASan/UBSan checks**, **766/770 full-suite passes**, and
+**382/382 installed and relocated checks each**. The only failures remain
+`CodeGenTest.GenerateSpawn`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-040/041).
+Maintained source and CTest discovery agree on **770 tests**. No new sanitizer
+errors, unexpected crashes, or skipped tests occurred. Both native runtime
+variants carry address/undefined instrumentation. The normal development CLI is
+refreshed and prints HELLO/WORLD for the filter input above.
+
+Native tests exercise binary and empty files, explicit open modes and errno,
+actual and injected permission failures, exact/zero/oversized read bounds,
+CRLF/standalone-CR/final-line semantics, partial EOF, read_all pushback, injected
+read failures with preserved prefixes, short/failing/zero-progress writes,
+flush and close failures, bounded diagnostics, and broken pipes while preserving
+the previous signal mask and an already-pending SIGPIPE. Two thousand native
+open/close cycles verify the descriptors are actually closed.
+
+Compiler tests execute every public operation and verify shared position/close
+state, failed-close invalidation, metadata allocation before destructive opens,
+allocation failure without input consumption, independent scratch reset,
+write_line suffix failure, mutability/privacy, exact private/runtime ABIs,
+external LLVM execution, and the packaged examples/guide programs verbatim.
+The copier preserves an existing destination, copies all 256 byte values, checks
+flush/close, and reuses bounded scratch storage. stderr remains independent of
+stdout and main's return value.
+
+A separate stress run with a 2 MiB stack filters 1,000,000 lines and copies a
+4,000,000-byte file. Exact outputs match independent Python byte comparisons;
+artifacts are under `/tmp/gloinc-spec030d-stress.skOst2`. Public APIs all have
+named examples in the guide. Relative documentation links, shell syntax,
+targeted clang-format, and `git diff --check` pass.
+
+Logs: `/tmp/gloinc-spec030d-{build,native-build,native,test-build,focused,core,full,sanitize-core,package,local-build}.log`.
+Reports/archive/checksum: `/tmp/gloinc-spec030d-package`; full JUnit report:
+`/tmp/gloinc-spec030d-full.xml`. SPEC-030e is next; no generic feature was enabled.
+
+### SPEC-030c verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+
+```sh
+cmake --build /tmp/gloinc-spec030-fresh --target gloinc_test gloin_standard_test -j4
+ctest --test-dir /tmp/gloinc-spec030-fresh -j4 \
+  -R '^(NumericLibraryTest|NumericRuntimeTest)\.' --output-on-failure
+cmake --build /tmp/gloinc-spec030-fresh --target check-core -j4
+ctest --test-dir /tmp/gloinc-spec030-fresh -j4 --output-on-failure \
+  --output-junit /tmp/gloinc-spec030c-full.xml
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec030-sanitize --target check-core -j3
+bash scripts/check-package.sh /tmp/gloinc-spec030-fresh /tmp/gloinc-spec030c-package
+cmake --build build --target gloinc -j3
+printf '1.25\n2.75\n3.5\n' | build/gloinc examples/numbers_lab.gloin
+```
+
+Results: **28/28 focused numeric tests**, **694/694 required Release checks**,
+**694/694 required ASan/UBSan checks**, **737/741 full-suite passes**, and
+**367/367 installed and relocated package checks each**. The only failures remain
+`CodeGenTest.GenerateSpawn`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-040/041).
+Maintained source and CTest discovery agree on **741 tests**. No new sanitizer
+errors, unexpected crashes, or skipped tests occurred. The refreshed normal
+compiler prints `count=3` and `mean=2.50` for the input above.
+
+Native tests cover integer extremes and invalid-before-overflow precedence;
+full counted float grammar, long inputs, direct-width midpoint rounding (including
+a double-rounding counterexample), subnormal/overflow/underflow/signed-zero rules;
+20,000 sampled floating bit patterns; fixed-format ties, precision and maximum
+buffers with guard bytes; locale-independent parsing/formatting; range-safe
+conversion, exactness/truncation, invalid modes, and nonfinite native input.
+Compiler tests exercise every public API, independent formatted snapshots,
+allocation failure and invalid-precision preflight, unchanged legacy APIs, source
+signatures/privacy, symbol collisions, malformed JIT ABIs, external LLVM execution,
+and installed/relocated examples and full guide programs.
+
+`/tmp/gloinc-spec030c-stress.gloin` performs 1,000,000 composed exact conversions,
+fixed formatting, float parsing, integer formatting, cursor traversal/comparison,
+and arena resets with a 2 MiB stack. It prints `numeric stress: ok` and exits zero.
+Vendored headers/license match all ten pinned SHA-256 checksums. Every new public
+API has a named guide example. Relative documentation links, shell syntax,
+targeted clang-format, and `git diff --check` pass.
+
+Logs: `/tmp/gloinc-spec030c-{build,test-build,test-rebuild,focused,core,full,sanitize-core,package,local-build}.log`.
+Reports/archive/checksum: `/tmp/gloinc-spec030c-package`; full JUnit report:
+`/tmp/gloinc-spec030c-full.xml`. Package verification includes the dependency license
+and provenance. SPEC-030d is next; generics remain deferred.
+
+### SPEC-030b verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+Rebuilt the existing Release and sanitizer Debug/Ninja trees and the normal
+development CLI; no new dependencies or native ABI were introduced.
+
+```sh
+cmake --build /tmp/gloinc-spec030-fresh -j 4
+ctest --test-dir /tmp/gloinc-spec030-fresh -j 4 \
+  -R '^(TextLibraryTest|StringLibraryTest)\.' --output-on-failure
+cmake --build /tmp/gloinc-spec030-fresh --target check-core
+ctest --test-dir /tmp/gloinc-spec030-fresh -j 4 --output-on-failure
+cmake --build /tmp/gloinc-spec030-sanitize -j 3
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec030-sanitize --target check-core
+bash scripts/check-package.sh /tmp/gloinc-spec030-fresh /tmp/gloinc-spec030b-package
+cmake --build build --target gloinc -j 3
+./build/gloinc examples/text_lab.gloin
+```
+
+Results: **35/35 focused string/text tests**, **666/666 required Release checks**,
+**666/666 required ASan/UBSan checks**, **709/713 full-suite passes**, and
+**355/355 checks** against each installed/relocated package. Only the unchanged
+`CodeGenTest.GenerateSpawn`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` fail (SPEC-040/041).
+Maintained source definitions and CTest discovery both contain **713 tests**.
+
+Seventeen `TextLibraryTest` cases cover borrowed cursor semantics and independent
+positions; empty/adjacent/trailing fields; LF/CRLF/final/empty lines; NUL/UTF-8;
+independently computed splits/replacements; all 256 bytes in ASCII conversion;
+limits and overflow; source reset/free and independent results; zero-capacity and
+aliased builders; atomic failed appends; immutable snapshots; both constructor
+allocation failures and snapshot failure; source type/mutability/privacy checks;
+private null/range/type guards; and external LLVM execution using the installed
+runtime. Injection through the real arena bridge fails the third allocation only
+after 10,000 append/clear iterations and cursor operations, proving those operations
+do not allocate and that snapshot failure leaves the builder usable.
+
+Both Gloin guide programs compile/run verbatim, including from installed/relocated
+documentation. The packaged [text lab](examples/text_lab.gloin) prints the asserted
+escaped report and retains its snapshot after freeing builder storage.
+`/tmp/gloinc-spec030b-stress.gloin` separately performs 1,000,000 iterations of
+splitting, ASCII conversion, builder reuse, snapshotting, replacement, and scratch
+reset with asserted intermediate results under a 2 MiB stack.
+
+Logs are `/tmp/gloinc-spec030b-{focused,core,full,sanitize-core,package}.log`;
+package reports/archive/checksum are in `/tmp/gloinc-spec030b-package`.
+Documentation links/fences, test inventory, targeted C++ formatting, shell syntax,
+and `git diff --check` pass. SPEC-030c is next; no generic feature was enabled.
+
+### SPEC-030a verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+Rebuilt the existing Release and sanitizer Debug/Ninja trees used for SPEC-030;
+no dependency downloads were required. Refreshed the normal `build/gloinc` too.
+
+```sh
+cmake --build /tmp/gloinc-spec030-fresh -j 4
+cmake --build /tmp/gloinc-spec030-fresh --target check-core
+ctest --test-dir /tmp/gloinc-spec030-fresh -j 4 --output-on-failure
+cmake --build /tmp/gloinc-spec030-sanitize -j 3
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec030-sanitize --target check-core
+bash scripts/check-package.sh /tmp/gloinc-spec030-fresh /tmp/gloinc-spec030a-package
+cmake --build build --target gloinc -j 2
+./build/gloinc examples/strings_lab.gloin
+```
+
+Results: **649/649 required Release checks**, **649/649 required ASan/UBSan
+checks**, **692/696 full-suite passes**, and **338/338 checks** against each
+installed/relocated package. The four unchanged failures are
+`CodeGenTest.GenerateSpawn`, `AsyncTest.DeferredFunctionGeneration`,
+`AsyncTest.SpawnGeneration`, and `SemaAsyncTest.AsyncTypes` (SPEC-040/041).
+Source definitions and CTest discovery both contain **696 tests**.
+
+The 18 `StringLibraryTest` cases cover all 14 public functions and guide programs,
+64 independently computed search/order cases, NUL/non-UTF-8 data, unsigned ordering,
+extreme/empty slice bounds, exact ASCII whitespace, explicit failure payloads,
+allocation failure injection, source reset/free/overwrite and independent copies,
+null empty descriptors, native primitive privacy/reserved names, invalid argument
+types/arity, guarded primitive bounds, symbol collisions, JIT ABI validation,
+replaceable library source, external LLVM execution, and the packaged example.
+Two added `StandardRuntimeTest` cases check all byte values, exact-sized copy
+buffers/guard bytes, absence of terminator writes, and zero-length null pointers.
+The native runtime and compiler are instrumented in the sanitizer build.
+
+Both fenced Gloin programs in [docs/strings.md](docs/strings.md) compile and run
+verbatim in maintained tests. `strings_lab.gloin` prints exactly `count = 42` and
+`strings lab: ok` on separate lines with exit status zero. A temporary copy with
+its 10,000-iteration loop expanded to 1,000,000 also produces that output under a
+2 MiB stack, in approximately one second including compilation in one local run.
+The loop resets scratch storage each iteration and retains its saved text in a
+different arena. Existing native arena tests cover retained-block reuse/release.
+
+Logs are `/tmp/gloinc-spec030a-{core,full,sanitize-core,package}.log`; package
+JUnit reports and archive/checksum are in `/tmp/gloinc-spec030a-package`.
+Documentation links/fences and all 14 API reference entries were audited;
+targeted C++ formatting, shell syntax, and `git diff --check` pass.
+
+### SPEC-030 verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+Fresh Release and sanitizer Debug/Ninja builds reused the pinned GoogleTest
+source cache without dependency downloads.
+
+```sh
+cmake -S . -B /tmp/gloinc-spec030-fresh -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
+cmake --build /tmp/gloinc-spec030-fresh -j 4
+cmake --build /tmp/gloinc-spec030-fresh --target check-core
+ctest --test-dir /tmp/gloinc-spec030-fresh -j 4 --output-on-failure
+bash scripts/check-package.sh /tmp/gloinc-spec030-fresh /tmp/gloinc-spec030-package
+cmake -S . -B /tmp/gloinc-spec030-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DGLOIN_ENABLE_SANITIZERS=ON \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
+cmake --build /tmp/gloinc-spec030-sanitize -j 3
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec030-sanitize --target check-core
+```
+
+Results: **629/629 required Release checks**, **629/629 required ASan/UBSan checks**,
+**672/676 full-suite passes**, and **320/320 package checks** for both installation
+and relocated extraction. Only `CodeGenTest.GenerateSpawn`,
+`AsyncTest.DeferredFunctionGeneration`, `AsyncTest.SpawnGeneration`, and
+`SemaAsyncTest.AsyncTypes` still fail (SPEC-040/041). No tests are disabled or
+reclassified as expected successes. Hosted CI was updated but not run.
+
+The 24 `StandardLibraryTest` cases cover source APIs, strict decimal boundaries,
+explicit statuses, stdin/EOF/CRLF/empty/final/raw-byte lines, byte limits/draining,
+allocation and I/O failure, zeroed arena bytes, retained strings across growth,
+manual reset/free, deferred views, wrong types, private primitives, symbol
+collisions, exact JIT ABI validation, library replacement, external LLVM execution,
+and the packaged interactive example. Native output is also available in the
+shared runtime for external runners. Final example error reporting avoids new
+allocation when reporting NO_MEMORY; its two relevant regressions were rechecked
+in both Release and ASan/UBSan builds after that refinement.
+
+The 15 independent `StandardRuntimeTest` cases validate grammar/error precedence,
+counted bytes, every i32 formatting boundary, 10,000 deterministic round trips,
+terminators/buffer bounds, all line-ending/limit cases, a drained oversized MiB
+line, I/O failure, and zeroed arena reuse. CTest discovery and maintained source
+both contain **676 tests**. The 142 core source fixtures comprise **38 successful
+programs, 85 rejected programs, and 19 runtime traps**.
+
+The normal build was refreshed and the large compiler lab now located in
+`../gloin_examples/project1` passed all four CLI modes, its independent Python
+oracle, four workload variants (up to 102.4 million updates), a 2 MiB stack,
+fault injections, and external LLVM execution with the expanded standard library.
+Its existing verifier was invoked with that relocated source root in memory;
+no files in the sibling example project were changed.
+
+### SPEC-029 verification
+
+Verified locally on 2026-09-23 with LLVM/MLIR 21.1.6 on Apple Silicon macOS.
+Fresh Ninja builds reuse the pinned GoogleTest source cache.
+
+```sh
+cmake -S . -B /tmp/gloinc-spec029-fresh -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
+cmake --build /tmp/gloinc-spec029-fresh -j 4
+cmake --build /tmp/gloinc-spec029-fresh --target check-core
+ctest --test-dir /tmp/gloinc-spec029-fresh -j 4 --output-on-failure
+bash scripts/check-package.sh /tmp/gloinc-spec029-fresh /tmp/gloinc-spec029-package
+cmake -S . -B /tmp/gloinc-spec029-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DGLOIN_ENABLE_SANITIZERS=ON \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$PWD/build/_deps/googletest-src"
+cmake --build /tmp/gloinc-spec029-sanitize -j 3
+ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build /tmp/gloinc-spec029-sanitize --target check-core
+```
+
+Results: **587/587 required Release checks**, **587/587 required ASan/UBSan checks**,
+**630/634 full-suite passes**, and **293/293 package checks** for each of staged
+installation and relocated extraction.
+The full suite retains only `CodeGenTest.GenerateSpawn`,
+`AsyncTest.DeferredFunctionGeneration`, `AsyncTest.SpawnGeneration`, and
+`SemaAsyncTest.AsyncTypes` (SPEC-040/041). No tests were disabled or changed into
+expected failures. Hosted CI was updated but not run.
+
+The 25 `ModuleTest` cases cover source-relative resolution from another working
+directory, parent paths/extensions/spaces, canonical shared files, nominal types,
+one emitted definition, separate same-basename files, public constants, privacy,
+isolated imports, root entry selection, unused invalid code, forbidden globals,
+constant errors, duplicates/shadowing, symlinks/cycles/depth limits, diagnostics,
+fresh compilation reads, standard dependencies/identity, in-memory roots,
+qualified defers, invalid function values/addresses, and the module lab.
+Selected cases also execute emitted LLVM through external tools.
+
+The 139 core source cases comprise **37 successful programs, 84 rejections, and
+18 traps**. Three added cases run a local caller and its dependency independently
+and reject private access; the former deferred-local-import fixture now explicitly
+rejects a bare path. `module_lab.gloin` and four supporting files share particle
+models/settings through a dependency graph, perform 10,000 linked allocations per
+round over three reset/reuse rounds, and print `module lab: ok`. The normal build,
+installed package, and relocated archive all execute it successfully.
 
 ### SPEC-028 verification
 

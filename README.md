@@ -9,31 +9,40 @@ verification evidence in order.
 
 Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR 21.1.6.
 The CLI compiles source files and runs scalar and ordinary struct programs through the in-process JIT.
-The executable core has 136 source-file acceptance cases covering successful
+The executable core has 142 source-file acceptance cases covering successful
 programs, rejected source, and runtime arithmetic traps. Checking and IR inspection
 modes are also available. The scalar-core version is `0.0.1`; installation and
 package validation are documented in [the release guide](docs/release.md).
+The [versioned HTML guide](docs/site/0.0.1/index.html) documents the 0.0.1
+language and compiler. Native object and executable output are supported on
+Apple Silicon macOS.
 
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | 606 tests discovered; local parallel run has 602 passes, 4 deferred-feature failures, no unexpected test-process crashes. |
-| Core acceptance | 136 CLI-driven source fixtures: 35 successful programs, 83 expected compiler errors, and 18 runtime traps. |
+| Full test suite | 867 tests discovered; 863 passes and 4 documented deferred-feature failures are required for the release audit. |
+| Core acceptance | 142 CLI-driven source fixtures: 38 successful programs, 85 expected compiler errors, and 19 runtime traps. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
 | Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/unless/while/for execution, loop-variable scope, and omitted for components are verified. |
 | Generics | Four IR-string checks pass; generic execution is not established. |
 | IR verification/lowering | One pipeline verifies source output and conversions, rejects unsupported IR, and produces LLVM-compatible modules for output and execution consumers. |
 | JIT | All 16 tests pass: native execution, validated entry/signatures, separate results/errors, repeated runs, and integer/float trap behavior. |
-| CLI | All 16 process tests pass: file loading, native results, checking, verified IR output, diagnostics, usage, and exit behavior. |
+| CLI | All 19 process tests pass: file loading, JIT and native results, object/executable output, checking, verified IR, diagnostics, usage, and exit behavior. |
 | Standard output | `@std` loads `stdlib/std.gloin`, which defines `print` and `println`; all 17 standard-module tests pass. |
 | Ordinary structs | 14 tests cover nested values, field validation/mutation, visibility, nominal types, native execution, and target padding/alignment. |
 | Pointers/references | 18 tests cover typed access, read-only views, recursive links, null traps, and manual lifetimes with no borrow checker. |
 | Methods | 19 tests cover instance/static calls, one explicit receiver, mutability, visibility, evaluation order, recursion, diagnostics, and external execution. |
 | Defer | 24 tests cover registration-time captures, conditional/loop registration, LIFO function-exit cleanup, early returns, traps, native allocation bookkeeping, and external execution. |
 | Arenas | `@arena` exposes `GeneralArena`: 21 compiler/API tests and nine native runtime tests cover initialized allocation, alignment, growth, reset/free, failure, and external linking. See [the arena guide](docs/arenas.md). |
-| Other imports, concurrency | Incomplete: SPEC-029/030, SPEC-040/041. |
+| Local modules | 25 tests cover relative paths, shared dependencies, exported functions/types/constants, privacy, cycles, and source diagnostics. See [modules](docs/modules.md). |
+| Standard input/conversions | 24 compiler/API tests and 15 native tests cover bounded input, decimal i32 parsing/formatting, explicit arena storage, error statuses, and external execution. See [the library guide](docs/standard-library.md). |
+| Numerical utilities | 12 compiler/API and 12 native tests cover `@math`, finite errors, signed zero, rounding, subnormals, host-state isolation, geometry/statistics, and packaged execution. See [math](docs/math.md). |
+| Timing and seeded randomness | 15 compiler/API and 13 native tests cover monotonic clocks, checked durations, scoped clock injection, SplitMix64 vectors, sampling, and packaged simulations. See [time and randomness](docs/time-random.md). |
+| Byte strings | 18 compiler/API tests cover 14 documented functions, byte bounds/search/ordering, borrowed views, arena copies, and guide examples. Two native tests cover exact/empty copies. See [usage and costs](docs/strings.md). |
+| Text construction | 17 tests cover borrowed cursors, bounded transformations, shared builder state, allocation failures, snapshots, and executable documentation. See [usage and costs](docs/text-construction.md). |
+| Package imports, concurrency | Incomplete: SPEC-044, SPEC-040/041. |
 
 [Compiler diagnostics](docs/diagnostics.md) now connect parsing, checking, and high-level
 codegen through `compile_source`, with verified high-level or LLVM output via
@@ -131,6 +140,41 @@ ordinary Gloin functions; adding a future `math.gloin` or `io.gloin` uses the sa
 file-loading path. See [standard module development](stdlib/README.md) for the
 native primitive, public exports, and `--stdlib-dir` option.
 
+SPEC-030 adds `std.input(&memory, max_bytes)`, `std.to_int(text)`, and
+`std.to_string(&memory, value)`. Input and formatting use an explicit caller-owned
+arena; input and parsing report errors through result structs. Conversion is i32
+only. See [the API and lifetime rules](docs/standard-library.md), or run:
+
+```sh
+printf '10\n-3\n+35\n' | ./build/gloinc examples/standard_library.gloin
+```
+
+SPEC-030a adds `@strings` and shared `@status` constants. Byte-string queries,
+slices, search, comparison, and ASCII trimming allocate nothing; `strings.copy`
+takes an explicit arena and reports allocation failure. Every function documents
+usage, ownership, and cost in the [API guide](docs/strings.md) and
+[library source](stdlib/strings.gloin). Run `./build/gloinc examples/strings_lab.gloin`
+for a configuration parser and an arena-lifetime example.
+
+SPEC-030b adds split/line cursors, bounded text transformations, and a fixed-capacity
+`StringBuilder`. Cursors allocate nothing; appends copy into preallocated storage;
+snapshots take an explicit destination arena. See [usage and costs](docs/text-construction.md)
+or run `./build/gloinc examples/text_lab.gloin` for an escaped report.
+
+SPEC-030c adds typed integer/float/bool parsers, arena-backed formatters, and
+explicit checked numeric conversions. See [examples, costs, and rounding rules](docs/numbers.md)
+and the [streaming statistics example](examples/numbers_lab.gloin).
+
+SPEC-030d adds `@io`: borrowed standard streams, owned files, explicit open modes,
+bounded arena reads, counted writes, flush/close, and recoverable OS errors.
+See [ownership, examples, and costs](docs/io.md), the [binary file copier](examples/io_copy.gloin),
+and the [line filter](examples/io_filter.gloin).
+
+SPEC-030e adds `@fs` lexical paths, metadata, explicit mutations, and `@process`
+arguments/environment/cwd. Programs receive arguments after `FILE --`; copied
+values use caller arenas. See [API usage and costs](docs/filesystem-process.md)
+and the [command-line file tool](examples/file_tool.gloin).
+
 ### Language essentials
 
 Functions and bindings start with `def`. All parameters, bindings, and function
@@ -168,9 +212,11 @@ Ordinary structs also support instance methods with explicit `self` pointers and
 static calls such as `Counter.make(40)`; see [the method fixture](tests/fixtures/core/run/methods.gloin).
 `defer call(...)` captures arguments immediately and runs registered calls in
 reverse order on normal function return; see [the defer fixture](tests/fixtures/core/run/defer.gloin).
-There are no implicit numeric conversions. Other imports, numeric formatting,
-arrays, packed structs, concurrency, and native executable output remain
-deferred. `examples/hello_world.gloin` is a runnable standard-output example.
+Local imports such as `import "./utils";` resolve relative to their source file;
+see [the module example](examples/module_lab.gloin).
+There are no implicit numeric conversions. Package imports, arrays, packed
+structs, and concurrency remain deferred. `examples/hello_world.gloin` is a
+runnable standard-output example.
 
 For a diagnostic example:
 
@@ -182,7 +228,37 @@ For a diagnostic example:
 The acceptance suite checks repeatable results on the supported toolchain and
 platform. It does not promise identical native machine code across platforms.
 
+SPEC-030f adds `@math`: 47 concrete numerical helpers and pi/tau constants,
+with checked domains/ranges, signed-zero rules, and explicit rounding. The
+[math guide](docs/math.md) documents every API and cost; the streaming
+[geometry/statistics example](examples/math_lab.gloin) reads `x,y` records.
+
+SPEC-030g adds `@time` monotonic readings and checked durations, plus `@random`
+with explicit, copyable SplitMix64 state. Every operation documents units,
+failure behavior, and cost in the [timing/randomness guide](docs/time-random.md).
+The [seeded simulation](examples/simulation_lab.gloin) combines these modules
+with math, CLI arguments, arena-backed formatting, and checked output. Embedders
+can inject a clock to test elapsed-time reporting deterministically.
+
+SPEC-030h adds a [configuration reader](examples/config_reader.gloin) and a
+[streaming statistics tool](examples/statistics_tool.gloin) alongside the
+simulation. They compose source modules with explicit ownership and bounded
+storage; the statistics tool selects multiple columns and creates a new report
+after validating input. See [formats, usage, costs, and verification](docs/integrated-examples.md).
+
 ## Install or package
+
+To produce a standalone executable or object on Apple Silicon macOS:
+
+```sh
+./build/gloinc --emit-exe -o hello examples/hello_world.gloin
+./hello
+./build/gloinc --emit-object -o hello.o examples/hello_world.gloin
+```
+
+Generated executables link the static Gloin runtime and do not require LLVM at
+runtime. The compiler and native link step require the pinned LLVM toolchain.
+See [native output and CLI options](docs/cli.md).
 
 After building and passing `check-core`, install into your user prefix:
 
@@ -206,7 +282,7 @@ bash scripts/check-package.sh build build/package-check
 
 CPack writes `build/gloinc-0.0.1-macos-arm64.tar.gz` and its `.sha256` checksum.
 The archive contains `bin/gloinc`, standard modules, native arena libraries and header,
-documentation, runnable examples, and the core source fixtures. The verification script runs all 265 CLI/arena/defer/method/pointer/struct/standard-output/source acceptance cases against
+documentation, runnable examples, and the core source fixtures. The verification script runs all 443 CLI/standard-library/module/arena/defer/method/pointer/struct/standard-output/source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
 spaces. See [the release guide](docs/release.md) for extraction, dependencies,
 sanitizer checks, and the supported-platform limits.
@@ -220,10 +296,11 @@ ctest --test-dir build -j 1 --output-on-failure
 ctest --test-dir build -j 4 --output-on-failure
 ```
 
-`check-core` runs 559 required scalar, arena, defer, method, pointer, struct, and standard-output checks, including frontend,
+`check-core` runs 820 required scalar, module, arena, defer, method, pointer, struct, native-output, and standard-output checks, including frontend,
 lowering, external execution, source acceptance, CLI, JIT, and dialect setup.
 The full suite exits nonzero for the documented
-failures; do not disable those cases to obtain a green run. The CLI suite launches
+failures; do not disable those cases. The release CI audits the exact four known
+failures and rejects any additional failure or skipped test. The CLI suite launches
 the built executable directly and verifies actual file-dependent results.
 
 ## Architecture and next milestones
@@ -233,14 +310,20 @@ it uses shared LLVM for resolved integer and floating values.
 `gloin_backend` contains codegen, the Gloin dialect, and the JIT runner. Both
 executables link these libraries. The CLI and tests use the same compilation,
 lowering, and execution APIs. `gloin_runtime` supplies the LLVM-independent
-native arena allocator; a shared variant is installed for external LLVM execution.
+native arena allocator and standard input/conversions; a shared variant is installed for external LLVM execution.
 
 [SPEC-006's contract](SPEC.md#first-release-contract-spec-006) selects a scalar
 JIT compiler on Apple Silicon macOS for the first release. SPEC-021 supplies its
 executable-core acceptance suite; SPEC-046 remains the release gate. Subsequent
 tasks add the strings, standard output, structs, pointers, methods, and defer
-listed above, followed by initialized-value arena allocation. Concurrency and native binaries remain deferred. The
-ordered backlog replaces the old phase notes as the implementation plan.
+listed above, followed by arenas, local modules, and input/i32 conversions.
+Native output is included in 0.0.1; concurrency remains deferred. The ordered
+backlog replaces the old phase notes as the implementation plan.
+
+Version 0.0.1 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
+support is not planned, although contributions are welcome. See
+[contributing rules](CONTRIBUTING.md) for the manual verification and deterministic
+change requirements, including the prohibition on AI slop and vibecoding.
 
 ## Continuous integration
 
@@ -251,7 +334,8 @@ parallel. It also validates installed/extracted packages and a separate ASan/UBS
 Debug build. The core step has its own result and `core.xml`/`core.log` reports.
 JUnit reports, full logs,
 environment details, and test inventory are uploaded as `compiler-ci-reports`,
-including on failure. The workflow remains red while the full suite fails.
+including on failure. The complete suite still reports its four deferred-feature
+failures; CI succeeds only when they match the documented list exactly.
 Compiler build outputs are not restored from a cache.
 
 [The verified SPEC-021 run](https://github.com/kubabialy/gloinc/actions/runs/35736970025)

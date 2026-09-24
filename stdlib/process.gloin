@@ -1,0 +1,48 @@
+// Invocation arguments, host environment, and current working directory.
+import "@arena";
+import "@strings";
+import "@status";
+// Failures have static empty text; nonempty success owns arena bytes until reset/free.
+// arg/env have os_error=0; cwd preserves native errno. Empty success can be static.
+def pub struct TextResult { def pub status: i32, def pub os_error: i32, def pub value: string, }
+
+// Example: process.arg_count(). O(1), no allocation. CLI includes source filename at index zero.
+// Only values after FILE -- are forwarded. An unconfigured embedding/external runner has count zero.
+def pub arg_count() -> u64 { return __process_arg_count(); }
+
+// Example: process.arg(&memory, 1). OUT_OF_RANGE consumes no arena storage; empty argument is OK/empty.
+// O(argument bytes) copy/zeroing, one exact-size arena request for nonempty text, no terminator promised.
+// NO_MEMORY is recoverable; bytes survive argument-scope exit but expire on memory reset/free.
+def pub arg(memory: &arena.GeneralArena, index: u64) -> TextResult {
+    def mut length: u64 = 0; def mut code: i32 = 0;
+    def bytes: *u8 = __process_arg(index, &length, &code);
+    if code != status.OK { return TextResult { status: code, os_error: 0, value: "" }; }
+    def result: strings.StringResult = strings.copy(memory, __process_string_view(bytes, length));
+    return TextResult { status: result.status, os_error: 0, value: result.value };
+}
+
+// Example: process.env(&memory, "GLOIN_LABEL"). Missing -> NOT_FOUND; present empty -> OK/empty.
+// Empty name, '=' or NUL -> INVALID. No encoding conversion; host mutation must be externally coordinated.
+// O(name+value bytes) plus host environment lookup, temporary native name length+1 copy,
+// and one exact-size arena request for nonempty value. NO_MEMORY is recoverable; arena lifetime applies.
+def pub env(memory: &arena.GeneralArena, name: string) -> TextResult {
+    def mut length: u64 = 0; def mut code: i32 = 0;
+    def bytes: *u8 = __process_env(name, &length, &code);
+    if code != status.OK { return TextResult { status: code, os_error: 0, value: "" }; }
+    def result: strings.StringResult = strings.copy(memory, __process_string_view(bytes, length));
+    return TextResult { status: result.status, os_error: 0, value: result.value };
+}
+
+// Example: process.cwd(&memory, 4096). Absolute host cwd, no implicit chdir; caller chooses byte bound.
+// One max_bytes+1 zeroed arena request retained even on error; O(max_bytes) plus host getcwd work.
+// TOO_LONG/ERANGE means bound too small, not truncation. NO_MEMORY preflight for enormous bounds.
+// Other failures preserve errno and empty text; successful bytes expire on arena reset/free.
+def pub cwd(memory: &arena.GeneralArena, max_bytes: u64) -> TextResult {
+    if max_bytes > 9223372036854775806 { return TextResult { status: status.NO_MEMORY, os_error: 0, value: "" }; }
+    def bytes: *u8 = memory.try_alloc_bytes(max_bytes + 1);
+    if bytes == null { return TextResult { status: status.NO_MEMORY, os_error: 0, value: "" }; }
+    def mut length: u64 = 0; def mut error: i32 = 0;
+    def code: i32 = __process_cwd(&*bytes, max_bytes + 1, &length, &error);
+    if code != status.OK { return TextResult { status: code, os_error: error, value: "" }; }
+    return TextResult { status: code, os_error: 0, value: __process_string_view(bytes, length) };
+}

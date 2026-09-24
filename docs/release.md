@@ -1,14 +1,19 @@
-# Gloinc 0.0.1 scalar-core release
+# Gloinc 0.0.1 release
 
-Version 0.0.1 is the scalar-core JIT compiler for Apple Silicon macOS with
-LLVM/MLIR 21.1.6. It reads a source file, checks it, and executes `main() -> i32`.
+Version 0.0.1 includes SPEC-001 through SPEC-030 and the SPEC-030a through
+SPEC-030h standard-library expansion. It runs on Apple Silicon macOS with
+LLVM/MLIR 21.1.6. The compiler checks source, runs `main() -> i32` through the
+JIT, and can emit native arm64 objects and standalone executables.
 Since SPEC-023, execution returns main's low eight bits as its process exit
 status. Only explicit `std.print`/`std.println` calls write to stdout.
 Compiler/file/JIT errors exit 1, usage errors exit 2, and arithmetic traps
 terminate with SIGTRAP or SIGILL. `--check`, `--emit-ir`, and `--emit-llvm` do
 not execute the program; LLVM inspection prints LLVM-dialect MLIR.
 
-The source README teaches the language and build commands. The maintained matrix
+The [versioned HTML guide](site/0.0.1/index.html) teaches the 0.0.1 language and
+compiler. Later minor and major versions receive their own immutable directory
+under `docs/site/`; update `versions.js` and the site root to select the latest.
+The source README also teaches build commands. The maintained matrix
 at `tests/fixtures/core/README.md` maps the scalar types, operators, calls, scopes,
 initialization, control flow, rejected syntax, and traps to executable fixtures.
 The canonical examples are acceptance inputs. Later sections of SPEC.md and the
@@ -45,15 +50,29 @@ tests enabled. `make run` defaults to the counter example; use
 | Path below the archive root | Contents |
 | --- | --- |
 | `bin/gloinc` | Compiler and in-process JIT client |
+| `share/doc/gloinc/docs/site/0.0.1/` | Versioned HTML language and usage guide |
+| `share/doc/gloinc/CONTRIBUTING.md` | Contribution and AI-assisted change policy |
 | `share/doc/gloinc/` | README, specification, checklist, and technical guides |
+| `share/doc/gloinc/third_party/fast_float/` | MIT license, pinned provenance, and header checksums for compiled-in decimal parsing |
 | `share/gloinc/examples/core_counter.gloin` | Runnable example returning 42 |
 | `share/gloinc/examples/hello_world.gloin` | Runnable standard-output example |
+| `share/gloinc/examples/numbers_lab.gloin` | Bounded numeric input, explicit conversion, incremental mean, and fixed formatting |
+| `share/gloinc/examples/standard_library.gloin` | Interactive decimal input, explicit errors, arena reuse, and sum output |
+| `share/gloinc/stdlib/math.gloin` | Concrete finite numerical utilities, typed constants and checked results |
+| `share/gloinc/stdlib/fs.gloin`, `share/gloinc/stdlib/process.gloin` | Paths, explicit mutations, and invocation context |
+| `share/gloinc/examples/file_tool.gloin` | CLI-selected binary file copy from any working directory |
+| `share/gloinc/stdlib/io.gloin` | Borrowed streams, owned files, bounded I/O, and explicit OS errors |
+| `share/gloinc/examples/io_copy.gloin`, `share/gloinc/examples/io_filter.gloin` | Bounded binary copier and line filter |
 | `share/gloinc/stdlib/std.gloin` | Standard utility functions, compiled when imported |
 | `share/gloinc/stdlib/arena.gloin` | General arena allocator and explicit lifecycle methods |
+| `share/gloinc/examples/module_lab.gloin`, `share/gloinc/examples/modules/` | Shared local dependencies, particle methods/constants, and arena reuse |
 | `share/gloinc/examples/arena_lab.gloin` | Linked particles with arena growth/reset/reuse |
-| `lib/libgloin_runtime.a`, `lib/libgloin_runtime.dylib` | Native arena runtime for static and external LLVM execution |
-| `include/gloin/arena_runtime.h` | C runtime ABI header |
-| `share/gloinc/core-fixtures/` | All 136 source acceptance fixtures and their matrix |
+| `lib/libgloin_runtime.a`, `lib/libgloin_runtime.dylib` | Native arena, byte, and numeric runtime for static and external LLVM execution |
+| `include/gloin/arena_runtime.h`, `include/gloin/stdlib_runtime.h`, `include/gloin/io_runtime.h`, `include/gloin/context_runtime.h`, `include/gloin/math_runtime.h`, `include/gloin/time_runtime.h`, `include/gloin/random_runtime.h` | C runtime ABI headers |
+| `share/gloinc/stdlib/time.gloin`, `share/gloinc/stdlib/random.gloin` | Monotonic time, checked durations, and explicit seeded randomness |
+| `share/gloinc/examples/simulation_lab.gloin` | Reproducible numeric simulation and elapsed-time reporting |
+| `share/gloinc/examples/config_reader.gloin`, `share/gloinc/examples/statistics_tool.gloin`, `share/gloinc/examples/data/` | Integrated bounded configuration/statistics programs and sample inputs |
+| `share/gloinc/core-fixtures/` | All 142 source acceptance fixtures and their matrix |
 
 LLVM/MLIR and their Homebrew dependencies are external and are not redistributed
 in this package. The installed executable uses the library installation selected
@@ -64,8 +83,11 @@ The compiler prefix itself can move without rebuilding.
 
 Use the archive on the same supported Apple Silicon macOS setup after installing
 the pinned toolchain. Packages built on newer macOS versions are not claimed to
-run on older systems. Intel macOS, Linux, Windows, cross-compilation, standalone
-Gloin executables, and a bundled LLVM distribution are outside this release.
+run on older systems. Native executables use system libraries and embed the
+static Gloin runtime; they do not require LLVM at runtime. Intel macOS, Linux,
+Windows, cross-compilation, and a bundled LLVM distribution are outside this
+release. Linux support is planned for 0.1.0. Windows support is not planned;
+contributors may propose and maintain it.
 
 ```sh
 cd build
@@ -76,9 +98,9 @@ tar -xzf gloinc-0.0.1-macos-arm64.tar.gz
 ```
 
 `bash scripts/check-package.sh build build/package-check` validates a staged
-installation and a relocated extraction. Each runs 265 CLI/arena/defer/method/pointer/struct/standard-output/source
+installation and a relocated extraction. Each runs 443 CLI/standard-library/module/arena/defer/method/pointer/struct/standard-output/source
 cases against that binary, using the installed fixtures. The script also executes
-the packaged counter, hello-world, and arena examples, verifies external LLVM
+the packaged counter, hello-world, arena, module, strings, text construction, and interactive standard-library examples, verifies external LLVM
 execution against the relocated runtime library, checks missing standard modules,
 and records shared-library dependencies. Removing either relocated `std.gloin`
 or `arena.gloin` must cause a module loading error, proving there is no fallback to the source checkout. It retains
@@ -87,12 +109,14 @@ are explicit test-harness overrides used for this purpose, not compiler options.
 
 ## Release validation
 
-The `check-core` target runs 559 required scalar, arena, defer, method, pointer, struct, and standard-output checks, including lower-level
+The `check-core` target runs 820 required scalar, module, arena, defer, method, pointer, struct, native-output, and standard-output checks, including lower-level
 frontend/operator/lowering tests and external execution probes as well as the
-136 source fixtures. No known failure is reclassified as success. Full serial
+142 source fixtures. No known failure is reclassified as success. Full serial
 and parallel runs remain separate. The full suite currently retains four
 deferred-feature failures: spawn codegen, deferred/spawn generation, and
-async types. Those features are rejected by the source compiler.
+async types. Those features are rejected by the source compiler. CI checks the
+exact four names in serial and parallel JUnit reports and fails on any new
+failure or skipped case; the full-suite test results remain visible.
 
 ```sh
 ctest --test-dir build -j 1 --output-on-failure --output-junit serial.xml

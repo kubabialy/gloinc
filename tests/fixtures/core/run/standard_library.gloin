@@ -1,0 +1,10 @@
+import "@std";
+import "@arena";
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+    def number: std.IntResult = std.to_int("+00042");
+    if number.status != std.OK { return 1; }
+    std.println(std.to_string(&memory, number.value));
+    return 0;
+}

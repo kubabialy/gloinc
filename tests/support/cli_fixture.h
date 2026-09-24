@@ -44,7 +44,8 @@ class CliFixture : public testing::Test {
         EXPECT_TRUE(static_cast<bool>(buffer));
         return buffer ? (*buffer)->getBuffer().str() : "";
     }
-    ProcessResult invoke(const std::vector<std::string> &arguments) {
+    ProcessResult invoke(const std::vector<std::string> &arguments,
+                         const std::string &stdin_path = "") {
         // Release validation reuses every CLI assertion against installed/extracted binaries.
         const char *override_path = std::getenv("GLOIN_TEST_CLI");
         const std::string executable = override_path ? override_path : gloin_test::gloinc;
@@ -54,7 +55,7 @@ class CliFixture : public testing::Test {
         std::vector<llvm::StringRef> argv{executable};
         for (const auto &argument : arguments)
             argv.push_back(argument);
-        const std::optional<llvm::StringRef> redirects[] = {llvm::StringRef(), stdout_path,
+        const std::optional<llvm::StringRef> redirects[] = {llvm::StringRef(stdin_path), stdout_path,
                                                             stderr_path};
         ProcessResult result{};
         result.status = llvm::sys::ExecuteAndWait(executable, argv, std::nullopt, redirects, 10, 0,

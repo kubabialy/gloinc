@@ -35,9 +35,12 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
             continue;
         }
         const auto &name = definition->name->value;
+        const auto primitive = standard_operation(name, standard_primitive_names);
         if (get_builtin_type(name) || current_scope->types.contains(name) ||
-            current_scope->symbols.contains(name) || (!current_module && imports.contains(name)) ||
-            (current_module && name == "__write_stdout")) {
+            current_scope->symbols.contains(name) || imports.contains(name) ||
+            (current_module && !current_module->standard_name.empty() && name == "__write_stdout") ||
+            (current_module && primitive &&
+             standard_primitive_allowed(*primitive, current_module->standard_name))) {
             log_error("Duplicate or reserved struct name '" + name + "'");
             continue;
         }
@@ -211,12 +214,9 @@ std::shared_ptr<Type> Sema::expression_type_hint(const Expression *expression) {
         if (auto structure = std::dynamic_pointer_cast<StructType>(base))
             if (auto *field = structure->get_field(name->value))
                 return field->type;
-        const auto *module = dynamic_cast<const Identifier *>(member->left.get());
-        if (!current_module && module && imports.contains(module->value) &&
-            !current_scope->resolve(module->value)) {
-            if (auto *symbol = module_scopes.at(imports.at(module->value))->resolve(name->value))
-                return symbol->type;
-        }
+        bool handled = false;
+        if (auto *symbol = module_member(member, handled, false))
+            return symbol->type;
     }
     return nullptr;
 }

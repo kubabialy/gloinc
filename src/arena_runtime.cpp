@@ -2,6 +2,7 @@
 #include "arena_runtime_internal.h"
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <new>
@@ -9,6 +10,7 @@
 namespace {
 constexpr size_t initial_capacity = 64 * 1024;
 constexpr size_t growth_limit = 1024 * 1024;
+thread_local const gloin::arena::Allocator *current_allocator = nullptr;
 struct Block {
     Block *next;
     size_t capacity;
@@ -35,14 +37,27 @@ void *allocate(void *, size_t size) noexcept { return std::malloc(size); }
 void release(void *, void *pointer) noexcept { std::free(pointer); }
 } // namespace
 
+extern "C" void gloin_arena_zero_bytes(void *bytes, uint64_t size) {
+    if (size)
+        std::memset(bytes, 0, static_cast<size_t>(size));
+}
+
 void *gloin::arena::create(Allocator allocator) noexcept {
     auto *memory = allocator.allocate(allocator.context, sizeof(State));
     return memory ? new (memory) State{allocator} : nullptr;
 }
 
 extern "C" void *gloin_arena_general_create() {
-    return gloin::arena::create({nullptr, allocate, release});
+    return gloin::arena::create(current_allocator
+                                    ? *current_allocator
+                                    : gloin::arena::Allocator{nullptr, allocate, release});
 }
+
+gloin::arena::AllocatorScope::AllocatorScope(Allocator value) noexcept
+    : allocator(value), previous(current_allocator) {
+    current_allocator = &allocator;
+}
+gloin::arena::AllocatorScope::~AllocatorScope() { current_allocator = previous; }
 
 extern "C" void *gloin_arena_general_alloc(void *opaque, uint64_t bytes, uint64_t alignment) {
     // Keeping the entire block within PTRDIFF_MAX also makes all internal

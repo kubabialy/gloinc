@@ -2,6 +2,7 @@
 #include "arena_runtime_internal.h"
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <gtest/gtest.h>
 #include <limits>
 #include <unordered_set>
@@ -155,4 +156,52 @@ TEST_F(ArenaRuntimeTest, ControlAllocationFailureReturnsNullWithoutLeaking) {
     backing.fail_at = 0;
     EXPECT_EQ(backing.create(), nullptr);
     EXPECT_TRUE(backing.live.empty());
+}
+
+TEST_F(ArenaRuntimeTest, AllocatorScopesNestAndExistingArenasRetainTheirBacking) {
+    Backing first, second;
+    void *retained = nullptr;
+    {
+        gloin::arena::AllocatorScope outer({&first, Backing::allocate, Backing::release});
+        auto *a = gloin_arena_general_create();
+        ASSERT_NE(a, nullptr);
+        {
+            gloin::arena::AllocatorScope inner({&second, Backing::allocate, Backing::release});
+            retained = gloin_arena_general_create();
+            ASSERT_NE(retained, nullptr);
+        }
+        EXPECT_NE(gloin_arena_general_alloc(retained, 16, 8), nullptr);
+        EXPECT_EQ(second.live.size(), 2u);
+        auto *b = gloin_arena_general_create();
+        ASSERT_NE(b, nullptr);
+        EXPECT_EQ(first.live.size(), 2u);
+        gloin_arena_general_destroy(a);
+        gloin_arena_general_destroy(b);
+    }
+    gloin_arena_general_destroy(retained);
+    EXPECT_TRUE(first.live.empty());
+    EXPECT_TRUE(second.live.empty());
+    auto calls = first.calls + second.calls;
+    auto *normal = gloin_arena_general_create();
+    ASSERT_NE(normal, nullptr);
+    gloin_arena_general_destroy(normal);
+    EXPECT_EQ(first.calls + second.calls, calls);
+}
+
+TEST_F(ArenaRuntimeTest, AllocatorScopeFailuresAreIsolatedToTheCallingThread) {
+    Backing failing;
+    failing.fail_at = 0;
+    {
+        gloin::arena::AllocatorScope scope({&failing, Backing::allocate, Backing::release});
+        EXPECT_EQ(gloin_arena_general_create(), nullptr);
+        EXPECT_TRUE(std::async(std::launch::async, [] {
+                        auto *other = gloin_arena_general_create();
+                        if (!other)
+                            return false;
+                        gloin_arena_general_destroy(other);
+                        return true;
+                    }).get());
+        EXPECT_EQ(failing.calls, 1u);
+    }
+    EXPECT_TRUE(failing.live.empty());
 }

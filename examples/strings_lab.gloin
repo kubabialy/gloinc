@@ -1,0 +1,62 @@
+import "@arena";
+import "@std";
+import "@status";
+import "@strings";
+
+// A configuration line is inspected without allocation. Only retaining its
+// value in another arena allocates; parse_count never owns its borrowed input.
+def parse_count(line: string) -> std.IntResult {
+    def text: string = strings.trim_ascii(line);
+    def separator: strings.FindResult = strings.find(text, "=");
+    if !separator.found { return std.IntResult { status: status.INVALID, value: 0 }; }
+    def left: strings.StringResult = strings.slice_bytes(text, 0, separator.offset);
+    def start: u64 = separator.offset + 1;
+    def right: strings.StringResult = strings.slice_bytes(text, start, strings.byte_length(text) - start);
+    if left.status != status.OK || right.status != status.OK {
+        return std.IntResult { status: status.INVALID, value: 0 };
+    }
+    if !strings.equal(strings.trim_ascii(left.value), "count") {
+        return std.IntResult { status: status.INVALID, value: 0 };
+    }
+    return std.to_int(strings.trim_ascii(right.value));
+}
+
+def main() -> i32 {
+    def mut input: arena.GeneralArena = arena.GeneralArena.create();
+    defer input.free();
+    def mut retained: arena.GeneralArena = arena.GeneralArena.create();
+    defer retained.free();
+
+    def line: strings.StringResult = strings.copy(&input, " \tcount = 42\r\n");
+    if line.status != status.OK { return 1; }
+    def count: std.IntResult = parse_count(line.value);
+    if count.status != status.OK || count.value != 42 { return 2; }
+    def saved: strings.StringResult = strings.copy(&retained, strings.trim_ascii(line.value));
+    if saved.status != status.OK { return 3; }
+    input.reset(); // saved lives in retained; line and every view of it are now invalid.
+    if !strings.equal(saved.value, "count = 42") { return 4; }
+
+    // Exercise counted bytes and explicit failures: NUL is data, not the end.
+    def nul: strings.ByteResult = strings.byte_at("a\0b", 1);
+    def beyond: strings.StringResult = strings.slice_bytes("abc", 2, 18446744073709551615);
+    if nul.status != status.OK || nul.value != 0 || beyond.status != status.OUT_OF_RANGE { return 5; }
+    if strings.byte_length("café") != 5 || strings.is_empty(saved.value) { return 6; }
+    if !strings.starts_with(saved.value, "count") || !strings.ends_with(saved.value, "42") { return 7; }
+    if !strings.contains(saved.value, "=") || strings.compare("a", "ab") != -1 { return 8; }
+    if !strings.equal(strings.trim_start_ascii(" x "), "x ") { return 9; }
+    if !strings.equal(strings.trim_end_ascii(" x "), " x") { return 10; }
+    def invalid: std.IntResult = parse_count("missing separator");
+    if invalid.status != status.INVALID { return 11; }
+
+    // Reuse scratch storage over a long run; do not retain its borrowed views.
+    for def mut i: i32 = 0; i < 10000; i = i + 1 {
+        def scratch: strings.StringResult = strings.copy(&input, " count = 42 ");
+        if scratch.status != status.OK { return 12; }
+        def parsed: std.IntResult = parse_count(scratch.value);
+        if parsed.status != status.OK || parsed.value != count.value { return 13; }
+        input.reset();
+    }
+    std.println(saved.value);
+    std.println("strings lab: ok");
+    return 0;
+}

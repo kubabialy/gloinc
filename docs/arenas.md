@@ -81,3 +81,15 @@ the JIT after exact ABI validation. Installation also includes
 runtime using `--shared-libs=/path/to/libgloin_runtime.dylib`.
 
 The complete language contract is in [SPEC.md](../SPEC.md#arena-allocation-spec-028).
+
+
+## Variable-length bytes (SPEC-030)
+
+`alloc_bytes(size: u64) -> *u8` and `try_alloc_bytes(size: u64) -> *u8`
+provide alignment-1 storage initialized entirely to zero, including after reset.
+The former traps on failure; the latter returns null. A successful zero-size
+request has a non-null address but grants no readable/writable bytes. Neither
+operation adds pointer arithmetic or bounds checks. These methods support the
+caller-owned strings used by [standard input and formatting](standard-library.md).
+The private `__arena_zero_bytes` operation is restricted to `@arena` and lowers
+to `gloin_arena_zero_bytes(void *, u64)` after successful allocation.

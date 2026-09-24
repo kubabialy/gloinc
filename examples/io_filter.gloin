@@ -1,0 +1,32 @@
+// Trim ASCII whitespace, omit empty/comment lines, uppercase the rest.
+// printf '  hello\r\n# comment\n world \n' | build/gloinc examples/io_filter.gloin
+// Lines are limited to 256 bytes; output and stderr are separate borrowed streams.
+import "@io";
+import "@arena";
+import "@status";
+import "@strings";
+
+def main() -> i32 {
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+    def mut input: io.Stream = io.stdin();
+    def mut output: io.Stream = io.stdout();
+    def mut errors: io.Stream = io.stderr();
+    def mut reading: bool = true;
+    while reading {
+        scratch.reset();
+        def line: io.ReadResult = input.read_line(&scratch, 256);
+        if line.status == status.END {
+            reading = false;
+        } else {
+            if line.status != status.OK { errors.write_line("line read failed"); errors.flush(); return 2; }
+            def trimmed: string = strings.trim_ascii(line.value);
+            if !strings.is_empty(trimmed) && !strings.starts_with(trimmed, "#") {
+                def upper: strings.StringResult = strings.upper_ascii(&scratch, trimmed, 256);
+                if upper.status != status.OK { return 3; }
+                if output.write_line(upper.value).status != status.OK { return 4; }
+            }
+        }
+    }
+    return output.flush().status;
+}

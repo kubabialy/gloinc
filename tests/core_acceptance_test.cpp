@@ -349,8 +349,8 @@ TEST_F(CoreAcceptanceTest, StandardHelloWorld) {
     expect_success(invoke({"--run", file}), "Hello World!\n");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredLocalImport) {
-    rejects("reject/deferred_local_import.gloin", "Unsupported module path");
+TEST_F(CoreAcceptanceTest, RejectBareLocalImport) {
+    rejects("reject/bare_local_import.gloin", "Unsupported module path");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredPackageImport) {
@@ -466,3 +466,19 @@ TEST_F(CoreAcceptanceTest, RejectMethodReceiver) { rejects("reject/method_receiv
 TEST_F(CoreAcceptanceTest, TrapNullMethod) { traps("trap/null_method.gloin"); }
 TEST_F(CoreAcceptanceTest, RunDefer) { runs("run/defer.gloin", "42"); }
 TEST_F(CoreAcceptanceTest, TrapDeferCleanup) { traps("trap/defer_cleanup.gloin"); }
+
+TEST_F(CoreAcceptanceTest, RunLocalModule) { runs("run/local_module.gloin", "25"); }
+TEST_F(CoreAcceptanceTest, RunModuleAsRoot) { runs("modules/utils.gloin", "25"); }
+TEST_F(CoreAcceptanceTest, RejectPrivateModuleMember) {
+    rejects("reject/private_module_member.gloin", "Unknown or private member");
+}
+
+TEST_F(CoreAcceptanceTest, StandardLibraryConversions) {
+    const auto file = fixture("run/standard_library.gloin");
+    expect_success(invoke({"--check", file}), "");
+    expect_success(invoke({file}), "42\n");
+}
+TEST_F(CoreAcceptanceTest, RejectImplicitStandardResult) {
+    rejects("reject/standard_result_type.gloin", "Type mismatch");
+}
+TEST_F(CoreAcceptanceTest, TrapFormattingWithFreedArena) { traps("trap/format_freed.gloin"); }

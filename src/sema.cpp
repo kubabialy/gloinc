@@ -74,7 +74,7 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
         if (core)
             return get_builtin_type(std::string(core_type_info(*core).name));
         const auto dot = name.find('.');
-        if (dot != std::string::npos && !current_module) {
+        if (dot != std::string::npos) {
             auto found = imports.find(name.substr(0, dot));
             if (found != imports.end() && module_scopes.contains(found->second)) {
                 auto type = module_scopes.at(found->second)->resolve_type(name.substr(dot + 1));
@@ -126,64 +126,24 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     current_return_type.reset();
     current_function = nullptr;
     imports.clear();
+    module_imports.clear();
     module_scopes.clear();
     current_module = nullptr;
-    for (const auto &stmt : program) {
-        if (const auto *import = dynamic_cast<const ImportStatement *>(stmt.get())) {
-            DiagnosticScope location(current_span, import->span);
-            if (!import->loaded)
-                log_error("Module must be loaded before semantic checking: " + import->path);
-            else if (!imports.emplace(import->module_name, import).second)
-                log_error("Duplicate import '" + import->path + "'");
-        }
-    }
-    // Core types already exist in the registry. Collect every supported signature
-    // before visiting any body, so bindings do not depend on declaration order.
     if (recording) {
-        const auto root_scope = current_scope;
-        for (const auto &stmt : program) {
-            const auto *import = dynamic_cast<const ImportStatement *>(stmt.get());
-            if (!import || !import->loaded)
-                continue;
-            current_module = import;
-            current_scope = std::make_shared<Scope>();
-            module_scopes[import] = current_scope;
-            collect_structs(import->declarations);
-            for (const auto &declaration : import->declarations) {
-                if (const auto *function = dynamic_cast<const FunctionDefinition *>(declaration.get())) {
-                    if (auto type = collect_function(function)) {
-                        collected_functions.emplace(function, std::move(type));
-                        recording->linkage_names[recording->bindings.at(function->name.get())] =
-                            "gloin.module." + import->module_name + "." + function->name->value;
-                    }
-                }
-            }
-            for (const auto &declaration : import->declarations) {
-                if (const auto *constant = dynamic_cast<const VariableDeclaration *>(declaration.get());
-                    constant && constant->is_const)
-                    check_constant(constant);
-            }
-            collect_methods(import->declarations);
+        module_scopes[nullptr] = current_scope;
+        if (!prepare_modules(program))
+            return false;
+        for (const auto *module : recording->modules) {
+            select_module(module);
+            collect_declarations(module->declarations);
+            if (has_error())
+                return false;
         }
-        current_module = nullptr;
-        current_scope = root_scope;
-        collect_structs(program);
+        select_module(nullptr);
+        collect_declarations(program);
         validate_struct_cycles();
         if (has_error())
             return false;
-        for (const auto &stmt : program) {
-            if (const auto *function = dynamic_cast<const FunctionDefinition *>(stmt.get())) {
-                if (auto type = collect_function(function))
-                    collected_functions.emplace(function, std::move(type));
-            }
-        }
-        // File constants are evaluated in lexical order before all bodies.
-        collect_methods(program);
-        for (const auto &stmt : program) {
-            if (const auto *constant = dynamic_cast<const VariableDeclaration *>(stmt.get());
-                constant && constant->is_const)
-                check_constant(constant);
-        }
         auto *entry = current_scope->resolve("main");
         if (entry) {
             DiagnosticScope location(current_span, recording->symbols[entry->id].span);
@@ -198,48 +158,17 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
                                      program.empty() ? SourceSpan{} : program.front()->span);
             log_error("Executable requires an entry point main() -> i32");
         }
-        if (has_error()) {
-            initialization.clear();
-            collected_functions.clear();
-            current_scope = std::make_shared<Scope>();
+        if (has_error())
             return false;
+        for (const auto *module : recording->modules) {
+            select_module(module);
+            check_bodies(module->declarations);
         }
-    }
-    for (const auto &stmt : program) {
-        if (const auto *import = dynamic_cast<const ImportStatement *>(stmt.get())) {
-            if (recording && module_scopes.contains(import)) {
-                const auto root_scope = current_scope;
-                current_scope = module_scopes.at(import);
-                current_module = import;
-                for (const auto &declaration : import->declarations) {
-                    if (dynamic_cast<const FunctionDefinition *>(declaration.get()))
-                        check_statement(declaration.get());
-                    else if (const auto *structure = dynamic_cast<const StructDefinition *>(declaration.get()))
-                        check_methods(structure);
-                }
-                current_module = nullptr;
-                current_scope = root_scope;
-                falls_through = true;
-            }
-            continue;
-        }
-        if (recording) {
-            if (const auto *constant = dynamic_cast<const VariableDeclaration *>(stmt.get());
-                constant && constant->is_const)
-                continue;
-        }
-        if (recording && dynamic_cast<const StructDefinition *>(stmt.get())) {
-            check_methods(static_cast<const StructDefinition *>(stmt.get()));
-            continue;
-        }
-        if (recording && !dynamic_cast<const FunctionDefinition *>(stmt.get()) &&
-            !(dynamic_cast<const VariableDeclaration *>(stmt.get()) &&
-              static_cast<const VariableDeclaration *>(stmt.get())->is_const)) {
-            DiagnosticScope location(current_span, stmt ? stmt->span : SourceSpan{});
-            log_error("Only functions and constants are allowed in a checked core program");
-            continue;
-        }
-        check_statement(stmt.get());
+        select_module(nullptr);
+        check_bodies(program);
+    } else {
+        for (const auto &statement : program)
+            check_statement(statement.get());
     }
     collected_functions.clear();
     current_scope = std::make_shared<Scope>();
@@ -299,7 +228,8 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
     // Keep source functions independent of the defer bookkeeping's native ABI.
     if (recording && !current_module &&
         (sym.name == "malloc" || sym.name == "free" ||
-         arena_operation(sym.name, arena_runtime_names)))
+         arena_operation(sym.name, arena_runtime_names) ||
+         standard_operation(sym.name, standard_runtime_names)))
         recording->linkage_names[recording->bindings.at(func_def->name.get())] =
             "gloin.user." + sym.name;
     return func_type;
@@ -647,22 +577,10 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
 
     } else if (const auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
         if (recording) {
-            const auto *module = dynamic_cast<const Identifier *>(member_access->left.get());
-            const auto *member = dynamic_cast<const Identifier *>(member_access->member.get());
-            if (!current_module && module && member && resolving_callee &&
-                imports.contains(module->value) && !current_scope->resolve(module->value)) {
-                const auto *import = imports.at(module->value);
-                for (const auto &declaration : import->declarations) {
-                    const auto *function = dynamic_cast<const FunctionDefinition *>(declaration.get());
-                    if (function && function->name->value == member->value && function->is_public) {
-                        auto *symbol = module_scopes.at(import)->resolve(member->value);
-                        recording->bindings[member] = symbol->id;
-                        return symbol->type;
-                    }
-                }
-                log_error("Unknown or private member '" + member->value + "' in " + import->path);
-                return nullptr;
-            }
+            bool handled = false;
+            auto *symbol = module_member(member_access, handled, true);
+            if (handled)
+                return symbol ? symbol->type : nullptr;
             return check_field(member_access);
         }
         auto obj_type = check_expression(member_access->left.get());
@@ -699,11 +617,16 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
                 return result;
         }
         const auto *direct = dynamic_cast<const Identifier *>(call->function.get());
-        if (recording && current_module && current_module->module_name == "arena" && direct) {
+        if (recording && current_module && direct) {
+            if (auto kind = standard_operation(direct->value, standard_primitive_names);
+                kind && standard_primitive_allowed(*kind, current_module->standard_name))
+                return check_standard_primitive(call, *kind);
+        }
+        if (recording && current_module && current_module->standard_name == "arena" && direct) {
             if (auto kind = arena_operation(direct->value, arena_primitive_names))
                 return check_arena_primitive(call, *kind);
         }
-        if (recording && current_module && direct && direct->value == "__write_stdout") {
+        if (recording && current_module && !current_module->standard_name.empty() && direct && direct->value == "__write_stdout") {
             if (call->arguments.size() != 1) {
                 log_error("__write_stdout expects exactly one string argument");
                 return nullptr;
@@ -842,15 +765,22 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
     symbol.kind = kind;
     symbol.loop_depth = loop_depth;
     DiagnosticScope location(current_span, name->span);
-    if (!current_module && !current_scope->parent && imports.contains(name->value)) {
+    if (!current_scope->parent && imports.contains(name->value)) {
         log_error("Declaration conflicts with imported module '" + name->value + "'");
         return false;
     }
-    if (current_module && name->value == "__write_stdout") {
+    if (current_module && !current_module->standard_name.empty() && name->value == "__write_stdout") {
         log_error("Cannot redeclare the native byte-output primitive");
         return false;
     }
-    if (current_module && current_module->module_name == "arena" &&
+    if (current_module) {
+        if (auto kind = standard_operation(name->value, standard_primitive_names);
+            kind && standard_primitive_allowed(*kind, current_module->standard_name)) {
+            log_error("Cannot redeclare a native standard-library primitive");
+            return false;
+        }
+    }
+    if (current_module && current_module->standard_name == "arena" &&
         arena_operation(name->value, arena_primitive_names)) {
         log_error("Cannot redeclare a native arena primitive");
         return false;

@@ -51,6 +51,15 @@ std::shared_ptr<Type> Sema::check_constant_expression(const Expression *expressi
         return get_builtin_type("bool");
     if (dynamic_cast<const StringLiteral *>(expression))
         return get_builtin_type("string");
+    if (const auto *member = dynamic_cast<const MemberAccessExpression *>(expression)) {
+        bool handled = false;
+        auto *symbol = module_member(member, handled, true);
+        if (symbol && symbol->kind == SymbolKind::Constant)
+            return symbol->type;
+        if (symbol || !handled)
+            log_error("Constant initializer requires an exported constant");
+        return nullptr;
+    }
     if (const auto *identifier = dynamic_cast<const Identifier *>(expression)) {
         auto *symbol = current_scope->resolve(identifier->value);
         if (!symbol) {
@@ -104,6 +113,8 @@ std::optional<ConstantValue> Sema::evaluate_constant(const Expression *expressio
         return ConstantValue{type, string->value};
     if (const auto *identifier = dynamic_cast<const Identifier *>(expression))
         return recording->constants.at(recording->bindings.at(identifier));
+    if (const auto *member = dynamic_cast<const MemberAccessExpression *>(expression))
+        return recording->constants.at(recording->module_constants.at(member));
     if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expression)) {
         auto operand = evaluate_constant(prefix->right.get());
         if (!operand)

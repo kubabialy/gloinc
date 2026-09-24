@@ -5,9 +5,10 @@ registered through `gloinc_test` and CTest. CMake checks that every file matchin
 that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
-`gloin_arena_test` target, registered with CTest and independent of LLVM.
+`gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
+`tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-At SPEC-028, maintained source definitions and CTest discovery both contain **606 tests**:
+At 0.0.1, maintained source definitions and CTest discovery contain **867 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -33,18 +34,34 @@ At SPEC-028, maintained source definitions and CTest discovery both contain **60
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
 | ArenaTest | 21 |
-| ArenaRuntimeTest | 9 |
+| ArenaRuntimeTest | 11 |
 | AsyncTest | 2 |
 | ArrayStringTest | 4 |
 | UnlessTest | 1 |
 | JitRunnerTest | 16 |
-| CliTest | 16 |
+| CliTest | 19 |
 | StandardModuleTest | 17 |
+| StandardLibraryTest | 24 |
+| StringLibraryTest | 18 |
+| TextLibraryTest | 17 |
+| NumericLibraryTest | 12 |
+| NumericRuntimeTest | 16 |
+| IoLibraryTest | 15 |
+| IoRuntimeTest | 14 |
+| ContextLibraryTest | 14 |
+| ContextRuntimeTest | 9 |
+| MathLibraryTest | 12 |
+| MathRuntimeTest | 12 |
+| TimeRandomLibraryTest | 15 |
+| IntegratedExamplesTest | 17 |
+| TimeRandomRuntimeTest | 13 |
+| StandardRuntimeTest | 17 |
+| ModuleTest | 25 |
 | OrdinaryStructTest | 14 |
 | PointerTest | 18 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 136 |
+| CoreAcceptanceTest | 142 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -59,9 +76,10 @@ passing on a non-null module.
 The root-level `simple_test_runner.cpp`, `test_imports.cpp`, and
 `test_for_loop_parsing.cpp` are legacy manual probes, excluded from the maintained
 inventory. They have stale relative includes and weak or print-only checks;
-their output is not build or language-coverage evidence. Maintained loop tests now cover SPEC-017; imports
-remain tracked in SPEC-023/SPEC-029/SPEC-030, and the status documents were corrected in SPEC-005.
-`examples/core_counter.gloin` is exercised by the CLI suite; other example files remain manual inputs.
+their output is not build or language-coverage evidence. Maintained tests cover
+loops (SPEC-017), standard modules (SPEC-023), and local modules (SPEC-029). The CLI also exercises `core_counter.gloin`, `hello_world.gloin`,
+`arena_lab.gloin`, `module_lab.gloin`, `standard_library.gloin`, and
+`strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, and `statistics_tool.gloin`; other examples remain manual inputs.
 
 ## Running and inspecting tests
 
@@ -75,8 +93,187 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. The local parallel SPEC-028 run reports
-**602 passes, 4 failures, no unexpected test-process crashes or skipped tests**.
+as expected successes. The local parallel SPEC-030h run reports
+**863 passes, 4 failures, no unexpected test-process crashes or skipped tests**.
+
+## Integrated examples (SPEC-030h)
+
+Seventeen `IntegratedExamplesTest` cases run the configuration reader, selected-column
+statistics tool, and simulation. They cover file/CLI success, exact grammar/size/numeric
+bounds, independent integer-sum and seeded simulation references, retained string
+copies, module composition, existing destination preservation, and external LLVM
+execution. Real examples/data are installed and relocated with the runtime.
+
+In-process runs use a scoped backing allocator to count actual native arena blocks,
+enforce a 512 KiB budget, inject block-allocation failures, and require no live
+allocations on return. 100,000-line/record streams use two blocks each; repeated
+failures preserve descriptor counts. Source-library substitutions inject write,
+flush, and close failures; controlled clocks test simulation failures. Two additional
+`ArenaRuntimeTest` cases verify nested allocator scopes, retained allocator contexts,
+failure restoration, and thread isolation. These checks participate in required
+and sanitizer gates. The larger [stress script](../scripts/check-integrated-examples.py)
+checks all three programs at one million records/samples with a 2 MiB stack,
+including rejection of one-over-limit inputs. See [the guide](../docs/integrated-examples.md).
+
+## Timing and seeded randomness (SPEC-030g)
+
+Fifteen `TimeRandomLibraryTest` cases cover duration overflow/units, backwards
+ticks, exact PRNG vectors, independent copies, invalid bounds without advancement,
+forced rejection, both unit-float endpoints, and the one-word float mapping.
+They verify JIT clock binding/restoration, failure normalization, module privacy,
+replaceable source modules, malformed native ABIs, and external LLVM execution.
+Both guide programs and the packaged simulation execute verbatim; an injected
+clock checks the complete simulation's elapsed report exactly.
+
+Thirteen independent `TimeRandomRuntimeTest` cases cover four reference seeds,
+counter wrap, both word endpoints, timespec overflow, errno preservation,
+callback status normalization, copied descriptors and borrowed userdata,
+nested scopes, invalid/out-of-order/foreign-thread pops, exception restoration,
+and concurrent thread isolation. Both suites are required and run under native
+sanitizers; compiler cases also run against installed and relocated packages.
+
+## Numerical utilities (SPEC-030f)
+
+Twelve `MathLibraryTest` cases execute all 47 public functions, typed constants,
+signed-minimum absolute overflow, signed-zero selections, clamp bounds, floating
+rounding, domains, finite subnormals, independent numerical references, and the
+explicit `def foo: int = -some_val;` initializer. Canonical module privacy, wrong
+signatures, invalid private selectors, replaceable source policy, native symbol
+collisions, malformed MLIR ABIs, and all four external LLVM math ABIs are covered.
+Both guide programs and the streaming geometry/statistics example run verbatim,
+including invalid/empty input and installed/relocated package execution.
+
+Twelve independent `MathRuntimeTest` cases verify both widths against exact cases,
+decimal constants (4 scaled machine epsilons), trigonometric/logarithmic identities
+(16 scaled epsilons), halfway neighbors, large integral rounding, domains and
+nonfinite native inputs, zero signs, representable subnormals versus underflow,
+overflow, stable hypot, and errno/floating-environment restoration on success and
+failure. Concurrent host threads retain independent rounding environments. These
+suites participate in required and sanitizer validation; compiler cases also
+participate in installed/relocated validation.
+
+## Filesystem and process context (SPEC-030e)
+
+Fourteen `ContextLibraryTest` cases cover the lexical path matrix, exact/overflow
+bounds, both join allocation failures, metadata/mutations, CLI forwarding and
+filename escaping, missing/empty/copied environment values, process allocation
+failures, host cwd, invocation argument restoration and rejected NUL, type/privacy
+checks, native collisions/ABIs, external execution, and the packaged tool/guide.
+The tool runs from another directory with spaced paths, missing/empty/nonempty
+labels, and malformed options that leave the filesystem untouched.
+
+Nine native `ContextRuntimeTest` cases cover regular files/directories/broken
+symlinks/FIFOs, counted paths and invalid-input preservation, mkdir/unlink/rename
+semantics, permission errors, deep-copied C argument scopes, invalid/LIFO cleanup,
+thread isolation, raw environment bytes, exact cwd bounds, and deleted cwd.
+Both suites belong to required and sanitizer validation; compiler cases also run
+against installed and relocated packages.
+
+## Streams and files (SPEC-030d)
+
+Fifteen `IoLibraryTest` cases exercise borrowed stdin/stdout/stderr, compatible
+stdio buffering, each file mode and I/O method, alias close state, bounded binary
+reads and EOF, partial read_all prefixes, wrong directions, malformed paths,
+OS errors/messages, metadata allocation before destructive opens, read allocation
+failure without consumption, scratch reuse, failed-close invalidation, write_line
+suffix failure, receiver mutability/privacy, native signatures and collisions,
+external LLVM execution, and packaged copier/filter/guide programs.
+
+Fourteen independent `IoRuntimeTest` cases cover real binary/empty files,
+exclusive create/append/truncate, actual and injected permission errors, chunk/line/
+read_all boundaries, partial read errors, deterministic short/failing/zero-progress
+writes, injected flush/close failures, broken pipes with preserved signal state,
+bounded diagnostic messages, and 2,000 open/close cycles with descriptor checks.
+Injection is per-call or per-stream; no process-global test hooks change runtime
+behavior. Both suites are required by `check-core` and ASan/UBSan; compiler tests
+also run against installed and relocated packages.
+
+## Numeric text and conversion (SPEC-030c)
+
+Twelve `NumericLibraryTest` cases execute all 29 public APIs, recoverable failures,
+exact/rounded/truncated conversion choices, signed zero, arena allocation failure,
+invalid-precision preflight, source type/privacy checks, reserved runtime-name
+collisions, malformed native ABIs, and external LLVM execution. The statistics
+example and both complete [guide](../docs/numbers.md) programs run verbatim against
+normal, installed, and relocated compilers.
+
+Sixteen LLVM-independent `NumericRuntimeTest` cases check integer limits, counted
+strict grammar, long inputs, direct-width midpoint rounding, finite float extremes,
+subnormals, signed zero, boolean spelling, 20,000 sampled float bit patterns,
+locale independence, formatting buffer guards, fixed rounding and precision,
+safe conversion boundaries, and cleared payloads on every native failure class.
+Both suites are required by `check-core` and ASan/UBSan validation. A separate
+million-iteration composition of parsing, formatting, conversion, cursor traversal,
+and arena reset passes with a 2 MiB stack.
+
+## Text traversal and construction (SPEC-030b)
+
+Seventeen `TextLibraryTest` cases cover split/line boundary semantics, independent
+cursor positions and borrowed views, invalid delimiters, bounded concat/repeat/
+replacement/case conversion, overflow and empty-output paths, independent result
+lifetimes, all 256 byte values, shared builder state, atomic failed appends,
+zero capacity, read-only queries, snapshots, and source reset/free.
+
+Per-handle allocation injection exercises state allocation failure, buffer
+allocation failure, and snapshot failure through the actual typed-arena bridge.
+10,000 append/clear iterations followed by an injected third-allocation failure
+verify that mutation and cursor traversal allocate nothing. Private primitive
+range/null/type guards, public mutability/privacy, and external LLVM execution
+are checked. The packaged report and both guide programs run verbatim against
+normal, installed, and relocated compilers. The suite is part of `check-core`
+and sanitizer validation. A separate million-iteration composition of splitting,
+case conversion, building, snapshotting, replacement, and scratch reset passes
+with a 2 MiB stack.
+
+## Byte strings (SPEC-030a)
+
+Eighteen `StringLibraryTest` cases cover all 14 public functions, shared status
+compatibility, unsigned ordering, NUL/arbitrary bytes, UTF-8 byte slicing,
+extreme/empty bounds, first/absent/empty search, exact ASCII trimming, and a
+64-case independent search/order oracle. They exercise copy lifetime independence,
+source reset/free and overwrite, injected allocation failure, allocation-free
+queries, cleared handles, type/arity/privacy diagnostics, native-name collisions,
+reserved struct names, primitive bounds traps, null empty descriptors, JIT ABI
+validation, external LLVM execution, and the packaged configuration example.
+Both Gloin code blocks in [the API guide](../docs/strings.md) compile and execute
+verbatim in the maintained suite. The suite is required by `check-core` and
+installed/relocated package validation.
+
+Two additional `StandardRuntimeTest` cases verify all 256 byte values, exact-sized
+copy destinations and guard bytes, no implicit terminator, and null-pointer
+zero-length copies. The native runtime is instrumented by the sanitizer build.
+A manual stress run of `strings_lab.gloin` expanded to one million iterations
+also passes with a 2 MiB stack; its scratch arena is reset each iteration.
+
+## Standard input and conversions (SPEC-030)
+
+Twenty-four `StandardLibraryTest` cases cover the source API, prompts/stdin,
+explicit statuses, integer boundaries, exact output bytes, wrong types/arity,
+EOF/empty/CRLF/final lines, NUL/non-UTF-8 bytes, zero/exact/oversized limits,
+allocation and I/O errors, retained strings across growth, arena reset/free,
+deferred views, zeroed bytes, private primitives, symbol collisions, JIT ABI
+validation, replaceable library source, external LLVM execution, and the packaged
+interactive example. The fixture can redirect stdin to a real file.
+
+Fifteen independent `StandardRuntimeTest` cases cover decimal grammar and bounds,
+syntax-vs-overflow precedence, counted non-NUL-terminated input, 10,000 deterministic
+round trips, bounded terminated formatting, input/EOF/line endings/raw bytes,
+oversized-line draining, I/O errors, and zero-initialized arena reuse. The native
+runtime and compiler are instrumented by the sanitizer build. CLI/library tests
+also run against installed/relocated packages.
+
+## Local modules (SPEC-029)
+
+Twenty-five `ModuleTest` cases cover source-relative and parent paths, optional
+extensions, spaces, shared dependencies and nominal types, unique emitted symbols,
+exported constants, private declarations/fields/methods, isolated file scopes,
+imported entry names, unused invalid code, forbidden globals, constant errors,
+duplicate imports, shadowing, symlinks, cycles, depth limits, located diagnostics,
+fresh reads, standard dependencies, native primitive identity, in-memory roots,
+qualified deferred calls, invalid function values/addresses, and the module lab.
+Successful cases execute through the CLI; selected cases inspect LLVM definitions
+and execute externally. Negative cases exercise every CLI compilation mode.
+The suite participates in required, sanitizer, and installed/relocated package checks.
 
 ## Arena allocation (SPEC-028)
 
@@ -514,7 +711,7 @@ counter returning 3, zero-iteration loops, header constants, void-call updates,
 discarded expressions, nested loops, early returns that skip trapping updates,
 and arithmetic guards/short-circuit expressions in loop headers. A test-only
 LLVM global records helper calls without changing the source control flow. The
-exact trace **123423422** proves initializer-once, condition-before-body,
+exact trace **123440422** proves initializer-once, condition-before-body,
 body-before-update, final false-condition checking, and single evaluation of a
 skipped `unless` body condition. Eight other programs return 42.
 

@@ -4,8 +4,7 @@
 #include "AST.h"
 #include "diagnostics.h"
 
-bool load_standard_modules(std::vector<std::unique_ptr<Statement>> &program,
-                           const std::string &directory,
-                           const std::shared_ptr<Diagnostics> &diagnostics);
+bool load_modules(std::vector<std::unique_ptr<Statement>> &program, const std::string &filename,
+                  const std::string &directory, const std::shared_ptr<Diagnostics> &diagnostics);
 
 #endif

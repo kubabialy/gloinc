@@ -1,5 +1,6 @@
 #include "compiler.h"
 #include "jit_runner.h"
+#include "native_output.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -10,9 +11,10 @@
 #include <string_view>
 
 namespace {
-enum class Mode { Run, Check, EmitIR, EmitLLVM };
+enum class Mode { Run, Check, EmitIR, EmitLLVM, EmitObject, EmitExecutable };
 constexpr std::string_view usage =
-    "Usage: gloinc [--run | --check | --emit-ir | --emit-llvm] [--stdlib-dir DIR] [--] FILE\n"
+    "Usage: gloinc [--run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] "
+    "[-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]\n"
     "       gloinc --help\n"
     "       gloinc --version\n";
 
@@ -44,8 +46,12 @@ int main(int argc, char *argv[]) {
                    "  --check      Compile and verify without execution; main is optional.\n"
                    "  --emit-ir    Print verified high-level MLIR without execution.\n"
                    "  --emit-llvm  Print verified LLVM-dialect MLIR without execution.\n"
+                   "  --emit-object  Write a native macOS arm64 object file.\n"
+                   "  --emit-exe     Link a standalone macOS arm64 executable.\n"
+                   "  -o PATH        Output path for --emit-object or --emit-exe.\n"
                    "  --stdlib-dir DIR  Load standard module files from DIR.\n"
-                   "  --           Treat remaining arguments as filenames.\n"
+                   "  --           Before FILE: end compiler options; after FILE: forward program "
+                   "arguments.\n"
                    "  -h, --help   Show this help.\n"
                    "  -V, --version  Show compiler and LLVM/MLIR versions.\n\n"
                    "Run returns main's low eight bits as the process exit status.\n"
@@ -64,10 +70,19 @@ int main(int argc, char *argv[]) {
     Mode mode = Mode::Run;
     bool has_mode = false;
     bool options = true;
+    bool forwarded = false;
+    std::vector<std::string> program_arguments;
     std::optional<std::string> filename;
     std::optional<std::string> library_directory;
+    std::optional<std::string> output_path;
     for (int i = 1; i < argc; ++i) {
         const std::string_view argument = argv[i];
+        if (filename && argument == "--") {
+            forwarded = true;
+            for (++i; i < argc; ++i)
+                program_arguments.emplace_back(argv[i]);
+            break;
+        }
         if (options && argument == "--") {
             options = false;
             continue;
@@ -75,8 +90,15 @@ int main(int argc, char *argv[]) {
         if (options && argument.starts_with('-')) {
             if (argument == "--stdlib-dir") {
                 if (library_directory || i + 1 == argc || std::string_view(argv[i + 1]).empty())
-                    return usage_error("--stdlib-dir requires one directory and may appear only once");
+                    return usage_error(
+                        "--stdlib-dir requires one directory and may appear only once");
                 library_directory = argv[++i];
+                continue;
+            }
+            if (argument == "-o") {
+                if (output_path || i + 1 == argc || std::string_view(argv[i + 1]).empty())
+                    return usage_error("-o requires one path and may appear only once");
+                output_path = argv[++i];
                 continue;
             }
             Mode selected;
@@ -88,6 +110,10 @@ int main(int argc, char *argv[]) {
                 selected = Mode::EmitIR;
             else if (argument == "--emit-llvm")
                 selected = Mode::EmitLLVM;
+            else if (argument == "--emit-object")
+                selected = Mode::EmitObject;
+            else if (argument == "--emit-exe")
+                selected = Mode::EmitExecutable;
             else
                 return usage_error("unknown or misplaced option '" + std::string(argument) + "'");
             if (has_mode)
@@ -102,6 +128,17 @@ int main(int argc, char *argv[]) {
     }
     if (!filename || filename->empty())
         return usage_error("expected one input file");
+    const bool native = mode == Mode::EmitObject || mode == Mode::EmitExecutable;
+    if (native != output_path.has_value())
+        return usage_error("-o PATH is required exactly for native output modes");
+    if (native &&
+        (*output_path == *filename || (llvm::sys::fs::exists(*output_path) &&
+                                       llvm::sys::fs::equivalent(*filename, *output_path))))
+        return usage_error("output path must differ from input file");
+
+    if (forwarded && mode != Mode::Run)
+        return usage_error("program arguments require run mode");
+    program_arguments.insert(program_arguments.begin(), *filename);
 
     llvm::sys::fs::file_status status;
     if (const auto error = llvm::sys::fs::status(*filename, status)) {
@@ -120,7 +157,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     if (!library_directory) {
-        auto executable = llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main));
+        auto executable =
+            llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main));
         llvm::SmallString<256> directory(llvm::sys::path::parent_path(executable));
         llvm::sys::path::append(directory, "stdlib");
         if (!llvm::sys::fs::is_directory(directory)) {
@@ -132,8 +170,8 @@ int main(int argc, char *argv[]) {
     mlir::MLIRContext context;
     auto compiled = compile_source(
         (*buffer)->getBuffer().str(), *filename, context,
-        mode == Mode::Run ? CompilationMode::Executable : CompilationMode::Module,
-        mode == Mode::EmitLLVM ? CompilationOutput::LLVM : CompilationOutput::HighLevel,
+        mode == Mode::Run || native ? CompilationMode::Executable : CompilationMode::Module,
+        mode == Mode::EmitLLVM || native ? CompilationOutput::LLVM : CompilationOutput::HighLevel,
         *library_directory);
     if (!compiled.success()) {
         compiled.diagnostics->render(std::cerr);
@@ -146,7 +184,18 @@ int main(int argc, char *argv[]) {
         llvm::outs() << '\n';
         return finish_output();
     }
-    auto executed = JitRunner::run(*compiled.module);
+    if (native) {
+        auto executable =
+            llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main));
+        if (!emit_native(*compiled.module, *output_path,
+                         mode == Mode::EmitObject ? NativeOutput::Object : NativeOutput::Executable,
+                         executable, *compiled.diagnostics)) {
+            compiled.diagnostics->render(std::cerr);
+            return 1;
+        }
+        return 0;
+    }
+    auto executed = JitRunner::run(*compiled.module, program_arguments);
     if (!executed.success()) {
         executed.diagnostics->render(std::cerr);
         return 1;

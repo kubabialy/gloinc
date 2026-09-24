@@ -11,5 +11,7 @@ inline mlir::LLVM::LLVMFunctionType arena_runtime_type(mlir::MLIRContext &contex
         return mlir::LLVM::LLVMFunctionType::get(pointer, {}, false);
     if (kind == ArenaPrimitive::Allocate)
         return mlir::LLVM::LLVMFunctionType::get(pointer, {pointer, integer, integer}, false);
+    if (kind == ArenaPrimitive::Zero)
+        return mlir::LLVM::LLVMFunctionType::get(nothing, {pointer, integer}, false);
     return mlir::LLVM::LLVMFunctionType::get(nothing, {pointer}, false);
 }

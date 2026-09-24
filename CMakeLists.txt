@@ -76,8 +76,11 @@ add_public_tablegen_target(GloinOpsIncGen)
 
 # LLVM-independent runtime. The JIT links it statically; external runners load
 # the shared variant, which is also shipped for emitted LLVM programs.
-add_library(gloin_runtime STATIC src/arena_runtime.cpp)
-add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp)
+add_library(gloin_runtime STATIC src/arena_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
+add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
+foreach(runtime_target gloin_runtime gloin_runtime_shared)
+    target_include_directories(${runtime_target} SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fast_float/include")
+endforeach()
 set_target_properties(gloin_runtime_shared PROPERTIES OUTPUT_NAME gloin_runtime)
 target_include_directories(gloin_runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
@@ -89,6 +92,8 @@ add_library(gloin_frontend STATIC
     src/sema_pointers.cpp
     src/sema_methods.cpp
     src/sema_arena.cpp
+    src/sema_modules.cpp
+    src/sema_standard.cpp
     src/numeric.cpp
     src/sema_numeric.cpp
     src/sema_constants.cpp
@@ -105,6 +110,7 @@ add_library(gloin_backend STATIC
     src/codegen_operators.cpp
     src/codegen_control_flow.cpp
     src/codegen_defer.cpp
+    src/codegen_standard.cpp
     src/codegen_arena.cpp
     src/compiler.cpp
     src/module_loader.cpp
@@ -112,6 +118,7 @@ add_library(gloin_backend STATIC
     src/lowering.cpp
     src/dialect/GloinDialect.cpp
     src/jit_runner.cpp
+    src/native_output.cpp
 )
 add_dependencies(gloin_backend GloinDialectIncGen GloinTypesIncGen GloinOpsIncGen)
 target_compile_definitions(gloin_backend PRIVATE
@@ -135,10 +142,24 @@ target_link_libraries(gloin_backend PUBLIC
 
 add_executable(gloinc main.cpp)
 target_link_libraries(gloinc PRIVATE gloin_backend)
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+    if(GLOIN_ENABLE_SANITIZERS)
+        # The runtime archive is instrumented by the build compiler. Its ASan
+        # runtime must come from that same compiler when linking generated code.
+        set(GLOIN_NATIVE_LINKER "${CMAKE_CXX_COMPILER}")
+    else()
+        find_program(GLOIN_NATIVE_LINKER NAMES clang++
+            HINTS "${LLVM_TOOLS_BINARY_DIR}" NO_DEFAULT_PATH REQUIRED)
+    endif()
+endif()
 target_compile_definitions(gloinc PRIVATE
     GLOIN_VERSION="${PROJECT_VERSION}"
     GLOIN_LLVM_VERSION="${LLVM_PACKAGE_VERSION}"
 )
+target_compile_definitions(gloin_backend PRIVATE
+    GLOIN_NATIVE_LINKER="${GLOIN_NATIVE_LINKER}")
+set_source_files_properties(src/native_output.cpp PROPERTIES
+    COMPILE_DEFINITIONS "GLOIN_NATIVE_SANITIZED=$<BOOL:${GLOIN_ENABLE_SANITIZERS}>")
 set(GLOIN_TARGETS gloin_frontend gloin_backend gloinc gloin_runtime gloin_runtime_shared)
 
 include(CTest)
@@ -172,6 +193,10 @@ if(BUILD_TESTING)
 namespace gloin_test {
 inline constexpr auto gloinc = R\"tool($<TARGET_FILE:gloinc>)tool\";
 inline constexpr auto core_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/core_counter.gloin)tool\";
+inline constexpr auto standard_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/standard_library.gloin)tool\";
+inline constexpr auto strings_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/strings_lab.gloin)tool\";
+inline constexpr auto strings_guide = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/docs/strings.md)tool\";
+inline constexpr auto module_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/module_lab.gloin)tool\";
 inline constexpr auto core_fixtures = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/core)tool\";
 inline constexpr auto mlir_opt = R\"tool(${GLOIN_MLIR_OPT})tool\";
 inline constexpr auto mlir_runner = R\"tool(${GLOIN_MLIR_RUNNER})tool\";
@@ -210,6 +235,16 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/jit_test.cpp
         tests/cli_test.cpp
         tests/standard_module_test.cpp
+        tests/standard_library_test.cpp
+        tests/string_library_test.cpp
+        tests/text_library_test.cpp
+        tests/numeric_library_test.cpp
+        tests/io_library_test.cpp
+        tests/context_library_test.cpp
+        tests/math_library_test.cpp
+        tests/time_random_library_test.cpp
+        tests/integrated_examples_test.cpp
+        tests/module_test.cpp
         tests/ordinary_struct_test.cpp
         tests/pointer_test.cpp
         tests/method_test.cpp
@@ -252,13 +287,18 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     list(APPEND GLOIN_TARGETS gloin_arena_test)
     gtest_discover_tests(gloin_arena_test PROPERTIES TIMEOUT 30)
 
+    add_executable(gloin_standard_test tests/runtime/standard_test.cpp tests/runtime/numeric_test.cpp tests/runtime/io_test.cpp tests/runtime/context_test.cpp tests/runtime/math_test.cpp tests/runtime/time_random_test.cpp)
+    target_link_libraries(gloin_standard_test PRIVATE gloin_runtime GTest::gtest_main)
+    list(APPEND GLOIN_TARGETS gloin_standard_test)
+    gtest_discover_tests(gloin_standard_test PROPERTIES TIMEOUT 30)
+
     # Required scalar-core suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure
             --output-junit "${CMAKE_CURRENT_BINARY_DIR}/core.xml"
-        DEPENDS gloinc_test gloin_arena_test USES_TERMINAL VERBATIM)
+        DEPENDS gloinc_test gloin_arena_test gloin_standard_test USES_TERMINAL VERBATIM)
 endif()
 
 set_target_properties(${GLOIN_TARGETS} PROPERTIES
@@ -282,13 +322,21 @@ install(TARGETS gloin_runtime gloin_runtime_shared
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES src/arena_runtime.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gloin)
+install(FILES src/arena_runtime.h src/stdlib_runtime.h src/io_runtime.h src/context_runtime.h src/math_runtime.h src/time_runtime.h src/random_runtime.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gloin)
 install(DIRECTORY stdlib/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/stdlib
     FILES_MATCHING PATTERN "*.gloin")
-install(FILES README.md SPEC.md SPEC-TODO.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
-install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
-install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/arena_lab.gloin
+install(FILES README.md CONTRIBUTING.md SPEC.md SPEC-TODO.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs
+    PATTERN ".DS_Store" EXCLUDE)
+install(FILES examples/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples)
+install(FILES tests/fixtures/core/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/tests/fixtures/core)
+install(FILES third_party/fast_float/LICENSE-MIT third_party/fast_float/README.md third_party/fast_float/SHA256SUMS
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}/third_party/fast_float)
+install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/arena_lab.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
+install(DIRECTORY examples/data DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
+install(DIRECTORY examples/modules DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples
+    FILES_MATCHING PATTERN "*.gloin")
 install(DIRECTORY tests/fixtures/core/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/core-fixtures)
 
 # Packages depend on the same LLVM/MLIR installation used at configure time.

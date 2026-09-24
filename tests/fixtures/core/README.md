@@ -31,6 +31,8 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 | UTF-8 comments, CRLF, multiline expressions | [utf8_comments](run/utf8_comments.gloin) |
 | i32 result mapped to host exit status modulo 256, with no implicit output | [negative](run/negative_result.gloin), [zero](run/zero_result.gloin), [minimum](run/minimum_result.gloin), [maximum](run/maximum_result.gloin) |
 | Function-exit LIFO defer and checked registration (SPEC-027) | [defer](run/defer.gloin), [invalid operand](reject/defer_operand.gloin), [cleanup trap](trap/defer_cleanup.gloin) |
+| Standard input/conversion API and arena lifetime (SPEC-030) | [conversions](run/standard_library.gloin), [result type](reject/standard_result_type.gloin), [freed formatting arena](trap/format_freed.gloin); stdin fixtures also run through `StandardLibraryTest` |
+| Local modules, private exports, and source-relative paths (SPEC-029) | [caller](run/local_module.gloin), [dependency also executable alone](modules/utils.gloin), [private access](reject/private_module_member.gloin), [bare path](reject/bare_local_import.gloin) |
 | Initialized arena allocation, import requirement, and freed-handle traps (SPEC-028) | [arena](run/arena.gloin), [type argument](reject/arena_value.gloin), [missing import](reject/unimported_arena.gloin), [freed handle](trap/arena_freed.gloin) |
 | Instance/static methods and explicit self (SPEC-026) | [methods](run/methods.gloin), [invalid receiver](reject/method_receiver.gloin), [null method access](trap/null_method.gloin) |
 | Pointers, references, indirect writes, and read-only aliases (SPEC-025) | [pointers](run/pointers.gloin) |
@@ -40,7 +42,7 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 | Standard import and exact hello-world output (SPEC-023) | [hello_world](run/hello_world.gloin) |
 | Eleven normative invalid fragments | `reject/canonical_01.gloin` through `canonical_11.gloin`; the unknown-type binding is wrapped in a function to reach type checking |
 | Initialization, immutability, scopes, types, literal ranges, calls, returns, constants | Named files under [reject](reject), including [uninitialized](reject/uninitialized.gloin), [mixed_widths](reject/mixed_widths.gloin), [missing_return](reject/missing_return.gloin) |
-| Deferred syntax/type families and unsupported operators | `reject/deferred_*.gloin`: local/package imports, unsupported string escapes, packed structs, arrays, generics, concurrency, extended numeric/layout types, legacy syntax, range loops, bitwise/shift/compound operators |
+| Deferred syntax/type families and unsupported operators | `reject/deferred_*.gloin`: package imports, unsupported string escapes, packed structs, arrays, generics, concurrency, extended numeric/layout types, legacy syntax, range loops, bitwise/shift/compound operators |
 | Checked integer overflow at every width; zero division and signed-minimum remainder | `trap/overflow_i*.gloin`, `trap/overflow_u*.gloin`, [division_zero](trap/division_zero.gloin), [signed_remainder](trap/signed_remainder.gloin) |
 | Floating zero division and non-finite results at both widths | [f32 division](trap/division_zero_f32.gloin), [f64 division](trap/division_zero_f64.gloin), [f32 overflow](trap/overflow_f32.gloin), [f64 overflow](trap/overflow_f64.gloin) |
 

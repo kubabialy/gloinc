@@ -94,6 +94,7 @@ class CodeGen {
     std::vector<mlir::LLVM::LLVMStructType> defer_record_types;
     std::vector<mlir::Value> gen_call_arguments(const CallExpression *call);
     mlir::Value emit_checked_call(const CallExpression *call, mlir::ValueRange arguments);
+    mlir::Value emit_standard_primitive(StandardPrimitive kind, mlir::ValueRange arguments);
     mlir::Value emit_arena_primitive(ArenaPrimitive kind, mlir::ValueRange arguments);
     mlir::Value emit_arena_allocation(mlir::func::FuncOp method, bool nullable,
                                       mlir::ValueRange arguments);

@@ -31,7 +31,7 @@ std::shared_ptr<Type> Sema::arena_value_type_hint(const Expression *value) {
 void Sema::register_arena_method(const std::shared_ptr<StructType> &structure,
                                  const FunctionDefinition *method,
                                  const std::shared_ptr<FunctionType> &signature) {
-    if (!structure->owner || structure->owner->module_name != "arena" ||
+    if (!structure->owner || structure->owner->standard_name != "arena" ||
         structure->name != "GeneralArena" ||
         (method->name->value != "alloc" && method->name->value != "try_alloc"))
         return;
@@ -58,6 +58,8 @@ std::shared_ptr<Type> Sema::check_arena_primitive(const CallExpression *call, Ar
         parameters.push_back(get_builtin_type("u64"));
         parameters.push_back(get_builtin_type("u64"));
     }
+    if (kind == ArenaPrimitive::Zero)
+        parameters.push_back(get_builtin_type("u64"));
     if (call->arguments.size() != parameters.size()) {
         log_error("Incorrect number of arena primitive arguments");
         return nullptr;

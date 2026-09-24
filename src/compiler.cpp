@@ -17,7 +17,7 @@ CompilationResult compile_source(std::string text, std::string filename, mlir::M
         return {{}, diagnostics, diagnostics->all().front().stage};
     if (standard_library_directory.empty())
         standard_library_directory = GLOIN_BUILD_STDLIB_DIR;
-    if (!load_standard_modules(parsed.program, standard_library_directory, diagnostics))
+    if (!load_modules(parsed.program, source->name, standard_library_directory, diagnostics))
         return {{}, diagnostics, diagnostics->all().back().stage};
 
     Sema sema(diagnostics);

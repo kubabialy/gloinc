@@ -1,0 +1,56 @@
+import "@strings";
+import "@status";
+import "@arena";
+import "@std";
+
+// Turn borrowed configuration lines into a bounded escaped report. Scratch
+// transformations expire each iteration; append copies them into the builder.
+def main() -> i32 {
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+    def mut storage: arena.GeneralArena = arena.GeneralArena.create();
+    defer storage.free();
+    def mut retained: arena.GeneralArena = arena.GeneralArena.create();
+    defer retained.free();
+    def made: strings.BuilderResult = strings.StringBuilder.create(&storage, 128);
+    if made.status != status.OK { return 1; }
+    def mut report: strings.StringBuilder = made.value;
+    def mut alias: strings.StringBuilder = report;
+    def mut lines: strings.LineCursor = strings.LineCursor.create(
+        " name = Gloin & friends \r\n# ignored\n empty = \n count = 42\n");
+    def mut line: strings.StringResult = lines.next();
+    while line.status == status.OK {
+        def text: string = strings.trim_ascii(line.value);
+        if !strings.is_empty(text) && !strings.starts_with(text, "#") {
+            def split: strings.SplitCursorResult = strings.SplitCursor.create(text, "=");
+            if split.status != status.OK { return 2; }
+            def mut fields: strings.SplitCursor = split.value;
+            def key: strings.StringResult = fields.next();
+            def value: strings.StringResult = fields.next();
+            def end: strings.StringResult = fields.next();
+            if key.status != status.OK || value.status != status.OK || end.status != status.END { return 3; }
+            def name: strings.StringResult = strings.upper_ascii(&scratch, strings.trim_ascii(key.value), 32);
+            def escaped: strings.StringResult = strings.replace_all(&scratch,
+                strings.trim_ascii(value.value), "&", "&amp;", 64);
+            if name.status != status.OK || escaped.status != status.OK { return 4; }
+            if alias.append(name.value) != status.OK || report.append("=") != status.OK
+                || report.append(escaped.value) != status.OK || alias.append_byte(10) != status.OK { return 5; }
+            scratch.reset(); // Builder owns copies, so its report remains valid.
+        }
+        line = lines.next();
+    }
+    if line.status != status.END { return 6; }
+    def divider: strings.StringResult = strings.repeat(&scratch, "-", 3, 3);
+    def label: strings.StringResult = strings.lower_ascii(&scratch, "DONE", 4);
+    if divider.status != status.OK || label.status != status.OK { return 7; }
+    def footer: strings.StringResult = strings.concat(&scratch, divider.value, label.value, 7);
+    if footer.status != status.OK || report.append(footer.value) != status.OK { return 8; }
+    if report.byte_length() != alias.byte_length() || report.capacity() != 128 { return 9; }
+    def saved: strings.StringResult = report.to_string(&retained);
+    if saved.status != status.OK { return 10; }
+    alias.clear();
+    if report.byte_length() != 0 || report.append("discarded") != status.OK { return 11; }
+    storage.free(); // report and alias are invalid; saved lives in retained.
+    std.println(saved.value);
+    return 0;
+}

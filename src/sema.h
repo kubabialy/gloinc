@@ -81,7 +81,7 @@ struct StructType : public Type {
     std::vector<Field> fields;
     bool is_packed;
     std::optional<size_t> identity;
-    const ImportStatement *owner = nullptr;
+    const SourceModule *owner = nullptr;
     bool is_public = false;
     std::unordered_map<std::string, const FunctionDefinition *> methods;
 
@@ -183,9 +183,18 @@ class Sema {
 
   private:
     std::optional<SemanticData> recording;
-    std::unordered_map<std::string, const ImportStatement *> imports;
-    std::unordered_map<const ImportStatement *, std::shared_ptr<Scope>> module_scopes;
-    const ImportStatement *current_module = nullptr;
+    using ModuleImports = std::unordered_map<std::string, const SourceModule *>;
+    ModuleImports imports;
+    std::unordered_map<const SourceModule *, ModuleImports> module_imports;
+    std::unordered_map<const SourceModule *, std::shared_ptr<Scope>> module_scopes;
+    const SourceModule *current_module = nullptr;
+    std::shared_ptr<Type> check_standard_primitive(const CallExpression *call, StandardPrimitive kind);
+    bool prepare_modules(const std::vector<std::unique_ptr<Statement>> &program);
+    void select_module(const SourceModule *module);
+    void collect_declarations(const std::vector<std::unique_ptr<Statement>> &program);
+    void check_bodies(const std::vector<std::unique_ptr<Statement>> &program);
+    Symbol *module_member(const MemberAccessExpression *member, bool &handled, bool diagnose);
+
     bool resolving_callee = false;
     bool checking_constant = false;
     std::optional<CoreType> expected_type;

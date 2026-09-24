@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gloin 0.0.1 — Guide and language reference</title><link rel="stylesheet" href="../style.css"><script src="../versions.js"></script></head><body>
+<header><h1>Gloin 0.0.1</h1><p>Guide and language reference · Apple Silicon macOS</p><label>Documentation version <select id="version" aria-label="Documentation version"></select></label></header>
+<main><nav aria-label="Contents"><a href="#start">Get started</a><a href="#cli">Compiler</a><a href="#syntax">Syntax</a><a href="#types">Types</a><a href="#flow">Functions and flow</a><a href="#data">Structs and memory</a><a href="#modules">Modules</a><a href="#library">Standard library</a><a href="#limits">Limits</a><a href="#reference">Further reference</a></nav><article>
+<section id="start"><h2>Get started</h2>
+<p>Gloin 0.0.1 runs on Apple Silicon macOS. Install Xcode Command Line Tools, CMake 3.28+, Ninja, and LLVM/MLIR 21.1.6. From a source checkout:</p>
+<pre><code>bash scripts/install-llvm.sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir
+cmake --build build -j 2
+./build/gloinc examples/hello_world.gloin</code></pre>
+<p>The last command prints <code>Hello World!</code>. Install with <code>cmake --install build --prefix "$HOME/.local"</code>. The compiler needs the LLVM installation it was built against; generated executables link the Gloin runtime and do not need LLVM at runtime.</p>
+<p>Save this as <code>hello.gloin</code>:</p>
+<pre><code>import "@std";
+
+def main() -&gt; i32 {
+    std.println("Hello World!");
+    return 0;
+}</code></pre>
+<pre><code>./build/gloinc hello.gloin
+./build/gloinc --emit-exe -o hello hello.gloin
+./hello</code></pre></section>
+<section id="cli"><h2>Compiler and native output</h2>
+<pre><code>gloinc [--run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] \
+       [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
+gloinc --help
+gloinc --version</code></pre>
+<table><tr><th>Mode</th><th>Behavior</th></tr>
+<tr><td>default / <code>--run</code></td><td>JIT runs <code>main() -&gt; i32</code>. Its low eight bits become the process exit status. Use <code>FILE -- ARG...</code> for program arguments.</td></tr>
+<tr><td><code>--check</code></td><td>Parse, type check, and verify without running. Main is optional.</td></tr>
+<tr><td><code>--emit-ir</code>, <code>--emit-llvm</code></td><td>Print verified high level or LLVM dialect MLIR for inspection.</td></tr>
+<tr><td><code>--emit-object -o PATH</code></td><td>Write a macOS arm64 object with a native entry point. Link it with <code>libgloin_runtime.a</code> using the pinned <code>clang++</code>.</td></tr>
+<tr><td><code>--emit-exe -o PATH</code></td><td>Link a macOS arm64 executable with the static Gloin runtime. Pass arguments directly to that executable.</td></tr></table>
+<p>Source, output, and link errors go to stderr and exit 1. Usage errors exit 2. Successful checks and emission exit 0. Runtime arithmetic traps terminate the program. Quote paths with spaces. <code>--stdlib-dir DIR</code> selects a directory of <code>@</code> modules.</p></section>
+<section id="syntax"><h2>Syntax</h2>
+<p>Source is UTF-8. Comments start with <code>//</code>. Bindings, assignments, call statements, returns, imports, and defer statements end in <code>;</code>. Function and control flow bodies use braces with no trailing semicolon. Declarations start with <code>def</code>; <code>pub</code> or <code>priv</code> follows <code>def</code>, with private as the default across modules.</p>
+<pre><code>def const LIMIT: i32 = 42;
+def pub calculate(x: i32) -&gt; i32 { return x + LIMIT; }
+// Within a function:
+def mut count: i32 = 0;</code></pre>
+<p>All bindings, parameters, fields, and return types need explicit types. A local may be declared without an initializer but must be assigned before use. Constants need compile time expressions. There are no implicit numeric conversions.</p></section>
+<section id="types"><h2>Types and expressions</h2>
+<table><tr><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>bool</code></td><td><code>true</code> or <code>false</code>; conditions require bool.</td></tr>
+<tr><td><code>i8 i16 i32 i64</code>, <code>u8 u16 u32 u64</code></td><td>Fixed width integers. <code>int</code> aliases i32; <code>usize</code> aliases u64 on arm64.</td></tr>
+<tr><td><code>f32 f64</code></td><td>Finite IEEE binary floating point.</td></tr>
+<tr><td><code>string</code></td><td>Immutable byte span (pointer and length). Escaped literals may contain NUL bytes. Ownership depends on the byte source.</td></tr>
+<tr><td><code>*T</code>, <code>&amp;T</code>, <code>*const T</code>, <code>&amp;const T</code></td><td>Typed nullable pointers and non-null references with mutable or read-only pointees.</td></tr>
+<tr><td>ordinary <code>struct</code></td><td>Named fields, value copying, methods, and target-correct layout.</td></tr>
+<tr><td><code>void</code></td><td>Function return type only.</td></tr></table>
+<p>Integer literals accept decimal, <code>0x</code> hexadecimal, and <code>0b</code> binary spelling. Floating literals use decimal spelling and typed context. Operators include <code>+ - * / %</code> (remainder for integers), comparisons, unary <code>!</code>, <code>&amp;&amp;</code>, and <code>||</code>. Boolean operators short circuit. Integer overflow, division by zero, and non-finite floating results trap at runtime; invalid constants are compile errors.</p></section>
+<section id="flow"><h2>Functions and control flow</h2>
+<pre><code>def add(a: i32, b: i32) -&gt; i32 { return a + b; }
+def main() -&gt; i32 {
+    def mut total: i32 = 0;
+    for def mut i: i32 = 0; i &lt; 3; i = i + 1 {
+        if i == 1 { total = add(total, 20); }
+        else { total = add(total, 11); }
+    }
+    return total;
+}</code></pre>
+<p>Use <code>if</code>/<code>else</code>, <code>unless</code>, <code>while</code>, and C style <code>for</code> with braced bodies. Functions can call forward declarations and recurse. Calls evaluate arguments left to right. <code>defer call(...);</code> captures arguments when reached and runs calls in reverse order on normal return. Traps do not unwind defers.</p></section>
+<section id="data"><h2>Structs and memory</h2>
+<pre><code>def struct Counter {
+    def pub mut value: i32,
+    def pub static make(start: i32) -&gt; Counter {
+        return Counter { value: start };
+    }
+    def pub increment(self: *Counter) -&gt; void {
+        self.value = self.value + 1;
+    }
+}</code></pre>
+<p>Fields and methods use declared visibility. Instance methods declare typed <code>self</code>; static calls use <code>Type.method(...)</code>. <code>@arena</code> supplies <code>GeneralArena</code> with initialized typed allocation, reset, and free. Reset invalidates values while retaining blocks; free releases storage. Pointer and arena lifetimes are manual. See the <a href="../../arenas.md">arena guide</a>.</p></section>
+<section id="modules"><h2>Modules</h2>
+<pre><code>import "@std";
+import "./utils";
+def main() -&gt; i32 {
+    std.println("ready");
+    return utils.calculate(40);
+}</code></pre>
+<p><code>@name</code> loads <code>name.gloin</code> from the standard library directory. Relative imports resolve from the importing source file. A module exposes its <code>pub</code> functions, constants, and structs through its namespace. Only the root file supplies <code>main</code>; imports have no runtime initialization. Import cycles, missing files, and private access produce diagnostics.</p></section>
+<section id="library"><h2>Standard library in 0.0.1</h2>
+<table><tr><th>Import</th><th>Contents and detailed guide</th></tr>
+<tr><td><code>@std</code></td><td>Byte output, bounded line input, i32 conversions, explicit statuses. <a href="../../standard-library.md">Guide</a></td></tr>
+<tr><td><code>@arena</code></td><td>Typed allocation and explicit memory lifecycle. <a href="../../arenas.md">Guide</a></td></tr>
+<tr><td><code>@strings</code>, <code>@status</code></td><td>Counted bytes, slices, comparison, search, trimming, copies, statuses. <a href="../../strings.md">Guide</a></td></tr>
+<tr><td><code>@std</code> numeric APIs</td><td>Parsing, formatting, checked conversion. <a href="../../numbers.md">Guide</a></td></tr>
+<tr><td><code>@io</code></td><td>Streams, files, bounded reads, counted writes, OS errors. <a href="../../io.md">Guide</a></td></tr>
+<tr><td><code>@fs</code>, <code>@process</code></td><td>Paths, metadata, mutations, arguments, environment, cwd. <a href="../../filesystem-process.md">Guide</a></td></tr>
+<tr><td><code>@math</code></td><td>Concrete numerical utilities, domain checks, rounding. <a href="../../math.md">Guide</a></td></tr>
+<tr><td><code>@time</code>, <code>@random</code></td><td>Monotonic time, checked durations, seeded SplitMix64. <a href="../../time-random.md">Guide</a></td></tr></table>
+<p>Modules live in <code>stdlib/</code> in a build and <code>share/gloinc/stdlib/</code> after installation. Arena backed strings borrow caller owned storage. The linked guides give signatures, ownership, errors, and costs.</p></section>
+<section id="limits"><h2>Support and limits</h2>
+<p>Version 0.0.1 supports Apple Silicon macOS only. Linux is planned for 0.1.0. Windows support is not planned; contributions are welcome. Cross compilation and Intel macOS are outside 0.0.1. Arrays, generics, enums, packed bitfields, external packages, and concurrency remain future work.</p>
+<p>Native objects and executables target the current Apple Silicon host. Executables do not need LLVM at runtime. The compiler and native linking step require the pinned toolchain. Objects require the static Gloin runtime at link time.</p></section>
+<section id="reference"><h2>Further reference</h2><p>The <a href="../../../SPEC.md">language specification</a> includes future designs; use this versioned page for the 0.0.1 feature boundary. The <a href="../../release.md">release guide</a> covers installation and packaging. The <a href="../../../examples/README.md">examples guide</a> lists runnable programs, and the <a href="../../../tests/fixtures/core/README.md">acceptance matrix</a> maps features to source tests.</p></section>
+</article></main><footer>Gloin documentation version 0.0.1</footer>
+<script>const select=document.getElementById('version');for(const version of window.gloinDocs.versions){const option=document.createElement('option');option.value=version;option.textContent=version;option.selected=version==='0.0.1';select.append(option)}select.addEventListener('change',()=>{location.href='../'+encodeURIComponent(select.value)+'/'})</script>
+</body></html>

@@ -3,6 +3,7 @@
 
 #include "AST.h"
 #include "arena_abi.h"
+#include "stdlib_abi.h"
 #include "compilation_mode.h"
 #include "numeric.h"
 #include <stdexcept>
@@ -64,7 +65,10 @@ struct ResolvedSymbol {
     SourceSpan span;
 };
 struct SemanticData {
+    std::vector<const SourceModule *> modules; // Dependency order, each file once.
+    std::unordered_map<const MemberAccessExpression *, SymbolId> module_constants;
     std::unordered_map<const CallExpression *, ArenaPrimitive> arena_runtime_calls;
+    std::unordered_map<const CallExpression *, StandardPrimitive> standard_calls;
     // Typed allocation calls target a checked library layout method. true is try_alloc.
     std::unordered_map<const CallExpression *, bool> arena_allocations;
     std::unordered_map<const FunctionDefinition *, std::vector<const DeferStatement *>> defers;

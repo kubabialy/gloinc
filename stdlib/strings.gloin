@@ -1,0 +1,392 @@
+// Counted-byte operations: NUL/invalid UTF-8 are data; no locale/character indexing.
+// Borrowed views require live, unchanged source bytes. See docs/strings.md
+// and docs/text-construction.md for complete examples, ownership, and costs.
+import "@arena";
+import "@status";
+
+// value is valid on status.OK; failure has value 0 (also a valid byte).
+def pub struct ByteResult { def pub status: i32, def pub value: u8, }
+// value is valid on status.OK; failure has static empty text.
+def pub struct StringResult { def pub status: i32, def pub value: string, }
+// offset is valid iff found; absence has offset 0 (also a valid match position).
+def pub struct FindResult { def pub found: bool, def pub offset: u64, }
+
+// Example: byte_length("café") is 5. O(1), no allocation; counts bytes.
+def pub byte_length(text: string) -> u64 { return __strings_length(text); }
+
+// Example: is_empty("") is true. O(1), no allocation.
+def pub is_empty(text: string) -> bool { return byte_length(text) == 0; }
+
+// Example: byte_at("abc", 1) is {status.OK, 98}. O(1), no allocation.
+// index >= byte_length(text) returns OUT_OF_RANGE and value 0.
+def pub byte_at(text: string, index: u64) -> ByteResult {
+    if index >= byte_length(text) { return ByteResult { status: status.OUT_OF_RANGE, value: 0 }; }
+    return ByteResult { status: status.OK, value: __strings_byte(text, index) };
+}
+
+// Example: slice_bytes("abc", 1, 2) returns OK and borrowed "bc".
+// O(1), no allocation. Empty end slices are valid. Invalid bounds return
+// OUT_OF_RANGE and "" without wrapping/trapping on oversized arguments.
+def pub slice_bytes(text: string, start: u64, length: u64) -> StringResult {
+    def size: u64 = byte_length(text);
+    if start > size || length > size - start {
+        return StringResult { status: status.OUT_OF_RANGE, value: "" };
+    }
+    return StringResult { status: status.OK, value: __strings_slice(text, start, length) };
+}
+
+// Example: equal("a\0b", "a") is false. Exact bytes; no allocation.
+// O(min(a length, b length)) worst case; unequal lengths take O(1).
+// Stops at first difference; not a constant-time secret comparison.
+def pub equal(a: string, b: string) -> bool {
+    def size: u64 = byte_length(a);
+    if size != byte_length(b) { return false; }
+    for def mut i: u64 = 0; i < size; i = i + 1 {
+        if __strings_byte(a, i) != __strings_byte(b, i) { return false; }
+    }
+    return true;
+}
+
+// Example: compare("a", "ab") is -1. Returns exactly -1, 0, or 1.
+// Unsigned lexicographic byte order, shorter equal prefix first.
+// O(min(a length, b length)), no allocation; not constant-time.
+def pub compare(a: string, b: string) -> i32 {
+    def a_size: u64 = byte_length(a);
+    def b_size: u64 = byte_length(b);
+    for def mut i: u64 = 0; i < a_size && i < b_size; i = i + 1 {
+        def left: u8 = __strings_byte(a, i);
+        def right: u8 = __strings_byte(b, i);
+        if left < right { return -1; }
+        if left > right { return 1; }
+    }
+    if a_size < b_size { return -1; }
+    if a_size > b_size { return 1; }
+    return 0;
+}
+
+// Internal: callers prove offset <= text size and needle size <= size-offset.
+def matches_at(text: string, needle: string, offset: u64) -> bool {
+    def size: u64 = byte_length(needle);
+    for def mut i: u64 = 0; i < size; i = i + 1 {
+        if __strings_byte(text, offset + i) != __strings_byte(needle, i) { return false; }
+    }
+    return true;
+}
+
+// Example: starts_with("name=value", "name=") is true; empty prefix matches.
+// O(prefix length), no allocation.
+def pub starts_with(text: string, prefix: string) -> bool {
+    return byte_length(prefix) <= byte_length(text) && matches_at(text, prefix, 0);
+}
+
+// Example: ends_with("file.gloin", ".gloin") is true; empty suffix matches.
+// O(suffix length), no allocation.
+def pub ends_with(text: string, suffix: string) -> bool {
+    def size: u64 = byte_length(text);
+    def suffix_size: u64 = byte_length(suffix);
+    return suffix_size <= size && matches_at(text, suffix, size - suffix_size);
+}
+
+// Example: find("a=b=c", "=") is {found: true, offset: 1}.
+// First byte offset; empty needle matches 0; absence is {false, 0}.
+// Simple scan: O(1 + text length * needle length) worst case, no allocation.
+def pub find(text: string, needle: string) -> FindResult {
+    def size: u64 = byte_length(text);
+    def needle_size: u64 = byte_length(needle);
+    if needle_size <= size {
+        def last: u64 = size - needle_size;
+        def mut i: u64 = 0;
+        while true {
+            if matches_at(text, needle, i) { return FindResult { found: true, offset: i }; }
+            if i == last { return FindResult { found: false, offset: 0 }; }
+            i = i + 1;
+        }
+    }
+    return FindResult { found: false, offset: 0 };
+}
+
+// Example: contains("abc", "bc") is true; empty needle always matches.
+// O(1 + text length * needle length) worst case, no allocation.
+def pub contains(text: string, needle: string) -> bool {
+    def result: FindResult = find(text, needle);
+    return result.found;
+}
+
+def ascii_whitespace(byte: u8) -> bool { return byte == 32 || (byte >= 9 && byte <= 13); }
+
+// Example: trim_start_ascii(" \tvalue ") borrows "value ".
+// Removes only bytes 9..13 and 32. O(text length), no allocation.
+def pub trim_start_ascii(text: string) -> string {
+    def size: u64 = byte_length(text);
+    def mut start: u64 = 0;
+    while start < size && ascii_whitespace(__strings_byte(text, start)) { start = start + 1; }
+    return __strings_slice(text, start, size - start);
+}
+
+// Example: trim_end_ascii(" value\r\n") borrows " value".
+// Removes only bytes 9..13 and 32. O(text length), no allocation.
+def pub trim_end_ascii(text: string) -> string {
+    def mut end: u64 = byte_length(text);
+    while end > 0 && ascii_whitespace(__strings_byte(text, end - 1)) { end = end - 1; }
+    return __strings_slice(text, 0, end);
+}
+
+// Example: trim_ascii(" \tvalue\r\n") borrows "value".
+// Removes only bytes 9..13 and 32 at both ends. O(text length), no allocation.
+def pub trim_ascii(text: string) -> string { return trim_end_ascii(trim_start_ascii(text)); }
+
+// Example: copy(&memory, "abc") returns OK and independent arena-backed "abc".
+// O(n) zeroing/copy work plus arena allocation; requests n bytes, no terminator.
+// Bytes live until memory.reset/free; block overhead follows GeneralArena.
+// Empty text returns OK/"" without allocation or inspecting memory.
+// Nonempty allocation failure returns NO_MEMORY/""; source is unchanged.
+// Use a different arena to outlive the source arena. Copying within one arena
+// does not protect either value from its reset/free. A freed nonempty arena traps.
+def pub copy(memory: &arena.GeneralArena, text: string) -> StringResult {
+    def size: u64 = byte_length(text);
+    if size == 0 { return StringResult { status: status.OK, value: "" }; }
+    def bytes: *u8 = memory.try_alloc_bytes(size);
+    if bytes == null { return StringResult { status: status.NO_MEMORY, value: "" }; }
+    return StringResult { status: status.OK, value: __strings_copy(text, &*bytes) };
+}
+
+// OK supplies a usable cursor. INVALID supplies an invalid cursor (next -> INVALID).
+def pub struct SplitCursorResult { def pub status: i32, def pub value: SplitCursor, }
+
+// Borrows text AND delimiter. Copies have independent positions, shared byte lifetimes.
+def pub struct SplitCursor {
+    def text: string,
+    def delimiter: string,
+    def mut offset: u64,
+    def mut done: bool,
+
+    // Example: create("a,,", ",") -> OK; next yields "a", "", "", then END.
+    // O(1), no allocation. Empty delimiter -> INVALID; empty text -> one empty token.
+    def pub static create(text: string, delimiter: string) -> SplitCursorResult {
+        if is_empty(delimiter) {
+            return SplitCursorResult { status: status.INVALID,
+                value: SplitCursor { text: "", delimiter: "", offset: 0, done: true } };
+        }
+        return SplitCursorResult { status: status.OK,
+            value: SplitCursor { text: text, delimiter: delimiter, offset: 0, done: false } };
+    }
+
+    // Example: item = cursor.next(); inspect item.status before using item.value.
+    // OK borrows the next token; END/"" repeats after exhaustion; invalid cursor -> INVALID/"".
+    // Leftmost nonoverlapping matches, including all empty tokens. O(1+r*m) worst
+    // case per call (r remaining bytes, m delimiter bytes); O(1+n*m) total, no allocation.
+    // Returned tokens survive advancement while source bytes remain live/unchanged.
+    def pub next(self: &SplitCursor) -> StringResult {
+        if is_empty(self.delimiter) { return StringResult { status: status.INVALID, value: "" }; }
+        if self.done { return StringResult { status: status.END, value: "" }; }
+        def rest: string = __strings_slice(self.text, self.offset, byte_length(self.text) - self.offset);
+        def found: FindResult = find(rest, self.delimiter);
+        if found.found {
+            self.offset = self.offset + found.offset + byte_length(self.delimiter);
+            return StringResult { status: status.OK, value: __strings_slice(rest, 0, found.offset) };
+        }
+        self.done = true;
+        return StringResult { status: status.OK, value: rest };
+    }
+}
+
+// Borrows counted input bytes. Copies advance independently without copying bytes.
+def pub struct LineCursor {
+    def text: string,
+    def mut offset: u64,
+
+    // Example: create("a\r\nb\n") yields "a", "b", END; create("") yields END.
+    // O(1), no allocation or validation; input must remain live/unchanged.
+    def pub static create(text: string) -> LineCursor { return LineCursor { text: text, offset: 0 }; }
+
+    // Example: line = cursor.next(); OK can contain empty text; END means finished.
+    // Removes LF plus one preceding CR; final unterminated line keeps standalone CR.
+    // No phantom item after terminal LF. END/"" repeats. O(1+scanned bytes) per
+    // call, O(1+n) total, no allocation; returned views borrow original input.
+    def pub next(self: &LineCursor) -> StringResult {
+        def size: u64 = byte_length(self.text);
+        if self.offset == size { return StringResult { status: status.END, value: "" }; }
+        def rest: string = __strings_slice(self.text, self.offset, size - self.offset);
+        def found: FindResult = find(rest, "\n");
+        if !found.found {
+            self.offset = size;
+            return StringResult { status: status.OK, value: rest };
+        }
+        self.offset = self.offset + found.offset + 1;
+        def mut length: u64 = found.offset;
+        def cr: u8 = 13;
+        if length > 0 && __strings_byte(rest, length - 1) == cr { length = length - 1; }
+        return StringResult { status: status.OK, value: __strings_slice(rest, 0, length) };
+    }
+}
+
+// All transformations below return independent arena bytes (no terminator).
+// Empty output is static "" and does not touch memory. Errors return "".
+// TOO_LONG is checked before allocation, NO_MEMORY reports allocation failure.
+// Nonempty results require a live arena and expire on its reset/free. O(1)
+// auxiliary storage; stated byte-work costs are additional to arena allocation.
+
+// Example: concat(&memory, "ab", "cd", 4) -> OK/"abcd"; limit 3 -> TOO_LONG.
+// O(1+output bytes), exactly output bytes allocated/zeroed; inputs unchanged.
+def pub concat(memory: &arena.GeneralArena, a: string, b: string, max_bytes: u64) -> StringResult {
+    def left: u64 = byte_length(a);
+    def right: u64 = byte_length(b);
+    if left > max_bytes || right > max_bytes - left { return StringResult { status: status.TOO_LONG, value: "" }; }
+    def size: u64 = left + right;
+    if size == 0 { return StringResult { status: status.OK, value: "" }; }
+    def bytes: *u8 = memory.try_alloc_bytes(size);
+    if bytes == null { return StringResult { status: status.NO_MEMORY, value: "" }; }
+    __strings_write(bytes, size, 0, a);
+    __strings_write(bytes, size, left, b);
+    return StringResult { status: status.OK, value: __strings_buffer_view(bytes, size) };
+}
+
+// Example: repeat(&memory, "ab", 3, 6) -> OK/"ababab".
+// Zero count/empty input -> OK/"" even for huge counts. O(1+output bytes),
+// exactly output bytes allocated/zeroed; count overflow/limit excess -> TOO_LONG.
+def pub repeat(memory: &arena.GeneralArena, text: string, count: u64, max_bytes: u64) -> StringResult {
+    def length: u64 = byte_length(text);
+    if length == 0 || count == 0 { return StringResult { status: status.OK, value: "" }; }
+    if count > max_bytes / length { return StringResult { status: status.TOO_LONG, value: "" }; }
+    def size: u64 = length * count;
+    def bytes: *u8 = memory.try_alloc_bytes(size);
+    if bytes == null { return StringResult { status: status.NO_MEMORY, value: "" }; }
+    for def mut position: u64 = 0; position < size; position = position + length { __strings_write(bytes, size, position, text); }
+    return StringResult { status: status.OK, value: __strings_buffer_view(bytes, size) };
+}
+
+// Example: replace_all(&memory, "aaaaa", "aa", "b", 3) -> OK/"bba".
+// Nonoverlapping original-input matches; empty replacement deletes. Empty needle
+// -> INVALID before other checks. Limit applies to final output, not input size.
+// O(1+n*m+output bytes), two passes, exactly output bytes allocated/zeroed.
+def pub replace_all(memory: &arena.GeneralArena, text: string, needle: string,
+    replacement: string, max_bytes: u64) -> StringResult {
+    def n: u64 = byte_length(text);
+    def m: u64 = byte_length(needle);
+    def r: u64 = byte_length(replacement);
+    if m == 0 { return StringResult { status: status.INVALID, value: "" }; }
+    def mut position: u64 = 0;
+    def mut size: u64 = 0;
+    while position < n {
+        if m <= n - position && matches_at(text, needle, position) {
+            if r > max_bytes - size { return StringResult { status: status.TOO_LONG, value: "" }; }
+            size = size + r;
+            position = position + m;
+        } else {
+            if size == max_bytes { return StringResult { status: status.TOO_LONG, value: "" }; }
+            size = size + 1;
+            position = position + 1;
+        }
+    }
+    if size == 0 { return StringResult { status: status.OK, value: "" }; }
+    def bytes: *u8 = memory.try_alloc_bytes(size);
+    if bytes == null { return StringResult { status: status.NO_MEMORY, value: "" }; }
+    position = 0;
+    def mut out: u64 = 0;
+    while position < n {
+        if m <= n - position && matches_at(text, needle, position) {
+            __strings_write(bytes, size, out, replacement);
+            out = out + r;
+            position = position + m;
+        } else {
+            __strings_store(bytes, size, out, __strings_byte(text, position));
+            out = out + 1;
+            position = position + 1;
+        }
+    }
+    return StringResult { status: status.OK, value: __strings_buffer_view(bytes, size) };
+}
+
+def change_ascii(memory: &arena.GeneralArena, text: string, max_bytes: u64, upper: bool) -> StringResult {
+    def size: u64 = byte_length(text);
+    if size > max_bytes { return StringResult { status: status.TOO_LONG, value: "" }; }
+    if size == 0 { return StringResult { status: status.OK, value: "" }; }
+    def bytes: *u8 = memory.try_alloc_bytes(size);
+    if bytes == null { return StringResult { status: status.NO_MEMORY, value: "" }; }
+    for def mut i: u64 = 0; i < size; i = i + 1 {
+        def mut byte: u8 = __strings_byte(text, i);
+        if upper { if byte >= 97 && byte <= 122 { byte = byte - 32; } }
+        else { if byte >= 65 && byte <= 90 { byte = byte + 32; } }
+        __strings_store(bytes, size, i, byte);
+    }
+    return StringResult { status: status.OK, value: __strings_buffer_view(bytes, size) };
+}
+
+// Example: lower_ascii(&memory, "ABC É", 6) -> OK/"abc É".
+// Changes only A-Z. O(n), allocates/zeroes n bytes even if unchanged; bounded as above.
+def pub lower_ascii(memory: &arena.GeneralArena, text: string, max_bytes: u64) -> StringResult {
+    return change_ascii(memory, text, max_bytes, false);
+}
+
+// Example: upper_ascii(&memory, "abc é", 6) -> OK/"ABC é".
+// Changes only a-z. O(n), allocates/zeroes n bytes even if unchanged; bounded as above.
+def pub upper_ascii(memory: &arena.GeneralArena, text: string, max_bytes: u64) -> StringResult {
+    return change_ascii(memory, text, max_bytes, true);
+}
+
+def struct BuilderState { def bytes: *u8, def limit: u64, def mut used: u64, }
+// Inspect status first: NO_MEMORY has an invalid handle that traps on method use.
+def pub struct BuilderResult { def pub status: i32, def pub value: StringBuilder, }
+
+// Copies alias shared state/length. All handles expire with the owning arena.
+// No borrowed public view, automatic growth, or individual free. Not thread-safe.
+def pub struct StringBuilder {
+    def state: *BuilderState,
+
+    // Example: made = StringBuilder.create(&memory, 128); check made.status,
+    // then bind `def mut builder: strings.StringBuilder = made.value;`.
+    // O(1+capacity) zeroing plus arena allocation: one state object, then capacity
+    // bytes (none if zero). Failure -> NO_MEMORY; a failed buffer allocation leaves
+    // state storage retained until reset/free. Zero capacity still needs a live arena.
+    def pub static create(memory: &arena.GeneralArena, capacity: u64) -> BuilderResult {
+        def state: *BuilderState = memory.try_alloc(BuilderState { bytes: null, limit: capacity, used: 0 });
+        if state == null { return BuilderResult { status: status.NO_MEMORY, value: StringBuilder { state: null } }; }
+        if capacity > 0 {
+            def bytes: *u8 = memory.try_alloc_bytes(capacity);
+            if bytes == null { return BuilderResult { status: status.NO_MEMORY, value: StringBuilder { state: null } }; }
+            // Replace initialized state; bytes and limit then stay stable for all aliases.
+            *state = BuilderState { bytes: bytes, limit: capacity, used: 0 };
+        }
+        return BuilderResult { status: status.OK, value: StringBuilder { state: state } };
+    }
+
+    // Example: builder.append("abc") -> OK, or TOO_LONG if it will not fit.
+    // O(1+text bytes), no allocation; prechecks entire append, failure changes nothing.
+    // Empty append succeeds. Source bytes are copied and need not outlive this call.
+    def pub append(self: &StringBuilder, text: string) -> i32 {
+        def size: u64 = byte_length(text);
+        if size > self.state.limit - self.state.used { return status.TOO_LONG; }
+        __strings_write(self.state.bytes, self.state.limit, self.state.used, text);
+        self.state.used = self.state.used + size;
+        return status.OK;
+    }
+
+    // Example: builder.append_byte(10) appends LF; 0 appends NUL.
+    // O(1), no allocation. Full builder -> TOO_LONG with no change.
+    def pub append_byte(self: &StringBuilder, byte: u8) -> i32 {
+        if self.state.used == self.state.limit { return status.TOO_LONG; }
+        __strings_store(self.state.bytes, self.state.limit, self.state.used, byte);
+        self.state.used = self.state.used + 1;
+        return status.OK;
+    }
+
+    // Example: builder.clear(); builder.byte_length() is now 0 through every alias.
+    // O(1), no allocation; reuses buffer, does not securely erase bytes or affect snapshots.
+    def pub clear(self: &StringBuilder) -> void { self.state.used = 0; }
+
+    // Example: builder.byte_length() counts appended bytes, including NUL.
+    // O(1), no allocation; reads shared length through a read-only receiver.
+    def pub byte_length(self: &const StringBuilder) -> u64 { return self.state.used; }
+
+    // Example: builder.capacity() is the fixed byte capacity supplied to create.
+    // O(1), no allocation; clear/append never change capacity.
+    def pub capacity(self: &const StringBuilder) -> u64 { return self.state.limit; }
+
+    // Example: saved = builder.to_string(&retained); check saved.status before use.
+    // Independent snapshot: O(length) zeroing/copy plus allocation, exactly length
+    // bytes (none if empty). NO_MEMORY leaves builder unchanged. Destination reset/free
+    // invalidates saved; a different arena lets it outlive the builder's arena.
+    def pub to_string(self: &const StringBuilder, memory: &arena.GeneralArena) -> StringResult {
+        return copy(memory, __strings_buffer_view(self.state.bytes, self.state.used));
+    }
+}

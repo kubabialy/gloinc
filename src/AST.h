@@ -329,12 +329,19 @@ struct WhileStatement : public Statement {
     }
 };
 
+struct SourceModule {
+    std::string canonical_path;
+    std::string module_name;
+    std::string standard_name; // Set only when reached through an @name import.
+    std::string linkage_prefix;
+    std::vector<std::unique_ptr<Statement>> declarations;
+};
+
 struct ImportStatement : public Statement {
     std::string path;
-    // Populated by the module loader; owned alongside the importing AST.
-    bool loaded = false;
+    // The loader shares each canonical source file across the acyclic graph.
     std::string module_name;
-    std::vector<std::unique_ptr<Statement>> declarations;
+    std::shared_ptr<SourceModule> module;
 
     explicit ImportStatement(std::string path) : path(std::move(path)) {}
 

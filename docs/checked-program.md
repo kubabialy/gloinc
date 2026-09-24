@@ -22,7 +22,8 @@ Both APIs default to `CompilationMode::Module`, permitting source without `main`
 Use `compile_source(text, filename, context, CompilationMode::Executable)` or
 `sema.check_for_codegen(std::move(ast), {}, CompilationMode::Executable)` when
 preparing an executable. Executable mode requires `main() -> i32`; both modes
-validate any file-scope `main` that is present. `CheckedProgram::mode()` records
+validate any root file-scope `main` that is present; imported functions named
+`main` are ordinary module functions. `CheckedProgram::mode()` records
 the requested mode and `entry_point()` exposes the validated function's symbol
 ID when present. Entry validation does not itself run or lower the module.
 
@@ -288,14 +289,19 @@ with separate results/errors and owned engine lifetimes. Packed aggregates and c
 deferred. A checked object establishes resolved identities and the checks currently
 implemented, not full release readiness.
 
-SPEC-023 loads standard module files before semantic checking. Each import owns
-its parsed declarations and source spans. Sema collects module functions, structs, and
-constants in a separate scope, resolves public qualified calls to ordinary
+SPEC-023 loads standard module files before semantic checking; SPEC-029 extends
+loading to a canonical dependency graph. Import edges share owned parsed module
+units and source spans, with one isolated scope per canonical file. Sema collects
+module functions, structs, and constants in that scope, resolves public qualified calls to ordinary
 `SymbolId`s, and records collision-free emitted names in `SemanticData`.
 Codegen declares and compiles those function bodies through the same path as
 application functions. Only library calls to `__write_stdout` receive a separate
 runtime-call marker; `print` and `println` have no special compiler handling.
-Local/package imports and dependencies between standard files remain deferred.
+Local imports and dependencies between standard files use the same graph.
+Dependencies are collected before importers; qualified constants bind to folded
+values, and codegen emits each file once. Only the root defines the executable
+entry. See [module ownership and resolution](modules.md). Package imports remain
+deferred.
 
 ## Ordinary struct layout
 
@@ -390,3 +396,32 @@ and deferred calls use the same bridge, including once-only captures. The native
 runtime owns blocks independently of the compiler/JIT and uses checked size and
 alignment arithmetic. See [arenas.md](arenas.md) for the source/native boundary,
 manual ownership, and reset/free semantics.
+
+
+## Standard input and conversions (SPEC-030)
+
+`SemanticData::standard_calls` binds private `@std` primitives after argument
+checking. Public API functions remain ordinary source declarations. Native calls
+split string descriptors into byte pointers/lengths, use output references for
+parsed values and formatted/input lengths, and return scalar statuses. The view
+primitive constructs the existing string type and rejects null with nonzero
+length. Public result structs require no compiler special cases. The JIT validates
+all native signatures and registers the statically linked runtime; external tools
+load its shared form. See [the standard-library contract](standard-library.md).
+
+SPEC-030a extends the same checked-call table with four `@strings`-only primitives:
+descriptor length, checked byte access, checked borrowed slices, and copying.
+Module identity controls access and reserved declarations, including struct names.
+Byte/slice lowering checks unsigned bounds before pointer arithmetic or loads;
+slice checks subtract only after validating the start. Copy splits the source
+descriptor into pointer/length, calls the validated scalar native ABI, and builds
+the result over caller-allocated destination bytes. Public statuses, comparisons,
+search, trimming, and allocation policy stay in ordinary library source.
+See [the byte-string contract and costs](strings.md).
+
+SPEC-030b extends this table with private buffer views, byte stores, and counted
+writes for `@strings`. Codegen guards advertised capacity, null pointers, and
+unsigned offsets before writing; empty writes accept a null buffer only at zero
+capacity. Counted writes reuse the existing native copy routine. Cursor state,
+builder metadata/aliasing, output sizing, and transformations stay in Gloin.
+No public pointer arithmetic or generic specialization is added.
