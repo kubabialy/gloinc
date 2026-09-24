@@ -23,7 +23,7 @@ instance methods (`value.method(...)`). Export methods with `def pub` or
 `def pub static`; instance methods declare one typed `self` pointer/reference.
 Public methods may use private fields/helpers inside the module. Callers still
 need the receiver capability required by the signature, and cannot call private
-methods directly. See [SPEC-026](../SPEC.md#methods-spec-026).
+methods directly. See [SPEC-026](https://github.com/kubabialy/gloinc/wiki/Language-Spec#methods-spec-026).
 
 `import "@arena";` loads [arena.gloin](arena.gloin), exposing initialized-value
 allocation through `arena.GeneralArena`. The same file can export additional

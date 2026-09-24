@@ -325,7 +325,7 @@ install(TARGETS gloin_runtime gloin_runtime_shared
 install(FILES src/arena_runtime.h src/stdlib_runtime.h src/io_runtime.h src/context_runtime.h src/math_runtime.h src/time_runtime.h src/random_runtime.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gloin)
 install(DIRECTORY stdlib/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/stdlib
     FILES_MATCHING PATTERN "*.gloin")
-install(FILES README.md CONTRIBUTING.md SPEC.md SPEC-TODO.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(FILES README.md CONTRIBUTING.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs
     PATTERN ".DS_Store" EXCLUDE)
 install(FILES examples/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples)

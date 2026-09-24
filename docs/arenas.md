@@ -80,7 +80,7 @@ the JIT after exact ABI validation. Installation also includes
 `include/gloin/arena_runtime.h`. External `mlir-runner` executions load the shared
 runtime using `--shared-libs=/path/to/libgloin_runtime.dylib`.
 
-The complete language contract is in [SPEC.md](../SPEC.md#arena-allocation-spec-028).
+The complete language contract is in the [language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec#arena-allocation-spec-028).
 
 
 ## Variable-length bytes (SPEC-030)

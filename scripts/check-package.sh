@@ -48,6 +48,7 @@ result=$("$package_root/bin/gloinc" "$package_root/share/gloinc/examples/module_
 [[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" && -f "$package_root/include/gloin/stdlib_runtime.h" && -f "$package_root/include/gloin/io_runtime.h" && -f "$package_root/include/gloin/context_runtime.h" && -f "$package_root/include/gloin/math_runtime.h" && -f "$package_root/include/gloin/time_runtime.h" && -f "$package_root/include/gloin/random_runtime.h" ]]
 [[ -f "$package_root/share/doc/gloinc/third_party/fast_float/LICENSE-MIT" && -f "$package_root/share/doc/gloinc/third_party/fast_float/README.md" ]]
 [[ -f "$package_root/share/doc/gloinc/docs/site/0.0.1/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
+[[ ! -e "$package_root/share/doc/gloinc/SPEC.md" && ! -e "$package_root/share/doc/gloinc/SPEC-TODO.md" && ! -e "$package_root/share/doc/gloinc/OpenCode.md" ]]
 "$package_root/bin/gloinc" --emit-exe -o "$work_dir/extracted prefix/native-hello" \
   "$package_root/share/gloinc/examples/hello_world.gloin"
 [[ "$("$work_dir/extracted prefix/native-hello")" == 'Hello World!' ]]
@@ -67,7 +68,7 @@ mv "$work_dir/arena.gloin.saved" "$package_root/share/gloinc/stdlib/arena.gloin"
 [[ "$module_status" == 1 && -z "$result" ]]
 grep -F "Cannot load module '@arena'" "$report_dir/missing-arena.txt"
 otool -L "$package_root/bin/gloinc" "$package_root/lib/libgloin_runtime.dylib" > "$report_dir/dependencies.txt"
-if grep -F "$build_dir" "$report_dir/dependencies.txt"; then
+if awk -v dir="$build_dir" '/^[[:space:]]/ && index($0, dir) { print; found = 1 } END { exit !found }' "$report_dir/dependencies.txt"; then
   echo "Installed compiler still depends on its build directory" >&2
   exit 1
 fi

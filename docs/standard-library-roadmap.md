@@ -7,8 +7,8 @@ This is the scope for SPEC-030a through SPEC-030h, ahead of SPEC-031. The
 SPEC-030d. The [filesystem/process guide](filesystem-process.md) covers SPEC-030e.
 The [math guide](math.md), [time/random guide](time-random.md), and
 [integrated examples](integrated-examples.md) cover SPEC-030f through SPEC-030h.
-All stages below are implemented and verified; [SPEC.md](../SPEC.md) defines their
-contracts, with evidence recorded in [SPEC-TODO.md](../SPEC-TODO.md).
+All stages below are implemented and verified; the [language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec) defines their
+contracts, with evidence recorded in the [implementation checklist](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist).
 SPEC-030's [existing API](standard-library.md) remains compatible.
 
 The objective is to write useful command-line tools, text processors, and numerical
@@ -179,7 +179,7 @@ remain follow-ups.
 ### SPEC-030f — Numerical utilities (`math.gloin`)
 
 Implemented; see the [numerical utilities guide](math.md) for API contracts and
-the [completion record](../SPEC-TODO.md#spec-030f-verification) for test evidence.
+the [completion record](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist#spec-030f-verification) for test evidence.
 
 - Concrete i32/i64/u64 and f32/f64 min/max/clamp functions; signed and floating
   absolute value. Define invalid clamp bounds and minimum signed-integer input.
@@ -199,7 +199,7 @@ No hidden RNG, implicit conversion, generic min/max, or wrapping arithmetic.
 ### SPEC-030g — Timing and reproducible simulation (`time.gloin`, `random.gloin`)
 
 Implemented. See [API contracts and examples](time-random.md) and the
-[completion record](../SPEC-TODO.md#spec-030g-verification) for verification evidence.
+[completion record](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist#spec-030g-verification) for verification evidence.
 
 - A fallible monotonic clock reading with explicit units and checked elapsed
   duration; use for benchmarks, never as a civil date/time representation.
@@ -221,7 +221,7 @@ work. This stage follows the core text/I/O/math work in priority.
 ### SPEC-030h — Demonstrate the library before starting generics
 
 Implemented. See [formats, usage, and resource contracts](integrated-examples.md)
-and the [completion record](../SPEC-TODO.md#spec-030h-verification). SPEC-031 is next.
+and the [completion record](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist#spec-030h-verification). SPEC-031 is next.
 
 Ship runnable, tested examples which compose the public modules:
 

@@ -28,6 +28,17 @@ Makefile
 
 .cache
 
+# Local development notes and assistant instructions
+OpenCode.md
+AGENTS.md
+CLAUDE.md
+.agents/
+.codex/
+
+# Maintained in the GitHub wiki
+SPEC.md
+SPEC-TODO.md
+
 # OS generated
 .DS_Store
 Thumbs.db

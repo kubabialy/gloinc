@@ -1,8 +1,8 @@
 # Gloin compiler
 
 Gloin is a C++23 compiler project built on LLVM/MLIR. It is under development;
-the [language specification](SPEC.md) describes the intended language, not a list
-of completed features. [SPEC-TODO.md](SPEC-TODO.md) tracks implementation and
+the [language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec) describes the intended language, not a list
+of completed features. The [implementation checklist](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist) tracks implementation and
 verification evidence in order.
 
 ## Current status
@@ -312,7 +312,7 @@ executables link these libraries. The CLI and tests use the same compilation,
 lowering, and execution APIs. `gloin_runtime` supplies the LLVM-independent
 native arena allocator and standard input/conversions; a shared variant is installed for external LLVM execution.
 
-[SPEC-006's contract](SPEC.md#first-release-contract-spec-006) selects a scalar
+[SPEC-006's contract](https://github.com/kubabialy/gloinc/wiki/Language-Spec#first-release-contract-spec-006) selects a scalar
 JIT compiler on Apple Silicon macOS for the first release. SPEC-021 supplies its
 executable-core acceptance suite; SPEC-046 remains the release gate. Subsequent
 tasks add the strings, standard output, structs, pointers, methods, and defer
@@ -323,7 +323,7 @@ backlog replaces the old phase notes as the implementation plan.
 Version 0.0.1 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
 support is not planned, although contributions are welcome. See
 [contributing rules](CONTRIBUTING.md) for the manual verification and deterministic
-change requirements, including the prohibition on AI slop and vibecoding.
+change requirements.
 
 ## Continuous integration
 

@@ -22,6 +22,6 @@ and SPEC-020 connects the [file-reading CLI](../docs/cli.md). Its tests execute
 | Concurrency | Incomplete: SPEC-040 through SPEC-043; the restored spawn assertion fails. |
 | Shared lowering, JIT, and file CLI | Verified under SPEC-018 through SPEC-020; SPEC-021 adds [source-file acceptance](../tests/fixtures/core/README.md). |
 
-[SPEC-TODO.md](../SPEC-TODO.md) replaces the phase roadmap. Its completion log
+[The implementation checklist](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist) replaces the phase roadmap. Its completion log
 records commands and results; [tests/README.md](../tests/README.md) lists failures.
 No specification-coverage percentage is claimed.

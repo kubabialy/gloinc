@@ -26,7 +26,7 @@ syntax. Standard output is implemented; local and standard module dependencies a
 files establish neither production readiness nor a specification-coverage percentage.
 
 Use the [root README](../README.md) for setup, the [maintained tests](../tests/README.md)
-for observed results, and [SPEC-TODO.md](../SPEC-TODO.md) for the implementation plan.
+for observed results, and the [implementation checklist](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist) for the implementation plan.
 
 ### Numeric parsing and reports (SPEC-030c)
 

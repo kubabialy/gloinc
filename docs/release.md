@@ -16,7 +16,8 @@ under `docs/site/`; update `versions.js` and the site root to select the latest.
 The source README also teaches build commands. The maintained matrix
 at `tests/fixtures/core/README.md` maps the scalar types, operators, calls, scopes,
 initialization, control flow, rejected syntax, and traps to executable fixtures.
-The canonical examples are acceptance inputs. Later sections of SPEC.md and the
+The canonical examples are acceptance inputs. Later sections of the
+[language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec) and the
 older mixed-feature examples are conceptual designs outside this release.
 
 ## Build and installation
@@ -51,8 +52,8 @@ tests enabled. `make run` defaults to the counter example; use
 | --- | --- |
 | `bin/gloinc` | Compiler and in-process JIT client |
 | `share/doc/gloinc/docs/site/0.0.1/` | Versioned HTML language and usage guide |
-| `share/doc/gloinc/CONTRIBUTING.md` | Contribution and AI-assisted change policy |
-| `share/doc/gloinc/` | README, specification, checklist, and technical guides |
+| `share/doc/gloinc/CONTRIBUTING.md` | Contribution guidelines |
+| `share/doc/gloinc/` | README and technical guides; the specification and checklist are in the GitHub wiki |
 | `share/doc/gloinc/third_party/fast_float/` | MIT license, pinned provenance, and header checksums for compiled-in decimal parsing |
 | `share/gloinc/examples/core_counter.gloin` | Runnable example returning 42 |
 | `share/gloinc/examples/hello_world.gloin` | Runnable standard-output example |

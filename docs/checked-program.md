@@ -69,7 +69,7 @@ Nested blocks may shadow outer variables, parameters, and functions; duplicate
 names within one scope fail. Initializers resolve before their new binding
 enters scope. Branches and while bodies keep their own locals, and leaving a
 scope restores outer lookup. See the normative
-[scope rules](../SPEC.md#declaration-visibility-and-lexical-scopes-spec-011).
+[scope rules](https://github.com/kubabialy/gloinc/wiki/Language-Spec#declaration-visibility-and-lexical-scopes-spec-011).
 
 Each checked run starts and ends with an empty scope and clears its temporary
 function collection. Successful reuse of Sema cannot retain declarations from
@@ -97,7 +97,7 @@ path; loops retain a possible zero-iteration path even with a literal `true`
 condition. Sema rejects statements after an unconditional return and checks both
 branches regardless of constant conditions. These rules reuse definite
 initialization's branch reachability without adding constant-condition analysis.
-See the normative [function contract](../SPEC.md#functions-calls-returns-and-entry-points-spec-014).
+See the normative [function contract](https://github.com/kubabialy/gloinc/wiki/Language-Spec#functions-calls-returns-and-entry-points-spec-014).
 
 Codegen retains defensive return-signature checks and refuses a checked non-void
 function with reachable fallthrough. It no longer substitutes LLVM `unreachable`
@@ -133,7 +133,7 @@ Runtime calls and runtime bindings are forbidden in constant expressions.
 Forward constant dependencies fail explicitly. SPEC-013 provides contextual
 literal typing; SPEC-015 supplies the matching runtime operator rules.
 The normative rules are in
-[SPEC.md](../SPEC.md#variables-constants-and-initialization-spec-012).
+[the language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec#variables-constants-and-initialization-spec-012).
 
 ## Numeric values (SPEC-013)
 
@@ -166,7 +166,7 @@ establish contextual typing. The frontend links the already-required shared LLVM
 library for these value classes and still has no MLIR dependency.
 
 These rules are normative in
-[SPEC.md](../SPEC.md#numeric-literals-and-conversions-spec-013).
+[the language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec#numeric-literals-and-conversions-spec-013).
 
 ## Expression operators
 
@@ -195,7 +195,7 @@ Operands and call arguments evaluate once, left to right. These expression
 continuations also work in branch/loop conditions and stores. SPEC-016 supplies
 the enclosing statement continuations; SPEC-017 extends them to `unless`/`for`.
 
-The normative [operator contract](../SPEC.md#expression-operators-and-arithmetic-failure-spec-015)
+The normative [operator contract](https://github.com/kubabialy/gloinc/wiki/Language-Spec#expression-operators-and-arithmetic-failure-spec-015)
 defines rounding, overflow, division/remainder signs, and unsupported operators.
 
 ## Branch and loop continuations
@@ -222,7 +222,7 @@ predecessor count. The existing checked non-void fallthrough guard is retained.
 Conditions are boolean in both Sema and codegen. Tests verify every generated
 block has one final terminator, successors stay within their function, and no
 orphan continuation survives, then execute the module through external tools.
-The normative [branch/loop rules](../SPEC.md#branches-and-while-loops-spec-016)
+The normative [branch/loop rules](https://github.com/kubabialy/gloinc/wiki/Language-Spec#branches-and-while-loops-spec-016)
 retain SPEC-014's conservative return analysis and unreachable-source rejection.
 
 ## Unless and for scope and continuations
@@ -310,7 +310,7 @@ Generated modules carry the native LLVM target triple and data layout.
 and queries allocation size, ABI alignment, and field offsets, including padding.
 The legacy allocation-size helper uses the same calculation. Struct literals
 require all fields and preserve source evaluation order; member writes use checked
-GEP indices. The [SPEC-024 contract](../SPEC.md#ordinary-structs-spec-024) defines
+GEP indices. The [SPEC-024 contract](https://github.com/kubabialy/gloinc/wiki/Language-Spec#ordinary-structs-spec-024) defines
 mutability, privacy, and whole-value initialization requirements.
 
 ## Pointers and references (SPEC-025)
@@ -329,7 +329,7 @@ cycles; temporary semantic type graphs are released after checking.
 Gloin has manually managed lifetimes and no borrow checker. References must
 identify live resources, but lifetime/provenance tracking, escape analysis, and
 ownership enforcement are not performed. Aliases are permitted. See the
-[normative rules](../SPEC.md#pointers-t-vs-t) for conversions and responsibilities.
+[normative rules](https://github.com/kubabialy/gloinc/wiki/Language-Spec#pointers-t-vs-t) for conversions and responsibilities.
 
 ## Methods (SPEC-026)
 

@@ -390,7 +390,7 @@ LF/CRLF and comment positions, repeated EOF, malformed numbers and quoted litera
 escape spelling, Unicode scalars, invalid UTF-8 in tokens and comments, BOM/NUL,
 unsupported trivia, and progress with bounded spans for every byte value.
 The literal grammar and reserved-token policy are defined in
-[SPEC.md](../SPEC.md#lexical-literal-forms-spec-008). Token recognition does not
+[language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec#lexical-literal-forms-spec-008). Token recognition does not
 establish parsing, type support, numeric conversion, or string execution.
 
 ## Parser contract checks

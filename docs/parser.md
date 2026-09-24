@@ -12,7 +12,7 @@ Parsing a type name does not establish type support.
 Core parsing enforces explicit binding/parameter/return annotations, modifier
 order, mandatory statement semicolons, braced control-flow bodies, and comma
 separators with optional final commas. Assignment is allowed only as a statement
-or loop update. [SPEC.md](../SPEC.md#expression-grouping-spec-009) defines operator
+or loop update. The [language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec#expression-grouping-spec-009) defines operator
 precedence. The canonical core examples also have complete semantic and
 execution checks in [SPEC-021's source fixtures](../tests/fixtures/core/README.md).
 
