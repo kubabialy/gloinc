@@ -1,0 +1,132 @@
+// Bounded streaming unquoted comma-delimited statistics, not CSV.
+// build/gloinc examples/statistics_tool.gloin -- INPUT NEW_OUTPUT 1,2
+import "@arena";
+import "@io";
+import "@process";
+import "@std";
+import "@strings";
+import "@math";
+import "@status";
+
+def struct Column {
+    def mut next: *Column, def index: u64, def mut count: u64,
+    def mut minimum: f64, def mut maximum: f64, def mut mean: f64,
+    // O(1), no allocation. Caller enforces <=1M rows and finite |value|<=1e12.
+    def add(self: &Column, value: f64) -> void {
+        if self.count == 0 { self.minimum = value; self.maximum = value; }
+        self.minimum = math.min_f64(self.minimum,value); self.maximum = math.max_f64(self.maximum,value);
+        self.count = self.count + 1;
+        def n: std.F64Result = std.f64_from_u64_exact(self.count);
+        self.mean = self.mean + (value - self.mean) / n.value;
+    }
+}
+def error(message: string, code: i32) -> i32 {
+    def mut errors: io.Stream = io.stderr(); errors.write_line(message); errors.flush(); return code;
+}
+// O(decimal output bytes), arena-backed conversion. Every write's status is checked.
+def integer(out: &io.File, scratch: &arena.GeneralArena, value: u64) -> bool {
+    def text: std.FormatResult = std.format_u64(scratch,value);
+    return text.status == status.OK && out.write_all(text.value).status == status.OK;
+}
+def decimal(out: &io.File, scratch: &arena.GeneralArena, value: f64) -> bool {
+    def text: std.FormatResult = std.format_f64_fixed(scratch,value,6);
+    return text.status == status.OK && out.write_all(text.value).status == status.OK;
+}
+// Example: execute("points.txt","new-report.txt","1,2"). One pass over input.
+// 1..16 distinct zero-based column indices <=63, <=64 fields, <=4096 bytes/line, <=1M rows.
+// No header, quoting, escaping, blank rows or NUL; every row has the same width.
+// Selected fields are trimmed finite numbers with |value|<=1e12; other fields are opaque bytes.
+// O(input bytes * selected columns), O(selected columns + max line bytes) retained memory.
+// Output is exclusively created AFTER valid input/close. On write/close failure a partial new file may remain.
+// Return 0 success, 2 arguments/input, 3 allocation/report I/O. Existing destinations stay untouched.
+def pub execute(input_path: string, output_path: string, columns: string) -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create(); defer owner.free();
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create(); defer scratch.free();
+    def selection: strings.SplitCursorResult = strings.SplitCursor.create(columns,",");
+    if selection.status != status.OK { return error("statistics: invalid columns",2); }
+    def mut choices: strings.SplitCursor = selection.value;
+    def mut head: *Column = null; def mut tail: *Column = null;
+    def mut selected: u64 = 0; def mut selecting: bool = true;
+    while selecting {
+        def part: strings.StringResult = choices.next();
+        if part.status == status.END { selecting = false; }
+        else {
+            def number: std.U64Result = std.parse_u64(strings.trim_ascii(part.value));
+            if part.status != status.OK || number.status != status.OK || number.value > 63 || selected == 16 { return error("statistics: invalid columns",2); }
+            def mut prior: *Column = head;
+            while prior != null { if prior.index == number.value { return error("statistics: duplicate column",2); } prior = prior.next; }
+            def node: *Column = owner.try_alloc(Column { next: null, index: number.value, count: 0, minimum: 0.0, maximum: 0.0, mean: 0.0 });
+            if node == null { return error("statistics: allocation failed",3); }
+            if tail == null { head = node; } else { tail.next = node; }
+            tail = node; selected = selected + 1;
+        }
+    }
+    if selected == 0 { return error("statistics: invalid columns",2); }
+    def opened: io.FileResult = io.File.open_read(&owner,input_path);
+    if opened.status != status.OK { return error("statistics: cannot open input",2); }
+    def mut input: io.File = opened.value; defer input.close();
+    def mut rows: u64 = 0; def mut width: u64 = 0; def mut reading: bool = true;
+    while reading {
+        scratch.reset();
+        def line: io.ReadResult = input.read_line(&scratch,4096);
+        if line.status == status.END { reading = false; }
+        else {
+            if line.status != status.OK { return error("statistics: read failed or line too long",2); }
+            if rows == 1000000 { return error("statistics: row limit exceeded",2); }
+            if strings.is_empty(line.value) || strings.contains(line.value,"\"") || strings.contains(line.value,"\0") { return error("statistics: invalid row",2); }
+            def split: strings.SplitCursorResult = strings.SplitCursor.create(line.value,",");
+            if split.status != status.OK { return error("statistics: invalid row",2); }
+            def mut fields: strings.SplitCursor = split.value;
+            def mut index: u64 = 0; def mut scanning: bool = true;
+            while scanning {
+                def field: strings.StringResult = fields.next();
+                if field.status == status.END { scanning = false; }
+                else {
+                    if field.status != status.OK || index == 64 { return error("statistics: too many fields",2); }
+                    def mut node: *Column = head;
+                    while node != null {
+                        if node.index == index {
+                            def value: std.F64Result = std.parse_f64(strings.trim_ascii(field.value));
+                            if value.status != status.OK || value.value < -1000000000000.0 || value.value > 1000000000000.0 { return error("statistics: invalid number",2); }
+                            (&*node).add(value.value);
+                        }
+                        node = node.next;
+                    }
+                    index = index + 1;
+                }
+            }
+            if rows == 0 { width = index; }
+            if index != width { return error("statistics: inconsistent row width",2); }
+            def mut node: *Column = head;
+            while node != null { if node.index >= width { return error("statistics: missing column",2); } node = node.next; }
+            rows = rows + 1;
+        }
+    }
+    if rows == 0 { return error("statistics: empty input",2); }
+    if input.close().status != status.OK { return error("statistics: input close failed",2); }
+    def made: io.FileResult = io.File.create_new(&owner,output_path);
+    if made.status != status.OK { return error("statistics: cannot create new output",3); }
+    def mut output: io.File = made.value; defer output.close();
+    if output.write_line("column,count,min,max,mean").status != status.OK { return error("statistics: report write failed",3); }
+    def mut node: *Column = head;
+    while node != null {
+        scratch.reset();
+        if !integer(&output,&scratch,node.index) || output.write_all(",").status != status.OK
+            || !integer(&output,&scratch,node.count) || output.write_all(",").status != status.OK
+            || !decimal(&output,&scratch,node.minimum) || output.write_all(",").status != status.OK
+            || !decimal(&output,&scratch,node.maximum) || output.write_all(",").status != status.OK
+            || !decimal(&output,&scratch,node.mean) || output.write_line("").status != status.OK { return error("statistics: report write failed",3); }
+        node = node.next;
+    }
+    if output.flush().status != status.OK { return error("statistics: report flush failed",3); }
+    if output.close().status != status.OK { return error("statistics: report close failed",3); }
+    return 0;
+}
+def main() -> i32 {
+    if process.arg_count() != 4 { return error("usage: statistics_tool INPUT NEW_OUTPUT COLUMNS",2); }
+    def mut arguments: arena.GeneralArena = arena.GeneralArena.create(); defer arguments.free();
+    def input: process.TextResult = process.arg(&arguments,1); def output: process.TextResult = process.arg(&arguments,2);
+    def columns: process.TextResult = process.arg(&arguments,3);
+    if input.status != status.OK || output.status != status.OK || columns.status != status.OK { return error("statistics: arguments unavailable",2); }
+    return execute(input.value,output.value,columns.value);
+}

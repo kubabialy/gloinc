@@ -1,0 +1,60 @@
+import @std/io;
+
+// Demonstrate variable declarations and arithmetic
+def test_arithmetic() -> i32 {
+    def a: i32 = 10;
+    def b: i32 = 20;
+    def c: i32 = a + b;
+    return c;  // Should be 30
+}
+
+// Demonstrate struct definitions
+struct Point {
+    def x: f32,
+    def y: f32
+}
+
+def test_structs() -> f32 {
+    def p: Point = Point { x: 1.0, y: 2.0 };
+    return p.x + p.y;  // Should be 3.0
+}
+
+// Demonstrate if/else control flow
+def test_control_flow() -> i32 {
+    def x: i32 = 5;
+    def result: i32;
+    
+    if x > 10 {
+        result = 100;
+    } else {
+        result = 0;
+    }
+    
+    return result;
+}
+
+// Demonstrate our for loop implementation
+def test_for_loop_comprehensive() -> i32 {
+    def mut sum: i32 = 0;
+    def mut count: i32 = 0;
+    
+    for def i: i32 = 0; i < 10; i = i + 1 {
+        sum = sum + i;
+        count = count + 1;
+    }
+    
+    return sum;  // Should be 45
+}
+
+// Test that imports work with for loops
+import "./math";  // This should work with our import system
+
+def main() -> i32 {
+    print("Testing Gloin language features...");
+    print("Arithmetic test: ", test_arithmetic());
+    print("Struct test: ", test_structs());
+    print("Control flow test: ", test_control_flow());
+    print("For loop test: ", test_for_loop_comprehensive());
+    
+    return 0;
+}

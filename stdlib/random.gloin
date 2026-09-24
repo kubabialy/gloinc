@@ -1,0 +1,34 @@
+// Reproducible simulation randomness, not cryptography. See docs/time-random.md.
+import "@status";
+import "@std";
+def pub const SPLITMIX64_VERSION: i32 = 1;
+def pub struct U64Result { def pub status: i32, def pub value: u64, }
+// Value state: copies advance independently. No heap owner or global seed.
+def pub struct SplitMix64 {
+    def mut state: u64,
+    // Example: def mut rng: random.SplitMix64 = random.SplitMix64.seeded(42);
+    // O(1), no allocation/failure. Every u64 seed, including zero, is valid; first draw advances it.
+    def pub static seeded(seed: u64) -> SplitMix64 { return SplitMix64 { state: seed }; }
+    // Example: rng.next_u64(); seed 0's first result is 16294208416658607535.
+    // O(1), no allocation/failure. Exactly one SplitMix64-v1 transition; full u64 output.
+    // Requires a mutable receiver. Copy state for independent streams; synchronize shared use.
+    def pub next_u64(self: &SplitMix64) -> u64 { return __random_splitmix64(&self.state); }
+    // Example: rng.below(6) -> OK/value in [0,6). Bound zero -> INVALID/0 WITHOUT advancing state.
+    // No allocation; expected <2 draws with uniform words, no imposed retry cap.
+    // Rejects the incomplete low interval before modulo; bound 1 still consumes one draw.
+    def pub below(self: &SplitMix64, bound: u64) -> U64Result {
+        if bound == 0 { return U64Result { status: status.INVALID, value: 0 }; }
+        // (2^64 - bound) % bound, computed without overflow in ordinary checked arithmetic.
+        def threshold: u64 = (18446744073709551615 - bound + 1) % bound;
+        def mut value: u64 = self.next_u64();
+        while value < threshold { value = self.next_u64(); }
+        return U64Result { status: status.OK, value: value % bound };
+    }
+    // Example: rng.unit_f64() -> one of 2^53 equally spaced values in [0,1), never 1.
+    // O(1), no allocation/failure, exactly one draw. Uses upper 53 bits / 2^53.
+    // Division by 2048 extracts bits without exposing general bitwise/wrapping operators.
+    def pub unit_f64(self: &SplitMix64) -> f64 {
+        def mantissa: u64 = self.next_u64() / 2048;
+        return std.f64_from_u64_exact(mantissa).value / 9007199254740992.0;
+    }
+}

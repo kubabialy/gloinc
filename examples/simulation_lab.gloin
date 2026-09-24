@@ -1,0 +1,70 @@
+// Reproducible Monte Carlo inputs and dice checksum; elapsed time measures the loop only.
+// build/gloinc examples/simulation_lab.gloin -- 42 10000
+import "@random";
+import "@time";
+import "@math";
+import "@std";
+import "@arena";
+import "@process";
+import "@io";
+import "@status";
+
+def error(message: string) -> i32 {
+    def mut errors: io.Stream = io.stderr(); errors.write_line(message); errors.flush(); return 2;
+}
+// O(decimal bytes), explicit arena-backed formatting; allocation/I/O failure is checked.
+def integer(out: &io.Stream, scratch: &arena.GeneralArena, label: string, value: u64) -> bool {
+    def text: std.FormatResult = std.format_u64(scratch,value);
+    return text.status == status.OK && out.write_all(label).status == status.OK && out.write_line(text.value).status == status.OK;
+}
+def decimal(out: &io.Stream, scratch: &arena.GeneralArena, label: string, value: f64) -> bool {
+    def text: std.FormatResult = std.format_f64_fixed(scratch,value,6);
+    return text.status == status.OK && out.write_all(label).status == status.OK && out.write_line(text.value).status == status.OK;
+}
+// Explicit seed/count entry for embedding or local-module composition. Same bounds and output as CLI.
+// O(samples) expected work, constant storage; allocation belongs to report formatting only.
+def pub simulate(seed: u64, samples: u64) -> i32 {
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create(); defer scratch.free();
+    if samples == 0 || samples > 1000000 { return error("samples must be in 1..1000000"); }
+    def mut rng: random.SplitMix64 = random.SplitMix64.seeded(seed);
+    def mut inside: u64 = 0; def mut dice_sum: u64 = 0;
+    def start: time.InstantResult = time.monotonic_now();
+    if start.status != status.OK { return error("clock read failed"); }
+    for def mut i: u64 = 0; i < samples; i = i + 1 {
+        def x: f64 = rng.unit_f64(); def y: f64 = rng.unit_f64();
+        if x*x + y*y <= 1.0 { inside = inside + 1; }
+        def die: random.U64Result = rng.below(6);
+        if die.status != status.OK { return error("random bound failed"); }
+        dice_sum = dice_sum + die.value + 1;
+    }
+    def end: time.InstantResult = time.monotonic_now();
+    if end.status != status.OK { return error("clock read failed"); }
+    def elapsed: time.DurationResult = time.elapsed(start.value,end.value);
+    if elapsed.status != status.OK { return error("clock moved backwards"); }
+    def count: std.F64Result = std.f64_from_u64_exact(samples); def hits: std.F64Result = std.f64_from_u64_exact(inside);
+    if count.status != status.OK || hits.status != status.OK { return error("count conversion failed"); }
+    def estimate: f64 = 4.0 * hits.value / count.value;
+    def difference: math.F64Result = math.abs_f64(estimate - math.PI_F64);
+    if difference.status != status.OK { return error("estimate failed"); }
+    def mut out: io.Stream = io.stdout();
+    if !integer(&out,&scratch,"seed=",seed) || !integer(&out,&scratch,"samples=",samples)
+        || !integer(&out,&scratch,"inside=",inside) || !integer(&out,&scratch,"dice_sum=",dice_sum)
+        || !decimal(&out,&scratch,"pi=",estimate) || !decimal(&out,&scratch,"abs_error=",difference.value)
+        || !integer(&out,&scratch,"elapsed_ns=",elapsed.value.nanoseconds) { return 3; }
+    if out.flush().status != status.OK { return 3; }
+    return 0;
+}
+
+def main() -> i32 {
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create(); defer scratch.free();
+    def mut seed: u64 = 42; def mut samples: u64 = 10000;
+    if process.arg_count() != 1 && process.arg_count() != 3 { return error("usage: [SEED SAMPLES], samples in 1..1000000"); }
+    if process.arg_count() == 3 {
+        def first: process.TextResult = process.arg(&scratch,1); def second: process.TextResult = process.arg(&scratch,2);
+        if first.status != status.OK || second.status != status.OK { return error("cannot read arguments"); }
+        def parsed_seed: std.U64Result = std.parse_u64(first.value); def parsed_samples: std.U64Result = std.parse_u64(second.value);
+        if parsed_seed.status != status.OK || parsed_samples.status != status.OK { return error("invalid seed or sample count"); }
+        seed = parsed_seed.value; samples = parsed_samples.value;
+    }
+    return simulate(seed,samples);
+}

@@ -1,0 +1,13 @@
+def add(x: i32) -> i32 {
+    return x + 14;
+}
+
+def main() -> i32 {
+    def mut total: i32 = 0;
+    for def mut i: i32 = 0; i < 3; i = i + 1 {
+        unless false {
+            total = add(total);
+        }
+    }
+    return total;
+}

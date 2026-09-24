@@ -1,0 +1,2 @@
+def pub const COUNT: i64 = 10000;
+def pub const STEP: i64 = 2;

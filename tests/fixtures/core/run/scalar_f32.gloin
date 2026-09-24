@@ -1,0 +1,15 @@
+def identity(x: f32) -> f32 { return x; }
+def arithmetic(x: f32, y: f32) -> bool {
+    if x + y != 10.0 || x - y != 4.0 || x * y != 21.0 || x / y != 2.3333333333333335 { return false; }
+    if -x != -7.0 || !(x > y) || !(x >= y) || !(y < x) || !(y <= x) { return false; }
+    if x == y || x != x || !(x >= x) || !(y <= y) { return false; }
+    return true;
+}
+def main() -> i32 {
+    def large: f32 = identity(3.4028234e38);
+    def small: f32 = identity(1.40129846e-45);
+    def zero: f32 = identity(-0.0);
+    if !(large > 1.0) || !(small > 0.0) || zero != 0.0 { return -1; }
+    if !arithmetic(7.0, 3.0) { return -2; }
+    return 42;
+}

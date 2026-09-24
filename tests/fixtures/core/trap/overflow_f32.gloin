@@ -1,0 +1,5 @@
+def main() -> i32 {
+def x: f32 = 3e38;
+def y: f32 = x * x;
+return 42;
+}

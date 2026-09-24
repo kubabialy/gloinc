@@ -1,0 +1,7 @@
+def pub struct Particle {
+    def pub mut position: i64,
+    def pub next: *Particle,
+    def pub step(self: &Particle, amount: i64) -> void {
+        self.position = self.position + amount;
+    }
+}

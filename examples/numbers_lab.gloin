@@ -1,0 +1,46 @@
+// Read finite decimal measurements, then print their count and mean.
+// Example: printf '1.25\n2.75\n3.5\n' | gloinc examples/numbers_lab.gloin
+// Output: count=3, mean=2.50 (on separate lines).
+// One reusable arena bounds scratch storage. Nothing borrows bytes across reset.
+import "@std";
+import "@status";
+import "@arena";
+import "@strings";
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+    def mut count: i64 = 0;
+    def mut mean: f64 = 0.0;
+    def mut reading: bool = true;
+    while reading {
+        memory.reset();
+        def line: std.InputResult = std.input(&memory, 128);
+        if line.status == status.END {
+            reading = false;
+        } else {
+            if line.status != status.OK { std.println("input failed"); return 1; }
+            def measurement: std.F64Result = std.parse_f64(strings.trim_ascii(line.value));
+            if measurement.status != status.OK { std.println("invalid number"); return 2; }
+            // Limit the domain so all intermediate arithmetic stays finite.
+            if measurement.value < -1000000.0 || measurement.value > 1000000.0 {
+                std.println("measurement out of range"); return 3;
+            }
+            if count == 1000000000 { std.println("too many measurements"); return 4; }
+            count = count + 1;
+            def denominator: std.F64Result = std.f64_from_i64_exact(count);
+            if denominator.status != status.OK { return 5; }
+            mean = mean + (measurement.value - mean) / denominator.value;
+        }
+    }
+    memory.reset();
+    def total: std.FormatResult = std.format_i64(&memory, count);
+    if total.status != status.OK { return 6; }
+    std.print("count="); std.println(total.value);
+    if count != 0 {
+        def average: std.FormatResult = std.format_f64_fixed(&memory, mean, 2);
+        if average.status != status.OK { return 7; }
+        std.print("mean="); std.println(average.value);
+    }
+    return 0;
+}

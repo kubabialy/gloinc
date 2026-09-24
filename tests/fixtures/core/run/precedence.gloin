@@ -1,0 +1,5 @@
+def main() -> i32 {
+    if 2 + 3 * 4 != 14 || (2 + 3) * 4 != 20 { return -1; }
+    if !true == true || !(false || true && true) { return -2; }
+    return 42;
+}

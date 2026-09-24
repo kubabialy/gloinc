@@ -6,6 +6,8 @@
 
 # Build directories
 build/
+build-*/
+ci-reports/
 cmake-build-debug/
 cmake-build-release/
 bin/
@@ -23,6 +25,19 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 !Makefile
+
+.cache
+
+# Local development notes and assistant instructions
+OpenCode.md
+AGENTS.md
+CLAUDE.md
+.agents/
+.codex/
+
+# Maintained in the GitHub wiki
+SPEC.md
+SPEC-TODO.md
 
 # OS generated
 .DS_Store

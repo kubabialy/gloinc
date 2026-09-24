@@ -1,0 +1,10 @@
+def const OFFSET: int = 2;
+
+def main() -> i32 {
+    def input: i32 = 40;
+    return add(input, OFFSET);
+}
+
+def add(left: i32, right: i32) -> i32 {
+    return left + right;
+}

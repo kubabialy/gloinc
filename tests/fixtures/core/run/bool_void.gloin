@@ -1,0 +1,12 @@
+def identity(x: bool) -> bool { return x; }
+def explicit_return() -> void { return; }
+def implicit_return() -> void {}
+def main() -> i32 {
+    explicit_return();
+    implicit_return();
+    def yes: bool = identity(true);
+    def no: bool = identity(false);
+    if !yes || no || yes == no || !(yes != no) { return -1; }
+    if !(yes && yes) || (yes && no) || !(no || yes) || (no || no) { return -2; }
+    return 42;
+}

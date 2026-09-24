@@ -1,0 +1,39 @@
+import "@std";
+import "@arena";
+
+// One decimal i32 per line. Input text and formatted output share this arena.
+// Reset only after every view from the previous line has been consumed.
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+    def mut count: i32 = 0;
+    def mut total: i32 = 0;
+    def mut reading: bool = true;
+    std.println("Enter decimal i32 values, one per line; EOF finishes:");
+    while reading {
+        def line: std.InputResult = std.input(&memory, 128);
+        if line.status == std.END { reading = false; }
+        else if line.status == std.NO_MEMORY {
+            // Reporting allocation failure must not require another allocation.
+            std.println("input error: 6");
+            return 2;
+        }
+        else if line.status != std.OK {
+            std.print("input error: "); std.println(std.to_string(&memory, line.status));
+            return 2;
+        } else {
+            def parsed: std.IntResult = std.to_int(line.value);
+            if parsed.status != std.OK {
+                std.print("conversion error: "); std.println(std.to_string(&memory, parsed.status));
+                return 3;
+            }
+            total = total + parsed.value;
+            count = count + 1;
+            std.print("accepted: "); std.println(std.to_string(&memory, parsed.value));
+        }
+        memory.reset();
+    }
+    std.print("count: "); std.println(std.to_string(&memory, count));
+    std.print("sum: "); std.println(std.to_string(&memory, total));
+    return 0;
+}

@@ -1,0 +1,282 @@
+// Streams and files. See docs/io.md for ownership, progress, errors, and costs.
+import "@arena";
+import "@status";
+import "@strings";
+
+// Check status before interpreting values. os_error is errno, or zero for library failures.
+def pub struct IoResult { def pub status: i32, def pub os_error: i32, }
+// Line failure is empty; chunk/all retain any prefix read before failure.
+// Successful and partial text borrows the destination arena until reset/free.
+def pub struct ReadResult { def pub status: i32, def pub os_error: i32, def pub value: string, }
+// written includes progress before an error; write_line includes its LF if accepted.
+def pub struct WriteResult { def pub status: i32, def pub os_error: i32, def pub written: u64, }
+// On failure value is closed. On success metadata borrows the supplied owner arena.
+def pub struct FileResult { def pub status: i32, def pub os_error: i32, def pub value: File, }
+// Diagnostic text is arena-owned on success, static empty on failure.
+def pub struct MessageResult { def pub status: i32, def pub value: string, }
+def struct FileState { def mut handle: *u8, }
+
+// Borrowed handle: shared stream position/buffering, no public close operation.
+// File-derived streams borrow shared metadata until its owner arena is reset/freed.
+// Mutating I/O requires a mutable handle, even though copies alias the same stream.
+def pub struct Stream {
+    def state: *FileState,
+    def standard: i32,
+    def readable: bool,
+
+    def handle(self: &const Stream) -> *u8 {
+        if self.standard != 0 { return __io_standard(self.standard); }
+        if self.state == null { return null; }
+        return self.state.handle;
+    }
+
+    // Example: stream.is_open(). O(1), no allocation; observes close through every alias.
+    // Does not test the OS descriptor or extend the metadata lifetime.
+    def pub is_open(self: &const Stream) -> bool { return self.handle() != null; }
+
+    def read(self: &Stream, memory: &arena.GeneralArena, max_bytes: u64, mode: i32) -> ReadResult {
+        def handle: *u8 = self.handle();
+        if handle == null { return ReadResult { status: status.CLOSED, os_error: 0, value: "" }; }
+        if !self.readable { return ReadResult { status: status.INVALID, os_error: 0, value: "" }; }
+        if mode == 1 && max_bytes == 0 { return ReadResult { status: status.INVALID, os_error: 0, value: "" }; }
+        if max_bytes > 9223372036854775806 { return ReadResult { status: status.NO_MEMORY, os_error: 0, value: "" }; }
+        def bytes: *u8 = memory.try_alloc_bytes(max_bytes + 1);
+        if bytes == null { return ReadResult { status: status.NO_MEMORY, os_error: 0, value: "" }; }
+        def mut length: u64 = 0;
+        def mut error: i32 = 0;
+        def code: i32 = __io_read(handle, &*bytes, max_bytes, mode, &length, &error);
+        return ReadResult { status: code, os_error: error, value: __io_string_view(bytes, length) };
+    }
+
+    // Example: stream.read_line(&scratch, 128). Strips LF/CRLF; final partial line is OK.
+    // END means no bytes before EOF. TOO_LONG drains the line; errors return empty text.
+    // O(consumed bytes + max_bytes zeroing) plus blocking I/O and one max_bytes+1 arena request.
+    // Results expire on scratch reset/free; allocation failure consumes nothing.
+    def pub read_line(self: &Stream, memory: &arena.GeneralArena, max_bytes: u64) -> ReadResult {
+        return self.read(memory, max_bytes, 0);
+    }
+
+    // Example: stream.read_chunk(&scratch, 4096). Requires max_bytes>0; binary data unchanged.
+    // Fills up to the bound until EOF/error; partial EOF is OK, subsequent empty EOF is END.
+    // I/O errors retain the received prefix. O(max_bytes) work/zeroing plus blocking I/O;
+    // one max_bytes+1 arena request, lifetime until reset/free; no allocation on invalid bound.
+    def pub read_chunk(self: &Stream, memory: &arena.GeneralArena, max_bytes: u64) -> ReadResult {
+        return self.read(memory, max_bytes, 1);
+    }
+
+    // Example: stream.read_all(&scratch, 65536). Empty EOF is OK/empty; preserves binary bytes.
+    // TOO_LONG returns the bound-sized prefix and leaves the next byte for the next read.
+    // I/O errors retain progress. O(max_bytes) work/zeroing plus blocking I/O and one-byte probe;
+    // one max_bytes+1 arena request, lifetime until reset/free; never drains unbounded input.
+    def pub read_all(self: &Stream, memory: &arena.GeneralArena, max_bytes: u64) -> ReadResult {
+        return self.read(memory, max_bytes, 2);
+    }
+
+    def write_mode(self: &Stream, text: string, all: i32) -> WriteResult {
+        def handle: *u8 = self.handle();
+        if handle == null { return WriteResult { status: status.CLOSED, os_error: 0, written: 0 }; }
+        if self.readable { return WriteResult { status: status.INVALID, os_error: 0, written: 0 }; }
+        def mut written: u64 = 0;
+        def mut error: i32 = 0;
+        def code: i32 = __io_write(handle, text, all, &written, &error);
+        return WriteResult { status: code, os_error: error, written: written };
+    }
+
+    // Example: stream.write("a\0b"). One native fwrite; inspect written even on OK.
+    // O(bytes accepted) plus blocking I/O, no Gloin allocation, no implicit flush or retained view.
+    // Errors preserve progress and errno; empty text succeeds on a live writable stream.
+    def pub write(self: &Stream, text: string) -> WriteResult { return self.write_mode(text, 0); }
+
+    // Example: stream.write_all("hello"). Retries short successful writes; stops on error/no progress.
+    // O(text bytes) plus blocking I/O, no Gloin allocation; success accepts all bytes, not a flush.
+    // Errors preserve progress; text is borrowed only during the call.
+    def pub write_all(self: &Stream, text: string) -> WriteResult { return self.write_mode(text, 1); }
+
+    // Example: stream.write_line("hello"). write_all(text), then write_all(LF); not atomic.
+    // O(text bytes+1), no Gloin allocation or implicit flush; written includes LF progress.
+    // A failed text write suppresses LF; no input reference is retained.
+    def pub write_line(self: &Stream, text: string) -> WriteResult {
+        def first: WriteResult = self.write_all(text);
+        if first.status != status.OK { return first; }
+        def last: WriteResult = self.write_all("\n");
+        return WriteResult { status: last.status, os_error: last.os_error, written: first.written + last.written };
+    }
+
+    // Example: stream.flush(). Explicitly checks buffered output delivery, not disk durability.
+    // O(pending buffered bytes) plus blocking I/O, no Gloin allocation; INVALID on read streams.
+    // Recoverable errno; success does not close the stream or prove a later close succeeds.
+    def pub flush(self: &Stream) -> IoResult {
+        def handle: *u8 = self.handle();
+        if handle == null { return IoResult { status: status.CLOSED, os_error: 0 }; }
+        if self.readable { return IoResult { status: status.INVALID, os_error: 0 }; }
+        def mut error: i32 = 0;
+        def code: i32 = __io_flush(handle, &error);
+        return IoResult { status: code, os_error: error };
+    }
+}
+
+// Owned FILE resource with arena-owned shared metadata. Copies alias ownership.
+// Close before resetting/freeing the owner arena. Close never frees arena metadata.
+// A separate scratch arena allows repeated read/reset while the file remains live.
+def pub struct File {
+    def state: *FileState,
+    def readable: bool,
+
+    // Example: made = File.open_read(&owner, "data.bin"); check made.status, then own made.value.
+    // Open existing bytes for reading; missing path -> NOT_FOUND.
+    // O(path bytes) plus OS open: one FileState arena request retained even on open failure;
+    // temporary native path bytes (length+1) and native FILE storage until close. No byte buffer.
+    // Invalid empty/NUL path is rejected before allocation; recoverable errno and allocation errors.
+    def pub static open_read(owner: &arena.GeneralArena, path: string) -> FileResult {
+        return open_file(owner, path, 0);
+    }
+
+    // Example: made = File.create_new(&owner, "data.bin"); check made.status, then own made.value.
+    // Exclusively create a new writable file; existing path -> ALREADY_EXISTS, never truncate.
+    // O(path bytes) plus OS open: one FileState arena request retained even on open failure;
+    // temporary native path bytes (length+1) and native FILE storage until close. No byte buffer.
+    // Invalid empty/NUL path is rejected before allocation; recoverable errno and allocation errors.
+    def pub static create_new(owner: &arena.GeneralArena, path: string) -> FileResult {
+        return open_file(owner, path, 1);
+    }
+
+    // Example: made = File.open_truncate(&owner, "data.bin"); check made.status, then own made.value.
+    // Explicitly truncate an existing file or create a writable file.
+    // O(path bytes) plus OS open: one FileState arena request retained even on open failure;
+    // temporary native path bytes (length+1) and native FILE storage until close. No byte buffer.
+    // Invalid empty/NUL path is rejected before allocation; recoverable errno and allocation errors.
+    def pub static open_truncate(owner: &arena.GeneralArena, path: string) -> FileResult {
+        return open_file(owner, path, 2);
+    }
+
+    // Example: made = File.open_append(&owner, "data.bin"); check made.status, then own made.value.
+    // Open/create a writable append stream; each native write targets the current end.
+    // O(path bytes) plus OS open: one FileState arena request retained even on open failure;
+    // temporary native path bytes (length+1) and native FILE storage until close. No byte buffer.
+    // Invalid empty/NUL path is rejected before allocation; recoverable errno and allocation errors.
+    def pub static open_append(owner: &arena.GeneralArena, path: string) -> FileResult {
+        return open_file(owner, path, 3);
+    }
+
+    // Example: file.stream(). O(1), no allocation; borrows shared state and cannot close it.
+    // Aliases share position; owner close makes every borrowed stream CLOSED.
+    def pub stream(self: &const File) -> Stream {
+        return Stream { state: self.state, standard: 0, readable: self.readable };
+    }
+
+    // Example: file.is_open(). O(1), no allocation; false after any alias closes, even on close error.
+    def pub is_open(self: &const File) -> bool {
+        if self.state == null { return false; }
+        return self.state.handle != null;
+    }
+
+    // Example: result = file.close(); inspect result.status. defer file.close() discards errors.
+    // Consumes the native resource once even on failure; all aliases become CLOSED immediately.
+    // Repeated close returns CLOSED/0. O(1) native cleanup plus blocking close; no Gloin allocation.
+    // Arena metadata remains until owner reset/free; never retry a failed native close.
+    def pub close(self: &File) -> IoResult {
+        if self.state == null { return IoResult { status: status.CLOSED, os_error: 0 }; }
+        def handle: *u8 = self.state.handle;
+        if handle == null { return IoResult { status: status.CLOSED, os_error: 0 }; }
+        self.state.handle = null;
+        def mut error: i32 = 0;
+        def code: i32 = __io_close(handle, &error);
+        return IoResult { status: code, os_error: error };
+    }
+
+    // Example: file.read_line(&scratch, 128). Same result/progress/error contract as Stream.read_line.
+    // O(consumed bytes + max_bytes zeroing) plus blocking I/O; one max_bytes+1 arena request.
+    // Bytes borrow scratch until reset/free; scratch must not invalidate the file metadata.
+    def pub read_line(self: &File, memory: &arena.GeneralArena, max_bytes: u64) -> ReadResult {
+        def mut stream: Stream = self.stream();
+        return stream.read_line(memory, max_bytes);
+    }
+
+    // Example: file.read_chunk(&scratch, 128). Same result/progress/error contract as Stream.read_chunk.
+    // O(max_bytes) work/zeroing plus blocking I/O; one max_bytes+1 byte arena request.
+    // Bytes borrow scratch until reset/free; scratch must not invalidate the file metadata.
+    def pub read_chunk(self: &File, memory: &arena.GeneralArena, max_bytes: u64) -> ReadResult {
+        def mut stream: Stream = self.stream();
+        return stream.read_chunk(memory, max_bytes);
+    }
+
+    // Example: file.read_all(&scratch, 128). Same result/progress/error contract as Stream.read_all.
+    // O(max_bytes) work/zeroing plus blocking I/O; one max_bytes+1 byte arena request.
+    // Bytes borrow scratch until reset/free; scratch must not invalidate the file metadata.
+    def pub read_all(self: &File, memory: &arena.GeneralArena, max_bytes: u64) -> ReadResult {
+        def mut stream: Stream = self.stream();
+        return stream.read_all(memory, max_bytes);
+    }
+
+    // Example: file.write("hello"). Same result/progress/error contract as Stream.write.
+    // O(text bytes) plus blocking I/O; no Gloin allocation.
+    // No input view is retained; errors are recoverable and never close the file.
+    def pub write(self: &File, text: string) -> WriteResult {
+        def mut stream: Stream = self.stream();
+        return stream.write(text);
+    }
+
+    // Example: file.write_all("hello"). Same result/progress/error contract as Stream.write_all.
+    // O(text bytes) plus blocking I/O; no Gloin allocation.
+    // No input view is retained; errors are recoverable and never close the file.
+    def pub write_all(self: &File, text: string) -> WriteResult {
+        def mut stream: Stream = self.stream();
+        return stream.write_all(text);
+    }
+
+    // Example: file.write_line("hello"). Same result/progress/error contract as Stream.write_line.
+    // O(text bytes) plus blocking I/O; no Gloin allocation.
+    // No input view is retained; errors are recoverable and never close the file.
+    def pub write_line(self: &File, text: string) -> WriteResult {
+        def mut stream: Stream = self.stream();
+        return stream.write_line(text);
+    }
+
+    // Example: file.flush(). Same result/progress/error contract as Stream.flush.
+    // O(pending bytes) plus blocking I/O; no Gloin allocation.
+    // No input view is retained; errors are recoverable and never close the file.
+    def pub flush(self: &File) -> IoResult {
+        def mut stream: Stream = self.stream();
+        return stream.flush();
+    }
+}
+
+def open_file(owner: &arena.GeneralArena, path: string, mode: i32) -> FileResult {
+    if strings.is_empty(path) || strings.contains(path, "\0") {
+        return FileResult { status: status.INVALID, os_error: 0, value: File { state: null, readable: false } };
+    }
+    // Allocate metadata before performing potentially destructive filesystem operations.
+    def state: *FileState = owner.try_alloc(FileState { handle: null });
+    if state == null { return FileResult { status: status.NO_MEMORY, os_error: 0, value: File { state: null, readable: false } }; }
+    def mut code: i32 = 0;
+    def mut error: i32 = 0;
+    def handle: *u8 = __io_open(path, mode, &code, &error);
+    if handle == null { return FileResult { status: code, os_error: error, value: File { state: null, readable: false } }; }
+    state.handle = handle;
+    return FileResult { status: status.OK, os_error: 0, value: File { state: state, readable: mode == 0 } };
+}
+
+// Example: def mut input: io.Stream = io.stdin(); O(1), no allocation.
+// Borrows process stdin, shares buffering/position with std.input; no close capability.
+def pub stdin() -> Stream { return Stream { state: null, standard: 1, readable: true }; }
+// Example: def mut output: io.Stream = io.stdout(); O(1), no allocation.
+// Borrows process stdout; host buffering is preserved; explicitly flush to observe pending errors.
+def pub stdout() -> Stream { return Stream { state: null, standard: 2, readable: false }; }
+// Example: def mut errors: io.Stream = io.stderr(); O(1), no allocation.
+// Borrows process stderr independently of stdout; no close capability, host buffering preserved.
+def pub stderr() -> Stream { return Stream { state: null, standard: 3, readable: false }; }
+
+// Example: io.error_message(&scratch, result.os_error); check status before value.
+// O(256) bounded work plus host message lookup and one 256-byte arena request; bytes expire on reset/free.
+// Zero returns static "no OS error"; negative/failed lookup -> INVALID, long message -> TOO_LONG,
+// allocation failure -> NO_MEMORY. Locale-specific diagnostics do not determine stable error categories.
+def pub error_message(memory: &arena.GeneralArena, os_error: i32) -> MessageResult {
+    if os_error == 0 { return MessageResult { status: status.OK, value: "no OS error" }; }
+    if os_error < 0 { return MessageResult { status: status.INVALID, value: "" }; }
+    def bytes: *u8 = memory.try_alloc_bytes(256);
+    if bytes == null { return MessageResult { status: status.NO_MEMORY, value: "" }; }
+    def mut length: u64 = 0;
+    def code: i32 = __io_error_message(os_error, &*bytes, &length);
+    if code != status.OK { return MessageResult { status: code, value: "" }; }
+    return MessageResult { status: status.OK, value: __io_string_view(bytes, length) };
+}

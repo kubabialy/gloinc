@@ -1,0 +1,1 @@
+def const mut n: i32 = 0;
