@@ -1,5 +1,6 @@
 #include "sema.h"
 #include "operators.h"
+#include <charconv>
 #include <iostream>
 
 void Scope::define(const std::string &name, Symbol symbol) { symbols[name] = symbol; }
@@ -69,6 +70,24 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
             if (!pointee || dynamic_cast<VoidType *>(pointee.get()))
                 return nullptr;
             return std::make_shared<PointerType>(pointee, name[0] == '*', read_only);
+        }
+        if (name.starts_with("[") && name.ends_with("]")) {
+            const auto separator = name.rfind("; ");
+            if (separator == std::string::npos || separator < 2)
+                return nullptr;
+            auto element = resolve_type_from_string(name.substr(1, separator - 1));
+            if (!element || dynamic_cast<VoidType *>(element.get()) ||
+                dynamic_cast<FunctionType *>(element.get()))
+                return nullptr;
+            const auto digits = std::string_view(name).substr(separator + 2,
+                                                       name.size() - separator - 3);
+            size_t length = 0;
+            auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(),
+                                                length);
+            if (error != std::errc{} || end != digits.data() + digits.size() ||
+                length > 1048576)
+                return nullptr;
+            return std::make_shared<ArrayType>(element, length);
         }
         auto core = resolve_core_type(name, recording->target);
         if (core)
@@ -495,6 +514,35 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         if (recording)
             recording->literals[expr] = ConstantValue{CoreType::String, str_lit->value};
         return get_builtin_type("string");
+    } else if (const auto *array = dynamic_cast<const ArrayLiteral *>(expr)) {
+        if (!recording || !array->braced || !expected_array) {
+            log_error("Fixed-array initializer requires a declared [T; N] type and braces");
+            return nullptr;
+        }
+        auto target = expected_array;
+        if (array->elements.size() != target->length)
+            log_error("Fixed-array initializer element count does not match its length");
+        for (const auto &element : array->elements) {
+            auto actual = check_typed_expression(element.get(), target->element);
+            if (actual && !actual->equals(*target->element))
+                log_error("Fixed-array initializer element type mismatch");
+        }
+        return target;
+    } else if (const auto *index = dynamic_cast<const IndexExpression *>(expr)) {
+        auto base = check_expression(index->left.get());
+        auto array = std::dynamic_pointer_cast<ArrayType>(base);
+        if (!array) {
+            if (base)
+                log_error("Indexing requires a fixed array");
+            return nullptr;
+        }
+        auto subscript = check_expression(index->index.get(), CoreType::U64);
+        auto core = subscript ? resolve_core_type(subscript->to_string()) : std::nullopt;
+        if (core && core_type_info(*core).is_integer)
+            return array->element;
+        if (subscript)
+            log_error("Fixed-array index must be an integer");
+        return nullptr;
     } else if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
         if (recording && (prefix->op == "&" || prefix->op == "*"))
             return check_pointer_unary(prefix);
@@ -749,7 +797,11 @@ std::shared_ptr<Type> Sema::resolve_annotation(const Identifier *annotation, boo
         DiagnosticScope location(current_span, annotation->span);
         auto core = value_type(type);
         if (!core) {
-            log_error("Unknown or unsupported core type '" + annotation->value + "'");
+            if (annotation->value.starts_with("["))
+                log_error("Invalid fixed-array type '" + annotation->value +
+                          "': use a supported element type and a decimal length up to 1048576");
+            else
+                log_error("Unknown or unsupported core type '" + annotation->value + "'");
             return nullptr;
         }
         if (*core == CoreType::Void && !allow_void) {

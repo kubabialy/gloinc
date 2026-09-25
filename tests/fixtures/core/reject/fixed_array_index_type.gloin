@@ -1,0 +1,4 @@
+def main() -> i32 {
+    def values: [i32; 2] = {1, 2};
+    return values[true];
+}

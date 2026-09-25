@@ -1,0 +1,53 @@
+def struct Cell {
+    def tag: u8,
+    def mut value: i32,
+}
+
+def copy(values: [i32; 2]) -> [i32; 2] {
+    return values;
+}
+
+def make() -> [i32; 2] {
+    return {20, 22};
+}
+
+def add(values: [i32; 2]) -> i32 {
+    return values[0] + values[1];
+}
+
+def choose(calls: &i32) -> [i32; 2] {
+    *calls = *calls + 1;
+    return {20, 22};
+}
+
+def next_index(calls: &i32) -> i32 {
+    *calls = *calls + 1;
+    return *calls - 1;
+}
+
+def increment(value: &i32) -> void {
+    *value = *value + 1;
+}
+
+def main() -> i32 {
+    def original: [i32; 2] = {1, 2};
+    def view: &const [i32; 2] = &original;
+    def mut changed: [i32; 2] = copy(original);
+    changed[0] = 40;
+    def nested: [[i32; 2]; 2] = {{3, 4}, {5, 6}};
+    def empty: [i32; 0] = {};
+    def mut cells: [Cell; 2] = {Cell {tag: 1, value: 20}, Cell {tag: 2, value: 21}};
+    cells[0].value = cells[0].value + 1;
+    def mut addressed: [i32; 1] = {1};
+    increment(&addressed[0]);
+    def mut calls: i32 = 0;
+    def selected: i32 = choose(&calls)[next_index(&calls)];
+    if original[0] != 1 || (*view)[1] != 2 || nested[1][0] != 5
+        || make()[1] != 22 || add({20, 22}) != 42
+        || selected != 22 || calls != 2
+        || cells[0].value + cells[1].value != 42
+        || addressed[0] != 2 {
+        return 1;
+    }
+    return changed[0] + changed[1];
+}

@@ -1,0 +1,4 @@
+def main() -> i32 {
+    def empty: [i32; 0] = {};
+    return empty[0];
+}

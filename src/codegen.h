@@ -138,6 +138,7 @@ class CodeGen {
     mlir::Value gen_expression(const Expression *expr, bool allow_void = false);
     mlir::Value gen_expression_impl(const Expression *expr);
     mlir::Value gen_address(const Expression *expr);
+    mlir::Value gen_array_address(const IndexExpression *expr, bool allow_temporary);
     mlir::Value gen_pointer_address(const Expression *expr);
     mlir::Type get_expression_type(const Expression *expr);
 

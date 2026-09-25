@@ -6,6 +6,7 @@
 #include "stdlib_abi.h"
 #include "compilation_mode.h"
 #include "numeric.h"
+#include <memory>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -23,6 +24,8 @@ struct ValueType {
     CoreType scalar = CoreType::Void;
     std::optional<size_t> structure;
     std::vector<PointerLayer> pointers; // Outermost first; base retains its nominal identity.
+    std::shared_ptr<ValueType> array_element;
+    size_t array_length = 0;
     ValueType() = default;
     ValueType(CoreType scalar) : scalar(scalar) {}
     static ValueType record(size_t id) {
@@ -30,7 +33,14 @@ struct ValueType {
         type.structure = id;
         return type;
     }
+    static ValueType array(ValueType element, size_t length) {
+        ValueType type;
+        type.array_element = std::make_shared<ValueType>(std::move(element));
+        type.array_length = length;
+        return type;
+    }
     bool is_pointer() const { return !pointers.empty(); }
+    bool is_array() const { return pointers.empty() && static_cast<bool>(array_element); }
     ValueType pointee() const {
         if (!is_pointer())
             throw std::logic_error("Value is not a pointer");
@@ -39,11 +49,17 @@ struct ValueType {
         return result;
     }
     CoreType builtin() const {
-        if (structure || is_pointer())
+        if (structure || is_pointer() || is_array())
             throw std::logic_error("Aggregate/pointer is not a builtin type");
         return scalar;
     }
-    bool operator==(const ValueType &) const = default;
+    bool operator==(const ValueType &other) const {
+        return scalar == other.scalar && structure == other.structure &&
+               pointers == other.pointers && array_length == other.array_length &&
+               (array_element && other.array_element
+                    ? *array_element == *other.array_element
+                    : !array_element && !other.array_element);
+    }
 };
 struct CheckedField {
     std::string name;

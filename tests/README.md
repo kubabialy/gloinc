@@ -486,7 +486,9 @@ SPEC-007's newline handling made
 `ParserTest.ParseStructDefinition`, and `ParserTest.ParsePackedStruct` pass.
 At SPEC-007, three formerly passing cases exposed failures: arena construction,
 the invalid async fixture, and array type resolution. SPEC-028 now implements
-arenas with source-based coverage; arrays remain an explicit rejection under SPEC-035. None were disabled or converted into
+arenas with source-based coverage. At that milestone, arrays remained an explicit
+rejection under SPEC-035; fixed arrays are now covered by source acceptance.
+None were disabled or converted into
 expected successes. `BasicCodeGenTest.HandlesControlFlow` now explicitly declares
 its assigned variable `mut`, as required by SPEC-006; a new diagnostic regression
 checks that the original immutable assignment fails. SPEC-007 added 15 passing

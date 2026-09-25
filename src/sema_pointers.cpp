@@ -17,7 +17,9 @@ bool Sema::pointer_conversion(const PointerType &source, const PointerType &targ
 std::shared_ptr<Type> Sema::check_typed_expression(const Expression *expression,
                                                    const std::shared_ptr<Type> &expected) {
     auto previous = expected_pointer;
+    auto previous_array = expected_array;
     expected_pointer = std::dynamic_pointer_cast<PointerType>(expected);
+    expected_array = std::dynamic_pointer_cast<ArrayType>(expected);
     auto actual = check_expression(expression, expected ? resolve_core_type(expected->to_string())
                                                         : std::nullopt);
     auto pointer = std::dynamic_pointer_cast<PointerType>(actual);
@@ -27,6 +29,7 @@ std::shared_ptr<Type> Sema::check_typed_expression(const Expression *expression,
         recording->types[expression] = *value_type(actual);
     }
     expected_pointer = previous;
+    expected_array = previous_array;
     return actual;
 }
 
@@ -49,6 +52,10 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
         prefix && prefix->op == "*") {
         const auto pointer = recording->types.at(prefix->right.get());
         return {type, !pointer.pointers.front().read_only, true};
+    }
+    if (const auto *index = dynamic_cast<const IndexExpression *>(expression)) {
+        auto base = check_place(index->left.get(), take_address);
+        return {type, base.writable, base.addressable};
     }
     if (const auto *member = dynamic_cast<const MemberAccessExpression *>(expression)) {
         if (recording->module_constants.contains(member)) {

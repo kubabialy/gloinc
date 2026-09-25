@@ -491,6 +491,18 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     } else if (auto *str_lit = dynamic_cast<const StringLiteral *>(expr)) {
         return emit_constant(ConstantValue{CoreType::String, str_lit->value});
     } else if (auto *array_lit = dynamic_cast<const ArrayLiteral *>(expr)) {
+        if (checked_data) {
+            if (!array_lit->braced)
+                fail("Unsupported array initializer spelling");
+            auto type = checked_type(array_lit);
+            mlir::Value value = builder.create<mlir::LLVM::ZeroOp>(location(), type);
+            for (size_t i = 0; i < array_lit->elements.size(); ++i) {
+                auto element = gen_expression(array_lit->elements[i].get());
+                value = builder.create<mlir::LLVM::InsertValueOp>(
+                    location(), value, element, llvm::ArrayRef<int64_t>{static_cast<int64_t>(i)});
+            }
+            return value;
+        }
         if (array_lit->elements.empty())
             fail("Unsupported expression or unresolved value in code generation");
         auto firstElem = gen_expression(array_lit->elements[0].get());
@@ -599,6 +611,11 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
 
         fail("Unsupported expression or unresolved value in code generation");
+    } else if (auto *index = dynamic_cast<const IndexExpression *>(expr)) {
+        if (!checked_data)
+            fail("Indexing requires checked semantic analysis");
+        auto address = gen_array_address(index, true);
+        return builder.create<mlir::LLVM::LoadOp>(location(), checked_type(index), address);
     } else if (auto *bin = dynamic_cast<const InfixExpression *>(expr)) {
         if (checked_data)
             return gen_checked_binary(bin);
@@ -984,6 +1001,9 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
         auto sym = lookup_binding(ident);
         if (sym.value && sym.is_address)
             return sym.value;
+    } else if (auto *index = dynamic_cast<const IndexExpression *>(expr)) {
+        if (checked_data)
+            return gen_array_address(index, false);
     } else if (auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
         if (checked_data) {
             bool indirect = checked_data->indirect_members.contains(member_access);
@@ -1057,6 +1077,38 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
         }
     }
     return nullptr;
+}
+
+mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_temporary) {
+    auto array_type = checked_data->types.at(expr->left.get());
+    if (!array_type.is_array())
+        fail("Index base is not a checked fixed array");
+    auto base = gen_address(expr->left.get());
+    if (!base) {
+        if (!allow_temporary)
+            return {};
+        auto value = gen_expression(expr->left.get());
+        base = create_entry_alloca(lower_type(array_type));
+        builder.create<mlir::LLVM::StoreOp>(location(), value, base);
+    }
+    auto index = gen_expression(expr->index.get());
+    auto index_type = checked_data->types.at(expr->index.get()).builtin();
+    const auto &info = core_type_info(index_type);
+    if (!info.is_integer)
+        fail("Index is not a checked integer");
+    if (info.bits < 64) {
+        if (info.is_signed)
+            index = builder.create<mlir::arith::ExtSIOp>(location(), builder.getI64Type(), index);
+        else
+            index = builder.create<mlir::arith::ExtUIOp>(location(), builder.getI64Type(), index);
+    }
+    auto length = emit_constant({CoreType::U64, llvm::APInt(64, array_type.array_length)});
+    auto in_bounds = builder.create<mlir::arith::CmpIOp>(
+        location(), mlir::arith::CmpIPredicate::ult, index, length);
+    require_runtime(in_bounds);
+    return builder.create<mlir::LLVM::GEPOp>(
+        location(), mlir::LLVM::LLVMPointerType::get(&context), lower_type(array_type), base,
+        llvm::ArrayRef<mlir::LLVM::GEPArg>{0, index});
 }
 
 mlir::Value CodeGen::gen_pointer_address(const Expression *expression) {
@@ -1246,6 +1298,9 @@ CodeGen::generate_unchecked_for_testing(const std::vector<std::unique_ptr<Statem
 mlir::Type CodeGen::lower_type(ValueType value_type) {
     if (value_type.is_pointer())
         return mlir::LLVM::LLVMPointerType::get(&context);
+    if (value_type.is_array())
+        return mlir::LLVM::LLVMArrayType::get(lower_type(*value_type.array_element),
+                                              value_type.array_length);
     if (value_type.structure) {
         const auto id = *value_type.structure;
         if (auto found = checked_struct_types.find(id); found != checked_struct_types.end())

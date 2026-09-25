@@ -4,6 +4,7 @@ def helper() -> i32 {
 
 def main() -> i32 {
     def sentinel: i32 = 1 / 0;
-    helper[0];
+    def value: i32 = helper();
+    value[0];
     return 42;
 }

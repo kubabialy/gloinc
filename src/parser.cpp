@@ -174,6 +174,10 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         advance_token();
         return std::make_unique<ArrayLiteral>(parse_expression_list(GLOIN_TOKEN_RBRACKET));
     }
+    case GLOIN_TOKEN_LBRACE: {
+        advance_token();
+        return std::make_unique<ArrayLiteral>(parse_expression_list(GLOIN_TOKEN_RBRACE), true);
+    }
     case GLOIN_TOKEN_SELF:
         return parse_name(true);
     case GLOIN_TOKEN_IDENTIFIER: {
@@ -241,7 +245,6 @@ std::unique_ptr<Expression> GloinParser::parse_infix_impl(std::unique_ptr<Expres
         return std::make_unique<CallExpression>(std::move(left), std::move(args));
     }
     if (type == GLOIN_TOKEN_LBRACKET) {
-        require_extended("Index expressions");
         advance_token();
         Restore index_context(allow_struct_literal, true);
         auto index = parse_expression(0);
@@ -415,7 +418,6 @@ std::unique_ptr<Identifier> GloinParser::parse_type_impl() {
             text += "const ";
     }
     if (accept(GLOIN_TOKEN_LBRACKET)) {
-        require_extended("Array types");
         auto element = parse_type();
         expect(GLOIN_TOKEN_SEMICOLON, "Expected ';' in array type");
         if (current_token.type != GLOIN_TOKEN_NUMBER)

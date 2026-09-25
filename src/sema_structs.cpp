@@ -12,6 +12,11 @@ std::optional<ValueType> Sema::value_type(const std::shared_ptr<Type> &type) con
         value->pointers.insert(value->pointers.begin(), {pointer->nullable, pointer->read_only});
         return value;
     }
+    if (const auto *array = dynamic_cast<const ArrayType *>(type.get())) {
+        auto element = value_type(array->element);
+        return element ? std::optional<ValueType>(ValueType::array(*element, array->length))
+                       : std::nullopt;
+    }
     if (const auto *structure = dynamic_cast<const StructType *>(type.get())) {
         if (structure->identity)
             return ValueType::record(*structure->identity);
@@ -82,14 +87,22 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
 
 void Sema::validate_struct_cycles() {
     std::vector<unsigned> state(recording->structures.size());
-    std::function<bool(size_t)> visit = [&](size_t id) {
+    std::function<bool(size_t)> visit;
+    std::function<bool(const ValueType &)> visit_value = [&](const ValueType &type) {
+        if (type.is_pointer())
+            return true;
+        if (type.is_array())
+            return visit_value(*type.array_element);
+        return !type.structure || visit(*type.structure);
+    };
+    visit = [&](size_t id) {
         if (state[id] == 1)
             return false;
         if (state[id] == 2)
             return true;
         state[id] = 1;
         for (const auto &field : recording->structures[id].fields)
-            if (!field.type.is_pointer() && field.type.structure && !visit(*field.type.structure))
+            if (!visit_value(field.type))
                 return false;
         state[id] = 2;
         return true;

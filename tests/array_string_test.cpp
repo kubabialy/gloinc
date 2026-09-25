@@ -88,7 +88,7 @@ TEST(ArrayStringTest, CheckedStringSignaturesUseTheSameRepresentation) {
     EXPECT_TRUE(llvm::isa<mlir::LLVM::LLVMStructType>(echo.getFunctionType().getInput(0)));
 }
 
-TEST(ArrayStringTest, ArrayTypesRemainDeferred) {
+TEST(ArrayStringTest, BracketArrayLiteralsRemainDeferred) {
     std::string code = R"(
         def main() -> i32 {
             def arr: [i32; 3] = [1, 2, 3];

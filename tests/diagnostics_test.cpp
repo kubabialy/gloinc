@@ -270,7 +270,8 @@ TEST(DiagnosticsTest, CorePipelineRejectsDeferredSyntaxBeforeChecking) {
     for (const std::string source :
          {"def packed struct(u32) X { def x: i32 } def main() -> i32 { return 0; }",
           "def main() -> i32 { run work(); return 0; }",
-          "def main() -> i32 { def x: [i32; 2]; return 0; }", "def main() -> i32 { return x = 1; }"}) {
+          "def main() -> i32 { def x: [i32; 2] = [1, 2]; return 0; }",
+          "def main() -> i32 { return x = 1; }"}) {
         auto result = compile_source(source, "core.gloin", context);
         EXPECT_FALSE(result.success()) << source;
         EXPECT_FALSE(result.module);

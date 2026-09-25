@@ -53,6 +53,50 @@ class CoreAcceptanceTest : public gloin_test::CliFixture {
 
 TEST_F(CoreAcceptanceTest, RunMinimal) { runs("run/minimal.gloin", "42"); }
 
+TEST_F(CoreAcceptanceTest, RunFixedArrays) {
+    runs("run/fixed_arrays.gloin", "42");
+    const auto executable = directory + "/fixed-arrays";
+    expect_success(invoke_raw({"-o", executable, fixture("run/fixed_arrays.gloin")}), "");
+    const auto out = directory + "/fixed-arrays.stdout";
+    const auto err = directory + "/fixed-arrays.stderr";
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+    std::string message;
+    bool launch_failed = false;
+    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                                10, 0, &message, &launch_failed);
+    EXPECT_FALSE(launch_failed) << message;
+    EXPECT_EQ(code, 42) << message << read(err);
+    EXPECT_TRUE(read(out).empty());
+    EXPECT_TRUE(read(err).empty());
+}
+TEST_F(CoreAcceptanceTest, RejectFixedArrayLength) {
+    rejects("reject/fixed_array_length.gloin", "element count");
+}
+TEST_F(CoreAcceptanceTest, RejectFixedArrayElement) {
+    rejects("reject/fixed_array_element.gloin", "element type mismatch");
+}
+TEST_F(CoreAcceptanceTest, RejectFixedArrayImmutable) {
+    rejects("reject/fixed_array_immutable.gloin", "Cannot write");
+}
+TEST_F(CoreAcceptanceTest, RejectFixedArrayIndexType) {
+    rejects("reject/fixed_array_index_type.gloin", "index must be an integer");
+}
+TEST_F(CoreAcceptanceTest, RejectRecursiveFixedArray) {
+    rejects("reject/fixed_array_recursive.gloin", "Recursive by-value struct");
+}
+TEST_F(CoreAcceptanceTest, RejectFixedArraySize) {
+    rejects("reject/fixed_array_size.gloin", "Invalid fixed-array type");
+}
+TEST_F(CoreAcceptanceTest, TrapFixedArrayBounds) {
+    traps("trap/fixed_array_bounds.gloin");
+}
+TEST_F(CoreAcceptanceTest, TrapFixedArrayNegative) {
+    traps("trap/fixed_array_negative.gloin");
+}
+TEST_F(CoreAcceptanceTest, TrapFixedArrayEmptyIndex) {
+    traps("trap/fixed_array_empty_index.gloin");
+}
+
 TEST_F(CoreAcceptanceTest, RunArena) { runs("run/arena.gloin", "42"); }
 TEST_F(CoreAcceptanceTest, RejectArenaTypeArgument) {
     rejects("reject/arena_value.gloin", "Expected expression");
@@ -281,9 +325,13 @@ TEST_F(CoreAcceptanceTest, RejectNullReference) {
     rejects("reject/null_reference.gloin", "null requires");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredArray) { rejects("reject/deferred_array.gloin", "Array"); }
+TEST_F(CoreAcceptanceTest, RejectBracketArrayLiteral) {
+    rejects("reject/deferred_array.gloin", "Array literals");
+}
 
-TEST_F(CoreAcceptanceTest, RejectDeferredSlice) { rejects("reject/deferred_slice.gloin", "Array"); }
+TEST_F(CoreAcceptanceTest, RejectDeferredSlice) {
+    rejects("reject/deferred_slice.gloin", "Expected ';' in array type");
+}
 
 TEST_F(CoreAcceptanceTest, RejectDeferOperand) { rejects("reject/defer_operand.gloin", "defer requires"); }
 
@@ -291,7 +339,9 @@ TEST_F(CoreAcceptanceTest, RejectFunctionMember) {
     rejects("reject/function_member.gloin", "Function values");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredIndex) { rejects("reject/deferred_index.gloin", "Index"); }
+TEST_F(CoreAcceptanceTest, RejectIndexNonArray) {
+    rejects("reject/deferred_index.gloin", "Indexing requires a fixed array");
+}
 
 TEST_F(CoreAcceptanceTest, RejectDeferredSpawn) {
     rejects("reject/deferred_spawn.gloin", "legacy");

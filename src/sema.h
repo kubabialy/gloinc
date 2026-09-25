@@ -123,6 +123,20 @@ struct PointerType : public Type {
     }
 };
 
+struct ArrayType : public Type {
+    std::shared_ptr<Type> element;
+    size_t length;
+    ArrayType(std::shared_ptr<Type> element, size_t length)
+        : element(std::move(element)), length(length) {}
+    std::string to_string() const override {
+        return "[" + element->to_string() + "; " + std::to_string(length) + "]";
+    }
+    bool equals(const Type &other) const override {
+        const auto *array = dynamic_cast<const ArrayType *>(&other);
+        return array && length == array->length && element->equals(*array->element);
+    }
+};
+
 struct DeferredType : public Type {
     std::shared_ptr<Type> value_type;
 
@@ -245,6 +259,7 @@ class Sema {
         bool addressable = false;
     };
     std::shared_ptr<PointerType> expected_pointer;
+    std::shared_ptr<ArrayType> expected_array;
     Place check_place(const Expression *expression, bool take_address = false);
     std::shared_ptr<Type> check_pointer_unary(const PrefixExpression *expression);
     std::shared_ptr<Type> check_indirect_assignment(const AssignmentExpression *assignment);

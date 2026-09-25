@@ -19,6 +19,9 @@ intentionally invalid tokens; formatting changes only whitespace and layout.
   Keep related statements together.
 - Put one space after commas. Do not leave trailing whitespace. Keep adjacent
   assignments aligned only when the alignment makes a small group easier to scan.
+- In fixed-array types, put one space after the semicolon: `[i32; 2]`. Keep a
+  short initializer on one line: `{1, 2}`. Use braces for array values and
+  brackets for indexing.
 - For a long boolean condition, break before `&&` or `||` and indent the
   continuation one level. Keep the opening `{` with the last condition line.
 - Put explanatory comments immediately before the declaration or step they

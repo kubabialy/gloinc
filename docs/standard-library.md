@@ -55,7 +55,8 @@ initialized entirely to zero. The first traps on failure; the second returns nul
 A zero-size allocation can return a distinct non-null address but grants no bytes
 to read or write. Reset/reuse still zeroes every requested byte. These methods
 supplement initialized-value `alloc`/`try_alloc`; they do not add pointer arithmetic,
-array indexing, or bounds checking. Helpers use borrowed arena references.
+array indexing, or bounds checking on their own. Fixed-array indexing is a
+separate language feature. Helpers use borrowed arena references.
 Allocation through a cleared handle traps, as with existing arena operations.
 
 ## Input rules

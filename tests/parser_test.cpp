@@ -434,7 +434,7 @@ TEST(ParserTest, RejectsUnsupportedCoreSyntax) {
         rejected(source);
     for (const std::string expression :
          {"spawn f()", "await f()", "run f()", "[1, 2]", "X<i32> { x: 1 }",
-          "a[0]",      "+a",        "~a",
+          "+a",        "~a",
           "a & b",     "a | b",     "a ^ b",   "a << b", "a >> b",    "a += 1",
           "a ? b",     "0..3",      "a => b"})
         rejected("def main() -> void { " + expression + "; }");

@@ -44,8 +44,8 @@ operations with LLVM-compatible types. High-level operations, custom types,
 and unrealized casts cannot cross this boundary. The LLVM constant operation's
 index-typed integer payload is allowed because LLVM's converter/exporter uses
 it with a concrete integer result; runtime index types remain forbidden. Raw
-SCF/memref fixtures exercise this internal compiler capability without adding
-source-language arrays or structured IR syntax.
+SCF/memref fixtures exercise this internal compiler capability independently
+of source-language fixed arrays or structured IR syntax.
 
 `JitRunner` and the `run_external_module` test helper both lower owned clones
 through this function. The external helper then uses `mlir-opt` only to

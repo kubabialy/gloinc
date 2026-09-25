@@ -10,7 +10,7 @@ verification evidence in order.
 Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR 21.1.6.
 The CLI builds native executables by default and can run scalar and ordinary struct
 programs through the in-process JIT with `--jit`.
-The executable core has 142 source-file acceptance cases covering successful
+The 0.0.2 executable core has 142 source-file acceptance cases covering successful
 programs, rejected source, and runtime arithmetic traps. Checking and IR inspection
 modes are also available. The current version is `0.0.2`; installation and
 package validation are documented in [the release guide](docs/release.md).
@@ -210,13 +210,16 @@ Ordinary structs support named literals, nested fields, value parameters/returns
 and checked mutation. See [the struct example](tests/fixtures/core/run/ordinary_struct.gloin).
 `*T`/`&T` and read-only `*const T`/`&const T` support manually managed resources;
 see [the pointer fixture](tests/fixtures/core/run/pointers.gloin).
+On the development branch after 0.0.2, fixed arrays use `[T; N]` and brace initializers such as
+`def values: [i32; 2] = {1, 2};`. Indexed reads and writes check bounds; see
+[the fixed-array guide](docs/fixed-arrays.md).
 Ordinary structs also support instance methods with explicit `self` pointers and
 static calls such as `Counter.make(40)`; see [the method fixture](tests/fixtures/core/run/methods.gloin).
 `defer call(...)` captures arguments immediately and runs registered calls in
 reverse order on normal function return; see [the defer fixture](tests/fixtures/core/run/defer.gloin).
 Local imports such as `import "./utils";` resolve relative to their source file;
 see [the module example](examples/module_lab.gloin).
-There are no implicit numeric conversions. Package imports, arrays, packed
+There are no implicit numeric conversions. Package imports, slices, packed
 structs, and concurrency remain deferred. `examples/hello_world.gloin` is a
 runnable standard-output example.
 
@@ -284,7 +287,7 @@ bash scripts/check-package.sh build build/package-check
 
 CPack writes `build/gloinc-0.0.2-macos-arm64.tar.gz` and its `.sha256` checksum.
 The archive contains `bin/gloinc`, standard modules, native arena libraries and header,
-documentation, runnable examples, and the core source fixtures. The verification script runs all 443 CLI/standard-library/module/arena/defer/method/pointer/struct/standard-output/source acceptance cases against
+documentation, runnable examples, and the core source fixtures. The verification script runs the CLI, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
 spaces. See [the release guide](docs/release.md) for extraction, dependencies,
 sanitizer checks, and the supported-platform limits.
@@ -298,7 +301,7 @@ ctest --test-dir build -j 1 --output-on-failure
 ctest --test-dir build -j 4 --output-on-failure
 ```
 
-`check-core` runs 820 required scalar, module, arena, defer, method, pointer, struct, native-output, and standard-output checks, including frontend,
+`check-core` runs the required scalar, module, arena, defer, method, pointer, struct, fixed-array, native-output, and standard-output checks, including frontend,
 lowering, external execution, source acceptance, CLI, JIT, and dialect setup.
 The full suite exits nonzero for the documented
 failures; do not disable those cases. The release CI audits the exact four known

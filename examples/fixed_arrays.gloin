@@ -1,0 +1,23 @@
+import "@std";
+
+def sum(values: [i32; 4]) -> i32 {
+    def mut total: i32 = 0;
+    for def mut index: usize = 0; index < 4; index = index + 1 {
+        total = total + values[index];
+    }
+    return total;
+}
+
+def main() -> i32 {
+    def mut scores: [i32; 4] = {8, 13, 7, 10};
+    scores[3] = 14;
+
+    def mut copy: [i32; 4] = scores;
+    copy[0] = 40;
+    if scores[0] != 8 || copy[0] != 40 || sum(scores) != 42 {
+        return 1;
+    }
+
+    std.println("sum = 42");
+    return 0;
+}

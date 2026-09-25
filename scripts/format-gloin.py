@@ -124,6 +124,11 @@ def format_source(source: str) -> str:
         if index < skip_until:
             continue
         if kind == "newline":
+            if brackets:
+                current = current.rstrip() + " "
+                source_line_has_token = False
+                emitted_on_source_line = False
+                continue
             flush()
             if not source_line_has_token and lines and lines[-1] != "":
                 lines.append("")
@@ -164,6 +169,35 @@ def format_source(source: str) -> str:
         elif kind == "{":
             source_line_has_token = True
             prefix = current.strip()
+            array_initializer = prefix.endswith(("=", "(", ",", ":")) or prefix == "return"
+            if array_initializer:
+                nesting = 1
+                end = index + 1
+                while end < len(scanned) and nesting:
+                    if scanned[end][0] == "{":
+                        nesting += 1
+                    elif scanned[end][0] == "}":
+                        nesting -= 1
+                    end += 1
+                contents = scanned[index:end]
+                if nesting == 0 and all(part != "comment" for part, _ in contents):
+                    literal = ""
+                    for part, spelling in contents:
+                        if part == "newline":
+                            continue
+                        if part == ",":
+                            literal = literal.rstrip() + ", "
+                        elif part == "}":
+                            literal = literal.rstrip() + "}"
+                        elif part == "text":
+                            literal += spelling.lstrip() if literal.endswith(("{", ", ")) else spelling
+                        else:
+                            literal += spelling
+                    literal = literal.replace(", }", "}")
+                    if len("    " * depth + prefix + literal) <= 100:
+                        append(literal)
+                        skip_until = end
+                        continue
             if prefix.startswith(("if ", "unless ")):
                 end = index + 1
                 while end < len(scanned) and scanned[end][0] not in {"newline", "comment", "{", "}"}:
@@ -216,7 +250,7 @@ def format_source(source: str) -> str:
             head = current.lstrip()
             if head == "for" or head.startswith(("for ", "for;")):
                 in_for_header = True
-            if in_for_header:
+            if brackets or in_for_header:
                 current = current.rstrip() + "; "
             elif not current.strip() and lines and lines[-1].rstrip().endswith(("}", ")", "]")):
                 lines[-1] += ";"

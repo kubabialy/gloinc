@@ -65,18 +65,19 @@ struct StringLiteral : public Expression {
 
 struct ArrayLiteral : public Expression {
     std::vector<std::unique_ptr<Expression>> elements;
+    bool braced;
     
-    explicit ArrayLiteral(std::vector<std::unique_ptr<Expression>> elements) 
-        : elements(std::move(elements)) {}
+    explicit ArrayLiteral(std::vector<std::unique_ptr<Expression>> elements, bool braced = false)
+        : elements(std::move(elements)), braced(braced) {}
         
     std::string to_string() const override {
         std::stringstream ss;
-        ss << "[";
+        ss << (braced ? "{" : "[");
         for (size_t i = 0; i < elements.size(); ++i) {
             ss << elements[i]->to_string();
             if (i < elements.size() - 1) ss << ", ";
         }
-        ss << "]";
+        ss << (braced ? "}" : "]");
         return ss.str();
     }
 };
