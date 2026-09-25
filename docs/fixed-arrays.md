@@ -1,8 +1,8 @@
-# Fixed arrays (development branch)
+# Fixed arrays (0.0.3)
 
 Fixed arrays have a known element type and length. They are available on the
-development branch after 0.0.2; the versioned 0.0.2 guide describes the
-published release.
+0.0.3 source branch; the published 0.0.2 release does not contain them. See the
+[0.0.3 HTML guide](site/0.0.3/index.html) for a language overview.
 
 Run [the example](../examples/fixed_arrays.gloin) with
 `./build/gloinc --jit examples/fixed_arrays.gloin`; it prints `sum = 42`.

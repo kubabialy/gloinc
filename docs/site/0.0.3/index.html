@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gloin 0.0.3 — Guide and language reference</title><link rel="stylesheet" href="../style.css"><script src="../versions.js"></script></head><body>
+<header><h1>Gloin 0.0.3</h1><p>Guide and language reference · Apple Silicon macOS</p><label>Documentation version <select id="version" aria-label="Documentation version"></select></label></header>
+<main><nav aria-label="Contents"><a href="#start">First program</a><a href="#cli">Compile and run</a><a href="#syntax">Source and declarations</a><a href="#types">Types and expressions</a><a href="#arrays">Fixed arrays</a><a href="#flow">Functions and control flow</a><a href="#data">Structs and methods</a><a href="#references">Pointers and references</a><a href="#modules">Modules</a><a href="#library">Input and standard library</a><a href="#limits">Limits</a><a href="#reference">Further reference</a></nav><article>
+<section id="start"><h2>Get started</h2>
+<p>This guide covers the language that Gloin 0.0.3 actually accepts. Work through the programs in order: write a source file, check it, run it, then build a native executable. The later sections explain values, control flow, structs, pointers, imports, and input. Links at the end give full API contracts.</p>
+<p>Gloin 0.0.3 runs on Apple Silicon macOS. Install Xcode Command Line Tools, CMake 3.28+, Ninja, and LLVM/MLIR 21.1.6. From a source checkout:</p>
+<pre><code>bash scripts/install-llvm.sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir
+cmake --build build -j 2</code></pre>
+<p>Install with <code>cmake --install build --prefix "$HOME/.local"</code> if you want a reusable compiler and standard modules. A downloaded <code>gloinc</code> also needs the matching LLVM/MLIR 21.1.6 installation to start; the archive does not bundle it. Run <code>bash share/gloinc/scripts/install-llvm.sh</code> from the extracted archive before invoking <code>bin/gloinc</code>. Executables produced by Gloin do not need LLVM at runtime.</p>
+<p>Save this as <code>hello.gloin</code>:</p>
+<pre><code>import "@std";
+
+def main() -&gt; i32 {
+    std.println("Hello World!");
+    return 0;
+}</code></pre>
+<pre><code>./build/gloinc --check hello.gloin
+./build/gloinc --jit hello.gloin
+./build/gloinc hello.gloin
+./a.out
+./build/gloinc -o hello hello.gloin
+./hello</code></pre></section>
+<section id="cli"><h2>Compiler and native output</h2>
+<p>Run the following commands from the directory containing your source file. By default, the compiler builds a standalone macOS arm64 executable named <code>a.out</code>; use <code>-o PATH</code> to choose its name. <code>--jit</code> or its alias <code>--run</code> executes the source immediately. <code>--check</code> validates a file without running it.</p>
+<pre><code>gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] \
+       [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
+gloinc --help
+gloinc --version</code></pre>
+<table><tr><th>Mode</th><th>Behavior</th></tr>
+<tr><td>default / <code>--emit-exe</code></td><td>Link a standalone macOS arm64 executable with the static Gloin runtime. Output is <code>a.out</code> unless <code>-o PATH</code> is supplied. Pass arguments directly to the executable.</td></tr>
+<tr><td><code>--jit</code> / <code>--run</code></td><td>JIT runs <code>main() -&gt; i32</code>. Its low eight bits become the compiler process exit status. A program returning 42 exits with status 42; that alone does not print <code>42</code>. Use <code>FILE -- ARG...</code> for program arguments.</td></tr>
+<tr><td><code>--check</code></td><td>Parse, type check, and verify without running. Main is optional.</td></tr>
+<tr><td><code>--emit-ir</code>, <code>--emit-llvm</code></td><td>Print verified high level or LLVM dialect MLIR for inspection.</td></tr>
+<tr><td><code>--emit-object -o PATH</code></td><td>Write a macOS arm64 object with a native entry point. Link it with <code>libgloin_runtime.a</code> using the pinned <code>clang++</code>.</td></tr>
+<tr><td><code>--emit-exe</code></td><td>Explicit spelling for the default executable mode.</td></tr></table>
+<p>Source, output, and link errors go to stderr and exit 1. Usage errors exit 2. Successful checks and emission exit 0. Runtime arithmetic traps terminate the program. Quote paths with spaces. <code>--stdlib-dir DIR</code> selects a directory of <code>@</code> modules. The compiler reports source locations for rejected code.</p></section>
+<section id="syntax"><h2>Source and declarations</h2>
+<p>Source is UTF-8; identifiers use ASCII letters, digits, and underscores. Comments start with <code>//</code>. Bindings, assignments, call statements, returns, imports, and defer statements end in <code>;</code>. Function and control flow bodies use braces with no trailing semicolon. Declarations start with <code>def</code>; <code>pub</code> or <code>priv</code> follows <code>def</code>, with private as the default across modules.</p>
+<pre><code>def const LIMIT: i32 = 42;
+def pub calculate(x: i32) -&gt; i32 { return x + LIMIT; }
+// Inside a function:
+def count: i32 = 0;      // Binding cannot be reassigned.
+def mut total: i32 = 0;  // Binding can be reassigned.
+total = total + count;</code></pre>
+<p>All bindings, parameters, fields, and return types need explicit types. A local may be declared without an initializer, then assigned before use. <code>def const</code> defines a compile time value; its expression cannot call a runtime function. Names in an inner block can shadow outer names. Assignments are statements, not expressions. There are no implicit numeric conversions or overloads.</p></section>
+<section id="types"><h2>Types and expressions</h2>
+<table><tr><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>bool</code></td><td><code>true</code> or <code>false</code>; conditions require bool.</td></tr>
+<tr><td><code>i8 i16 i32 i64</code>, <code>u8 u16 u32 u64</code></td><td>Fixed width signed and unsigned integers. <code>int</code> aliases <code>i32</code>; <code>usize</code> aliases <code>u64</code> on arm64.</td></tr>
+<tr><td><code>f32 f64</code></td><td>IEEE binary floating point. Checked arithmetic traps on non-finite results.</td></tr>
+<tr><td><code>string</code></td><td>A counted, immutable byte view. Escapes include <code>\n</code>, <code>\t</code>, and <code>\0</code>; embedded NUL is data. The bytes may be borrowed from another value or arena.</td></tr>
+<tr><td><code>*T</code>, <code>&amp;T</code>, <code>*const T</code>, <code>&amp;const T</code></td><td>Typed nullable pointers and non-null references, with writable or read-only pointees. See <a href="#references">pointers and references</a>.</td></tr>
+<tr><td><code>struct</code></td><td>Named fields and value copying. Methods belong to a struct.</td></tr>
+<tr><td><code>[T; N]</code></td><td>A fixed array of exactly <code>N</code> values of <code>T</code>. See <a href="#arrays">fixed arrays</a>.</td></tr>
+<tr><td><code>void</code></td><td>Function return type only.</td></tr></table>
+<p>Integer literals accept decimal, <code>0x</code> hexadecimal, and <code>0b</code> binary spelling. Floating literals use decimal spelling and a type context. The context of a binding, parameter, field, or return can select a literal's type. Gloin does not implicitly convert one typed numeric value to another.</p>
+<p>Expressions have unary <code>-</code> and <code>!</code>; arithmetic <code>+ - * / %</code> (remainder is integer only); comparisons <code>== != &lt; &lt;= &gt; &gt;=</code>; and boolean <code>&amp;&amp; ||</code>. Parentheses control grouping. Arithmetic binds before comparisons, and comparisons before boolean operators. <code>&amp;&amp;</code> and <code>||</code> short circuit; other operands and call arguments evaluate left to right. Integer overflow, division by zero, and non-finite floating results trap at runtime; invalid constant expressions fail during checking.</p></section>
+<section id="arrays"><h2>Fixed arrays</h2>
+<p>A fixed array has an element type and a length known when you compile. Write its type as <code>[T; N]</code> and initialize it with exactly <code>N</code> values in braces. Indexes start at zero. This complete program prints <code>sum = 42</code>:</p>
+<pre><code>import "@std";
+
+def sum(values: [i32; 4]) -&gt; i32 {
+    def mut result: i32 = 0;
+    for def mut i: usize = 0; i &lt; 4; i = i + 1 {
+        result = result + values[i];
+    }
+    return result;
+}
+
+def main() -&gt; i32 {
+    def mut values: [i32; 4] = {8, 13, 7, 10};
+    values[3] = 14;
+    if sum(values) != 42 { return 1; }
+    std.println("sum = 42");
+    return 0;
+}</code></pre>
+<p>An array is a value: assigning it, passing it to a function, or returning it copies its elements. <code>[i32; 2]</code> and <code>[i32; 3]</code> are different types. An array literal needs a type context from a binding, parameter, field, or return; <code>[1, 2]</code> is not an array literal. Nested arrays use nested braces, such as <code>def grid: [[i32; 2]; 2] = {{1, 2}, {3, 4}};</code>. Empty arrays use <code>[i32; 0] = {}</code>.</p>
+<p>Every indexed read or write checks <code>0 &lt;= index &lt; N</code> and traps on failure, including any access to a zero-length array. Writing an element requires writable storage. <code>&amp;values[0]</code> borrows a live element; it does not extend that element's lifetime. A pointer to an array points to the whole array, not its first element. Fixed arrays have no slice operator or pointer arithmetic. See the <a href="../../fixed-arrays.md">detailed guide</a> and the packaged <code>fixed_arrays.gloin</code> example.</p></section>
+<section id="flow"><h2>Functions and control flow</h2>
+<p>Functions declare the type of every parameter and an explicit return type. The root source file needs <code>def main() -&gt; i32</code> to run or emit native output. Other functions may return <code>void</code>. This program returns 42 as its exit status:</p>
+<pre><code>def add(a: i32, b: i32) -&gt; i32 { return a + b; }
+def main() -&gt; i32 {
+    def mut total: i32 = 0;
+    for def mut i: i32 = 0; i &lt; 3; i = i + 1 {
+        if i == 1 { total = add(total, 20); }
+        else { total = add(total, 11); }
+    }
+    return total;
+}</code></pre>
+<p>Use <code>if</code>/<code>else</code>, <code>unless</code> (run a body when its condition is false), <code>while</code>, and C style <code>for</code> with braced bodies. <code>break</code> and <code>continue</code> are not part of this release. Functions may call later declarations and recurse. A non-<code>void</code> function must return a value on every reachable path. An early <code>return</code> exits the function.</p>
+<p><code>defer call(...);</code> schedules a function call for normal function exit. Its arguments are evaluated and captured when execution reaches the defer; deferred calls run in reverse registration order. A runtime trap does not run them. Use this for cleanup such as <code>defer memory.free();</code>.</p></section>
+<section id="data"><h2>Structs and methods</h2>
+<p>A struct groups named, typed fields. Struct values copy by value. Separate a struct's fields with commas and construct a value with every required field. A field can be reassigned only if its declaration uses <code>def mut</code>. Methods declare a typed <code>self</code> parameter; static methods have no <code>self</code>. This complete program also returns 42:</p>
+<pre><code>def struct Counter {
+    def mut value: i32,
+    def static make(value: i32) -&gt; Counter {
+        return Counter { value: value };
+    }
+    def add(self: &amp;Counter, amount: i32) -&gt; void {
+        self.value = self.value + amount;
+    }
+    def read(self: &amp;const Counter) -&gt; i32 { return self.value; }
+}
+
+def main() -&gt; i32 {
+    def mut counter: Counter = Counter.make(40);
+    counter.add(2);
+    return counter.read();
+}</code></pre>
+<p>Inside its declaring module, a method can read private fields. Other modules can use only <code>pub</code> members. A method receiver may be a struct value, reference, or pointer of the declared kind. The compiler checks whether writes through <code>self</code> are allowed. Recursive structures use pointer or reference fields; by-value recursive layout is rejected.</p></section>
+<section id="references"><h2>Pointers, references, and <code>&amp;*p</code></h2>
+<p>Gloin makes nullability visible in the type. <code>*T</code> is a pointer that may hold <code>null</code>. <code>&amp;T</code> is a reference to an existing initialized <code>T</code> and cannot be null. Adding <code>const</code> after <code>*</code> or <code>&amp;</code> makes the pointee read-only. Neither form allocates or owns memory.</p>
+<table><tr><th>Source</th><th>Meaning</th></tr>
+<tr><td><code>def mut x: i32 = 41;</code><br><code>def r: &amp;i32 = &amp;x;</code></td><td><code>&amp;x</code> takes the address of an initialized, writable place. <code>r</code> cannot be rebound, but <code>*r = 42;</code> can change <code>x</code>.</td></tr>
+<tr><td><code>def mut p: *i32 = r;</code></td><td>A non-null reference can weaken to a nullable pointer. The reverse conversion is never implicit.</td></tr>
+<tr><td><code>if p != null { add_one(&amp;*p); }</code></td><td><code>&amp;*p</code> is an <em>expression</em>: dereference <code>p</code>, check it for null, and create a non-null reference. If <code>p</code> is null, evaluation traps. The check does not prove the storage is still alive.</td></tr>
+<tr><td><code>def slot: &amp;*i32 = &amp;p;</code></td><td><code>&amp;*i32</code> is a <em>type</em>: a non-null reference to a nullable <code>*i32</code> variable. It is not a nullable reference. <code>*slot = null;</code> changes the pointer stored in <code>p</code>.</td></tr></table>
+<p>The same characters mean different things in a type and in an expression: <code>&amp;*i32</code> nests the reference and pointer types, while <code>&amp;*p</code> takes a reference through the pointer value named <code>p</code>. There is no nullable reference type in 0.0.3. Use <code>*T</code> for an optional address, and <code>&amp;*T</code> when a function needs to rebind an existing optional pointer slot.</p>
+<p>This complete program exercises both forms and returns 42. <code>set_slot</code> receives a non-null reference to the nullable pointer variable. <code>add_one</code> receives a non-null reference to the integer behind that pointer.</p>
+<pre><code>def add_one(value: &amp;i32) -&gt; void { *value = *value + 1; }
+def set_slot(slot: &amp;*i32, value: *i32) -&gt; void { *slot = value; }
+
+def main() -&gt; i32 {
+    def mut answer: i32 = 41;
+    def reference: &amp;i32 = &amp;answer;
+    def mut pointer: *i32 = null;
+    set_slot(&amp;pointer, reference);
+    if pointer == null { return 1; }
+    add_one(&amp;*pointer);
+    return answer;
+}</code></pre>
+<p>Dereferencing a null pointer, using <code>p.field</code> when <code>p</code> is null, or evaluating <code>&amp;*p</code> when <code>p</code> is null traps. <code>null</code> needs a pointer type from context; it cannot initialize <code>&amp;T</code>. A pointer is not a boolean: compare it with <code>null</code>. Pointer comparisons compare addresses, not values. There is no pointer arithmetic or arbitrary pointer cast.</p>
+<p>Only the outer pointer layer may weaken from writable to read-only or from reference to pointer. Binding mutability and pointee mutability differ: <code>def p: &amp;i32</code> cannot rebind <code>p</code> but can write <code>*p</code>; <code>def mut p: *const i32</code> can rebind <code>p</code> but cannot write <code>*p</code>. You may take an address only of initialized, addressable storage, not a literal or temporary.</p>
+<p>Memory management is manual. Gloin has no borrow checker or lifetime tracking. A reference must still point to live storage after a null check; copying or returning an address does not extend the value's life. <code>@arena</code> provides <code>GeneralArena</code> for initialized typed allocation. <code>reset()</code> invalidates all values in that arena while retaining blocks; <code>free()</code> releases them. See the <a href="../../arenas.md">arena guide</a> for allocation and failure behavior.</p></section>
+<section id="modules"><h2>Modules</h2>
+<p>Put these two files in one directory. The imported file gives an ordinary function public visibility. The root file calls it through the module name:</p>
+<p><code>guide_utils.gloin</code></p>
+<pre><code>def pub twice(x: i32) -&gt; i32 { return x + x; }</code></pre>
+<p><code>main.gloin</code></p>
+<pre><code>import "./guide_utils";
+
+def main() -&gt; i32 { return guide_utils.twice(21); }</code></pre>
+<p><code>gloinc --jit main.gloin</code> exits with status 42; <code>gloinc main.gloin</code> writes <code>a.out</code>. <code>@name</code> loads <code>name.gloin</code> from the standard library directory. Relative imports resolve from the importing source file; you can include or omit the <code>.gloin</code> extension. A module exposes its <code>pub</code> functions, constants, and structs through its namespace. Only the root file supplies <code>main</code>; imports have no runtime initialization. Import cycles, missing files, and private access produce diagnostics.</p></section>
+<section id="library"><h2>Input and standard library</h2>
+<p>Standard modules use the same import and namespace rules. Output is explicit: a return value sets the exit status but does not print. <code>std.print</code> writes bytes without a newline and <code>std.println</code> adds one. Input and parsing return status-bearing structs so a program can handle EOF, invalid text, and allocation failure. This program reads a decimal integer, adds one, and prints it. Try <code>printf '41\n' | gloinc --jit next.gloin</code>.</p>
+<pre><code>import "@std";
+import "@arena";
+
+def main() -&gt; i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+    def line: std.InputResult = std.input(&amp;memory, 64);
+    if line.status != std.OK { return 1; }
+    def parsed: std.IntResult = std.to_int(line.value);
+    if parsed.status != std.OK { return 2; }
+    std.println(std.to_string(&amp;memory, parsed.value + 1));
+    return 0;
+}</code></pre>
+<p><code>line.value</code> borrows bytes owned by <code>memory</code>. Use it before <code>memory.reset()</code> or <code>memory.free()</code>. <code>std.to_int</code> distinguishes a valid integer from a parse failure. The example treats every non-OK input status as exit 1; a larger program can distinguish <code>std.END</code>, <code>std.NO_MEMORY</code>, and other errors. The <a href="../../standard-library.md">standard library guide</a> lists the exact statuses and signatures.</p>
+<table><tr><th>Import</th><th>Contents and detailed guide</th></tr>
+<tr><td><code>@std</code></td><td>Byte output, bounded line input, i32 conversions, explicit statuses. <a href="../../standard-library.md">Guide</a></td></tr>
+<tr><td><code>@arena</code></td><td>Typed allocation and explicit memory lifecycle. <a href="../../arenas.md">Guide</a></td></tr>
+<tr><td><code>@strings</code>, <code>@status</code></td><td>Counted bytes, slices, comparison, search, trimming, copies, statuses. <a href="../../strings.md">Guide</a></td></tr>
+<tr><td><code>@std</code> numeric APIs</td><td>Parsing, formatting, checked conversion. <a href="../../numbers.md">Guide</a></td></tr>
+<tr><td><code>@io</code></td><td>Streams, files, bounded reads, counted writes, OS errors. <a href="../../io.md">Guide</a></td></tr>
+<tr><td><code>@fs</code>, <code>@process</code></td><td>Paths, metadata, mutations, arguments, environment, cwd. <a href="../../filesystem-process.md">Guide</a></td></tr>
+<tr><td><code>@math</code></td><td>Concrete numerical utilities, domain checks, rounding. <a href="../../math.md">Guide</a></td></tr>
+<tr><td><code>@time</code>, <code>@random</code></td><td>Monotonic time, checked durations, seeded SplitMix64. <a href="../../time-random.md">Guide</a></td></tr></table>
+<p>Modules live in <code>stdlib/</code> in a build and <code>share/gloinc/stdlib/</code> after installation. Arena-backed strings borrow caller-owned storage. The linked guides give signatures, ownership, errors, and costs. The <a href="../../integrated-examples.md">integrated examples</a> combine modules for file processing, statistics, and simulation.</p></section>
+<section id="limits"><h2>Support and limits</h2>
+<p>Version 0.0.3 supports Apple Silicon macOS only. Linux is planned for 0.1.0. Windows support is not planned; contributions are welcome. Cross compilation and Intel macOS are outside 0.0.3. Slices, vectors, maps, generics, enums, packed bitfields, external packages, and concurrency remain future work.</p>
+<p>Native objects and executables target the current Apple Silicon host. Executables do not need LLVM at runtime. The compiler and native linking step require the pinned toolchain. Objects require the static Gloin runtime at link time.</p></section>
+<section id="reference"><h2>Further reference</h2><p>The <a href="https://github.com/kubabialy/gloinc/wiki/Language-Spec">language specification</a> includes future designs; use this versioned page for the 0.0.3 feature boundary. The <a href="../../release-0.0.3.md">release guide</a> covers installation and packaging. The <a href="../../../examples/README.md">examples guide</a> lists runnable programs, and the <a href="../../../tests/fixtures/core/README.md">acceptance matrix</a> maps features to source tests.</p></section>
+</article></main><footer>Gloin documentation version 0.0.3</footer>
+<script>const select=document.getElementById('version');for(const version of window.gloinDocs.versions){const option=document.createElement('option');option.value=version;option.textContent=version;option.selected=version==='0.0.3';select.append(option)}select.addEventListener('change',()=>{location.href='../'+encodeURIComponent(select.value)+'/'})</script>
+</body></html>

@@ -47,7 +47,10 @@ result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/m
 [[ "$result" == 'module lab: ok' ]]
 [[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" && -f "$package_root/include/gloin/stdlib_runtime.h" && -f "$package_root/include/gloin/io_runtime.h" && -f "$package_root/include/gloin/context_runtime.h" && -f "$package_root/include/gloin/math_runtime.h" && -f "$package_root/include/gloin/time_runtime.h" && -f "$package_root/include/gloin/random_runtime.h" ]]
 [[ -f "$package_root/share/doc/gloinc/third_party/fast_float/LICENSE-MIT" && -f "$package_root/share/doc/gloinc/third_party/fast_float/README.md" ]]
-[[ -f "$package_root/share/doc/gloinc/docs/site/0.0.2/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/site/0.0.3/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
+[[ -f "$package_root/share/gloinc/scripts/install-llvm.sh" && -f "$package_root/share/gloinc/examples/fixed_arrays.gloin" ]]
+[[ "$("$package_root/bin/gloinc" --version)" == 'gloinc 0.0.3 (LLVM/MLIR 21.1.6)' ]]
+[[ "$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/fixed_arrays.gloin")" == 'sum = 42' ]]
 [[ ! -e "$package_root/share/doc/gloinc/SPEC.md" && ! -e "$package_root/share/doc/gloinc/SPEC-TODO.md" && ! -e "$package_root/share/doc/gloinc/OpenCode.md" ]]
 "$package_root/bin/gloinc" -o "$work_dir/extracted prefix/native-hello" \
   "$package_root/share/gloinc/examples/hello_world.gloin"
@@ -78,4 +81,4 @@ if awk -v dir="$build_dir" '/^[[:space:]]/ && index($0, dir) { print; found = 1 
   exit 1
 fi
 cp "$archive" "$archive.sha256" "$report_dir/"
-echo "Installed and extracted packages passed all CLI/standard-library/module/arena/defer/method/pointer/struct/standard-output/source acceptance cases."
+echo "Installed and extracted packages passed CLI, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases."

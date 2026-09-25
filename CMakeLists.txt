@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gloinc VERSION 0.0.2)
+project(gloinc VERSION 0.0.3)
 
 option(GLOIN_ENABLE_SANITIZERS "Instrument project C++ code with AddressSanitizer and UBSan" OFF)
 if(GLOIN_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -325,6 +325,7 @@ install(TARGETS gloin_runtime gloin_runtime_shared
 install(FILES src/arena_runtime.h src/stdlib_runtime.h src/io_runtime.h src/context_runtime.h src/math_runtime.h src/time_runtime.h src/random_runtime.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gloin)
 install(DIRECTORY stdlib/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/stdlib
     FILES_MATCHING PATTERN "*.gloin")
+install(FILES scripts/install-llvm.sh DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/scripts)
 install(FILES README.md CONTRIBUTING.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs
     PATTERN ".DS_Store" EXCLUDE)
@@ -332,7 +333,7 @@ install(FILES examples/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples)
 install(FILES tests/fixtures/core/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/tests/fixtures/core)
 install(FILES third_party/fast_float/LICENSE-MIT third_party/fast_float/README.md third_party/fast_float/SHA256SUMS
     DESTINATION ${CMAKE_INSTALL_DOCDIR}/third_party/fast_float)
-install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/arena_lab.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin
+install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/arena_lab.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/data DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/modules DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples
@@ -346,7 +347,7 @@ if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" AND NOT GLOIN_ENABLE_SANITI
     set(CPACK_PACKAGE_NAME gloinc)
     set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
     set(CPACK_PACKAGE_FILE_NAME "gloinc-${PROJECT_VERSION}-macos-arm64")
-    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Gloin scalar-core JIT compiler; requires LLVM/MLIR 21.1.6")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Gloin native compiler and JIT; requires LLVM/MLIR 21.1.6")
     set(CPACK_PACKAGE_CHECKSUM SHA256)
     include(CPack)
 endif()

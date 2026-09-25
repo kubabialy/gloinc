@@ -1,7 +1,7 @@
 # Versioned HTML documentation
 
-Each released version has its own directory, such as `0.0.1/`. Keep published
-directories stable so links and installed archives continue to describe the
+Each prepared or released version has its own directory, such as `0.0.1/`.
+Keep published directories stable so links and installed archives continue to describe the
 compiler they shipped with. The root `index.html` points to the latest version;
 `versions.js` supplies the version selector on every page.
 

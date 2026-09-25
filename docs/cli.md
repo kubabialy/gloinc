@@ -90,7 +90,7 @@ supported platform, following [the JIT contract](jit.md). They produce no result
 shells may describe the signal and map it to a shell-specific status. The CLI
 does not add signal recovery or execution timeouts.
 
-`--version` reports `gloinc 0.0.2 (LLVM/MLIR 21.1.6)`. This identifies the
+`--version` reports `gloinc 0.0.3 (LLVM/MLIR 21.1.6)`. This identifies the
 scalar-core compiler. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
 core acceptance; [the release guide](release.md) documents installation,
 packaging, and validation. `import "@std";` enables `std.print(string)` and

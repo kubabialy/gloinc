@@ -8,22 +8,28 @@ verification evidence in order.
 ## Current status
 
 Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR 21.1.6.
+**LLVM/MLIR 21.1.6 must also be installed to run a downloaded `gloinc` compiler.**
+The release archive links to its shared libraries and does not bundle them.
+Install the pinned toolchain with `bash scripts/install-llvm.sh` from a source
+checkout, or run `bash share/gloinc/scripts/install-llvm.sh` from an extracted
+0.0.3 archive before using `bin/gloinc`. Executables produced by `gloinc`
+link the Gloin runtime statically and do not need LLVM at runtime.
 The CLI builds native executables by default and can run scalar and ordinary struct
 programs through the in-process JIT with `--jit`.
-The 0.0.2 executable core has 142 source-file acceptance cases covering successful
+The 0.0.3 executable core has 152 source-file acceptance cases covering successful
 programs, rejected source, and runtime arithmetic traps. Checking and IR inspection
-modes are also available. The current version is `0.0.2`; installation and
-package validation are documented in [the release guide](docs/release.md).
-The [versioned HTML guide](docs/site/0.0.2/index.html) documents the 0.0.2
-language and compiler. Native object and executable output are supported on
-Apple Silicon macOS.
+modes are also available. The source version is `0.0.3`; the published 0.0.2
+release predates fixed arrays. Installation and package validation are documented
+in the [0.0.3 release guide](docs/release-0.0.3.md). The [versioned HTML
+guide](docs/site/0.0.3/index.html) documents the 0.0.3 language and compiler.
+Native object and executable output are supported on Apple Silicon macOS.
 
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | 867 tests discovered; 863 passes and 4 documented deferred-feature failures are required for the release audit. |
-| Core acceptance | 142 CLI-driven source fixtures: 38 successful programs, 85 expected compiler errors, and 19 runtime traps. |
+| Full test suite | 877 tests discovered; 873 passes and 4 documented deferred-feature failures are required for the release audit. |
+| Core acceptance | 152 CLI-driven source fixtures: 39 successful programs, 91 expected compiler errors, and 22 runtime traps. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
 | Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/unless/while/for execution, loop-variable scope, and omitted for components are verified. |
@@ -55,7 +61,7 @@ semantic data and ownership boundary required by normal codegen.
 
 [The JIT API](docs/jit.md) executes compiled modules in process. The
 [core acceptance matrix](tests/fixtures/core/README.md) maps the release contract
-to source fixtures. [The release guide](docs/release.md) describes package contents,
+to source fixtures. [The release guide](docs/release-0.0.3.md) describes package contents,
 runtime dependencies, and the SPEC-046 validation gate.
 
 Test pass counts are not specification-coverage percentages. The compiler is not
@@ -210,7 +216,7 @@ Ordinary structs support named literals, nested fields, value parameters/returns
 and checked mutation. See [the struct example](tests/fixtures/core/run/ordinary_struct.gloin).
 `*T`/`&T` and read-only `*const T`/`&const T` support manually managed resources;
 see [the pointer fixture](tests/fixtures/core/run/pointers.gloin).
-On the development branch after 0.0.2, fixed arrays use `[T; N]` and brace initializers such as
+In 0.0.3, fixed arrays use `[T; N]` and brace initializers such as
 `def values: [i32; 2] = {1, 2};`. Indexed reads and writes check bounds; see
 [the fixed-array guide](docs/fixed-arrays.md).
 Ordinary structs also support instance methods with explicit `self` pointers and
@@ -276,7 +282,8 @@ cmake --install build --prefix "$HOME/.local"
 Add `$HOME/.local/bin` to your `PATH` to use `gloinc` from any directory.
 The installed compiler still requires the exact LLVM/MLIR installation used
 to build it. With the supported Homebrew setup, that is `/opt/homebrew/opt/llvm`;
-LLVM is an external dependency and is not bundled.
+LLVM is an external dependency and is not bundled. The installed copy of the
+installer is `"$HOME/.local/share/gloinc/scripts/install-llvm.sh"`.
 
 To create and verify an archive:
 
@@ -285,11 +292,11 @@ cmake --build build --target package
 bash scripts/check-package.sh build build/package-check
 ```
 
-CPack writes `build/gloinc-0.0.2-macos-arm64.tar.gz` and its `.sha256` checksum.
+CPack writes `build/gloinc-0.0.3-macos-arm64.tar.gz` and its `.sha256` checksum.
 The archive contains `bin/gloinc`, standard modules, native arena libraries and header,
 documentation, runnable examples, and the core source fixtures. The verification script runs the CLI, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
-spaces. See [the release guide](docs/release.md) for extraction, dependencies,
+spaces. See [the release guide](docs/release-0.0.3.md) for extraction, dependencies,
 sanitizer checks, and the supported-platform limits.
 
 ## Verify the build
@@ -322,10 +329,10 @@ JIT compiler on Apple Silicon macOS. Completed later specifications added the
 standard library, structs, pointers, methods, defer, arenas, and native output.
 SPEC-021 supplies the executable-core acceptance suite; SPEC-046 completed the
 0.0.1 release gate.
-Native output is the default in 0.0.2; concurrency remains deferred. The ordered
+Native output remains the default in 0.0.3; concurrency remains deferred. The ordered
 backlog replaces the old phase notes as the implementation plan.
 
-Version 0.0.2 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
+Version 0.0.3 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
 support is not planned, although contributions are welcome. See
 [contributing rules](CONTRIBUTING.md) for the manual verification and deterministic
 change requirements.
