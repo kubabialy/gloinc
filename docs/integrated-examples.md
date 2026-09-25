@@ -164,7 +164,7 @@ would fail if per-line storage accumulated. Small/large simulations have identic
 arena backing peaks. Open file-descriptor counts before/after execution catch
 resource leaks, including repeated failures. These counts cover program arenas
 and file descriptors, not compiler/LLVM heap usage. ASan/UBSan instrument project
-native code; [JIT/prebuilt-library limitations](release.md) still apply.
+native code; [JIT/prebuilt-library limitations](release-0.0.3.md) still apply.
 
 The reproducible larger stress check is:
 

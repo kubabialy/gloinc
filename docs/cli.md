@@ -4,7 +4,7 @@ Build instructions are in [the README](../README.md). The supported development
 platform is Apple Silicon macOS with LLVM/MLIR 21.1.6.
 
 ```text
-gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
+gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] [-O0 | -O2] [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
 gloinc --help
 gloinc --version
 ```
@@ -49,6 +49,9 @@ Checking and inspection accept helper-only and empty modules. If `main` is
 present, its signature must still be valid. These modes do not execute trapping
 or non-terminating source programs.
 Native output requires `main() -> i32`; object output requires `-o PATH`.
+Native output defaults to `-O0`. `-O2` runs LLVM's standard O2 IR pipeline
+before optimized target code generation. Optimization flags apply only to
+native object and executable output.
 Executable output defaults to `a.out` when no output path is given. The output must differ from
 the source path. Successful emission replaces the named output atomically; source
 and link errors leave it untouched. Native programs receive their own executable
@@ -65,6 +68,7 @@ CLI, they do not use the `FILE -- ARG...` forwarding delimiter.
 ./build/gloinc -o hello examples/hello_world.gloin
 ./hello
 ./build/gloinc --emit-object -o hello.o examples/hello_world.gloin
+./build/gloinc -O2 -o fast-hello examples/hello_world.gloin
 /opt/homebrew/opt/llvm/bin/clang++ hello.o build/libgloin_runtime.a -o hello-from-object
 ./hello-from-object
 ```
@@ -92,7 +96,7 @@ does not add signal recovery or execution timeouts.
 
 `--version` reports `gloinc 0.0.3 (LLVM/MLIR 21.1.6)`. This identifies the
 scalar-core compiler. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
-core acceptance; [the release guide](release.md) documents installation,
+core acceptance; [the current release guide](release-0.0.3.md) documents installation,
 packaging, and validation. `import "@std";` enables `std.print(string)` and
 `std.println(string)`. Output preserves exact bytes, including embedded NULs;
 println appends LF. Both return void. Missing modules/members fail before execution.
@@ -106,7 +110,7 @@ executable. Check/inspection select module mode. LLVM inspection uses the same v
 [lowering pipeline](lowering.md) as execution. Structured compiler diagnostics
 are rendered once at the CLI boundary.
 
-All 19 `CliTest` cases launch the actual built executable with argument vectors,
+All 20 `CliTest` cases launch the actual built executable with argument vectors,
 captured output, isolated temporary files, and bounded waits. They verify file
 results, the repository counter example, repeated/concurrent runs, all modes,
 i32 boundaries, source errors, unreadable/non-regular files, byte/UTF-8 rejection,

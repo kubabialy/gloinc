@@ -1,5 +1,8 @@
 # Gloinc 0.0.2 release
 
+This is the archived 0.0.2 release guide. For the current source package, use
+the [0.0.3 release guide](release-0.0.3.md).
+
 Version 0.0.2 includes SPEC-001 through SPEC-030 and the SPEC-030a through
 SPEC-030h standard-library expansion. It runs on Apple Silicon macOS with
 LLVM/MLIR 21.1.6. The compiler checks source, runs `main() -> i32` through the

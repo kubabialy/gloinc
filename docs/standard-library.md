@@ -1,8 +1,10 @@
 # Standard input and integer conversions (SPEC-030)
 
-For the proposed expansion before generics, see the
-[standard-library roadmap](standard-library-roadmap.md). This guide describes
-the currently implemented SPEC-030 API.
+This guide describes the implemented SPEC-030 input and integer conversion API.
+The later modules have dedicated guides for [strings](strings.md),
+[text construction](text-construction.md), [numbers](numbers.md), [I/O](io.md),
+[filesystem and processes](filesystem-process.md), [math](math.md), and
+[time and randomness](time-random.md).
 
 The public API lives in [stdlib/std.gloin](../stdlib/std.gloin). These are ordinary
 Gloin functions and result structs, compiled from source. Native primitives handle

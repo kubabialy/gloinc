@@ -103,7 +103,7 @@ make clean BUILD_DIR=build-no-tests
 `make run` defaults to `examples/core_counter.gloin`; `RUN_ARGS` overrides its CLI
 arguments. `check-core` requires a tests-enabled build and runs the 817 required
 scalar, module, arena, and standard-output checks. Installation, CPack archives, external runtime dependencies,
-and the sanitizer build option are described in [release.md](release.md).
+and the sanitizer build option are described in the [current release guide](release-0.0.3.md).
 `make clean` invokes CMake's clean target in an already configured directory,
 removing build products while retaining the configuration and downloaded sources.
 
@@ -136,7 +136,7 @@ The `MLIRSetup.AllCompilerDialects` regression test uses the actual `CodeGen`
 constructor and checks that Gloin, Func, Arith, ControlFlow, MemRef, SCF, and LLVM
 dialects all load into one context. This is a toolchain/linkage check. The JIT
 uses SPEC-018's shared lowering and SPEC-019's validated translation/invocation;
-[the JIT tests](../tests/README.md#in-process-jit-execution-spec-019) verify execution.
+[the JIT contract](jit.md) and maintained tests verify execution.
 
 ## Decimal runtime dependency
 

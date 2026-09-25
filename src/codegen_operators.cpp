@@ -107,6 +107,15 @@ mlir::Value CodeGen::gen_checked_binary(const InfixExpression *expression) {
     if (checked_data->types.at(expression->left.get()).is_pointer()) {
         auto left = gen_expression(expression->left.get());
         auto right = gen_expression(expression->right.get());
+        if (expression->op == "+") {
+            auto null = builder.create<mlir::LLVM::ZeroOp>(location(), left.getType());
+            require_runtime(builder.create<mlir::LLVM::ICmpOp>(
+                location(), mlir::LLVM::ICmpPredicate::ne, left, null));
+            auto element = checked_data->types.at(expression->left.get()).pointee();
+            return builder.create<mlir::LLVM::GEPOp>(
+                location(), left.getType(), lower_type(element), left,
+                llvm::ArrayRef<mlir::LLVM::GEPArg>{right});
+        }
         return builder.create<mlir::LLVM::ICmpOp>(
             location(),
             expression->op == "==" ? mlir::LLVM::ICmpPredicate::eq : mlir::LLVM::ICmpPredicate::ne,

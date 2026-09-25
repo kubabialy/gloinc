@@ -51,7 +51,8 @@ element-by-element initialization is not supported.
 Arrays are values: assigning, passing, and returning an array copies its
 elements. `&values[0]` creates a reference to a live element and follows the
 same manual lifetime rules as other references. Pointers to arrays are not
-pointers to their first element, and pointer arithmetic remains unsupported.
+pointers to their first element. On the development branch, a pointer to an
+element can use the explicit offset rules in [pointer offsets](pointer-offsets.md).
 Array layout follows the target's ordinary contiguous array layout, including
 the element type's alignment and padding.
 

@@ -145,8 +145,10 @@ the SPEC-030a APIs and costs documented above are unchanged.
 Copy alone calls the new native routine `gloin_strings_copy(source, length,
 destination)`. It requires nonoverlapping live ranges of the given length and
 accesses neither pointer for zero length. JIT signature validation and symbol
-registration match the installed shared runtime. General pointer arithmetic,
-string indexing syntax, generic APIs, and string operators remain unchanged.
+registration match the installed shared runtime. These string APIs do not add
+string indexing syntax, generic APIs, or string operators. The development
+branch's separate [pointer-offset feature](pointer-offsets.md) does not add
+string bounds checking.
 
 `StringLibraryTest` covers public contracts, private primitive boundaries,
 allocation failure, source lifetime independence, invalid source, an independent

@@ -65,9 +65,10 @@ full-consumption conversion, contextual types, and signed-literal rules.
 
 `ParseMode::SyntaxOnly` explicitly permits the existing deferred grammar and
 statement-fragment lists for stage-isolated tests. It is not a supported compiler
-language mode and is not exposed by `compile_source`. It lets packed-struct, generic,
-array, and concurrency tests continue to inspect their stages
-while core compilation rejects those constructs. Legacy `spawn`/`await`, missing
+language mode and is not exposed by `compile_source`. It lets packed-struct,
+generic, legacy array-literal, and concurrency tests inspect their stages while
+core compilation rejects those constructs. Fixed arrays use `[T; N]` and `{...}`
+in core compilation. Legacy `spawn`/`await`, missing
 annotations, misplaced modifiers, and malformed lists still fail in this mode.
 
 The syntax-only parser shares token consumption and precedence with the core.
@@ -95,7 +96,9 @@ Core parsing accepts recursive `*T`/`&T` annotations with optional `const` after
 each pointer marker, unary address-of/dereference, and `null`. In a type annotation
 `&&T` splits into two reference layers; in expressions `&&` remains logical AND.
 Addressability, initialization, qualifier conversions, and contextual null types
-are checked by Sema. No borrow-checker or unsafe-block syntax is introduced.
+are checked by Sema. The development branch accepts `*T + i64` with the
+[pointer-offset rules](pointer-offsets.md). No borrow-checker or unsafe-block
+syntax is introduced.
 
 ## Methods (SPEC-026)
 

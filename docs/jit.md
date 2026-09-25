@@ -79,7 +79,7 @@ remains visible if a later error or trap occurs. Concurrency and global variable
 remain deferred. File loading, result/exit conventions, and
 check/IR modes are documented in [the CLI reference](cli.md). Source-file acceptance
 is covered by [SPEC-021's fixtures](../tests/fixtures/core/README.md); installation
-and packaging are documented in [the release guide](release.md).
+and packaging are documented in [the current release guide](release-0.0.3.md).
 
 Codegen and the JIT share one thread-safe native-target initialization and layout
 query. Source-generated modules carry that native triple and data layout, so

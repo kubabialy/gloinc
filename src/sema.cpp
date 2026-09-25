@@ -562,7 +562,7 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
              std::dynamic_pointer_cast<PointerType>(expression_type_hint(bin->right.get())) ||
              dynamic_cast<const NullLiteral *>(bin->left.get()) ||
              dynamic_cast<const NullLiteral *>(bin->right.get())))
-            return check_pointer_comparison(bin);
+            return bin->op == "+" ? check_pointer_offset(bin) : check_pointer_comparison(bin);
         auto [left_type, right_type] = check_binary_operands(bin);
 
         if (!left_type || !right_type)

@@ -15,7 +15,7 @@ enum class Mode { Run, Check, EmitIR, EmitLLVM, EmitObject, EmitExecutable };
 constexpr std::string_view usage =
     "Usage: gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | "
     "--emit-exe] "
-    "[-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]\n"
+    "[-O0 | -O2] [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]\n"
     "       gloinc --help\n"
     "       gloinc --version\n";
 
@@ -50,6 +50,7 @@ int main(int argc, char *argv[]) {
                    "  --emit-llvm  Print verified LLVM-dialect MLIR without execution.\n"
                    "  --emit-object  Write a native macOS arm64 object file.\n"
                    "  --emit-exe     Link a standalone macOS arm64 executable (default).\n"
+                   "  -O0, -O2      Native optimization level (default: -O0).\n"
                    "  -o PATH        Set native output path (default: a.out for executables).\n"
                    "  --stdlib-dir DIR  Load standard module files from DIR.\n"
                    "  --           Before FILE: end compiler options; after FILE: forward program "
@@ -77,6 +78,8 @@ int main(int argc, char *argv[]) {
     std::optional<std::string> filename;
     std::optional<std::string> library_directory;
     std::optional<std::string> output_path;
+    NativeOptimization optimization = NativeOptimization::O0;
+    bool has_optimization = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view argument = argv[i];
         if (filename && argument == "--") {
@@ -101,6 +104,14 @@ int main(int argc, char *argv[]) {
                 if (output_path || i + 1 == argc || std::string_view(argv[i + 1]).empty())
                     return usage_error("-o requires one path and may appear only once");
                 output_path = argv[++i];
+                continue;
+            }
+            if (argument == "-O0" || argument == "-O2") {
+                if (has_optimization)
+                    return usage_error("choose exactly one optimization level");
+                optimization =
+                    argument == "-O2" ? NativeOptimization::O2 : NativeOptimization::O0;
+                has_optimization = true;
                 continue;
             }
             Mode selected;
@@ -131,6 +142,8 @@ int main(int argc, char *argv[]) {
     if (!filename || filename->empty())
         return usage_error("expected one input file");
     const bool native = mode == Mode::EmitObject || mode == Mode::EmitExecutable;
+    if (has_optimization && !native)
+        return usage_error("-O0 and -O2 require native output mode");
     if (mode == Mode::EmitObject && !output_path)
         return usage_error("-o PATH is required for object output");
     if (!native && output_path)
@@ -195,7 +208,7 @@ int main(int argc, char *argv[]) {
             llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main));
         if (!emit_native(*compiled.module, *output_path,
                          mode == Mode::EmitObject ? NativeOutput::Object : NativeOutput::Executable,
-                         executable, *compiled.diagnostics)) {
+                         optimization, executable, *compiled.diagnostics)) {
             compiled.diagnostics->render(std::cerr);
             return 1;
         }

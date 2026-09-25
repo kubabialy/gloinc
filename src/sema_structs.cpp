@@ -197,6 +197,9 @@ std::shared_ptr<Type> Sema::expression_type_hint(const Expression *expression) {
             if (auto type = expression_type_hint(prefix->right.get()))
                 return std::make_shared<PointerType>(type, false, false);
         }
+    } else if (const auto *binary = dynamic_cast<const InfixExpression *>(expression)) {
+        if (binary->op == "+")
+            return expression_type_hint(binary->left.get());
     } else if (const auto *literal = dynamic_cast<const StructLiteral *>(expression)) {
         if (literal->name)
             return resolve_type_from_string(literal->name->value);

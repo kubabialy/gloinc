@@ -41,6 +41,40 @@ TEST_F(CliTest, NativeExecutableRunsWithoutJitAndReceivesArguments) {
     EXPECT_TRUE(read(err).empty());
 }
 
+TEST_F(CliTest, OptimizedNativeOutputPreservesCheckedArrayBounds) {
+    const auto valid = source(R"(
+        def main() -> i32 {
+            def mut values: [i32; 3] = {10, 20, 12};
+            def first: *i32 = &values[0];
+            return *(first + 1) + values[2];
+        }
+    )", "valid.gloin");
+    const auto optimized = directory + "/optimized";
+    expect_success(invoke_raw({"-O2", "-o", optimized, valid}), "");
+    std::string message;
+    bool launch_failed = false;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(optimized, {optimized}, std::nullopt, {}, 10, 0,
+                                        &message, &launch_failed), 32) << message;
+    EXPECT_FALSE(launch_failed);
+
+    const auto invalid = source("def main() -> i32 { def a: [i32; 2] = {1, 2}; return a[2]; }",
+                                "invalid.gloin");
+    const auto trapping = directory + "/trapping";
+    expect_success(invoke_raw({"-O2", "-o", trapping, invalid}), "");
+    EXPECT_LT(llvm::sys::ExecuteAndWait(trapping, {trapping}, std::nullopt, {}, 10, 0,
+                                        &message, &launch_failed), 0) << message;
+    EXPECT_FALSE(launch_failed);
+    const auto null_offset = source(
+        "def main() -> i32 { def p: *i32 = null; def q: *i32 = p + 0; return 1; }",
+        "null-offset.gloin");
+    expect_success(invoke_raw({"-O2", "-o", trapping, null_offset}), "");
+    EXPECT_LT(llvm::sys::ExecuteAndWait(trapping, {trapping}, std::nullopt, {}, 10, 0,
+                                        &message, &launch_failed), 0) << message;
+    EXPECT_FALSE(launch_failed);
+    expect_error(invoke_raw({"-O2", "--jit", valid}), 2, "require native output");
+    expect_error(invoke_raw({"-O2", "-O0", valid}), 2, "exactly one optimization");
+}
+
 TEST_F(CliTest, NativeObjectAndFailurePaths) {
     const auto file = source("def main() -> i32 { return 42; }");
     const auto object = directory + "/program.o";

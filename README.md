@@ -28,7 +28,7 @@ Native object and executable output are supported on Apple Silicon macOS.
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | 877 tests discovered; 873 passes and 4 documented deferred-feature failures are required for the release audit. |
+| Full test suite | 880 tests discovered; 876 pass and 4 documented deferred-feature tests fail on reserved async/spawn syntax. |
 | Core acceptance | 152 CLI-driven source fixtures: 39 successful programs, 91 expected compiler errors, and 22 runtime traps. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 49 parser tests pass: core grammar, precedence, strict annotations/delimiters, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
@@ -36,10 +36,10 @@ Native object and executable output are supported on Apple Silicon macOS.
 | Generics | Four IR-string checks pass; generic execution is not established. |
 | IR verification/lowering | One pipeline verifies source output and conversions, rejects unsupported IR, and produces LLVM-compatible modules for output and execution consumers. |
 | JIT | All 16 tests pass: native execution, validated entry/signatures, separate results/errors, repeated runs, and integer/float trap behavior. |
-| CLI | All 19 process tests pass: file loading, JIT and native results, object/executable output, checking, verified IR, diagnostics, usage, and exit behavior. |
+| CLI | All 20 process tests pass: file loading, JIT and native results, object/executable output, `-O2`, checking, verified IR, diagnostics, usage, and exit behavior. |
 | Standard output | `@std` loads `stdlib/std.gloin`, which defines `print` and `println`; all 17 standard-module tests pass. |
 | Ordinary structs | 14 tests cover nested values, field validation/mutation, visibility, nominal types, native execution, and target padding/alignment. |
-| Pointers/references | 18 tests cover typed access, read-only views, recursive links, null traps, and manual lifetimes with no borrow checker. |
+| Pointers/references | 20 tests cover typed access, read-only views, recursive links, null traps, nullable pointer offsets, and manual lifetimes with no borrow checker. |
 | Methods | 19 tests cover instance/static calls, one explicit receiver, mutability, visibility, evaluation order, recursion, diagnostics, and external execution. |
 | Defer | 24 tests cover registration-time captures, conditional/loop registration, LIFO function-exit cleanup, early returns, traps, native allocation bookkeeping, and external execution. |
 | Arenas | `@arena` exposes `GeneralArena`: 21 compiler/API tests and nine native runtime tests cover initialized allocation, alignment, growth, reset/free, failure, and external linking. See [the arena guide](docs/arenas.md). |
@@ -144,7 +144,7 @@ Run `tests/fixtures/core/run/hello_world.gloin` to print exactly `Hello World!`
 and a newline, with exit status 0. `std.print` writes without adding a newline.
 
 The standard library lives in [stdlib/std.gloin](stdlib/std.gloin). These are
-ordinary Gloin functions; adding a future `math.gloin` or `io.gloin` uses the same
+ordinary Gloin functions; existing `math.gloin` and `io.gloin` use the same
 file-loading path. See [standard module development](stdlib/README.md) for the
 native primitive, public exports, and `--stdlib-dir` option.
 
@@ -219,6 +219,8 @@ see [the pointer fixture](tests/fixtures/core/run/pointers.gloin).
 In 0.0.3, fixed arrays use `[T; N]` and brace initializers such as
 `def values: [i32; 2] = {1, 2};`. Indexed reads and writes check bounds; see
 [the fixed-array guide](docs/fixed-arrays.md).
+The development branch also supports [nullable pointer offsets](docs/pointer-offsets.md)
+and native `-O2` output; these features are newer than the 0.0.3 guide.
 Ordinary structs also support instance methods with explicit `self` pointers and
 static calls such as `Counter.make(40)`; see [the method fixture](tests/fixtures/core/run/methods.gloin).
 `defer call(...)` captures arguments immediately and runs registered calls in
@@ -324,13 +326,11 @@ executables link these libraries. The CLI and tests use the same compilation,
 lowering, and execution APIs. `gloin_runtime` supplies the LLVM-independent
 native arena allocator and standard input/conversions; a shared variant is installed for external LLVM execution.
 
-[SPEC-006's contract](https://github.com/kubabialy/gloinc/wiki/Language-Spec#first-release-contract-spec-006) originally selected a scalar
-JIT compiler on Apple Silicon macOS. Completed later specifications added the
-standard library, structs, pointers, methods, defer, arenas, and native output.
-SPEC-021 supplies the executable-core acceptance suite; SPEC-046 completed the
-0.0.1 release gate.
-Native output remains the default in 0.0.3; concurrency remains deferred. The ordered
-backlog replaces the old phase notes as the implementation plan.
+Native output is the default. The current source also offers opt-in `-O2` native
+compilation and nullable pointer offsets; see [CLI options](docs/cli.md) and
+[pointer rules](docs/pointer-offsets.md). Concurrency remains deferred. The
+[implementation checklist](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist)
+tracks the remaining work.
 
 Version 0.0.3 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
 support is not planned, although contributions are welcome. See
@@ -349,10 +349,3 @@ environment details, and test inventory are uploaded as `compiler-ci-reports`,
 including on failure. The complete suite still reports its four deferred-feature
 failures; CI succeeds only when they match the documented list exactly.
 Compiler build outputs are not restored from a cache.
-
-[The verified SPEC-021 run](https://github.com/kubabialy/gloinc/actions/runs/35736970025)
-built both configurations and passed all **161 focused checks**. Its complete
-serial and parallel runs each report **463/470 passes**, with the same seven
-deferred-feature failures and no unexpected test-process crashes or skips.
-The overall run is red because those full-suite failures remain; the core
-acceptance step passes. Download `compiler-ci-reports` for the evidence.

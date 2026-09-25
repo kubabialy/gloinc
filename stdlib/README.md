@@ -1,9 +1,9 @@
 # Standard modules
 
-The [pre-generics library roadmap](../docs/standard-library-roadmap.md) records
-the implemented string, I/O, numeric, and utility modules. The
+The [standard-library guides](../docs/standard-library.md) describe the public
+APIs, ownership, failures, and costs. The
 [integrated examples](../docs/integrated-examples.md) compose these APIs and verify
-resource use before the next generics stage.
+resource use.
 
 `import "@std";` loads [std.gloin](std.gloin). Its public `print` and `println`
 functions are ordinary Gloin functions, compiled with the caller. The compiler

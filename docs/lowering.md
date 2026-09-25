@@ -86,4 +86,4 @@ All existing external language tests now use production lowering, including
 arithmetic trap tests. SPEC-019 adds [JIT translation registration, validated
 invocation, and separate execution failure/results](jit.md). [The file CLI](cli.md)
 uses these APIs. [SPEC-021's source fixtures](../tests/fixtures/core/README.md) check
-core acceptance; [the release guide](release.md) covers installation and packaging.
+core acceptance; [the current release guide](release-0.0.3.md) covers installation and packaging.

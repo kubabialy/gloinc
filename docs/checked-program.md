@@ -117,7 +117,8 @@ initialized; a delayed immutable local permits only its first assignment.
 Delayed locals use storage with their resolved type. An immutable local with an
 initializer can remain an SSA value. These choices do not grant mutability:
 semantic checking has already rejected every forbidden store or uninitialized
-read. Aggregate addressability remains deferred; SPEC-017 defines `for` scope below.
+read. Later struct and fixed-array work adds aggregate addressability; SPEC-017
+defines `for` scope below.
 
 Top-level constants are evaluated in source order after function collection and
 before bodies. Local constants obey lexical scope. The frontend evaluator in
@@ -320,6 +321,8 @@ Only outermost capability weakening is allowed; Sema records the converted type
 at value boundaries. Numeric operators retain builtin IDs; pointer comparisons
 use LLVM address comparison. Nullable accesses branch to a trap before a load,
 store, or reference creation. GEPs and loads use the checked pointee type.
+The development branch also checks `*T + i64` offsets as described in
+[pointer offsets](pointer-offsets.md).
 
 Address-taking records declaration IDs so even immutable locals and value
 parameters receive stable entry-block stack slots when necessary. Struct fields
@@ -424,4 +427,5 @@ writes for `@strings`. Codegen guards advertised capacity, null pointers, and
 unsigned offsets before writing; empty writes accept a null buffer only at zero
 capacity. Counted writes reuse the existing native copy routine. Cursor state,
 builder metadata/aliasing, output sizing, and transformations stay in Gloin.
-No public pointer arithmetic or generic specialization is added.
+These private string primitives add no generic specialization. Nullable pointer
+offsets are a separate [development-branch feature](pointer-offsets.md).

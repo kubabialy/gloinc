@@ -250,12 +250,14 @@ TEST_F(PointerTest, ReadOnlyStorageCannotAcquireWritableAliases) {
     }
 }
 
-TEST_F(PointerTest, PointeeMismatchesNullReferencesAndPointerArithmeticAreRejected) {
+TEST_F(PointerTest, PointeeMismatchesNullReferencesAndInvalidPointerOperatorsAreRejected) {
     for (const std::string body :
          {"def p: &i32 = null;", "def p: &const i32 = null;", "def p: *void = null;",
           "def p: &void;", "def p: *Missing = null;", "def p: *i32 = 0;",
           "def mut x: i64 = 1; def p: *i32 = &x;", "def p: *i32 = null; def r: &i32 = p;",
-          "def p: *i32 = null; p + 1;", "def p: *i32 = null; p < p;",
+          "def p: *i32 = null; p < p;", "def p: *i32 = null; p - 1;",
+          "def p: *i32 = null; 1 + p;", "def p: *i32 = null; p + true;",
+          "def mut x: i32 = 1; def p: &i32 = &x; p + 1;",
           "def p: *i32 = null; def q: *u32 = null; p == q;", "null == null;",
           "def p: *i32 = null; if p { return 1; }", "def p: *i32 = null; *p = true;",
           "def const p: *i32 = null;", "def p: *i32 = null; consume(p);",
@@ -270,6 +272,30 @@ TEST_F(PointerTest, PointeeMismatchesNullReferencesAndPointerArithmeticAreReject
         auto file = source(function + " def main() -> i32 { return 0; }");
         expect_error(invoke({file}), 1, "error:");
     }
+}
+
+TEST_F(PointerTest, NullablePointerOffsetsAdvanceByElementsAndPreserveReadOnlyCapability) {
+    const auto file = source(R"(
+        def main() -> i32 {
+            def mut data: [i32; 3] = {10, 20, 12};
+            def first: *i32 = &data[0];
+            def second: *i32 = first + 1;
+            def last: *const i32 = second + 1;
+            def before_last: *const i32 = last + -1;
+            if *before_last == 20 && *last == 12 { return *second + *last; }
+            return 1;
+        }
+    )");
+    expect_run(invoke({file}), 32);
+    expect_success(invoke({"--check", file}), "");
+}
+
+TEST_F(PointerTest, NullPointerOffsetTrapsBeforeAddressCalculation) {
+    const auto file = source("def main() -> i32 { def p: *i32 = null; def q: *i32 = p + 0; return 1; }");
+    expect_success(invoke({"--check", file}), "");
+    auto result = invoke({file});
+    EXPECT_LT(result.status, 0) << result.err;
+    EXPECT_TRUE(result.err.empty()) << result.err;
 }
 
 TEST_F(PointerTest, LiveAliasesAndReturnedCallerReferencesNeedNoBorrowChecker) {

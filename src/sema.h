@@ -266,6 +266,7 @@ class Sema {
     std::shared_ptr<Type> check_typed_expression(const Expression *expression,
                                                  const std::shared_ptr<Type> &expected);
     std::shared_ptr<Type> check_pointer_comparison(const InfixExpression *expression);
+    std::shared_ptr<Type> check_pointer_offset(const InfixExpression *expression);
     bool pointer_conversion(const PointerType &source, const PointerType &target) const;
     std::shared_ptr<Type> check_expression_impl(const Expression *expr);
     std::shared_ptr<Type> resolve_annotation(const Identifier *annotation, bool allow_void = false);

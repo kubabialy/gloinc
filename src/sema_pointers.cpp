@@ -111,8 +111,8 @@ std::shared_ptr<Type> Sema::check_indirect_assignment(const AssignmentExpression
 
 std::shared_ptr<Type> Sema::check_pointer_comparison(const InfixExpression *expression) {
     if (expression->op != "==" && expression->op != "!=") {
-        log_error(
-            "Pointers support only == and !=; pointer arithmetic and ordering are unsupported");
+        log_error("Pointers support ==, !=, and nullable pointer + i64; other pointer "
+                  "operators are unsupported");
         return nullptr;
     }
     auto left_hint =
@@ -135,4 +135,20 @@ std::shared_ptr<Type> Sema::check_pointer_comparison(const InfixExpression *expr
         return nullptr;
     }
     return get_builtin_type("bool");
+}
+
+std::shared_ptr<Type> Sema::check_pointer_offset(const InfixExpression *expression) {
+    auto left = check_expression(expression->left.get());
+    auto pointer = std::dynamic_pointer_cast<PointerType>(left);
+    if (!pointer || !pointer->nullable || std::dynamic_pointer_cast<FunctionType>(pointer->pointee) ||
+        pointer->pointee->to_string() == "void") {
+        log_error("Pointer offset requires a nullable data pointer (*T) on the left");
+        return nullptr;
+    }
+    auto right = check_expression(expression->right.get(), CoreType::I64);
+    if (!right || !right->equals(*get_builtin_type("i64"))) {
+        log_error("Pointer offset requires an i64 element count on the right");
+        return nullptr;
+    }
+    return left;
 }

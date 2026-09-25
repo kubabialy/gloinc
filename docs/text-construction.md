@@ -183,5 +183,6 @@ relocated package validation.
 
 Algorithms and state live in Gloin source. Three additional private primitives
 provide buffer views, guarded byte stores, and guarded counted writes; writes
-reuse the native copy ABI. These primitives do not expose mutable string views,
-raw byte indexing, or pointer arithmetic to application source.
+reuse the native copy ABI. These primitives do not expose mutable string views
+or raw byte indexing. [Nullable pointer offsets](pointer-offsets.md) are a
+separate development-branch feature and do not grant string bounds checking.

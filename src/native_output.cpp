@@ -8,6 +8,7 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/Path.h"
@@ -76,7 +77,8 @@ bool temporary(const std::string &output, llvm::SmallString<256> &path, Diagnost
 } // namespace
 
 bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput kind,
-                 const std::string &compiler_path, Diagnostics &diagnostics) {
+                 NativeOptimization optimization, const std::string &compiler_path,
+                 Diagnostics &diagnostics) {
 #if !defined(__APPLE__) || !defined(__aarch64__)
     error(diagnostics, "Native output in 0.0.1 supports Apple Silicon macOS only");
     return false;
@@ -90,6 +92,9 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
         error(diagnostics, llvm::toString(builder.takeError()));
         return false;
     }
+    builder->setCodeGenOptLevel(optimization == NativeOptimization::O2
+                                    ? llvm::CodeGenOptLevel::Default
+                                    : llvm::CodeGenOptLevel::None);
     auto machine = builder->createTargetMachine();
     if (!machine) {
         error(diagnostics, llvm::toString(machine.takeError()));
@@ -113,6 +118,26 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
     if (llvm::verifyModule(*translated, &report)) {
         error(diagnostics, "Invalid native LLVM IR: " + verification);
         return false;
+    }
+    if (optimization == NativeOptimization::O2) {
+        llvm::LoopAnalysisManager loops;
+        llvm::FunctionAnalysisManager functions;
+        llvm::CGSCCAnalysisManager call_graphs;
+        llvm::ModuleAnalysisManager modules;
+        llvm::PassBuilder pass_builder(machine->get());
+        pass_builder.registerModuleAnalyses(modules);
+        pass_builder.registerCGSCCAnalyses(call_graphs);
+        pass_builder.registerFunctionAnalyses(functions);
+        pass_builder.registerLoopAnalyses(loops);
+        pass_builder.crossRegisterProxies(loops, functions, call_graphs, modules);
+        auto pipeline = pass_builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+        pipeline.run(*translated, modules);
+        std::string optimized_verification;
+        llvm::raw_string_ostream optimized_report(optimized_verification);
+        if (llvm::verifyModule(*translated, &optimized_report)) {
+            error(diagnostics, "Invalid optimized native LLVM IR: " + optimized_verification);
+            return false;
+        }
     }
     llvm::SmallString<256> object_path;
     const std::string object_output = kind == NativeOutput::Object ? output : output + ".o";
