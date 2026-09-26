@@ -165,6 +165,7 @@ class Scope {
   public:
     std::unordered_map<std::string, Symbol> symbols;
     std::unordered_map<std::string, std::shared_ptr<Type>> types; // Registry for user-defined types
+    std::unordered_map<std::string, const StructDefinition *> generic_structs;
     std::shared_ptr<Scope> parent;
 
     explicit Scope(std::shared_ptr<Scope> parent = nullptr) : parent(std::move(parent)) {}
@@ -174,6 +175,7 @@ class Scope {
 
     void define_type(const std::string &name, std::shared_ptr<Type> type);
     std::shared_ptr<Type> resolve_type(const std::string &name);
+    const StructDefinition *resolve_generic_struct(const std::string &name);
 };
 
 class Sema {
@@ -237,6 +239,17 @@ class Sema {
     std::shared_ptr<FunctionType> collect_function(const FunctionDefinition *function);
     std::optional<ValueType> value_type(const std::shared_ptr<Type> &type) const;
     std::vector<std::shared_ptr<StructType>> collected_struct_types;
+    std::unordered_map<const StructDefinition *, const SourceModule *> generic_struct_owners;
+    struct GenericSpecialization {
+        const StructDefinition *definition;
+        std::vector<ValueType> arguments;
+        std::shared_ptr<StructType> type;
+    };
+    std::vector<GenericSpecialization> generic_specializations;
+    size_t generic_specialization_depth = 0;
+    std::shared_ptr<StructType>
+    specialize_struct(const StructDefinition *definition,
+                      const std::vector<std::shared_ptr<Type>> &arguments);
     void collect_structs(const std::vector<std::unique_ptr<Statement>> &program);
     void collect_methods(const std::vector<std::unique_ptr<Statement>> &program);
     std::unordered_map<const FunctionDefinition *, bool> arena_methods;

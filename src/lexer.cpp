@@ -470,6 +470,8 @@ std::string token_type_to_string(const GloinTokenType type) {
         return "FALSE";
     case GLOIN_TOKEN_NULL:
         return "NULL";
+    case GLOIN_TOKEN_ZEROED:
+        return "ZEROED";
     case GLOIN_TOKEN_ASSIGN:
         return "ASSIGN";
     case GLOIN_TOKEN_PLUS:
@@ -666,6 +668,7 @@ GloinTokenType get_keyword_type(std::string_view identifier) {
         {"true", GLOIN_TOKEN_TRUE},
         {"false", GLOIN_TOKEN_FALSE},
         {"null", GLOIN_TOKEN_NULL},
+        {"zeroed", GLOIN_TOKEN_ZEROED},
         {"struct", GLOIN_TOKEN_STRUCT},
         {"enum", GLOIN_TOKEN_ENUM},
         {"pub", GLOIN_TOKEN_PUB},

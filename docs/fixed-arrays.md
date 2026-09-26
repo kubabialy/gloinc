@@ -59,3 +59,29 @@ the element type's alignment and padding.
 Slices, vectors, maps, and variable-length arrays are separate future work
 after generics. Fixed arrays have no `.length` member or slice operator yet;
 the length is part of their type.
+
+## Development addition after 0.0.3: `zeroed`
+
+The current development compiler accepts `zeroed` wherever an explicit
+fixed-array type supplies the context:
+
+```gloin
+def mut grid: [[i32; 100]; 100] = zeroed;
+grid[99][99] = 42;
+```
+
+It initializes every element to zero (`false` for `bool`, `null` for a nullable
+pointer, and an empty string for `string`). The string zero value has a null
+data pointer and zero length; string operations must accept that as empty text.
+It works recursively for nested arrays and for an empty array of any valid
+element type. Arrays of non-null references and structs are currently rejected.
+`zeroed` has no type on its own: `def x: i32 = zeroed;` is invalid. The array
+still occupies its full storage, and initializing a large local array uses
+memory proportional to its size. `zeroed` adds no heap allocation or lazy
+capacity reservation.
+
+`def mut grid: [[i32; 100]; 100];` already reserves local storage without
+initializing it, but the definite-initialization rule prevents element writes
+until the whole array has been assigned. A separate `init` keyword is not
+defined for fixed arrays. Vector and slice capacity/length rules remain for
+their later design.

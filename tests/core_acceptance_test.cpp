@@ -69,6 +69,64 @@ TEST_F(CoreAcceptanceTest, RunFixedArrays) {
     EXPECT_TRUE(read(out).empty());
     EXPECT_TRUE(read(err).empty());
 }
+TEST_F(CoreAcceptanceTest, RunZeroedNestedArray) {
+    auto file = source(R"(
+        def main() -> i32 {
+            def mut grid: [[i32; 100]; 100] = zeroed;
+            if grid[0][0] != 0 || grid[99][99] != 0 { return 1; }
+            grid[99][99] = 42;
+            return grid[99][99];
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    const auto executable = directory + "/zeroed-array";
+    expect_success(invoke_raw({"-o", executable, file}), "");
+    const auto out = directory + "/zeroed-array.stdout";
+    const auto err = directory + "/zeroed-array.stderr";
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+    std::string message;
+    bool launch_failed = false;
+    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                                10, 0, &message, &launch_failed);
+    EXPECT_FALSE(launch_failed) << message;
+    EXPECT_EQ(code, 42) << message << read(err);
+    EXPECT_TRUE(read(out).empty());
+    EXPECT_TRUE(read(err).empty());
+}
+TEST_F(CoreAcceptanceTest, RejectInvalidZeroedArray) {
+    for (const std::string body : {
+             "def x: i32 = zeroed;",
+             "def x: [&i32; 2] = zeroed;",
+             "def x: [Cell; 2] = zeroed;",
+             "zeroed;"}) {
+        SCOPED_TRACE(body);
+        auto file = source("def struct Cell { def value: i32, } "
+                           "def main() -> i32 { " + body + " return 0; }");
+        expect_error(invoke({"--check", file}), 1, "zeroed");
+    }
+}
+TEST_F(CoreAcceptanceTest, ZeroedBoolNullablePointerAndEmptyArrays) {
+    auto file = source(R"(
+        import "@std";
+        import "@strings";
+        def main() -> i32 {
+            def flags: [bool; 3] = zeroed;
+            def floats: [f64; 2] = zeroed;
+            def pointers: [*i32; 2] = zeroed;
+            def texts: [string; 2] = zeroed;
+            def empty: [&i32; 0] = zeroed;
+            def null_pointer: *i32 = null;
+            def float_zero: f64 = 0.0;
+            if flags[0] || pointers[0] != null_pointer { return 1; }
+            if floats[0] != float_zero || floats[1] != float_zero { return 3; }
+            if !strings.is_empty(texts[0]) || !strings.equal(texts[0], "") { return 2; }
+            std.print(texts[0]);
+            return 42;
+        }
+    )");
+    expect_run(invoke({file}), 42);
+}
 TEST_F(CoreAcceptanceTest, RejectFixedArrayLength) {
     rejects("reject/fixed_array_length.gloin", "element count");
 }

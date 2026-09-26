@@ -100,7 +100,7 @@ TEST_F(OrdinaryStructTest, InvalidDeclarationsFailWithSourceLocations) {
           "def struct P {} def P() -> void {}", "def struct i32 {}", "def struct P { def x: P, }",
           "def struct P { def q: Q, } def struct Q { def p: P, }",
           "def struct P { def x: i32 = 1, }", "def packed struct(u32) P { def x: u8, }",
-          "def struct P<T> { def x: T, }", "def struct P { def method() -> void {} }",
+          "def struct P { def method() -> void {} }",
           "def f() -> void { def struct Local {} }"}) {
         SCOPED_TRACE(declaration);
         auto file = source(declaration + "\ndef main() -> i32 { return 0; }");

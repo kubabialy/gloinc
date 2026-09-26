@@ -53,6 +53,10 @@ struct NullLiteral : public Expression {
     std::string to_string() const override { return "null"; }
 };
 
+struct ZeroedLiteral : public Expression {
+    std::string to_string() const override { return "zeroed"; }
+};
+
 struct StringLiteral : public Expression {
     std::string value;
     

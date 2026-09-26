@@ -2,7 +2,7 @@
 
 `GloinParser` defaults to `ParseMode::Core`. `compile_source` uses this mode and
 requires a successful complete parse before invoking Sema. A source file may
-contain functions, constants, imports, and ordinary structs. Runtime globals, nested functions, executable
+contain functions, constants, imports, ordinary structs, and generic struct templates. Runtime globals, nested functions, executable
 file-scope statements, and deferred syntax receive parsing diagnostics.
 Sema's checked-program path resolves core type identities and rejects unsupported
 scalar types under SPEC-010; SPEC-013 checks contextual numeric literals and
@@ -66,17 +66,20 @@ full-consumption conversion, contextual types, and signed-literal rules.
 `ParseMode::SyntaxOnly` explicitly permits the existing deferred grammar and
 statement-fragment lists for stage-isolated tests. It is not a supported compiler
 language mode and is not exposed by `compile_source`. It lets packed-struct,
-generic, legacy array-literal, and concurrency tests inspect their stages while
-core compilation rejects those constructs. Fixed arrays use `[T; N]` and `{...}`
-in core compilation. Legacy `spawn`/`await`, missing
-annotations, misplaced modifiers, and malformed lists still fail in this mode.
+generic-method, legacy array-literal, and concurrency tests inspect their stages
+while core compilation rejects those constructs. Generic struct templates and
+applications, and fixed arrays using `[T; N]` and `{...}`, parse in core mode.
+Legacy `spawn`/`await`, missing annotations, misplaced modifiers, and malformed
+lists still fail in syntax-only mode.
 
 The syntax-only parser shares token consumption and precedence with the core.
 Struct literals cannot take a control-flow body's opening brace. Generic
 aggregate lookahead uses token structure rather than identifier capitalization;
 type parsing splits `>>` only when consuming nested type closers and preserves
-each closer's byte position. These checks do not establish aggregate layout,
-generic execution, or concurrency support.
+each closer's byte position. The lookahead also recognizes module-qualified
+constructors and fixed-array or pointer type arguments. These checks do not
+establish aggregate layout or concurrency support. Checked generic struct
+specialization is a separate semantic and codegen step.
 
 The old struct-method fixture now spells `def pub greet(self: *Person)` and the
 multi-parameter generic fixture includes its missing field comma. Their feature
@@ -87,8 +90,11 @@ unimplemented feature tests remain visible in the full suite.
 
 Core parsing accepts file-scope `def [pub|priv] struct Name { ... }`, comma-separated
 `def [pub|priv] [mut] field: Type` declarations, named literals, member expressions,
-and module-qualified type names/literals. Struct names can be lowercase. Packed/generic definitions, field defaults, and local structs remain
-rejected. Semantic checking validates fields and visibility before codegen.
+and module-qualified type names/literals. Struct names can be lowercase.
+Generic struct templates use `Name<T, U>` with explicit type applications;
+checked specialization currently rejects methods on generic structs. Packed
+definitions, field defaults, and local structs remain rejected. Semantic
+checking validates fields and visibility before codegen.
 
 ## Pointers and references (SPEC-025)
 

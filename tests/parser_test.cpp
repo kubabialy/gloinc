@@ -429,11 +429,10 @@ TEST(ParserTest, RejectsTruncatedConstructsAndTrailingTokens) {
 TEST(ParserTest, RejectsUnsupportedCoreSyntax) {
     for (const std::string source :
          {"fn f() {}", "extern def f() -> void;", "struct X {}", "def packed struct(u32) X {}",
-          "def deferred f() -> void {}", "def spawnable f() -> void {}",
-          "def f<T>(x: T) -> T { return x; }"})
+          "def deferred f() -> void {}", "def spawnable f() -> void {}"})
         rejected(source);
     for (const std::string expression :
-         {"spawn f()", "await f()", "run f()", "[1, 2]", "X<i32> { x: 1 }",
+         {"spawn f()", "await f()", "run f()", "[1, 2]",
           "+a",        "~a",
           "a & b",     "a | b",     "a ^ b",   "a << b", "a >> b",    "a += 1",
           "a ? b",     "0..3",      "a => b"})
@@ -495,6 +494,34 @@ TEST(ParserTest, DeferredExpressionsComposeWithoutSkippingTokens) {
     auto *fn = dynamic_cast<FunctionDefinition *>(result.program[0].get());
     ASSERT_NE(fn, nullptr);
     EXPECT_EQ(fn->body->statements.size(), 5u);
+}
+
+TEST(ParserTest, GenericLiteralLookaheadAcceptsQualifiedAndCompositeTypeArguments) {
+    auto result = checked(R"(def main() -> i32 {
+        def value: pkg.box<[*const i32; 2]> = pkg.box<[*const i32; 2]> { item: {} };
+        def nested: pkg.box<pkg.box<i32>> =
+            pkg.box<pkg.box<i32>> { item: pkg.box<i32> { item: 1 } };
+        return 0;
+    })",
+                          ParseMode::SyntaxOnly);
+    ASSERT_TRUE(result.success);
+    auto *function = dynamic_cast<FunctionDefinition *>(result.program[0].get());
+    ASSERT_NE(function, nullptr);
+    auto *declaration = dynamic_cast<VariableDeclaration *>(function->body->statements[0].get());
+    ASSERT_NE(declaration, nullptr);
+    ASSERT_NE(dynamic_cast<StructLiteral *>(declaration->initializer.get()), nullptr);
+    EXPECT_EQ(declaration->type->value, "pkg.box<[*const i32; 2]>");
+}
+
+TEST(ParserTest, ComparisonsRemainExpressionsWithGenericLookahead) {
+    for (const std::string source : {"a < b", "a < b > c", "a < b + c"}) {
+        GloinParser parser(Lexer(source), ParseMode::SyntaxOnly);
+        auto expression = parser.parse_expression(0);
+        ASSERT_NE(expression, nullptr) << source;
+        EXPECT_FALSE(parser.has_error()) << source;
+        EXPECT_TRUE(parser.at_end()) << source;
+        EXPECT_NE(dynamic_cast<InfixExpression *>(expression.get()), nullptr) << source;
+    }
 }
 
 TEST(ParserTest, NestedTypeClosersPreserveSourceSpans) {

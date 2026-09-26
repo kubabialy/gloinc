@@ -34,19 +34,47 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
         if (!definition)
             continue;
         DiagnosticScope location(current_span, definition->span);
-        if (!definition->name || definition->is_packed || definition->backing_type ||
-            !definition->generic_params.empty()) {
-            log_error("Only ordinary non-generic structs are supported (SPEC-024)");
+        if (!definition->name || definition->is_packed || definition->backing_type) {
+            log_error("Packed structs are not supported in checked programs");
             continue;
         }
         const auto &name = definition->name->value;
         const auto primitive = standard_operation(name, standard_primitive_names);
         if (get_builtin_type(name) || current_scope->types.contains(name) ||
+            current_scope->generic_structs.contains(name) ||
             current_scope->symbols.contains(name) || imports.contains(name) ||
             (current_module && !current_module->standard_name.empty() && name == "__write_stdout") ||
             (current_module && primitive &&
              standard_primitive_allowed(*primitive, current_module->standard_name))) {
             log_error("Duplicate or reserved struct name '" + name + "'");
+            continue;
+        }
+        if (!definition->generic_params.empty()) {
+            std::set<std::string> parameters;
+            bool valid = true;
+            for (const auto &parameter : definition->generic_params)
+                if (!parameters.insert(parameter).second || get_builtin_type(parameter)) {
+                    log_error("Duplicate or reserved generic parameter '" + parameter + "'");
+                    valid = false;
+                }
+            std::set<std::string> field_names;
+            for (const auto &field : definition->fields) {
+                if (!field.name || !field.type || field.offset != -1) {
+                    log_error("Invalid generic struct field declaration");
+                    valid = false;
+                } else if (!field_names.insert(field.name->value).second) {
+                    log_error("Duplicate field '" + field.name->value + "'");
+                    valid = false;
+                }
+            }
+            if (!definition->methods.empty()) {
+                log_error("Methods on generic structs await SPEC-032 specialization");
+                valid = false;
+            }
+            if (valid) {
+                current_scope->generic_structs.emplace(name, definition);
+                generic_struct_owners.emplace(definition, current_module);
+            }
             continue;
         }
         auto structure =
@@ -85,6 +113,81 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
     }
 }
 
+std::shared_ptr<StructType>
+Sema::specialize_struct(const StructDefinition *definition,
+                        const std::vector<std::shared_ptr<Type>> &arguments) {
+    std::vector<ValueType> keys;
+    for (const auto &argument : arguments) {
+        auto value = value_type(argument);
+        if (!value)
+            return nullptr;
+        keys.push_back(*value);
+    }
+    for (const auto &specialization : generic_specializations)
+        if (specialization.definition == definition && specialization.arguments == keys)
+            return specialization.type;
+    if (generic_specialization_depth >= 64) {
+        log_error("Generic struct specialization exceeds 64 nested applications");
+        return nullptr;
+    }
+    struct DepthGuard {
+        size_t &depth;
+        explicit DepthGuard(size_t &depth) : depth(depth) { ++depth; }
+        ~DepthGuard() { --depth; }
+    } depth_guard(generic_specialization_depth);
+
+    const auto *owner = generic_struct_owners.at(definition);
+    std::string name = owner ? owner->module_name + "." : "";
+    name += definition->name->value + "<";
+    for (size_t i = 0; i < arguments.size(); ++i) {
+        if (i)
+            name += ", ";
+        name += arguments[i]->to_string();
+    }
+    name += ">";
+    auto structure = std::make_shared<StructType>(name, std::vector<StructType::Field>{}, false);
+    structure->identity = recording->structures.size();
+    structure->owner = owner;
+    structure->is_public = definition->is_public;
+    recording->structures.push_back({name, {}});
+    collected_struct_types.push_back(structure);
+    generic_specializations.push_back({definition, std::move(keys), structure});
+
+    auto saved_scope = current_scope;
+    auto saved_module = current_module;
+    auto saved_imports = imports;
+    current_scope = std::make_shared<Scope>(module_scopes.at(owner));
+    current_module = owner;
+    imports = module_imports.at(owner);
+    for (size_t i = 0; i < arguments.size(); ++i)
+        current_scope->define_type(definition->generic_params[i], arguments[i]);
+    std::set<std::string> names;
+    for (const auto &field : definition->fields) {
+        DiagnosticScope location(current_span, field.name ? field.name->span : definition->span);
+        if (!field.name || !field.type || field.offset != -1) {
+            log_error("Invalid generic struct field declaration");
+            continue;
+        }
+        if (!names.insert(field.name->value).second) {
+            log_error("Duplicate field '" + field.name->value + "'");
+            continue;
+        }
+        auto type = resolve_type_from_string(field.type->value);
+        auto value = value_type(type);
+        if (!value || dynamic_cast<VoidType *>(type.get())) {
+            log_error("Unknown or invalid field type '" + field.type->value + "' in " + name);
+            continue;
+        }
+        structure->fields.push_back({field.name->value, type, field.is_public});
+        recording->structures.at(*structure->identity)
+            .fields.push_back({field.name->value, *value, field.is_public, field.is_mutable});
+    }
+    current_scope = saved_scope;
+    current_module = saved_module;
+    imports = std::move(saved_imports);
+    return structure;
+}
+
 void Sema::validate_struct_cycles() {
     std::vector<unsigned> state(recording->structures.size());
     std::function<bool(size_t)> visit;
@@ -120,6 +223,18 @@ void Sema::validate_struct_cycles() {
             break;
         }
     }
+    if (!has_error())
+        for (const auto &specialization : generic_specializations) {
+            const auto id = *specialization.type->identity;
+            if (!visit(id)) {
+                DiagnosticScope location(current_span, specialization.definition->span);
+                log_error("Recursive by-value struct has infinite size: " +
+                          recording->structures[id].name);
+                for (auto &structure : collected_struct_types)
+                    structure->fields.clear();
+                break;
+            }
+        }
 }
 
 std::shared_ptr<Type> Sema::check_struct_literal(const StructLiteral *literal) {

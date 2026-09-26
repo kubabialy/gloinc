@@ -3,6 +3,56 @@
 #include <charconv>
 #include <iostream>
 
+namespace {
+bool zeroable_array_element(const std::shared_ptr<Type> &type) {
+    if (const auto *array = dynamic_cast<const ArrayType *>(type.get()))
+        return array->length == 0 || zeroable_array_element(array->element);
+    if (const auto *pointer = dynamic_cast<const PointerType *>(type.get()))
+        return pointer->nullable;
+    if (const auto core = resolve_core_type(type->to_string()))
+        return *core != CoreType::Void;
+    return false;
+}
+
+std::string_view trim_type(std::string_view text) {
+    while (!text.empty() && text.front() == ' ')
+        text.remove_prefix(1);
+    while (!text.empty() && text.back() == ' ')
+        text.remove_suffix(1);
+    return text;
+}
+
+std::vector<std::string> split_type_arguments(std::string_view text) {
+    std::vector<std::string> arguments;
+    size_t start = 0;
+    int angle = 0;
+    int square = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        switch (text[i]) {
+        case '<': ++angle; break;
+        case '>': --angle; break;
+        case '[': ++square; break;
+        case ']': --square; break;
+        case ',':
+            if (angle == 0 && square == 0) {
+                arguments.emplace_back(trim_type(text.substr(start, i - start)));
+                start = i + 1;
+            }
+            break;
+        default: break;
+        }
+        if (angle < 0 || square < 0)
+            return {};
+    }
+    if (angle != 0 || square != 0)
+        return {};
+    auto last = trim_type(text.substr(start));
+    if (!last.empty())
+        arguments.emplace_back(last);
+    return arguments;
+}
+} // namespace
+
 void Scope::define(const std::string &name, Symbol symbol) { symbols[name] = symbol; }
 
 Symbol *Scope::resolve(const std::string &name) {
@@ -27,6 +77,12 @@ std::shared_ptr<Type> Scope::resolve_type(const std::string &name) {
         return parent->resolve_type(name);
     }
     return nullptr;
+}
+
+const StructDefinition *Scope::resolve_generic_struct(const std::string &name) {
+    if (auto it = generic_structs.find(name); it != generic_structs.end())
+        return it->second;
+    return parent ? parent->resolve_generic_struct(name) : nullptr;
 }
 
 Sema::Sema(std::shared_ptr<Diagnostics> diagnostics) : diagnostics_(std::move(diagnostics)) {
@@ -89,6 +145,44 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 return nullptr;
             return std::make_shared<ArrayType>(element, length);
         }
+        const auto open = name.find('<');
+        if (open != std::string::npos && name.ends_with('>')) {
+            const auto base = name.substr(0, open);
+            const auto type_arguments =
+                split_type_arguments(std::string_view(name).substr(open + 1,
+                                                                   name.size() - open - 2));
+            const StructDefinition *definition = nullptr;
+            if (const auto dot = base.find('.'); dot != std::string::npos) {
+                auto imported = imports.find(base.substr(0, dot));
+                if (imported != imports.end()) {
+                    definition = module_scopes.at(imported->second)->resolve_generic_struct(
+                        base.substr(dot + 1));
+                    if (definition && !definition->is_public)
+                        definition = nullptr;
+                }
+            } else {
+                definition = current_scope->resolve_generic_struct(base);
+            }
+            if (!definition) {
+                log_error("Unknown or inaccessible generic struct '" + base + "'");
+                return nullptr;
+            }
+            if (type_arguments.size() != definition->generic_params.size()) {
+                log_error("Generic struct '" + base + "' expects " +
+                          std::to_string(definition->generic_params.size()) + " type arguments");
+                return nullptr;
+            }
+            std::vector<std::shared_ptr<Type>> arguments;
+            for (const auto &argument : type_arguments) {
+                auto type = resolve_type_from_string(argument);
+                if (!type || !value_type(type) || dynamic_cast<VoidType *>(type.get())) {
+                    log_error("Unknown or invalid generic type argument '" + argument + "'");
+                    return nullptr;
+                }
+                arguments.push_back(std::move(type));
+            }
+            return specialize_struct(definition, arguments);
+        }
         auto core = resolve_core_type(name, recording->target);
         if (core)
             return get_builtin_type(std::string(core_type_info(*core).name));
@@ -103,7 +197,14 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
             }
             return nullptr;
         }
-        return current_scope->resolve_type(name);
+        if (auto type = current_scope->resolve_type(name))
+            return type;
+        if (auto *definition = current_scope->resolve_generic_struct(name)) {
+            log_error("Generic struct '" + name + "' requires " +
+                      std::to_string(definition->generic_params.size()) + " type arguments");
+            return nullptr;
+        }
+        return nullptr;
     }
     // Check for generics: Deferred<T>, Result<T, E>, Spawn<T>
     if (name.find("Deferred<") == 0 && name.back() == '>') {
@@ -139,6 +240,9 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     for (auto &structure : collected_struct_types)
         structure->fields.clear();
     collected_struct_types.clear();
+    generic_struct_owners.clear();
+    generic_specializations.clear();
+    generic_specialization_depth = 0;
     initialization.clear();
     falls_through = true;
     loop_depth = 0;
@@ -185,6 +289,8 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         }
         select_module(nullptr);
         check_bodies(program);
+        if (!has_error())
+            validate_struct_cycles();
     } else {
         for (const auto &statement : program)
             check_statement(statement.get());
@@ -201,8 +307,11 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
         log_error("Incomplete function declaration");
         return nullptr;
     }
-    if (recording &&
-        (func_def->is_deferred || func_def->is_spawnable || !func_def->generic_params.empty())) {
+    if (recording && !func_def->generic_params.empty()) {
+        log_error("Generic functions await SPEC-033 specialization");
+        return nullptr;
+    }
+    if (recording && (func_def->is_deferred || func_def->is_spawnable)) {
         log_error("Unsupported function in checked core program");
         return nullptr;
     }
@@ -492,6 +601,18 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
             return nullptr;
         }
         return expected_pointer;
+    }
+    if (dynamic_cast<const ZeroedLiteral *>(expr)) {
+        if (!recording || !expected_array) {
+            log_error("zeroed requires a contextual fixed-array type [T; N]");
+            return nullptr;
+        }
+        if (expected_array->length != 0 &&
+            !zeroable_array_element(expected_array->element)) {
+            log_error("zeroed requires zeroable elements (not non-null references or structs)");
+            return nullptr;
+        }
+        return expected_array;
     }
     if (const auto *ident = dynamic_cast<const Identifier *>(expr)) {
         Symbol *sym = current_scope->resolve(ident->value);

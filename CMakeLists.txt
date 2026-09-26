@@ -292,8 +292,8 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     list(APPEND GLOIN_TARGETS gloin_standard_test)
     gtest_discover_tests(gloin_standard_test PROPERTIES TIMEOUT 30)
 
-    # Required scalar-core suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
+    # Required supported-language suites; the unfiltered suite still reports deferred failures.
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|CheckedGenericsTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure

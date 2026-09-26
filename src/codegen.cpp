@@ -158,7 +158,8 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
         if (checked_data) {
             auto declare_unit = [&](const auto &statements) {
                 for (const auto &statement : statements) {
-                    if (const auto *structure = dynamic_cast<const StructDefinition *>(statement.get()))
+                    if (const auto *structure = dynamic_cast<const StructDefinition *>(statement.get());
+                        structure && structure->generic_params.empty())
                         for (const auto &method : structure->methods)
                             declare_function(method.get());
                     if (const auto *function = dynamic_cast<const FunctionDefinition *>(statement.get()))
@@ -302,6 +303,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
 
     } else if (auto *struct_def = dynamic_cast<const StructDefinition *>(stmt)) {
         if (checked_data) {
+            if (!struct_def->generic_params.empty())
+                return;
             (void)checked_type(struct_def);
             for (const auto &method : struct_def->methods)
                 gen_statement(method.get());
@@ -485,6 +488,10 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     } else if (dynamic_cast<const NullLiteral *>(expr)) {
         if (!checked_data || !checked_data->types.at(expr).is_pointer())
             fail("Untyped null literal");
+        return builder.create<mlir::LLVM::ZeroOp>(location(), checked_type(expr));
+    } else if (dynamic_cast<const ZeroedLiteral *>(expr)) {
+        if (!checked_data || !checked_data->types.at(expr).is_array())
+            fail("zeroed requires a checked fixed-array type");
         return builder.create<mlir::LLVM::ZeroOp>(location(), checked_type(expr));
     } else if (auto *bool_lit = dynamic_cast<const BooleanLiteral *>(expr)) {
         return builder.create<mlir::arith::ConstantIntOp>(location(), bool_lit->value ? 1 : 0, 1);

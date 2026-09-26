@@ -119,11 +119,16 @@ std::unique_ptr<Expression> GloinParser::parse_expression_impl(int min_binding_p
 // In deferred expression syntax, only a balanced type-argument list followed by '{'
 // can introduce a generic aggregate literal. Identifier capitalization plays no role.
 bool GloinParser::generic_literal_ahead() const {
-    if (!allow_struct_literal || current_token.type != GLOIN_TOKEN_IDENTIFIER ||
-        next_token.type != GLOIN_TOKEN_LT)
+    if (!allow_struct_literal || current_token.type != GLOIN_TOKEN_IDENTIFIER)
+        return false;
+    size_t open = cursor + 1;
+    while (open + 1 < tokens.size() && tokens[open].type == GLOIN_TOKEN_DOT &&
+           tokens[open + 1].type == GLOIN_TOKEN_IDENTIFIER)
+        open += 2;
+    if (open >= tokens.size() || tokens[open].type != GLOIN_TOKEN_LT)
         return false;
     int depth = 0;
-    for (size_t i = cursor + 1; i + 1 < tokens.size(); ++i) {
+    for (size_t i = open; i + 1 < tokens.size(); ++i) {
         auto type = tokens[i].type;
         if (type == GLOIN_TOKEN_LT)
             ++depth;
@@ -133,7 +138,10 @@ bool GloinParser::generic_literal_ahead() const {
             depth -= 2;
         else if (type != GLOIN_TOKEN_IDENTIFIER && !is_type_token(type) &&
                  type != GLOIN_TOKEN_COMMA && type != GLOIN_TOKEN_DOT &&
-                 type != GLOIN_TOKEN_MULTIPLY && type != GLOIN_TOKEN_AMPERSAND)
+                 type != GLOIN_TOKEN_MULTIPLY && type != GLOIN_TOKEN_AMPERSAND &&
+                 type != GLOIN_TOKEN_CONST && type != GLOIN_TOKEN_LBRACKET &&
+                 type != GLOIN_TOKEN_RBRACKET && type != GLOIN_TOKEN_SEMICOLON &&
+                 type != GLOIN_TOKEN_NUMBER)
             return false;
         if (depth <= 0)
             return depth == 0 && tokens[i + 1].type == GLOIN_TOKEN_LBRACE;
@@ -161,6 +169,11 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
     }
     case GLOIN_TOKEN_NULL: {
         auto node = located_node<NullLiteral>();
+        advance_token();
+        return node;
+    }
+    case GLOIN_TOKEN_ZEROED: {
+        auto node = located_node<ZeroedLiteral>();
         advance_token();
         return node;
     }
@@ -377,7 +390,6 @@ std::vector<std::string> GloinParser::parse_generic_params() {
     std::vector<std::string> params;
     if (!accept(GLOIN_TOKEN_LT))
         return params;
-    require_extended("Generic declarations");
     do {
         params.push_back(parse_name()->value);
         if (!accept(GLOIN_TOKEN_COMMA) || current_token.type == GLOIN_TOKEN_GT)
@@ -437,7 +449,6 @@ std::unique_ptr<Identifier> GloinParser::parse_type_impl() {
             text += "." + parse_name()->value;
         }
         if (accept(GLOIN_TOKEN_LT)) {
-            require_extended("Generic types");
             text += "<";
             bool first = true;
             do {
