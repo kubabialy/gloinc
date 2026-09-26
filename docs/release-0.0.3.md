@@ -1,11 +1,16 @@
 # Gloinc 0.0.3 release preparation
 
 Version 0.0.3 includes SPEC-001 through SPEC-030 and the SPEC-030a through
-SPEC-030h standard-library expansion, plus SPEC-035a fixed arrays. It runs on Apple Silicon macOS with
+SPEC-030h standard-library expansion, plus SPEC-035a fixed arrays, nullable
+pointer offsets, and opt-in native `-O2`. It runs on Apple Silicon macOS with
 LLVM/MLIR 21.1.6. The compiler checks source, runs `main() -> i32` through the
 JIT, and can emit native arm64 objects and standalone executables.
 Executable output is the default: `gloinc -o hello hello.gloin` names the output,
-while `gloinc hello.gloin` writes `a.out`. Use `--jit` or `--run` to execute in process.
+while `gloinc hello.gloin` writes `a.out`. Native output defaults to `-O0`;
+`-O2` runs LLVM's O2 IR pipeline before object generation. Use `--jit` or
+`--run` to execute in process. A nullable `*T` supports a signed `i64` element
+offset within one live allocation; see [the pointer rules](pointer-offsets.md)
+for null traps and unchecked bounds.
 Since SPEC-023, execution returns main's low eight bits as its process exit
 status. Only explicit `std.print`/`std.println` calls write to stdout.
 Compiler/file/JIT errors exit 1, usage errors exit 2, and arithmetic traps
@@ -61,6 +66,7 @@ tests enabled. `make run` defaults to the counter example; use
 | `share/gloinc/examples/core_counter.gloin` | Runnable example returning 42 |
 | `share/gloinc/examples/hello_world.gloin` | Runnable standard-output example |
 | `share/gloinc/examples/fixed_arrays.gloin` | Runnable fixed-array example; prints `sum = 42` |
+| `share/gloinc/examples/pointer_offsets.gloin` | Runnable nullable pointer-offset example; exits 32 |
 | `share/gloinc/examples/numbers_lab.gloin` | Bounded numeric input, explicit conversion, incremental mean, and fixed formatting |
 | `share/gloinc/examples/standard_library.gloin` | Interactive decimal input, explicit errors, arena reuse, and sum output |
 | `share/gloinc/stdlib/math.gloin` | Concrete finite numerical utilities, typed constants and checked results |
@@ -107,9 +113,9 @@ bash ./gloinc-0.0.3-macos-arm64/share/gloinc/scripts/install-llvm.sh
 ```
 
 `bash scripts/check-package.sh build build/package-check` validates a staged
-installation and a relocated extraction. Each runs 453 CLI/standard-library/module/arena/defer/method/pointer/struct/fixed-array/standard-output/source
+installation and a relocated extraction. Each runs 456 CLI/standard-library/module/arena/defer/method/pointer/struct/fixed-array/standard-output/source
 cases against that binary, using the installed fixtures. The script also executes
-the packaged counter, hello-world, fixed-array, arena, module, strings, text construction, and interactive standard-library examples, verifies external LLVM
+the packaged counter, hello-world, fixed-array, optimized pointer-offset, arena, module, strings, text construction, and interactive standard-library examples, verifies external LLVM
 execution against the relocated runtime library, checks missing standard modules,
 and records shared-library dependencies. Removing either relocated `std.gloin`
 or `arena.gloin` must cause a module loading error, proving there is no fallback to the source checkout. It retains
@@ -118,7 +124,7 @@ are explicit test-harness overrides used for this purpose, not compiler options.
 
 ## Release validation
 
-The `check-core` target runs 830 required scalar, module, arena, defer, method, pointer, struct, fixed-array, native-output, and standard-output checks, including lower-level
+The `check-core` target runs 833 required scalar, module, arena, defer, method, pointer, struct, fixed-array, native-output, and standard-output checks, including lower-level
 frontend/operator/lowering tests and external execution probes as well as the
 152 source fixtures. No known failure is reclassified as success. Full serial
 and parallel runs remain separate. The full suite currently retains four
@@ -159,7 +165,7 @@ the complete serial/parallel results. `compiler-ci-reports` contains the logs,
 JUnit reports, package, checksum, environment, and CMake configurations. A red
 full-suite step remains distinct from passing supported-core checks.
 
-The 0.0.3 release gate must record the exact verified commit and CI evidence.
-Preparing these artifacts does not create a Git tag or publish a GitHub Release.
+The 0.0.3 release gate records the exact verified commit and CI evidence in
+the published release notes and GitHub release.
 Successful results establish deterministic supported behavior on the selected platform, not
 byte-identical binaries or compatibility with unvalidated systems.

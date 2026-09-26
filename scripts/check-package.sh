@@ -48,9 +48,14 @@ result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/m
 [[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" && -f "$package_root/include/gloin/stdlib_runtime.h" && -f "$package_root/include/gloin/io_runtime.h" && -f "$package_root/include/gloin/context_runtime.h" && -f "$package_root/include/gloin/math_runtime.h" && -f "$package_root/include/gloin/time_runtime.h" && -f "$package_root/include/gloin/random_runtime.h" ]]
 [[ -f "$package_root/share/doc/gloinc/third_party/fast_float/LICENSE-MIT" && -f "$package_root/share/doc/gloinc/third_party/fast_float/README.md" ]]
 [[ -f "$package_root/share/doc/gloinc/docs/site/0.0.3/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
-[[ -f "$package_root/share/gloinc/scripts/install-llvm.sh" && -f "$package_root/share/gloinc/examples/fixed_arrays.gloin" ]]
+[[ -f "$package_root/share/gloinc/scripts/install-llvm.sh" && -f "$package_root/share/gloinc/examples/fixed_arrays.gloin" && -f "$package_root/share/gloinc/examples/pointer_offsets.gloin" ]]
 [[ "$("$package_root/bin/gloinc" --version)" == 'gloinc 0.0.3 (LLVM/MLIR 21.1.6)' ]]
 [[ "$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/fixed_arrays.gloin")" == 'sum = 42' ]]
+"$package_root/bin/gloinc" -O2 -o "$work_dir/extracted prefix/pointer-offsets" \
+  "$package_root/share/gloinc/examples/pointer_offsets.gloin"
+offset_status=0
+"$work_dir/extracted prefix/pointer-offsets" || offset_status=$?
+[[ "$offset_status" == 32 ]]
 [[ ! -e "$package_root/share/doc/gloinc/SPEC.md" && ! -e "$package_root/share/doc/gloinc/SPEC-TODO.md" && ! -e "$package_root/share/doc/gloinc/OpenCode.md" ]]
 "$package_root/bin/gloinc" -o "$work_dir/extracted prefix/native-hello" \
   "$package_root/share/gloinc/examples/hello_world.gloin"

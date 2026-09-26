@@ -333,7 +333,7 @@ install(FILES examples/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples)
 install(FILES tests/fixtures/core/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/tests/fixtures/core)
 install(FILES third_party/fast_float/LICENSE-MIT third_party/fast_float/README.md third_party/fast_float/SHA256SUMS
     DESTINATION ${CMAKE_INSTALL_DOCDIR}/third_party/fast_float)
-install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/arena_lab.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin
+install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/pointer_offsets.gloin examples/arena_lab.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/data DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/modules DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples

@@ -18,8 +18,9 @@ The CLI builds native executables by default and can run scalar and ordinary str
 programs through the in-process JIT with `--jit`.
 The 0.0.3 executable core has 152 source-file acceptance cases covering successful
 programs, rejected source, and runtime arithmetic traps. Checking and IR inspection
-modes are also available. The source version is `0.0.3`; the published 0.0.2
-release predates fixed arrays. Installation and package validation are documented
+modes are also available. Version 0.0.3 adds fixed arrays, nullable pointer
+offsets, and opt-in native `-O2` output to the published 0.0.2 feature set.
+Installation and package validation are documented
 in the [0.0.3 release guide](docs/release-0.0.3.md). The [versioned HTML
 guide](docs/site/0.0.3/index.html) documents the 0.0.3 language and compiler.
 Native object and executable output are supported on Apple Silicon macOS.
@@ -219,8 +220,9 @@ see [the pointer fixture](tests/fixtures/core/run/pointers.gloin).
 In 0.0.3, fixed arrays use `[T; N]` and brace initializers such as
 `def values: [i32; 2] = {1, 2};`. Indexed reads and writes check bounds; see
 [the fixed-array guide](docs/fixed-arrays.md).
-The development branch also supports [nullable pointer offsets](docs/pointer-offsets.md)
-and native `-O2` output; these features are newer than the 0.0.3 guide.
+Nullable pointers also support [signed element offsets](docs/pointer-offsets.md).
+Native object and executable output accepts opt-in `-O2`; the default remains
+`-O0`. Both features are documented in the 0.0.3 guide.
 Ordinary structs also support instance methods with explicit `self` pointers and
 static calls such as `Counter.make(40)`; see [the method fixture](tests/fixtures/core/run/methods.gloin).
 `defer call(...)` captures arguments immediately and runs registered calls in
@@ -326,7 +328,7 @@ executables link these libraries. The CLI and tests use the same compilation,
 lowering, and execution APIs. `gloin_runtime` supplies the LLVM-independent
 native arena allocator and standard input/conversions; a shared variant is installed for external LLVM execution.
 
-Native output is the default. The current source also offers opt-in `-O2` native
+Native output is the default. Version 0.0.3 also offers opt-in `-O2` native
 compilation and nullable pointer offsets; see [CLI options](docs/cli.md) and
 [pointer rules](docs/pointer-offsets.md). Concurrency remains deferred. The
 [implementation checklist](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist)

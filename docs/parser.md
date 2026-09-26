@@ -96,7 +96,7 @@ Core parsing accepts recursive `*T`/`&T` annotations with optional `const` after
 each pointer marker, unary address-of/dereference, and `null`. In a type annotation
 `&&T` splits into two reference layers; in expressions `&&` remains logical AND.
 Addressability, initialization, qualifier conversions, and contextual null types
-are checked by Sema. The development branch accepts `*T + i64` with the
+are checked by Sema. Version 0.0.3 accepts `*T + i64` with the
 [pointer-offset rules](pointer-offsets.md). No borrow-checker or unsafe-block
 syntax is introduced.
 

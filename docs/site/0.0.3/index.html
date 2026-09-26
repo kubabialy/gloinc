@@ -27,7 +27,7 @@ def main() -&gt; i32 {
 <section id="cli"><h2>Compiler and native output</h2>
 <p>Run the following commands from the directory containing your source file. By default, the compiler builds a standalone macOS arm64 executable named <code>a.out</code>; use <code>-o PATH</code> to choose its name. <code>--jit</code> or its alias <code>--run</code> executes the source immediately. <code>--check</code> validates a file without running it.</p>
 <pre><code>gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] \
-       [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
+       [-O0 | -O2] [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
 gloinc --help
 gloinc --version</code></pre>
 <table><tr><th>Mode</th><th>Behavior</th></tr>
@@ -37,7 +37,7 @@ gloinc --version</code></pre>
 <tr><td><code>--emit-ir</code>, <code>--emit-llvm</code></td><td>Print verified high level or LLVM dialect MLIR for inspection.</td></tr>
 <tr><td><code>--emit-object -o PATH</code></td><td>Write a macOS arm64 object with a native entry point. Link it with <code>libgloin_runtime.a</code> using the pinned <code>clang++</code>.</td></tr>
 <tr><td><code>--emit-exe</code></td><td>Explicit spelling for the default executable mode.</td></tr></table>
-<p>Source, output, and link errors go to stderr and exit 1. Usage errors exit 2. Successful checks and emission exit 0. Runtime arithmetic traps terminate the program. Quote paths with spaces. <code>--stdlib-dir DIR</code> selects a directory of <code>@</code> modules. The compiler reports source locations for rejected code.</p></section>
+<p>Native object and executable output default to <code>-O0</code>. Add <code>-O2</code> to run LLVM's O2 IR pipeline before native code generation, for example <code>gloinc -O2 -o hello hello.gloin</code>. Optimization flags apply only to native output, not JIT or inspection modes. They do not change the language's checked arithmetic and pointer rules. Source, output, and link errors go to stderr and exit 1. Usage errors exit 2. Successful checks and emission exit 0. Runtime arithmetic traps terminate the program. Quote paths with spaces. <code>--stdlib-dir DIR</code> selects a directory of <code>@</code> modules. The compiler reports source locations for rejected code.</p></section>
 <section id="syntax"><h2>Source and declarations</h2>
 <p>Source is UTF-8; identifiers use ASCII letters, digits, and underscores. Comments start with <code>//</code>. Bindings, assignments, call statements, returns, imports, and defer statements end in <code>;</code>. Function and control flow bodies use braces with no trailing semicolon. Declarations start with <code>def</code>; <code>pub</code> or <code>priv</code> follows <code>def</code>, with private as the default across modules.</p>
 <pre><code>def const LIMIT: i32 = 42;
@@ -79,7 +79,7 @@ def main() -&gt; i32 {
     return 0;
 }</code></pre>
 <p>An array is a value: assigning it, passing it to a function, or returning it copies its elements. <code>[i32; 2]</code> and <code>[i32; 3]</code> are different types. An array literal needs a type context from a binding, parameter, field, or return; <code>[1, 2]</code> is not an array literal. Nested arrays use nested braces, such as <code>def grid: [[i32; 2]; 2] = {{1, 2}, {3, 4}};</code>. Empty arrays use <code>[i32; 0] = {}</code>.</p>
-<p>Every indexed read or write checks <code>0 &lt;= index &lt; N</code> and traps on failure, including any access to a zero-length array. Writing an element requires writable storage. <code>&amp;values[0]</code> borrows a live element; it does not extend that element's lifetime. A pointer to an array points to the whole array, not its first element. Fixed arrays have no slice operator or pointer arithmetic. See the <a href="../../fixed-arrays.md">detailed guide</a> and the packaged <code>fixed_arrays.gloin</code> example.</p></section>
+<p>Every indexed read or write checks <code>0 &lt;= index &lt; N</code> and traps on failure, including any access to a zero-length array. Writing an element requires writable storage. <code>&amp;values[0]</code> borrows a live element; it does not extend that element's lifetime. A pointer to an array points to the whole array, not its first element. Fixed arrays have no slice operator. A nullable pointer to an element can use <a href="#references">signed element offsets</a>; pointer offsets do not carry the array's bounds check. See the <a href="../../fixed-arrays.md">detailed guide</a> and the packaged <code>fixed_arrays.gloin</code> example.</p></section>
 <section id="flow"><h2>Functions and control flow</h2>
 <p>Functions declare the type of every parameter and an explicit return type. The root source file needs <code>def main() -&gt; i32</code> to run or emit native output. Other functions may return <code>void</code>. This program returns 42 as its exit status:</p>
 <pre><code>def add(a: i32, b: i32) -&gt; i32 { return a + b; }
@@ -133,7 +133,15 @@ def main() -&gt; i32 {
     add_one(&amp;*pointer);
     return answer;
 }</code></pre>
-<p>Dereferencing a null pointer, using <code>p.field</code> when <code>p</code> is null, or evaluating <code>&amp;*p</code> when <code>p</code> is null traps. <code>null</code> needs a pointer type from context; it cannot initialize <code>&amp;T</code>. A pointer is not a boolean: compare it with <code>null</code>. Pointer comparisons compare addresses, not values. There is no pointer arithmetic or arbitrary pointer cast.</p>
+<p>Dereferencing a null pointer, using <code>p.field</code> when <code>p</code> is null, or evaluating <code>&amp;*p</code> when <code>p</code> is null traps. <code>null</code> needs a pointer type from context; it cannot initialize <code>&amp;T</code>. A pointer is not a boolean: compare it with <code>null</code>. Pointer comparisons compare addresses, not values. There is no arbitrary pointer cast.</p>
+<p>A nullable data pointer <code>*T</code> can advance by a signed <code>i64</code> number of elements: <code>p + offset</code>. This complete program returns 32:</p>
+<pre><code>def main() -&gt; i32 {
+    def mut values: [i32; 3] = {10, 20, 12};
+    def first: *i32 = &amp;values[0];
+    def second: *i32 = first + 1;
+    return *second + *(second + 1);
+}</code></pre>
+<p>Run the packaged <code>pointer_offsets.gloin</code> with <code>gloinc --jit</code>, or build it with <code>gloinc -O2 -o pointer-offsets pointer_offsets.gloin</code>. Adding any offset to null traps, including zero. Pointer offsets do not check allocation bounds: keep both addresses within the same live allocation or one past its end, and never dereference one past. <code>&amp;T</code>, void and function pointers cannot be offset; pointer subtraction, ordering, and indexing remain unsupported. Fixed-array indexing retains its runtime bounds check. See the <a href="../../pointer-offsets.md">full pointer-offset contract</a>.</p>
 <p>Only the outer pointer layer may weaken from writable to read-only or from reference to pointer. Binding mutability and pointee mutability differ: <code>def p: &amp;i32</code> cannot rebind <code>p</code> but can write <code>*p</code>; <code>def mut p: *const i32</code> can rebind <code>p</code> but cannot write <code>*p</code>. You may take an address only of initialized, addressable storage, not a literal or temporary.</p>
 <p>Memory management is manual. Gloin has no borrow checker or lifetime tracking. A reference must still point to live storage after a null check; copying or returning an address does not extend the value's life. <code>@arena</code> provides <code>GeneralArena</code> for initialized typed allocation. <code>reset()</code> invalidates all values in that arena while retaining blocks; <code>free()</code> releases them. See the <a href="../../arenas.md">arena guide</a> for allocation and failure behavior.</p></section>
 <section id="modules"><h2>Modules</h2>

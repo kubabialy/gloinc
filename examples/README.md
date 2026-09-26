@@ -13,7 +13,7 @@ arguments to run successfully.
 | `core_counter.gloin` | Scalar core execution | Verified by the CLI tests; broader runnable fixtures are in [core acceptance](../tests/fixtures/core/README.md). |
 | `hello_world.gloin` | Standard output | Runnable with SPEC-022/SPEC-023. |
 | `fixed_arrays.gloin` | Fixed arrays | Version 0.0.3: initializes, indexes, copies, updates, and sums a `[i32; 4]` array. See [the guide](../docs/fixed-arrays.md). |
-| `pointer_offsets.gloin` | Nullable pointer offsets | Development branch: advances a `*i32` through a live fixed array. See [the rules](../docs/pointer-offsets.md). |
+| `pointer_offsets.gloin` | Nullable pointer offsets | Version 0.0.3: advances a `*i32` through a live fixed array. See [the rules](../docs/pointer-offsets.md). |
 | `standard_library.gloin` | Input and i32 conversions | Runnable with SPEC-030; counted lines, explicit errors, caller-owned arena strings, reset/reuse, and totals. |
 | `strings_lab.gloin` | Byte strings and explicit retention | Runnable with SPEC-030a; allocation-free configuration parsing, checked access, search, independent copies, and 10,000 scratch-arena resets. See [costs and usage](../docs/strings.md). |
 | `text_lab.gloin` | Traversal and bounded construction | Runnable with SPEC-030b; borrowed cursors, escaped report construction, transformations, shared builder state, scratch reuse, and an independent snapshot. See [costs and usage](../docs/text-construction.md). |

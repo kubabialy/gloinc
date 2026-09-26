@@ -321,7 +321,7 @@ Only outermost capability weakening is allowed; Sema records the converted type
 at value boundaries. Numeric operators retain builtin IDs; pointer comparisons
 use LLVM address comparison. Nullable accesses branch to a trap before a load,
 store, or reference creation. GEPs and loads use the checked pointee type.
-The development branch also checks `*T + i64` offsets as described in
+Version 0.0.3 also checks `*T + i64` offsets as described in
 [pointer offsets](pointer-offsets.md).
 
 Address-taking records declaration IDs so even immutable locals and value

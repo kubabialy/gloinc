@@ -1,4 +1,4 @@
-# Pointer offsets (development branch)
+# Pointer offsets (0.0.3)
 
 A nullable pointer `*T` can be advanced by a signed `i64` number of elements:
 
