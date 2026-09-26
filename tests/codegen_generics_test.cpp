@@ -161,6 +161,81 @@ TEST_F(CheckedGenericsTest, RecursivePointerField) {
     expect_run(invoke({file}), 42);
 }
 
+TEST_F(CheckedGenericsTest, MethodsSpecializeForSeveralTypesAndNativeExecution) {
+    auto file = source(R"(
+        import "@strings";
+        def struct Box<T> {
+            def pub mut value: T,
+            def pub static make(value: T) -> Box<T> {
+                return Box<T> { value: value };
+            }
+            def pub get(self: &const Box<T>) -> T { return self.value; }
+            def pub set(self: &Box<T>, value: T) -> void { self.value = value; }
+            def pub copy(self: &const Box<T>) -> Box<T> {
+                return Box<T> { value: self.get() };
+            }
+            def pub static fact(n: i32) -> i32 {
+                if n <= 1 { return 1; }
+                return n * Box<T>.fact(n - 1);
+            }
+        }
+        def main() -> i32 {
+            def mut number: Box<i32> = Box<i32>.make(40);
+            number.set(42);
+            def word: Box<string> = Box<string>.make("ok");
+            def wrapped: Box<Box<i32>> = Box<Box<i32>>.make(number.copy());
+            if strings.equal(word.get(), "ok") && wrapped.get().value == 42
+                && Box<i32>.fact(5) == 120 {
+                return number.get();
+            }
+            return 1;
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    const auto executable = directory + "/generic-methods-native";
+    expect_success(invoke_raw({"-O2", "-o", executable, file}), "");
+    const auto out = directory + "/generic-methods-native.stdout";
+    const auto err = directory + "/generic-methods-native.stderr";
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+    std::string message;
+    bool launch_failed = false;
+    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                                10, 0, &message, &launch_failed);
+    EXPECT_FALSE(launch_failed) << message;
+    EXPECT_EQ(code, 42) << message << read(err);
+}
+
+TEST_F(CheckedGenericsTest, ModulePublicMethodsUsePrivateFieldsAndHelpers) {
+    source(R"(
+        def pub struct Box<T> {
+            def mut value: T,
+            def pub static make(value: T) -> Box<T> { return Box<T> { value: value }; }
+            def helper(self: &const Box<T>) -> T { return self.value; }
+            def pub get(self: &const Box<T>) -> T { return self.helper(); }
+            def pub set(self: &Box<T>, value: T) -> void { self.value = value; }
+        }
+    )",
+           "container.gloin");
+    auto file = source(R"(
+        import "./container";
+        def main() -> i32 {
+            def mut box: container.Box<i32> = container.Box<i32>.make(40);
+            box.set(42);
+            return box.get();
+        }
+    )",
+                       "main.gloin");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    auto private_method = source("import \"./container\"; "
+                                 "def main() -> i32 { "
+                                 "def box: container.Box<i32> = container.Box<i32>.make(42); "
+                                 "return box.helper(); }",
+                                 "private-method.gloin");
+    expect_error(invoke({"--check", private_method}), 1, "Private method");
+}
+
 TEST_F(CheckedGenericsTest, RejectsArityUnknownArgumentsAndByValueCycles) {
     for (const auto &[declaration, diagnostic] : {
              std::pair{"def x: Box<i32, i32> = Box<i32, i32> { value: 1 };",
@@ -197,8 +272,8 @@ TEST_F(CheckedGenericsTest, InvalidTemplateDeclarationsAndPrivateImports) {
              std::pair{"def struct Pair<i32> { def value: i32, }", "Expected identifier"},
              std::pair{"def struct Pair<T> { def value: T, def value: T, }",
                        "Duplicate field"},
-             std::pair{"def struct Pair<T> { def get(self: *Pair<T>) -> T { return self.value; } }",
-                       "Methods on generic structs"}}) {
+             std::pair{"def struct Pair<T> { def get<U>(self: *Pair<T>) -> T { return self.value; } }",
+                       "Generic methods with their own type parameters"}}) {
         SCOPED_TRACE(declaration);
         auto file = source(std::string(declaration) + " def main() -> i32 { return 0; }");
         expect_error(invoke({"--check", file}), 1, diagnostic);
@@ -216,4 +291,30 @@ TEST_F(CheckedGenericsTest, InvalidTemplateDeclarationsAndPrivateImports) {
                            "generic-function.gloin");
     expect_error(invoke({"--check", function}), 1,
                  "Generic functions await SPEC-033 specialization");
+
+    auto bad_receiver = source("def struct Box<T> { def value: T, "
+                               "def get(self: &i32) -> T { return self.value; } } "
+                               "def main() -> i32 { def x: Box<i32> = Box<i32> { value: 42 }; "
+                               "return x.get(); }",
+                               "bad-receiver.gloin");
+    expect_error(invoke({"--check", bad_receiver}), 1,
+                 "Instance method requires first parameter self");
+
+    auto bad_body = source("def struct Broken<T> { def value: T, "
+                           "def bad(self: &const Broken<T>) -> T { return self.missing; } } "
+                           "def main() -> i32 { "
+                           "def value: Broken<i32> = Broken<i32> { value: 42 }; "
+                           "return 0; }",
+                           "bad-body.gloin");
+    expect_error(invoke({"--check", bad_body}), 1, "Unknown field 'missing'");
+
+    auto growing = source("def struct Grow<T> { "
+                          "def next(self: &const Grow<T>) -> i32 { "
+                          "def child: Grow<Grow<T>> = Grow<Grow<T>> {}; "
+                          "return child.next(); } } "
+                          "def main() -> i32 { "
+                          "def root: Grow<i32> = Grow<i32> {}; return root.next(); }",
+                          "growing.gloin");
+    expect_error(invoke({"--check", growing}), 1,
+                 "Generic struct specialization limit of 256 exceeded");
 }

@@ -82,6 +82,8 @@ struct ResolvedSymbol {
 };
 struct SemanticData {
     std::vector<const SourceModule *> modules; // Dependency order, each file once.
+    // Concrete copies give every generic method specialization distinct node identities.
+    std::vector<std::unique_ptr<FunctionDefinition>> specialized_methods;
     std::unordered_map<const MemberAccessExpression *, SymbolId> module_constants;
     std::unordered_map<const CallExpression *, ArenaPrimitive> arena_runtime_calls;
     std::unordered_map<const CallExpression *, StandardPrimitive> standard_calls;

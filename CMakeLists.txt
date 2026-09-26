@@ -85,6 +85,7 @@ set_target_properties(gloin_runtime_shared PROPERTIES OUTPUT_NAME gloin_runtime)
 target_include_directories(gloin_runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 add_library(gloin_frontend STATIC
+    src/ast_clone.cpp
     src/lexer.cpp
     src/parser.cpp
     src/sema.cpp

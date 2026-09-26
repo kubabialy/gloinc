@@ -27,20 +27,21 @@ Native object and executable output are supported on Apple Silicon macOS.
 
 The unreleased development tree adds checked [generic structs](docs/generics.md)
 and the [fixed-array `zeroed` initializer](docs/fixed-arrays.md#development-addition-after-003-zeroed).
-Generic functions and methods on generic structs remain pending. Built-in
-`result<T>` and `error` have a [partial design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented),
+Generic functions and methods with their own type parameters remain pending.
+Built-in `result<T>` and `error` have a
+[partial design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented),
 but are not implemented.
 
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | The 0.0.3 release validation found 880 tests: 876 passed and 4 documented deferred-feature tests failed on reserved async/spawn syntax. The development tree discovers 890 tests; all 843 required supported-language checks pass. |
+| Full test suite | The 0.0.3 release validation found 880 tests: 876 passed and 4 documented deferred-feature tests failed on reserved async/spawn syntax. The development tree discovers 892 tests; all 845 required supported-language checks pass. |
 | Core acceptance | The 0.0.3 release has 152 CLI-driven source cases; development adds three `zeroed` array cases. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 51 development parser tests pass: core grammar, precedence, strict annotations/delimiters, generic literal lookahead, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
 | Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/unless/while/for execution, loop-variable scope, and omitted for components are verified. |
-| Generics | Checked generic structs execute with explicit type arguments, nested types, arrays, pointers, and module visibility. Generic functions and methods on generic structs remain pending. Four older unchecked IR-string tests also pass. |
+| Generics | Checked generic structs execute with explicit type arguments, nested types, arrays, pointers, module visibility, and specialized instance/static methods. Generic functions and methods with their own type parameters remain pending. Four older unchecked IR-string tests also pass. |
 | IR verification/lowering | One pipeline verifies source output and conversions, rejects unsupported IR, and produces LLVM-compatible modules for output and execution consumers. |
 | JIT | All 16 tests pass: native execution, validated entry/signatures, separate results/errors, repeated runs, and integer/float trap behavior. |
 | CLI | All 20 process tests pass: file loading, JIT and native results, object/executable output, `-O2`, checking, verified IR, diagnostics, usage, and exit behavior. |

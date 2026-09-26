@@ -1,4 +1,5 @@
 #include "sema.h"
+#include "ast_clone.h"
 #include <functional>
 #include <set>
 
@@ -67,9 +68,15 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
                     valid = false;
                 }
             }
-            if (!definition->methods.empty()) {
-                log_error("Methods on generic structs await SPEC-032 specialization");
-                valid = false;
+            for (const auto &method : definition->methods) {
+                if (!method->name || !field_names.insert(method->name->value).second) {
+                    log_error("Duplicate field or method in generic struct '" + name + "'");
+                    valid = false;
+                }
+                if (!method->generic_params.empty()) {
+                    log_error("Generic methods with their own type parameters await SPEC-033");
+                    valid = false;
+                }
             }
             if (valid) {
                 current_scope->generic_structs.emplace(name, definition);
@@ -126,6 +133,10 @@ Sema::specialize_struct(const StructDefinition *definition,
     for (const auto &specialization : generic_specializations)
         if (specialization.definition == definition && specialization.arguments == keys)
             return specialization.type;
+    if (generic_specializations.size() >= 256) {
+        log_error("Generic struct specialization limit of 256 exceeded");
+        return nullptr;
+    }
     if (generic_specialization_depth >= 64) {
         log_error("Generic struct specialization exceeds 64 nested applications");
         return nullptr;
@@ -151,7 +162,8 @@ Sema::specialize_struct(const StructDefinition *definition,
     structure->is_public = definition->is_public;
     recording->structures.push_back({name, {}});
     collected_struct_types.push_back(structure);
-    generic_specializations.push_back({definition, std::move(keys), structure});
+    generic_specializations.push_back({definition, std::move(keys), structure, arguments, {}});
+    const size_t specialization_index = generic_specializations.size() - 1;
 
     auto saved_scope = current_scope;
     auto saved_module = current_module;
@@ -181,6 +193,14 @@ Sema::specialize_struct(const StructDefinition *definition,
         structure->fields.push_back({field.name->value, type, field.is_public});
         recording->structures.at(*structure->identity)
             .fields.push_back({field.name->value, *value, field.is_public, field.is_mutable});
+    }
+    for (const auto &method : definition->methods) {
+        auto instance = clone_function(*method);
+        auto *function = instance.get();
+        recording->specialized_methods.push_back(std::move(instance));
+        // Field specialization above may append other entries to this vector.
+        generic_specializations[specialization_index].method_instances.push_back(function);
+        collect_method(structure, function);
     }
     current_scope = saved_scope;
     current_module = saved_module;

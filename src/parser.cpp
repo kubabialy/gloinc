@@ -116,10 +116,10 @@ std::unique_ptr<Expression> GloinParser::parse_expression_impl(int min_binding_p
     return left;
 }
 
-// In deferred expression syntax, only a balanced type-argument list followed by '{'
-// can introduce a generic aggregate literal. Identifier capitalization plays no role.
-bool GloinParser::generic_literal_ahead() const {
-    if (!allow_struct_literal || current_token.type != GLOIN_TOKEN_IDENTIFIER)
+// A balanced type application is an expression prefix only before a struct
+// literal or a static method call. Identifier capitalization plays no role.
+bool GloinParser::generic_type_prefix_ahead() const {
+    if (current_token.type != GLOIN_TOKEN_IDENTIFIER)
         return false;
     size_t open = cursor + 1;
     while (open + 1 < tokens.size() && tokens[open].type == GLOIN_TOKEN_DOT &&
@@ -143,8 +143,15 @@ bool GloinParser::generic_literal_ahead() const {
                  type != GLOIN_TOKEN_RBRACKET && type != GLOIN_TOKEN_SEMICOLON &&
                  type != GLOIN_TOKEN_NUMBER)
             return false;
-        if (depth <= 0)
-            return depth == 0 && tokens[i + 1].type == GLOIN_TOKEN_LBRACE;
+        if (depth <= 0) {
+            if (depth != 0)
+                return false;
+            if (allow_struct_literal && tokens[i + 1].type == GLOIN_TOKEN_LBRACE)
+                return true;
+            return i + 3 < tokens.size() && tokens[i + 1].type == GLOIN_TOKEN_DOT &&
+                   tokens[i + 2].type == GLOIN_TOKEN_IDENTIFIER &&
+                   tokens[i + 3].type == GLOIN_TOKEN_LPAREN;
+        }
     }
     return false;
 }
@@ -194,7 +201,7 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
     case GLOIN_TOKEN_SELF:
         return parse_name(true);
     case GLOIN_TOKEN_IDENTIFIER: {
-        bool generic = generic_literal_ahead();
+        bool generic = generic_type_prefix_ahead();
         size_t end = cursor;
         while (end + 2 < tokens.size() && tokens[end + 1].type == GLOIN_TOKEN_DOT &&
                tokens[end + 2].type == GLOIN_TOKEN_IDENTIFIER)

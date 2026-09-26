@@ -1,18 +1,26 @@
 # Generic structs (development version)
 
 The current development compiler supports explicit type arguments on generic
-structs. This feature is not in the 0.0.3 release. Generic functions and
-methods on generic structs are still rejected.
+structs, including instance and static methods. This feature is not in the
+0.0.3 release. Generic functions and methods with their own type parameters
+are still rejected.
 
 ```gloin
 def struct Box<T> {
     def pub mut value: T,
+
+    def pub static create(value: T) -> Box<T> {
+        return Box<T> { value: value };
+    }
+
+    def pub get(self: &const Box<T>) -> T {
+        return self.value;
+    }
 }
 
 def main() -> i32 {
-    def mut box: Box<i32> = Box<i32> { value: 40 };
-    box.value = box.value + 2;
-    return box.value;
+    def box: Box<i32> = Box<i32>.create(42);
+    return box.get();
 }
 ```
 
@@ -32,8 +40,19 @@ receive compile errors. Recursive pointers to the same specialization are
 allowed. Field types are checked when a specialization is used; duplicate
 parameters and fields are checked on the template declaration.
 
+Methods are checked and emitted separately for each concrete struct type. An
+instance method spells its receiver, such as `self: &const Box<T>`; a static
+method uses `def static` and is called as `Box<i32>.create(42)`. Method bodies
+may refer to the enclosing type parameters, use private fields/helpers in
+their defining module, and call themselves recursively. A method cannot
+declare additional type parameters. A method body is checked when its enclosing
+struct specialization is used; an unused generic template does not prove its
+body valid for every possible type argument. The compiler currently limits a
+program to 256 concrete generic struct specializations, and a directly nested
+application to 64 levels.
+
 Types are never inferred for generic arguments. The compiler currently
-rejects `def identity<T>(...)` and methods declared inside generic structs.
+rejects `def identity<T>(...)` as a generic function.
 Built-in `result<T>` and `error` have a separate
 [partial design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented);
 they are not implemented. Slices and vectors are planned after generic types

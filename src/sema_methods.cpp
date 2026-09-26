@@ -7,49 +7,51 @@ void Sema::collect_methods(const std::vector<std::unique_ptr<Statement>> &progra
             continue;
         auto structure = std::dynamic_pointer_cast<StructType>(
             current_scope->resolve_type(definition->name->value));
-        for (const auto &method : definition->methods) {
-            DiagnosticScope location(current_span, method->span);
-            if (!method->name)
-                continue;
-            const auto &name = method->name->value;
-            if (structure->get_field(name) ||
-                !structure->methods.emplace(name, method.get()).second) {
-                log_error("Duplicate field or method '" + name + "'");
-                continue;
-            }
-            // Method symbols have their own namespace, not the file's function namespace.
-            enter_scope();
-            auto signature = collect_function(method.get());
-            leave_scope();
-            if (!signature)
-                continue;
-            bool valid = true;
-            for (size_t i = 0; i < method->parameters.size(); ++i) {
-                if (method->parameters[i].name->value == "self" && (method->is_static || i != 0)) {
-                    log_error("self is allowed only as the first parameter of an instance method");
-                    valid = false;
-                }
-            }
-            if (!method->is_static) {
-                auto receiver =
-                    signature->param_types.empty()
-                        ? nullptr
-                        : std::dynamic_pointer_cast<PointerType>(signature->param_types[0]);
-                if (method->parameters.empty() || method->parameters[0].name->value != "self" ||
-                    !receiver || !receiver->pointee->equals(*structure)) {
-                    log_error("Instance method requires first parameter self: *" + structure->name +
-                              " or &" + structure->name + " (optionally const)");
-                    valid = false;
-                }
-            }
-            if (!valid)
-                continue;
-            collected_functions.emplace(method.get(), signature);
-            register_arena_method(structure, method.get(), signature);
-            recording->linkage_names[recording->bindings.at(method->name.get())] =
-                "gloin.method." + std::to_string(*structure->identity) + "." + name;
+        for (const auto &method : definition->methods)
+            collect_method(structure, method.get());
+    }
+}
+
+void Sema::collect_method(const std::shared_ptr<StructType> &structure,
+                          const FunctionDefinition *method) {
+    DiagnosticScope location(current_span, method->span);
+    if (!method->name)
+        return;
+    const auto &name = method->name->value;
+    if (structure->get_field(name) || !structure->methods.emplace(name, method).second) {
+        log_error("Duplicate field or method '" + name + "'");
+        return;
+    }
+    // Method symbols have their own namespace, not the file's function namespace.
+    enter_scope();
+    auto signature = collect_function(method);
+    leave_scope();
+    if (!signature)
+        return;
+    bool valid = true;
+    for (size_t i = 0; i < method->parameters.size(); ++i) {
+        if (method->parameters[i].name->value == "self" && (method->is_static || i != 0)) {
+            log_error("self is allowed only as the first parameter of an instance method");
+            valid = false;
         }
     }
+    if (!method->is_static) {
+        auto receiver = signature->param_types.empty()
+                            ? nullptr
+                            : std::dynamic_pointer_cast<PointerType>(signature->param_types[0]);
+        if (method->parameters.empty() || method->parameters[0].name->value != "self" ||
+            !receiver || !receiver->pointee->equals(*structure)) {
+            log_error("Instance method requires first parameter self: *" + structure->name +
+                      " or &" + structure->name + " (optionally const)");
+            valid = false;
+        }
+    }
+    if (!valid)
+        return;
+    collected_functions.emplace(method, signature);
+    register_arena_method(structure, method, signature);
+    recording->linkage_names[recording->bindings.at(method->name.get())] =
+        "gloin.method." + std::to_string(*structure->identity) + "." + name;
 }
 
 void Sema::check_methods(const StructDefinition *definition) {

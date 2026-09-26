@@ -13,7 +13,7 @@ arguments to run successfully.
 | `core_counter.gloin` | Scalar core execution | Verified by the CLI tests; broader runnable fixtures are in [core acceptance](../tests/fixtures/core/README.md). |
 | `hello_world.gloin` | Standard output | Runnable with SPEC-022/SPEC-023. |
 | `fixed_arrays.gloin` | Fixed arrays | Version 0.0.3: initializes, indexes, copies, updates, and sums a `[i32; 4]` array. See [the guide](../docs/fixed-arrays.md). |
-| `generic_structs.gloin` | Generic structs and `zeroed` arrays | Unreleased development compiler: returns 42 using nested and multi-parameter generic structs plus a 100×100 zeroed array. See [generic structs](../docs/generics.md). |
+| `generic_structs.gloin` | Generic structs, methods, and `zeroed` arrays | Unreleased development compiler: returns 42 using static and instance methods, nested and multi-parameter generic structs, and a 100×100 zeroed array. See [generic structs](../docs/generics.md). |
 | `pointer_offsets.gloin` | Nullable pointer offsets | Version 0.0.3: advances a `*i32` through a live fixed array. See [the rules](../docs/pointer-offsets.md). |
 | `standard_library.gloin` | Input and i32 conversions | Runnable with SPEC-030; counted lines, explicit errors, caller-owned arena strings, reset/reuse, and totals. |
 | `strings_lab.gloin` | Byte strings and explicit retention | Runnable with SPEC-030a; allocation-free configuration parsing, checked access, search, independent copies, and 10,000 scratch-arena resets. See [costs and usage](../docs/strings.md). |

@@ -95,6 +95,17 @@ def format_source(source: str) -> str:
     source_line_has_token = False
     emitted_on_source_line = False
 
+    def generic_depth(value: str) -> int:
+        """Count tight type-argument brackets in the pending source fragment."""
+        level = 0
+        for position, character in enumerate(value):
+            if character == "<" and position and (value[position - 1].isalnum() or
+                                                    value[position - 1] in "_>]"):
+                level += 1
+            elif character == ">" and level:
+                level -= 1
+        return level
+
     def emit(value: str, level: int | None = None):
         nonlocal emitted_on_source_line
         value = value.strip()
@@ -124,7 +135,7 @@ def format_source(source: str) -> str:
         if index < skip_until:
             continue
         if kind == "newline":
-            if brackets:
+            if brackets or generic_depth(current):
                 current = current.rstrip() + " "
                 source_line_has_token = False
                 emitted_on_source_line = False
@@ -259,7 +270,9 @@ def format_source(source: str) -> str:
                 flush()
         elif kind == ",":
             source_line_has_token = True
-            if frames and (parentheses, brackets) == frames[-1][:2]:
+            if generic_depth(current):
+                current = current.rstrip() + ", "
+            elif frames and (parentheses, brackets) == frames[-1][:2]:
                 if current.strip():
                     current = current.rstrip() + ","
                     flush()

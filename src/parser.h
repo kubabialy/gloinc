@@ -132,7 +132,7 @@ class GloinParser {
     std::unique_ptr<Identifier> parse_name(bool receiver = false);
     std::unique_ptr<Expression> parse_assignment();
     std::unique_ptr<Expression> parse_condition();
-    bool generic_literal_ahead() const;
+    bool generic_type_prefix_ahead() const;
     void consume_type_close();
 
     static int get_binding_power(GloinTokenType type);

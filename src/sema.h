@@ -244,6 +244,8 @@ class Sema {
         const StructDefinition *definition;
         std::vector<ValueType> arguments;
         std::shared_ptr<StructType> type;
+        std::vector<std::shared_ptr<Type>> resolved_arguments;
+        std::vector<const FunctionDefinition *> method_instances;
     };
     std::vector<GenericSpecialization> generic_specializations;
     size_t generic_specialization_depth = 0;
@@ -252,6 +254,8 @@ class Sema {
                       const std::vector<std::shared_ptr<Type>> &arguments);
     void collect_structs(const std::vector<std::unique_ptr<Statement>> &program);
     void collect_methods(const std::vector<std::unique_ptr<Statement>> &program);
+    void collect_method(const std::shared_ptr<StructType> &structure,
+                        const FunctionDefinition *method);
     std::unordered_map<const FunctionDefinition *, bool> arena_methods;
     void register_arena_method(const std::shared_ptr<StructType> &structure,
                                const FunctionDefinition *method,

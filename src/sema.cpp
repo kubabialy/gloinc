@@ -289,6 +289,21 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         }
         select_module(nullptr);
         check_bodies(program);
+        // A body can instantiate another generic struct. Keep checking until
+        // every concrete method body has its own semantic bindings.
+        for (size_t i = 0; i < generic_specializations.size(); ++i) {
+            const auto specialization = generic_specializations[i];
+            const auto *owner = generic_struct_owners.at(specialization.definition);
+            select_module(owner);
+            current_scope = std::make_shared<Scope>(module_scopes.at(owner));
+            for (size_t argument = 0; argument < specialization.resolved_arguments.size(); ++argument)
+                current_scope->define_type(specialization.definition->generic_params[argument],
+                                           specialization.resolved_arguments[argument]);
+            for (const auto *method : specialization.method_instances)
+                if (collected_functions.contains(method))
+                    check_statement(method);
+        }
+        select_module(nullptr);
         if (!has_error())
             validate_struct_cycles();
     } else {

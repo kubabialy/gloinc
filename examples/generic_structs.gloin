@@ -1,5 +1,20 @@
 def struct Box<T> {
     def pub mut value: T,
+
+    def pub static create(value: T) -> Box<T> {
+        return Box<T> {
+            value: value
+        };
+    }
+
+    def pub read(self: &const Box<T>) -> T {
+        return self.value;
+    }
+
+    def pub set(self: &Box<T>, value: T) -> void {
+        self.value = value;
+    }
+
 }
 
 def struct Pair<A, B> {
@@ -11,14 +26,11 @@ def main() -> i32 {
     def mut grid: [[i32; 100]; 100] = zeroed;
     grid[99][99] = 40;
 
-    def boxed: Box<i32> = Box<i32> {
-        value: grid[99][99]
-    };
-    def pair: Pair<Box<i32>,
-    i32> = Pair<Box<i32>,
-    i32> {
+    def mut boxed: Box<i32> = Box<i32>.create(grid[99][99]);
+    boxed.set(boxed.read());
+    def pair: Pair<Box<i32>, i32> = Pair<Box<i32>, i32> {
         first: boxed,
         second: 2,
     };
-    return pair.first.value + pair.second;
+    return pair.first.read() + pair.second;
 }

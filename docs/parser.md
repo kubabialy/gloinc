@@ -66,19 +66,19 @@ full-consumption conversion, contextual types, and signed-literal rules.
 `ParseMode::SyntaxOnly` explicitly permits the existing deferred grammar and
 statement-fragment lists for stage-isolated tests. It is not a supported compiler
 language mode and is not exposed by `compile_source`. It lets packed-struct,
-generic-method, legacy array-literal, and concurrency tests inspect their stages
-while core compilation rejects those constructs. Generic struct templates and
-applications, and fixed arrays using `[T; N]` and `{...}`, parse in core mode.
+legacy array-literal, and concurrency tests inspect their stages while core
+compilation rejects those constructs. Generic struct templates, their methods,
+applications, and fixed arrays using `[T; N]` and `{...}` parse in core mode.
 Legacy `spawn`/`await`, missing annotations, misplaced modifiers, and malformed
 lists still fail in syntax-only mode.
 
 The syntax-only parser shares token consumption and precedence with the core.
 Struct literals cannot take a control-flow body's opening brace. Generic
-aggregate lookahead uses token structure rather than identifier capitalization;
+type-prefix lookahead uses token structure rather than identifier capitalization;
 type parsing splits `>>` only when consuming nested type closers and preserves
 each closer's byte position. The lookahead also recognizes module-qualified
-constructors and fixed-array or pointer type arguments. These checks do not
-establish aggregate layout or concurrency support. Checked generic struct
+constructors, static method receivers, and fixed-array or pointer type arguments.
+These checks do not establish aggregate layout or concurrency support. Checked generic struct
 specialization is a separate semantic and codegen step.
 
 The old struct-method fixture now spells `def pub greet(self: *Person)` and the
@@ -92,7 +92,8 @@ Core parsing accepts file-scope `def [pub|priv] struct Name { ... }`, comma-sepa
 `def [pub|priv] [mut] field: Type` declarations, named literals, member expressions,
 and module-qualified type names/literals. Struct names can be lowercase.
 Generic struct templates use `Name<T, U>` with explicit type applications;
-checked specialization currently rejects methods on generic structs. Packed
+checked specialization supports instance and static methods that use the enclosing
+type parameters. Methods that declare new type parameters are rejected. Packed
 definitions, field defaults, and local structs remain rejected. Semantic
 checking validates fields and visibility before codegen.
 
