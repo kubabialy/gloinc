@@ -8,14 +8,14 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **892 tests**:
+The current source definitions and CTest discovery contain **896 tests**:
 
 | Suite | Tests |
 | --- | ---: |
 | LexerTest | 34 |
 | DiagnosticsTest | 20 |
 | CheckedProgramTest | 13 |
-| ParserTest | 51 |
+| ParserTest | 52 |
 | ScopeTest | 11 |
 | VariablesTest | 17 |
 | NumericTest | 12 |
@@ -31,7 +31,7 @@ The current source definitions and CTest discovery contain **892 tests**:
 | CodeGenStructTest | 2 |
 | CodeGenSpecTest | 2 |
 | CodeGenGenericsTest | 4 |
-| CheckedGenericsTest | 7 |
+| CheckedGenericsTest | 10 |
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
 | ArenaTest | 21 |
@@ -66,9 +66,9 @@ The current source definitions and CTest discovery contain **892 tests**:
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
-The four older generic tests still check unchecked IR strings. Seven checked
-generic-struct tests now cover JIT/native execution, specialized methods, and
-diagnostics. The orphaned `tests/lit/spawn.mlir` has been replaced by structured assertions in
+The four older generic tests still check unchecked IR strings. Ten checked
+generic tests cover JIT/native execution, specialized structs, methods and
+functions, and diagnostics. The orphaned `tests/lit/spawn.mlir` has been replaced by structured assertions in
 `CodeGenTest.GenerateSpawn`: worker/main functions and returns, the constant i32
 argument, spawn callee, operand, and handle type. No lit/FileCheck installation
 is required. This test now exposes the missing spawn operation instead of
@@ -349,7 +349,7 @@ parameters/returns, field writes, strings and empty records, literal evaluation
 order, signedness and floating fields, exact initialization, and loop-local
 storage. Negative cases cover unknown/duplicate/missing/private fields,
 recursive layouts, wrong nominal types, uninitialized reads/writes, immutable
-roots and nested fields, temporary receivers, invalid method receivers, and deferred packed/generic
+roots and nested fields, temporary receivers, invalid method receivers, and deferred packed
 forms. Context reuse checks prevent backend type names leaking between programs.
 Layout tests assert padding, field offsets, and ABI alignment using both the
 native layout and explicit 32/64-bit pointer layouts. An external LLVM runner

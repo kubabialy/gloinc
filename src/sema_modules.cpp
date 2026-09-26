@@ -1,5 +1,6 @@
 #include "sema.h"
 #include <functional>
+#include <set>
 #include <unordered_set>
 
 bool Sema::prepare_modules(const std::vector<std::unique_ptr<Statement>> &program) {
@@ -41,7 +42,46 @@ void Sema::select_module(const SourceModule *module) {
 void Sema::collect_declarations(const std::vector<std::unique_ptr<Statement>> &program) {
     collect_structs(program);
     for (const auto &declaration : program) {
+        const auto *function = dynamic_cast<const FunctionDefinition *>(declaration.get());
+        if (!function || function->generic_params.empty())
+            continue;
+        DiagnosticScope location(current_span, function->span);
+        const auto &name = function->name->value;
+        const auto primitive = standard_operation(name, standard_primitive_names);
+        if (get_builtin_type(name) || current_scope->types.contains(name) ||
+            current_scope->generic_structs.contains(name) ||
+            current_scope->generic_functions.contains(name) ||
+            current_scope->symbols.contains(name) || imports.contains(name) ||
+            (current_module && !current_module->standard_name.empty() && name == "__write_stdout") ||
+            (current_module && primitive &&
+             standard_primitive_allowed(*primitive, current_module->standard_name)) ||
+            (current_module && current_module->standard_name == "arena" &&
+             arena_operation(name, arena_primitive_names))) {
+            log_error("Duplicate or reserved generic function name '" + name + "'");
+            continue;
+        }
+        if (function->is_deferred || function->is_spawnable) {
+            log_error("Unsupported generic function declaration");
+            continue;
+        }
+        std::set<std::string> parameters;
+        bool valid = true;
+        for (const auto &parameter : function->generic_params)
+            if (!parameters.insert(parameter).second || get_builtin_type(parameter) ||
+                current_scope->types.contains(parameter) ||
+                current_scope->generic_structs.contains(parameter)) {
+                log_error("Duplicate or reserved generic parameter '" + parameter + "'");
+                valid = false;
+            }
+        if (valid) {
+            current_scope->generic_functions.emplace(name, function);
+            generic_function_owners.emplace(function, current_module);
+        }
+    }
+    for (const auto &declaration : program) {
         if (const auto *function = dynamic_cast<const FunctionDefinition *>(declaration.get())) {
+            if (!function->generic_params.empty())
+                continue;
             if (auto type = collect_function(function)) {
                 collected_functions.emplace(function, std::move(type));
                 if (current_module)
@@ -66,7 +106,9 @@ void Sema::check_bodies(const std::vector<std::unique_ptr<Statement>> &program) 
             continue;
         if (const auto *structure = dynamic_cast<const StructDefinition *>(statement.get())) {
             check_methods(structure);
-        } else if (dynamic_cast<const FunctionDefinition *>(statement.get())) {
+        } else if (const auto *function = dynamic_cast<const FunctionDefinition *>(statement.get())) {
+            if (!function->generic_params.empty())
+                continue;
             check_statement(statement.get());
         } else {
             DiagnosticScope location(current_span, statement->span);

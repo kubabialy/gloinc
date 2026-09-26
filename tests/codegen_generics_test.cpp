@@ -113,9 +113,6 @@ TEST(CodeGenGenericsTest, InstantiatesMultiParamGenerics) {
     EXPECT_TRUE(mlir.find("Pair<i32, f32>") != std::string::npos);
 }
 
-// TODO: Methods on generic structs are not yet fully implemented in CodeGen (needs specialization
-// of methods) TEST(CodeGenGenericsTest, GenericMethods) { ... }
-
 namespace {
 class CheckedGenericsTest : public gloin_test::CliFixture {};
 }
@@ -286,12 +283,6 @@ TEST_F(CheckedGenericsTest, InvalidTemplateDeclarationsAndPrivateImports) {
                        "private-main.gloin");
     expect_error(invoke({"--check", file}), 1, "Unknown or inaccessible generic struct");
 
-    auto function = source("def identity<T>(value: T) -> T { return value; } "
-                           "def main() -> i32 { return 0; }",
-                           "generic-function.gloin");
-    expect_error(invoke({"--check", function}), 1,
-                 "Generic functions await SPEC-033 specialization");
-
     auto bad_receiver = source("def struct Box<T> { def value: T, "
                                "def get(self: &i32) -> T { return self.value; } } "
                                "def main() -> i32 { def x: Box<i32> = Box<i32> { value: 42 }; "
@@ -317,4 +308,90 @@ TEST_F(CheckedGenericsTest, InvalidTemplateDeclarationsAndPrivateImports) {
                           "growing.gloin");
     expect_error(invoke({"--check", growing}), 1,
                  "Generic struct specialization limit of 256 exceeded");
+}
+
+TEST_F(CheckedGenericsTest, GenericFunctionsSpecializeAndExecuteNatively) {
+    auto file = source(R"(
+        def struct Box<T> { def pub value: T, }
+        def identity<T>(value: T) -> T { return value; }
+        def duplicate<T>(value: T) -> T { return identity<T>(identity<T>(value)); }
+        def fact<T>(n: T) -> T {
+            if n <= 1 { return 1; }
+            return n * fact<T>(n - 1);
+        }
+        def main() -> i32 {
+            def numbers: [i32; 2] = duplicate<[i32; 2]>({40, 2});
+            def box: Box<i32> = identity<Box<i32>>(Box<i32> { value: numbers[0] });
+            if identity<bool>(true) && fact<i32>(3) == 6 {
+                return duplicate<int>(box.value + numbers[1]);
+            }
+            return 1;
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    const auto executable = directory + "/generic-functions-native";
+    expect_success(invoke_raw({"-O2", "-o", executable, file}), "");
+    const auto out = directory + "/generic-functions-native.stdout";
+    const auto err = directory + "/generic-functions-native.stderr";
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+    std::string message;
+    bool launch_failed = false;
+    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                                10, 0, &message, &launch_failed);
+    EXPECT_FALSE(launch_failed) << message;
+    EXPECT_EQ(code, 42) << message << read(err);
+}
+
+TEST_F(CheckedGenericsTest, GenericFunctionsRespectModuleVisibilityAndDefinitionScope) {
+    source(R"(
+        def local(value: i32) -> i32 { return value; }
+        def pub wrap<T>(value: T) -> T { return value; }
+        def pub checked<T>(value: T) -> T { return wrap<T>(local(value)); }
+        def hidden<T>(value: T) -> T { return value; }
+    )", "utils.gloin");
+    auto file = source(R"(
+        import "./utils";
+        def main() -> i32 { return utils.checked<i32>(utils.wrap<i32>(42)); }
+    )", "main.gloin");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    auto private_call = source("import \"./utils\"; "
+                               "def main() -> i32 { return utils.hidden<i32>(42); }",
+                               "private-function.gloin");
+    expect_error(invoke({"--check", private_call}), 1,
+                 "Unknown or inaccessible generic function");
+}
+
+TEST_F(CheckedGenericsTest, GenericFunctionCallAndDeclarationDiagnostics) {
+    for (const auto &[call, diagnostic] : {
+             std::pair{"identity<i32, bool>(42)", "expects 1 type arguments"},
+             std::pair{"identity<Missing>(42)", "Unknown or invalid generic type argument"},
+             std::pair{"identity<void>(42)", "Unknown or invalid generic type argument"},
+             std::pair{"identity<i32>(true)", "Argument 1 type mismatch"},
+             std::pair{"identity<i32>()", "Incorrect number of arguments"}}) {
+        SCOPED_TRACE(call);
+        auto file = source("def identity<T>(value: T) -> T { return value; } "
+                           "def main() -> i32 { return " + std::string(call) + "; }");
+        expect_error(invoke({"--check", file}), 1, diagnostic);
+    }
+    auto duplicate = source("def value<T, T>(item: T) -> T { return item; } "
+                            "def main() -> i32 { return 0; }");
+    expect_error(invoke({"--check", duplicate}), 1, "Duplicate or reserved generic parameter");
+    auto unused = source("def broken<T>(value: T) -> T { return value.missing; } "
+                         "def main() -> i32 { return 42; }");
+    expect_run(invoke({unused}), 42);
+    auto used = source("def broken<T>(value: T) -> T { return value.missing; } "
+                       "def main() -> i32 { return broken<i32>(42); }");
+    expect_error(invoke({"--check", used}), 1, "Field access requires an ordinary struct value");
+
+    auto missing_arguments = source("def identity<T>(value: T) -> T { return value; } "
+                                    "def main() -> i32 { return identity(42); }");
+    expect_error(invoke({"--check", missing_arguments}), 1,
+                 "requires explicit type arguments");
+
+    auto growing = source("def grow<T>(value: T) -> i32 { return grow<*T>(null); } "
+                          "def main() -> i32 { return grow<i32>(42); }");
+    expect_error(invoke({"--check", growing}), 1,
+                 "Generic function specialization limit of 256 exceeded");
 }

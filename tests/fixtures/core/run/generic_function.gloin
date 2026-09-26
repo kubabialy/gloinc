@@ -3,5 +3,5 @@ def identity<T>(x: T) -> T {
 }
 
 def main() -> i32 {
-    return 42;
+    return identity<i32>(42);
 }

@@ -51,8 +51,8 @@ It prints `arena lab: ok` and exits zero. Adjust `PARTICLES` for larger workload
 ## Library and compiler boundary
 
 Lifecycle methods and allocation policy are ordinary source in `arena.gloin`.
-Until generic functions are specified, the checked declarations
-`GeneralArena.alloc` and `GeneralArena.try_alloc` form a narrow typed bridge.
+The checked declarations `GeneralArena.alloc` and `GeneralArena.try_alloc`
+form a narrow typed bridge for allocation and ownership semantics.
 Their library implementation signature is
 `(self: &GeneralArena, size: u64, alignment: u64) -> *u8`; source callers must pass
 one initialized value, never size/alignment. Sema validates that exact public

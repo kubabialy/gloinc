@@ -116,8 +116,8 @@ std::unique_ptr<Expression> GloinParser::parse_expression_impl(int min_binding_p
     return left;
 }
 
-// A balanced type application is an expression prefix only before a struct
-// literal or a static method call. Identifier capitalization plays no role.
+// A balanced type application is an expression prefix before a struct literal,
+// a static method call, or an explicitly adjacent generic function call.
 bool GloinParser::generic_type_prefix_ahead() const {
     if (current_token.type != GLOIN_TOKEN_IDENTIFIER)
         return false;
@@ -147,6 +147,10 @@ bool GloinParser::generic_type_prefix_ahead() const {
             if (depth != 0)
                 return false;
             if (allow_struct_literal && tokens[i + 1].type == GLOIN_TOKEN_LBRACE)
+                return true;
+            if (tokens[i + 1].type == GLOIN_TOKEN_LPAREN &&
+                tokens[open - 1].span.end == tokens[open].span.begin &&
+                tokens[i].span.end == tokens[i + 1].span.begin)
                 return true;
             return i + 3 < tokens.size() && tokens[i + 1].type == GLOIN_TOKEN_DOT &&
                    tokens[i + 2].type == GLOIN_TOKEN_IDENTIFIER &&

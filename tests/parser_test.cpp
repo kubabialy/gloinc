@@ -514,13 +514,28 @@ TEST(ParserTest, GenericLiteralLookaheadAcceptsQualifiedAndCompositeTypeArgument
 }
 
 TEST(ParserTest, ComparisonsRemainExpressionsWithGenericLookahead) {
-    for (const std::string source : {"a < b", "a < b > c", "a < b + c"}) {
+    for (const std::string source : {"a < b", "a < b > c", "a < b + c", "a < b > (c)"}) {
         GloinParser parser(Lexer(source), ParseMode::SyntaxOnly);
         auto expression = parser.parse_expression(0);
         ASSERT_NE(expression, nullptr) << source;
         EXPECT_FALSE(parser.has_error()) << source;
         EXPECT_TRUE(parser.at_end()) << source;
         EXPECT_NE(dynamic_cast<InfixExpression *>(expression.get()), nullptr) << source;
+    }
+}
+
+TEST(ParserTest, ExplicitGenericFunctionCallsPreserveNestedArguments) {
+    for (const std::string source : {"identity<i32>(42)",
+                                     "module.identity<Box<i32>>(value)",
+                                     "identity<*const [i32; 2]>(value)"}) {
+        GloinParser parser(Lexer(source), ParseMode::Core);
+        auto expression = parser.parse_expression(0);
+        ASSERT_NE(expression, nullptr) << source;
+        EXPECT_FALSE(parser.has_error()) << source;
+        EXPECT_TRUE(parser.at_end()) << source;
+        const auto *call = dynamic_cast<const CallExpression *>(expression.get());
+        ASSERT_NE(call, nullptr) << source;
+        EXPECT_NE(dynamic_cast<const Identifier *>(call->function.get()), nullptr) << source;
     }
 }
 

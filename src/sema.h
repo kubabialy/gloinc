@@ -166,6 +166,7 @@ class Scope {
     std::unordered_map<std::string, Symbol> symbols;
     std::unordered_map<std::string, std::shared_ptr<Type>> types; // Registry for user-defined types
     std::unordered_map<std::string, const StructDefinition *> generic_structs;
+    std::unordered_map<std::string, const FunctionDefinition *> generic_functions;
     std::shared_ptr<Scope> parent;
 
     explicit Scope(std::shared_ptr<Scope> parent = nullptr) : parent(std::move(parent)) {}
@@ -176,6 +177,7 @@ class Scope {
     void define_type(const std::string &name, std::shared_ptr<Type> type);
     std::shared_ptr<Type> resolve_type(const std::string &name);
     const StructDefinition *resolve_generic_struct(const std::string &name);
+    const FunctionDefinition *resolve_generic_function(const std::string &name);
 };
 
 class Sema {
@@ -236,6 +238,20 @@ class Sema {
                               bool right_reaches);
     std::unordered_map<const FunctionDefinition *, std::shared_ptr<FunctionType>>
         collected_functions;
+    std::unordered_map<const FunctionDefinition *, const SourceModule *> generic_function_owners;
+    struct GenericFunctionSpecialization {
+        const FunctionDefinition *definition;
+        std::vector<ValueType> arguments;
+        std::vector<std::shared_ptr<Type>> resolved_arguments;
+        const FunctionDefinition *instance;
+        std::shared_ptr<FunctionType> signature;
+    };
+    std::vector<GenericFunctionSpecialization> generic_function_specializations;
+    std::shared_ptr<FunctionType>
+    specialize_function(const FunctionDefinition *definition,
+                        const std::vector<std::shared_ptr<Type>> &arguments,
+                        SymbolId &symbol);
+    std::shared_ptr<Type> check_generic_function_call(const CallExpression *call, bool &handled);
     std::shared_ptr<FunctionType> collect_function(const FunctionDefinition *function);
     std::optional<ValueType> value_type(const std::shared_ptr<Type> &type) const;
     std::vector<std::shared_ptr<StructType>> collected_struct_types;

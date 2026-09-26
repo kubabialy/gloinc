@@ -1,0 +1,21 @@
+def struct Box<T> {
+    def pub value: T,
+}
+
+def identity<T>(value: T) -> T {
+    return value;
+}
+
+def factorial<T>(value: T) -> T {
+    if value <= 1 {
+        return 1;
+    }
+    return value * factorial<T>(value - 1);
+}
+
+def main() -> i32 {
+    def box: Box<i32> = identity<Box<i32>>(Box<i32> {
+        value: 7
+    });
+    return factorial<i32>(3) * box.value;
+}

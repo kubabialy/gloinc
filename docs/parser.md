@@ -2,7 +2,8 @@
 
 `GloinParser` defaults to `ParseMode::Core`. `compile_source` uses this mode and
 requires a successful complete parse before invoking Sema. A source file may
-contain functions, constants, imports, ordinary structs, and generic struct templates. Runtime globals, nested functions, executable
+contain functions, generic function templates, constants, imports, ordinary
+structs, and generic struct templates. Runtime globals, nested functions, executable
 file-scope statements, and deferred syntax receive parsing diagnostics.
 Sema's checked-program path resolves core type identities and rejects unsupported
 scalar types under SPEC-010; SPEC-013 checks contextual numeric literals and
@@ -77,7 +78,10 @@ Struct literals cannot take a control-flow body's opening brace. Generic
 type-prefix lookahead uses token structure rather than identifier capitalization;
 type parsing splits `>>` only when consuming nested type closers and preserves
 each closer's byte position. The lookahead also recognizes module-qualified
-constructors, static method receivers, and fixed-array or pointer type arguments.
+constructors, static method receivers, generic function calls, and fixed-array
+or pointer type arguments. For a generic function call, `<` touches the callee
+name and `(` touches the closing `>`; spaced `a < b > (c)` remains comparison
+syntax.
 These checks do not establish aggregate layout or concurrency support. Checked generic struct
 specialization is a separate semantic and codegen step.
 

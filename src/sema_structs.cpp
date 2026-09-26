@@ -43,6 +43,7 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
         const auto primitive = standard_operation(name, standard_primitive_names);
         if (get_builtin_type(name) || current_scope->types.contains(name) ||
             current_scope->generic_structs.contains(name) ||
+            current_scope->generic_functions.contains(name) ||
             current_scope->symbols.contains(name) || imports.contains(name) ||
             (current_module && !current_module->standard_name.empty() && name == "__write_stdout") ||
             (current_module && primitive &&
@@ -74,7 +75,7 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
                     valid = false;
                 }
                 if (!method->generic_params.empty()) {
-                    log_error("Generic methods with their own type parameters await SPEC-033");
+                    log_error("Generic methods with their own type parameters are not supported");
                     valid = false;
                 }
             }

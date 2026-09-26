@@ -1,8 +1,8 @@
-# Generic structs (development version)
+# Generics (development version)
 
 The current development compiler supports explicit type arguments on generic
-structs, including instance and static methods. This feature is not in the
-0.0.3 release. Generic functions and methods with their own type parameters
+structs, their instance and static methods, and generic functions. These
+features are not in the 0.0.3 release. Methods with their own type parameters
 are still rejected.
 
 ```gloin
@@ -51,8 +51,35 @@ body valid for every possible type argument. The compiler currently limits a
 program to 256 concrete generic struct specializations, and a directly nested
 application to 64 levels.
 
-Types are never inferred for generic arguments. The compiler currently
-rejects `def identity<T>(...)` as a generic function.
+Generic functions declare type parameters after their name and require all
+type arguments at every call. They can be public and called through an import.
+There is no type inference or overload resolution.
+
+```gloin
+def identity<T>(value: T) -> T { return value; }
+
+def main() -> i32 {
+    return identity<i32>(42);
+}
+```
+
+The call spelling is `name<T>(...)` or `module.name<T>(...)`. The `<` must
+touch the function name and `(` must touch the closing `>`; spaces inside the
+type argument list are allowed. This keeps `a < b > c` a comparison. Nested
+arguments such as `identity<Box<i32>>(box)` are accepted. A call without type
+arguments, an incorrect count, an inaccessible function, and unknown type
+arguments are compile errors.
+
+The compiler creates one checked function body per distinct canonical argument
+list; `int` and `i32` select the same specialization. Recursive calls with
+the same type arguments reuse it. Function bodies are checked when specialized,
+so an unused generic function is not proven valid for every possible type.
+At most 256 concrete generic function specializations may be created in one
+program. A generic function can call private helpers in its defining module,
+even when specialized from another module. Its argument and return types are
+checked for each specialization. Generic methods with additional method type
+parameters remain unsupported.
+
 Built-in `result<T>` and `error` have a separate
 [partial design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented);
 they are not implemented. Slices and vectors are planned after generic types

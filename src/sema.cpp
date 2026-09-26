@@ -1,4 +1,5 @@
 #include "sema.h"
+#include "ast_clone.h"
 #include "operators.h"
 #include <charconv>
 #include <iostream>
@@ -83,6 +84,12 @@ const StructDefinition *Scope::resolve_generic_struct(const std::string &name) {
     if (auto it = generic_structs.find(name); it != generic_structs.end())
         return it->second;
     return parent ? parent->resolve_generic_struct(name) : nullptr;
+}
+
+const FunctionDefinition *Scope::resolve_generic_function(const std::string &name) {
+    if (auto it = generic_functions.find(name); it != generic_functions.end())
+        return it->second;
+    return parent ? parent->resolve_generic_function(name) : nullptr;
 }
 
 Sema::Sema(std::shared_ptr<Diagnostics> diagnostics) : diagnostics_(std::move(diagnostics)) {
@@ -242,6 +249,8 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     collected_struct_types.clear();
     generic_struct_owners.clear();
     generic_specializations.clear();
+    generic_function_owners.clear();
+    generic_function_specializations.clear();
     generic_specialization_depth = 0;
     initialization.clear();
     falls_through = true;
@@ -291,17 +300,31 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         check_bodies(program);
         // A body can instantiate another generic struct. Keep checking until
         // every concrete method body has its own semantic bindings.
-        for (size_t i = 0; i < generic_specializations.size(); ++i) {
-            const auto specialization = generic_specializations[i];
-            const auto *owner = generic_struct_owners.at(specialization.definition);
-            select_module(owner);
-            current_scope = std::make_shared<Scope>(module_scopes.at(owner));
-            for (size_t argument = 0; argument < specialization.resolved_arguments.size(); ++argument)
-                current_scope->define_type(specialization.definition->generic_params[argument],
-                                           specialization.resolved_arguments[argument]);
-            for (const auto *method : specialization.method_instances)
-                if (collected_functions.contains(method))
-                    check_statement(method);
+        size_t struct_index = 0;
+        size_t function_index = 0;
+        while (struct_index < generic_specializations.size() ||
+               function_index < generic_function_specializations.size()) {
+            if (struct_index < generic_specializations.size()) {
+                const auto specialization = generic_specializations[struct_index++];
+                const auto *owner = generic_struct_owners.at(specialization.definition);
+                select_module(owner);
+                current_scope = std::make_shared<Scope>(module_scopes.at(owner));
+                for (size_t argument = 0; argument < specialization.resolved_arguments.size(); ++argument)
+                    current_scope->define_type(specialization.definition->generic_params[argument],
+                                               specialization.resolved_arguments[argument]);
+                for (const auto *method : specialization.method_instances)
+                    if (collected_functions.contains(method))
+                        check_statement(method);
+            } else {
+                const auto specialization = generic_function_specializations[function_index++];
+                const auto *owner = generic_function_owners.at(specialization.definition);
+                select_module(owner);
+                current_scope = std::make_shared<Scope>(module_scopes.at(owner));
+                for (size_t argument = 0; argument < specialization.resolved_arguments.size(); ++argument)
+                    current_scope->define_type(specialization.definition->generic_params[argument],
+                                               specialization.resolved_arguments[argument]);
+                check_statement(specialization.instance);
+            }
         }
         select_module(nullptr);
         if (!has_error())
@@ -323,7 +346,7 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
         return nullptr;
     }
     if (recording && !func_def->generic_params.empty()) {
-        log_error("Generic functions await SPEC-033 specialization");
+        log_error("Generic function template requires explicit type arguments at a call");
         return nullptr;
     }
     if (recording && (func_def->is_deferred || func_def->is_spawnable)) {
@@ -376,6 +399,120 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
         recording->linkage_names[recording->bindings.at(func_def->name.get())] =
             "gloin.user." + sym.name;
     return func_type;
+}
+
+std::shared_ptr<FunctionType>
+Sema::specialize_function(const FunctionDefinition *definition,
+                          const std::vector<std::shared_ptr<Type>> &arguments,
+                          SymbolId &symbol) {
+    std::vector<ValueType> keys;
+    for (const auto &argument : arguments) {
+        auto value = value_type(argument);
+        if (!value)
+            return nullptr;
+        keys.push_back(*value);
+    }
+    for (const auto &specialization : generic_function_specializations)
+        if (specialization.definition == definition && specialization.arguments == keys) {
+            symbol = recording->bindings.at(specialization.instance->name.get());
+            return specialization.signature;
+        }
+    if (generic_function_specializations.size() >= 256) {
+        log_error("Generic function specialization limit of 256 exceeded");
+        return nullptr;
+    }
+
+    auto instance = clone_function(*definition);
+    instance->generic_params.clear();
+    const auto *concrete = instance.get();
+    recording->specialized_functions.push_back(std::move(instance));
+
+    const auto *owner = generic_function_owners.at(definition);
+    auto saved_scope = current_scope;
+    auto saved_module = current_module;
+    auto saved_imports = imports;
+    current_scope = std::make_shared<Scope>(module_scopes.at(owner));
+    current_module = owner;
+    imports = module_imports.at(owner);
+    for (size_t i = 0; i < arguments.size(); ++i)
+        current_scope->define_type(definition->generic_params[i], arguments[i]);
+    auto signature = collect_function(concrete);
+    current_scope = saved_scope;
+    current_module = saved_module;
+    imports = std::move(saved_imports);
+    if (!signature)
+        return nullptr;
+    collected_functions.emplace(concrete, signature);
+    symbol = recording->bindings.at(concrete->name.get());
+    recording->linkage_names[symbol] = "gloin.generic.function." + std::to_string(symbol);
+    generic_function_specializations.push_back(
+        {definition, std::move(keys), arguments, concrete, signature});
+    return signature;
+}
+
+std::shared_ptr<Type> Sema::check_generic_function_call(const CallExpression *call, bool &handled) {
+    const auto *callee = dynamic_cast<const Identifier *>(call->function.get());
+    if (!callee)
+        return nullptr;
+    const auto open = callee->value.find('<');
+    if (open == std::string::npos || !callee->value.ends_with('>'))
+        return nullptr;
+    handled = true;
+    const auto base = callee->value.substr(0, open);
+    const auto argument_names = split_type_arguments(
+        std::string_view(callee->value).substr(open + 1, callee->value.size() - open - 2));
+    const FunctionDefinition *definition = nullptr;
+    if (const auto dot = base.find('.'); dot != std::string::npos) {
+        auto imported = imports.find(base.substr(0, dot));
+        if (imported != imports.end() && !current_scope->resolve(base.substr(0, dot))) {
+            definition = module_scopes.at(imported->second)->resolve_generic_function(base.substr(dot + 1));
+            if (definition && !definition->is_public)
+                definition = nullptr;
+        }
+    } else {
+        if (!current_scope->resolve(base))
+            definition = current_scope->resolve_generic_function(base);
+    }
+    if (!definition) {
+        log_error("Unknown or inaccessible generic function '" + base + "'");
+        return nullptr;
+    }
+    if (argument_names.size() != definition->generic_params.size()) {
+        log_error("Generic function '" + base + "' expects " +
+                  std::to_string(definition->generic_params.size()) + " type arguments");
+        return nullptr;
+    }
+    std::vector<std::shared_ptr<Type>> arguments;
+    for (const auto &name : argument_names) {
+        auto type = resolve_type_from_string(name);
+        if (!type || !value_type(type) || dynamic_cast<VoidType *>(type.get())) {
+            log_error("Unknown or invalid generic type argument '" + name + "'");
+            return nullptr;
+        }
+        arguments.push_back(std::move(type));
+    }
+    SymbolId symbol = invalid_symbol;
+    auto signature = specialize_function(definition, arguments, symbol);
+    if (!signature)
+        return nullptr;
+    recording->bindings[callee] = symbol;
+    if (call->arguments.size() != signature->param_types.size()) {
+        log_error("Error: Incorrect number of arguments. Expected " +
+                  std::to_string(signature->param_types.size()) + ", got " +
+                  std::to_string(call->arguments.size()));
+        return nullptr;
+    }
+    for (size_t i = 0; i < call->arguments.size(); ++i) {
+        auto actual = check_typed_expression(call->arguments[i].get(), signature->param_types[i]);
+        if (!actual)
+            return nullptr;
+        if (!actual->equals(*signature->param_types[i])) {
+            log_error("Error: Argument " + std::to_string(i + 1) + " type mismatch. Expected " +
+                      signature->param_types[i]->to_string() + ", got " + actual->to_string());
+            return nullptr;
+        }
+    }
+    return signature->return_type;
 }
 
 void Sema::check_statement(const Statement *stmt) {
@@ -632,6 +769,11 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
     if (const auto *ident = dynamic_cast<const Identifier *>(expr)) {
         Symbol *sym = current_scope->resolve(ident->value);
         if (!sym) {
+            if (recording && current_scope->resolve_generic_function(ident->value)) {
+                log_error("Generic function '" + ident->value +
+                          "' requires explicit type arguments");
+                return nullptr;
+            }
             log_error("Error: Undefined variable '" + ident->value + "'\n");
             return nullptr;
         }
@@ -796,6 +938,9 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
     } else if (const auto *call = dynamic_cast<const CallExpression *>(expr)) {
         if (recording) {
             bool handled = false;
+            auto generic = check_generic_function_call(call, handled);
+            if (handled)
+                return generic;
             auto result = check_method_call(call, handled);
             if (handled)
                 return result;
@@ -974,7 +1119,9 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
         return false;
     }
     if (current_scope->symbols.contains(name->value) ||
-        current_scope->types.contains(name->value)) {
+        current_scope->types.contains(name->value) ||
+        current_scope->generic_structs.contains(name->value) ||
+        current_scope->generic_functions.contains(name->value)) {
         log_error("Duplicate declaration '" + name->value + "'");
         return false;
     }

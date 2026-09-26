@@ -477,9 +477,7 @@ TEST_F(CoreAcceptanceTest, RejectDeferredEnum) {
     rejects("reject/deferred_enum.gloin", "identifier");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredGeneric) {
-    rejects("reject/deferred_generic.gloin", "Generic");
-}
+TEST_F(CoreAcceptanceTest, RunGenericFunction) { runs("run/generic_function.gloin", "42"); }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredExtern) {
     rejects("reject/deferred_extern.gloin", "top-level function or constant");
