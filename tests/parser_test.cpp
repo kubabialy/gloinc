@@ -535,7 +535,33 @@ TEST(ParserTest, ExplicitGenericFunctionCallsPreserveNestedArguments) {
         EXPECT_TRUE(parser.at_end()) << source;
         const auto *call = dynamic_cast<const CallExpression *>(expression.get());
         ASSERT_NE(call, nullptr) << source;
-        EXPECT_NE(dynamic_cast<const Identifier *>(call->function.get()), nullptr) << source;
+        if (source.starts_with("module.")) {
+            const auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get());
+            ASSERT_NE(member, nullptr) << source;
+            EXPECT_EQ(dynamic_cast<const Identifier *>(member->member.get())->value,
+                      "identity<Box<i32>>");
+        } else {
+            EXPECT_NE(dynamic_cast<const Identifier *>(call->function.get()), nullptr) << source;
+        }
+    }
+}
+
+TEST(ParserTest, GenericMethodCallsKeepTheReceiverSeparate) {
+    for (const std::string source : {"box.choose<i32>(42)",
+                                     "Box<i32>.make<bool>(true)",
+                                     "pkg.Box<i32>.make<*const i32>(value)"}) {
+        GloinParser parser(Lexer(source), ParseMode::Core);
+        auto expression = parser.parse_expression(0);
+        ASSERT_NE(expression, nullptr) << source;
+        EXPECT_FALSE(parser.has_error()) << source;
+        EXPECT_TRUE(parser.at_end()) << source;
+        const auto *call = dynamic_cast<const CallExpression *>(expression.get());
+        ASSERT_NE(call, nullptr) << source;
+        const auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get());
+        ASSERT_NE(member, nullptr) << source;
+        const auto *name = dynamic_cast<const Identifier *>(member->member.get());
+        ASSERT_NE(name, nullptr) << source;
+        EXPECT_NE(name->value.find('<'), std::string::npos) << source;
     }
 }
 

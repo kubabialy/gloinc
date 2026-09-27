@@ -1,0 +1,38 @@
+def struct Pair<A, B> {
+    def pub first: A,
+    def pub second: B,
+
+    def pub with_third<C>(self: &const Pair<A, B>, third: C) -> Triple<A, B, C> {
+        return Triple<A, B, C> {
+            first: self.first,
+            second: self.second,
+            third: third
+        };
+    }
+
+}
+
+def struct Triple<A, B, C> {
+    def pub first: A,
+    def pub second: B,
+    def pub third: C,
+}
+
+def struct Pairs {
+    def pub static create<A, B>(first: A, second: B) -> Pair<A, B> {
+        return Pair<A, B> {
+            first: first,
+            second: second
+        };
+    }
+
+}
+
+def main() -> i32 {
+    def pair: Pair<i32, i32> = Pairs.create<i32, i32>(40, 2);
+    def triple: Triple<i32, i32, bool> = pair.with_third<bool>(true);
+    if triple.third {
+        return triple.first + triple.second;
+    }
+    return 1;
+}

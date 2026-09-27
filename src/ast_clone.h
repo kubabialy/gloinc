@@ -3,8 +3,8 @@
 
 #include "AST.h"
 
-// A checked specialization needs distinct AST node identities for every
-// concrete method body, because semantic bindings are keyed by node address.
+// Checked specializations need distinct AST node identities for every concrete
+// function or method body, because semantic bindings are keyed by node address.
 std::unique_ptr<FunctionDefinition> clone_function(const FunctionDefinition &function);
 
 #endif

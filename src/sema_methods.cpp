@@ -1,4 +1,6 @@
 #include "sema.h"
+#include "ast_clone.h"
+#include <set>
 
 void Sema::collect_methods(const std::vector<std::unique_ptr<Statement>> &program) {
     for (const auto &statement : program) {
@@ -22,12 +24,32 @@ void Sema::collect_method(const std::shared_ptr<StructType> &structure,
         log_error("Duplicate field or method '" + name + "'");
         return;
     }
+    if (!method->generic_params.empty()) {
+        std::set<std::string> parameters;
+        for (const auto &parameter : method->generic_params)
+            if (!parameters.insert(parameter).second || get_builtin_type(parameter) ||
+                current_scope->resolve_type(parameter) ||
+                current_scope->resolve_generic_struct(parameter))
+                log_error("Duplicate or reserved generic method parameter '" + parameter + "'");
+        return;
+    }
     // Method symbols have their own namespace, not the file's function namespace.
     enter_scope();
     auto signature = collect_function(method);
     leave_scope();
     if (!signature)
         return;
+    if (!validate_method_signature(structure, method, signature))
+        return;
+    collected_functions.emplace(method, signature);
+    register_arena_method(structure, method, signature);
+    recording->linkage_names[recording->bindings.at(method->name.get())] =
+        "gloin.method." + std::to_string(*structure->identity) + "." + name;
+}
+
+bool Sema::validate_method_signature(const std::shared_ptr<StructType> &structure,
+                                     const FunctionDefinition *method,
+                                     const std::shared_ptr<FunctionType> &signature) {
     bool valid = true;
     for (size_t i = 0; i < method->parameters.size(); ++i) {
         if (method->parameters[i].name->value == "self" && (method->is_static || i != 0)) {
@@ -46,12 +68,71 @@ void Sema::collect_method(const std::shared_ptr<StructType> &structure,
             valid = false;
         }
     }
-    if (!valid)
+    return valid;
+}
+
+void Sema::bind_enclosing_type_params(const std::shared_ptr<StructType> &structure) {
+    for (const auto &specialization : generic_specializations) {
+        if (specialization.type->identity != structure->identity)
+            continue;
+        for (size_t i = 0; i < specialization.resolved_arguments.size(); ++i)
+            current_scope->define_type(specialization.definition->generic_params[i],
+                                       specialization.resolved_arguments[i]);
         return;
-    collected_functions.emplace(method, signature);
-    register_arena_method(structure, method, signature);
-    recording->linkage_names[recording->bindings.at(method->name.get())] =
-        "gloin.method." + std::to_string(*structure->identity) + "." + name;
+    }
+}
+
+std::shared_ptr<FunctionType>
+Sema::specialize_method(const std::shared_ptr<StructType> &structure,
+                        const FunctionDefinition *definition,
+                        const std::vector<std::shared_ptr<Type>> &arguments, SymbolId &symbol) {
+    std::vector<ValueType> keys;
+    for (const auto &argument : arguments) {
+        auto value = value_type(argument);
+        if (!value)
+            return nullptr;
+        keys.push_back(*value);
+    }
+    for (const auto &specialization : generic_method_specializations)
+        if (specialization.definition == definition &&
+            specialization.receiver->identity == structure->identity &&
+            specialization.arguments == keys) {
+            symbol = recording->bindings.at(specialization.instance->name.get());
+            return specialization.signature;
+        }
+    if (generic_method_specializations.size() >= 256) {
+        log_error("Generic method specialization limit of 256 exceeded");
+        return nullptr;
+    }
+    auto instance = clone_function(*definition);
+    instance->generic_params.clear();
+    const auto *concrete = instance.get();
+    recording->specialized_methods.push_back(std::move(instance));
+
+    auto saved_scope = current_scope;
+    auto saved_module = current_module;
+    auto saved_imports = imports;
+    current_module = structure->owner;
+    current_scope = std::make_shared<Scope>(module_scopes.at(current_module));
+    imports = module_imports.at(current_module);
+    bind_enclosing_type_params(structure);
+    for (size_t i = 0; i < arguments.size(); ++i)
+        current_scope->define_type(definition->generic_params[i], arguments[i]);
+    auto signature = collect_function(concrete);
+    bool valid = signature && validate_method_signature(structure, concrete, signature);
+    current_scope = saved_scope;
+    current_module = saved_module;
+    imports = std::move(saved_imports);
+    if (!valid)
+        return nullptr;
+    collected_functions.emplace(concrete, signature);
+    symbol = recording->bindings.at(concrete->name.get());
+    recording->linkage_names[symbol] = "gloin.method." + std::to_string(*structure->identity) +
+                                       "." + definition->name->value + ".generic." +
+                                       std::to_string(symbol);
+    generic_method_specializations.push_back(
+        {definition, structure, std::move(keys), arguments, concrete, signature});
+    return signature;
 }
 
 void Sema::check_methods(const StructDefinition *definition) {
@@ -87,8 +168,10 @@ const FunctionDefinition *Sema::method_target(const MemberAccessExpression *memb
             type = pointer->pointee;
         structure = std::dynamic_pointer_cast<StructType>(type);
     }
-    if (structure && structure->methods.contains(name->value))
-        return structure->methods.at(name->value);
+    const auto open = name->value.find('<');
+    const auto method_name = open == std::string::npos ? name->value : name->value.substr(0, open);
+    if (structure && structure->methods.contains(method_name))
+        return structure->methods.at(method_name);
     return nullptr;
 }
 
@@ -96,14 +179,38 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
     const auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get());
     if (!member)
         return nullptr;
-    const auto *method = method_target(member);
+    const auto *name = dynamic_cast<const Identifier *>(member->member.get());
+    if (!name)
+        return nullptr;
+    const auto open = name->value.find('<');
+    const bool explicit_types = open != std::string::npos && name->value.ends_with('>');
     auto structure = method_type_receiver(member->left.get());
     const bool type_receiver = bool(structure);
-    handled = method || type_receiver;
+    std::shared_ptr<PointerType> receiver_pointer;
+    if (!type_receiver) {
+        if (const auto *module = dynamic_cast<const Identifier *>(member->left.get());
+            module && imports.contains(module->value) &&
+            !current_scope->resolve(module->value))
+            return nullptr; // A module function call is handled separately.
+        auto receiver_type = check_expression(member->left.get());
+        if (!receiver_type) {
+            handled = true;
+            return nullptr;
+        }
+        receiver_pointer = std::dynamic_pointer_cast<PointerType>(receiver_type);
+        structure = std::dynamic_pointer_cast<StructType>(
+            receiver_pointer ? receiver_pointer->pointee : receiver_type);
+    }
+    const auto method_name = open == std::string::npos ? name->value : name->value.substr(0, open);
+    const auto *method = structure && structure->methods.contains(method_name)
+                             ? structure->methods.at(method_name)
+                             : nullptr;
+    handled = method || type_receiver || explicit_types;
     if (!handled)
         return nullptr;
     if (!method) {
-        log_error("Unknown method on type '" + structure->name + "'");
+        log_error(structure ? "Unknown method on type '" + structure->name + "'"
+                            : "Unknown generic method '" + name->value + "'");
         return nullptr;
     }
     if (type_receiver != method->is_static) {
@@ -111,35 +218,66 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
                                     : "Instance method requires an object receiver");
         return nullptr;
     }
-    auto found = collected_functions.find(method);
-    if (found == collected_functions.end())
-        return nullptr; // Invalid declaration already diagnosed.
-    auto signature = found->second;
-    size_t offset = method->is_static ? 0 : 1;
-    if (!type_receiver) {
-        auto receiver_type = check_expression(member->left.get());
-        if (!receiver_type)
-            return nullptr;
-        auto pointer = std::dynamic_pointer_cast<PointerType>(receiver_type);
-        const bool take_address = !pointer;
-        if (!pointer) {
-            auto place = check_place(member->left.get(), true);
-            if (!place.type || !place.addressable)
-                return nullptr;
-            pointer = std::make_shared<PointerType>(place.type, false, !place.writable);
-        }
-        structure = std::dynamic_pointer_cast<StructType>(pointer->pointee);
-        auto expected = std::static_pointer_cast<PointerType>(signature->param_types[0]);
-        if (!pointer_conversion(*pointer, *expected)) {
-            log_error("Method receiver requires " + expected->to_string() + ", got " +
-                      pointer->to_string());
-            return nullptr;
-        }
-        recording->method_receivers[call] = take_address;
-    }
     if (!method->is_public && structure->owner != current_module) {
         log_error("Private method '" + method->name->value + "'");
         return nullptr;
+    }
+    std::shared_ptr<FunctionType> signature;
+    SymbolId symbol = invalid_symbol;
+    if (!method->generic_params.empty()) {
+        if (!explicit_types) {
+            log_error("Generic method '" + method->name->value +
+                      "' requires explicit type arguments");
+            return nullptr;
+        }
+        auto names = split_type_arguments(std::string_view(name->value).substr(
+            open + 1, name->value.size() - open - 2));
+        if (names.size() != method->generic_params.size()) {
+            log_error("Generic method '" + method->name->value + "' expects " +
+                      std::to_string(method->generic_params.size()) + " type arguments");
+            return nullptr;
+        }
+        std::vector<std::shared_ptr<Type>> arguments;
+        for (const auto &argument : names) {
+            auto type = resolve_type_from_string(argument);
+            if (!type || !value_type(type) || dynamic_cast<VoidType *>(type.get())) {
+                log_error("Unknown or invalid generic type argument '" + argument + "'");
+                return nullptr;
+            }
+            arguments.push_back(std::move(type));
+        }
+        signature = specialize_method(structure, method, arguments, symbol);
+        if (!signature)
+            return nullptr;
+    } else {
+        if (explicit_types) {
+            log_error("Non-generic method '" + method->name->value +
+                      "' cannot take type arguments");
+            return nullptr;
+        }
+        auto found = collected_functions.find(method);
+        if (found == collected_functions.end())
+            return nullptr; // Invalid declaration already diagnosed.
+        signature = found->second;
+        symbol = recording->bindings.at(method->name.get());
+    }
+    size_t offset = method->is_static ? 0 : 1;
+    if (!type_receiver) {
+        const bool take_address = !receiver_pointer;
+        if (!receiver_pointer) {
+            auto place = check_place(member->left.get(), true);
+            if (!place.type || !place.addressable)
+                return nullptr;
+            receiver_pointer =
+                std::make_shared<PointerType>(place.type, false, !place.writable);
+        }
+        auto expected = std::static_pointer_cast<PointerType>(signature->param_types[0]);
+        if (!pointer_conversion(*receiver_pointer, *expected)) {
+            log_error("Method receiver requires " + expected->to_string() + ", got " +
+                      receiver_pointer->to_string());
+            return nullptr;
+        }
+        recording->method_receivers[call] = take_address;
     }
     if (auto bridge = arena_methods.find(method); bridge != arena_methods.end()) {
         if (call->arguments.size() != 1) {
@@ -154,8 +292,7 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
         if (!value || !value_type(value) || value_type(value) == ValueType(CoreType::Void))
             return nullptr;
         recording->arena_allocations[call] = bridge->second;
-        recording->bindings[static_cast<const Identifier *>(member->member.get())] =
-            recording->bindings.at(method->name.get());
+        recording->bindings[name] = symbol;
         return std::make_shared<PointerType>(value, bridge->second, false);
     }
     if (call->arguments.size() != signature->param_types.size() - offset) {
@@ -172,7 +309,6 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
             return nullptr;
         }
     }
-    recording->bindings[static_cast<const Identifier *>(member->member.get())] =
-        recording->bindings.at(method->name.get());
+    recording->bindings[name] = symbol;
     return signature->return_type;
 }

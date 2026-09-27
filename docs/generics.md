@@ -1,9 +1,8 @@
 # Generics (development version)
 
 The current development compiler supports explicit type arguments on generic
-structs, their instance and static methods, and generic functions. These
-features are not in the 0.0.3 release. Methods with their own type parameters
-are still rejected.
+structs, instance and static methods (including methods with their own type
+parameters), and generic functions. These features are not in the 0.0.3 release.
 
 ```gloin
 def struct Box<T> {
@@ -44,12 +43,54 @@ Methods are checked and emitted separately for each concrete struct type. An
 instance method spells its receiver, such as `self: &const Box<T>`; a static
 method uses `def static` and is called as `Box<i32>.create(42)`. Method bodies
 may refer to the enclosing type parameters, use private fields/helpers in
-their defining module, and call themselves recursively. A method cannot
-declare additional type parameters. A method body is checked when its enclosing
-struct specialization is used; an unused generic template does not prove its
-body valid for every possible type argument. The compiler currently limits a
-program to 256 concrete generic struct specializations, and a directly nested
-application to 64 levels.
+their defining module, and call themselves recursively. A method without its
+own type parameters is checked when its enclosing struct specialization is
+used. The compiler limits a program to 256 concrete generic struct
+specializations, and a directly nested application to 64 levels.
+
+A method may also declare its own type parameters, independently of its
+struct's parameters. Both ordinary and generic structs can do this. Every
+call supplies all method arguments explicitly:
+
+```gloin
+def struct Triple<A, B, C> {
+    def pub first: A,
+    def pub second: B,
+    def pub third: C,
+}
+
+def struct Pair<A, B> {
+    def pub first: A,
+    def pub second: B,
+
+    def pub with_third<C>(self: &const Pair<A, B>, third: C) -> Triple<A, B, C> {
+        return Triple<A, B, C> {
+            first: self.first,
+            second: self.second,
+            third: third
+        };
+    }
+}
+```
+
+Call it as `pair.with_third<bool>(true)`. A static method on an ordinary
+struct uses a form such as `Pairs.create<i32, string>(40, "x")`; an imported
+type keeps its module prefix. The `<` touches the method name and `(` touches
+the closing `>`.
+The [runnable example](../examples/generic_methods.gloin) also shows a
+generic static method on an ordinary struct.
+
+Specializations are keyed by concrete receiver type and canonical method
+arguments; aliases such as `int` and `i32` reuse one instance. Recursive
+calls with the same arguments reuse it. A method with its own type parameters
+is checked only when that concrete method is called, even if its enclosing
+struct was specialized. An unused method template is not proven valid for
+every argument. Wrong arity, unknown/private arguments, omitted arguments,
+type arguments on an ordinary method, invalid receivers, and duplicate or
+shadowing parameter names are compile errors. Private methods remain private
+across modules; public specialized methods may call private helpers in their
+defining module. A program may create at most 256 concrete method
+specializations with own type arguments.
 
 Generic functions declare type parameters after their name and require all
 type arguments at every call. They can be public and called through an import.
@@ -77,8 +118,7 @@ so an unused generic function is not proven valid for every possible type.
 At most 256 concrete generic function specializations may be created in one
 program. A generic function can call private helpers in its defining module,
 even when specialized from another module. Its argument and return types are
-checked for each specialization. Generic methods with additional method type
-parameters remain unsupported.
+checked for each specialization.
 
 Built-in `result<T>` and `error` have a separate
 [partial design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented);

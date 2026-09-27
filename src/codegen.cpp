@@ -161,7 +161,8 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
                     if (const auto *structure = dynamic_cast<const StructDefinition *>(statement.get());
                         structure && structure->generic_params.empty())
                         for (const auto &method : structure->methods)
-                            declare_function(method.get());
+                            if (method->generic_params.empty())
+                                declare_function(method.get());
                     if (const auto *function = dynamic_cast<const FunctionDefinition *>(statement.get());
                         function && function->generic_params.empty())
                         declare_function(function);
@@ -171,7 +172,8 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
                 declare_unit(module->declarations);
             declare_unit(program);
             for (const auto &method : checked_data->specialized_methods)
-                declare_function(method.get());
+                if (method->generic_params.empty())
+                    declare_function(method.get());
             for (const auto &function : checked_data->specialized_functions)
                 declare_function(function.get());
             for (const auto *module : checked_data->modules)
@@ -195,7 +197,8 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
         }
         if (checked_data)
             for (const auto &method : checked_data->specialized_methods)
-                gen_statement(method.get());
+                if (method->generic_params.empty())
+                    gen_statement(method.get());
         if (checked_data)
             for (const auto &function : checked_data->specialized_functions)
                 gen_statement(function.get());
@@ -322,7 +325,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
                 return;
             (void)checked_type(struct_def);
             for (const auto &method : struct_def->methods)
-                gen_statement(method.get());
+                if (method->generic_params.empty())
+                    gen_statement(method.get());
             return;
         }
         std::string name = struct_def->name->value;

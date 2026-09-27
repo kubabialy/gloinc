@@ -269,8 +269,8 @@ TEST_F(CheckedGenericsTest, InvalidTemplateDeclarationsAndPrivateImports) {
              std::pair{"def struct Pair<i32> { def value: i32, }", "Expected identifier"},
              std::pair{"def struct Pair<T> { def value: T, def value: T, }",
                        "Duplicate field"},
-             std::pair{"def struct Pair<T> { def get<U>(self: *Pair<T>) -> T { return self.value; } }",
-                       "Generic methods with their own type parameters"}}) {
+             std::pair{"def struct Pair<T> { def get<T>(self: *Pair<T>) -> T { return self.value; } }",
+                       "Duplicate or reserved generic method parameter"}}) {
         SCOPED_TRACE(declaration);
         auto file = source(std::string(declaration) + " def main() -> i32 { return 0; }");
         expect_error(invoke({"--check", file}), 1, diagnostic);
@@ -394,4 +394,130 @@ TEST_F(CheckedGenericsTest, GenericFunctionCallAndDeclarationDiagnostics) {
                           "def main() -> i32 { return grow<i32>(42); }");
     expect_error(invoke({"--check", growing}), 1,
                  "Generic function specialization limit of 256 exceeded");
+}
+
+TEST_F(CheckedGenericsTest, GenericMethodsSpecializeForReceiverAndOwnTypes) {
+    auto file = source(R"(
+        def identity<T>(value: T) -> T { return value; }
+        def struct Box<T> {
+            def pub value: T,
+            def pub static from<U>(marker: U, fallback: T) -> Box<T> {
+                return Box<T> { value: fallback };
+            }
+            def pub choose<U>(self: &const Box<T>, candidate: U) -> U {
+                return identity<U>(candidate);
+            }
+            def pub static count<U>(n: i32, marker: U) -> i32 {
+                if n <= 0 { return 0; }
+                return 1 + Box<T>.count<U>(n - 1, marker);
+            }
+        }
+        def struct Tool {
+            def pub static pass<U>(value: U) -> U { return value; }
+        }
+        def main() -> i32 {
+            def box: Box<i32> = Box<i32>.from<bool>(true, 40);
+            def other: Box<bool> = Box<bool>.from<i32>(7, true);
+            if other.value && Box<i32>.count<bool>(2, true) == 2 {
+                def first: i32 = box.choose<int>(Tool.pass<i32>(20));
+                return first + identity<&const Box<i32>>(&box).choose<i32>(22);
+            }
+            return 1;
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    const auto executable = directory + "/generic-method-arguments-native";
+    expect_success(invoke_raw({"-O2", "-o", executable, file}), "");
+    const auto out = directory + "/generic-method-arguments-native.stdout";
+    const auto err = directory + "/generic-method-arguments-native.stderr";
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+    std::string message;
+    bool launch_failed = false;
+    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                                10, 0, &message, &launch_failed);
+    EXPECT_FALSE(launch_failed) << message;
+    EXPECT_EQ(code, 42) << message << read(err);
+}
+
+TEST_F(CheckedGenericsTest, GenericMethodsHonorModuleVisibilityAndPrivateHelpers) {
+    source(R"(
+        def pub struct Box<T> {
+            def pub value: T,
+            def pub static make<U>(value: T, marker: U) -> Box<T> {
+                return Box<T> { value: value };
+            }
+            def hidden<U>(self: &const Box<T>, alternative: U) -> U {
+                return alternative;
+            }
+            def pub choose<U>(self: &const Box<T>, alternative: U) -> U {
+                return self.hidden<U>(alternative);
+            }
+        }
+    )", "container.gloin");
+    auto file = source(R"(
+        import "./container";
+        def main() -> i32 {
+            def box: container.Box<i32> = container.Box<i32>.make<bool>(40, true);
+            return box.choose<i32>(42);
+        }
+    )", "main.gloin");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    auto private_call = source("import \"./container\"; "
+                               "def main() -> i32 { "
+                               "def box: container.Box<i32> = "
+                               "container.Box<i32>.make<bool>(40, true); "
+                               "return box.hidden<i32>(42); }",
+                               "private-method.gloin");
+    expect_error(invoke({"--check", private_call}), 1, "Private method");
+}
+
+TEST_F(CheckedGenericsTest, GenericMethodArgumentsAndBodiesAreChecked) {
+    const std::string prelude =
+        "def struct Box<T> { def value: T, "
+        "def choose<U>(self: &const Box<T>, value: U) -> U { return value; } "
+        "def get(self: &const Box<T>) -> T { return self.value; } } ";
+    for (const auto &[call, diagnostic] : {
+             std::pair{"box.choose(42)", "requires explicit type arguments"},
+             std::pair{"box.choose<i32, bool>(42)", "expects 1 type arguments"},
+             std::pair{"box.choose<Missing>(42)", "Unknown or invalid generic type argument"},
+             std::pair{"box.choose<i32>(true)", "Method argument type mismatch"},
+             std::pair{"box.get<i32>()", "cannot take type arguments"}}) {
+        SCOPED_TRACE(call);
+        auto file = source(prelude + "def main() -> i32 { "
+                                   "def box: Box<i32> = Box<i32> { value: 40 }; "
+                                   "return " + std::string(call) + "; }");
+        expect_error(invoke({"--check", file}), 1, diagnostic);
+    }
+    auto duplicate = source("def struct Box<T> { def value: T, "
+                            "def choose<U, U>(self: &Box<T>, value: U) -> U { return value; } } "
+                            "def main() -> i32 { return 0; }");
+    expect_error(invoke({"--check", duplicate}), 1,
+                 "Duplicate or reserved generic method parameter");
+    auto unused = source("def struct Box<T> { def value: T, "
+                         "def broken<U>(self: &const Box<T>, value: U) -> U { "
+                         "return self.missing; } } "
+                         "def main() -> i32 { "
+                         "def box: Box<i32> = Box<i32> { value: 42 }; return box.value; }");
+    expect_run(invoke({unused}), 42);
+    auto used = source("def struct Box<T> { def value: T, "
+                       "def broken<U>(self: &const Box<T>, value: U) -> U { "
+                       "return self.missing; } } "
+                       "def main() -> i32 { "
+                       "def box: Box<i32> = Box<i32> { value: 42 }; "
+                       "return box.broken<i32>(0); }");
+    expect_error(invoke({"--check", used}), 1, "Unknown field 'missing'");
+    auto bad_receiver = source("def struct Broken { "
+                               "def choose<U>(self: &i32, value: U) -> U { return value; } } "
+                               "def main() -> i32 { def box: Broken = Broken {}; "
+                               "return box.choose<i32>(42); }");
+    expect_error(invoke({"--check", bad_receiver}), 1,
+                 "Instance method requires first parameter self");
+    auto growing = source("def struct Grow { "
+                          "def pub static next<T>(value: T) -> i32 { "
+                          "return Grow.next<*T>(null); } } "
+                          "def main() -> i32 { return Grow.next<i32>(42); }");
+    expect_error(invoke({"--check", growing}), 1,
+                 "Generic method specialization limit of 256 exceeded");
 }

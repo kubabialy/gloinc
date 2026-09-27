@@ -149,12 +149,12 @@ bool GloinParser::generic_type_prefix_ahead() const {
             if (allow_struct_literal && tokens[i + 1].type == GLOIN_TOKEN_LBRACE)
                 return true;
             if (tokens[i + 1].type == GLOIN_TOKEN_LPAREN &&
+                open == cursor + 1 &&
                 tokens[open - 1].span.end == tokens[open].span.begin &&
                 tokens[i].span.end == tokens[i + 1].span.begin)
                 return true;
-            return i + 3 < tokens.size() && tokens[i + 1].type == GLOIN_TOKEN_DOT &&
-                   tokens[i + 2].type == GLOIN_TOKEN_IDENTIFIER &&
-                   tokens[i + 3].type == GLOIN_TOKEN_LPAREN;
+            return i + 2 < tokens.size() && tokens[i + 1].type == GLOIN_TOKEN_DOT &&
+                   tokens[i + 2].type == GLOIN_TOKEN_IDENTIFIER;
         }
     }
     return false;
@@ -277,7 +277,8 @@ std::unique_ptr<Expression> GloinParser::parse_infix_impl(std::unique_ptr<Expres
     }
     if (type == GLOIN_TOKEN_DOT) {
         advance_token();
-        return std::make_unique<MemberAccessExpression>(std::move(left), parse_name());
+        auto member = generic_type_prefix_ahead() ? parse_type() : parse_name();
+        return std::make_unique<MemberAccessExpression>(std::move(left), std::move(member));
     }
     std::string op(current_token.literal);
     int precedence = get_binding_power(type);

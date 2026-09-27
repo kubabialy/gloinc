@@ -5,6 +5,7 @@
 #include "checked_program.h"
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -253,6 +254,7 @@ class Sema {
                         SymbolId &symbol);
     std::shared_ptr<Type> check_generic_function_call(const CallExpression *call, bool &handled);
     std::shared_ptr<FunctionType> collect_function(const FunctionDefinition *function);
+    static std::vector<std::string> split_type_arguments(std::string_view text);
     std::optional<ValueType> value_type(const std::shared_ptr<Type> &type) const;
     std::vector<std::shared_ptr<StructType>> collected_struct_types;
     std::unordered_map<const StructDefinition *, const SourceModule *> generic_struct_owners;
@@ -264,6 +266,15 @@ class Sema {
         std::vector<const FunctionDefinition *> method_instances;
     };
     std::vector<GenericSpecialization> generic_specializations;
+    struct GenericMethodSpecialization {
+        const FunctionDefinition *definition;
+        std::shared_ptr<StructType> receiver;
+        std::vector<ValueType> arguments;
+        std::vector<std::shared_ptr<Type>> resolved_arguments;
+        const FunctionDefinition *instance;
+        std::shared_ptr<FunctionType> signature;
+    };
+    std::vector<GenericMethodSpecialization> generic_method_specializations;
     size_t generic_specialization_depth = 0;
     std::shared_ptr<StructType>
     specialize_struct(const StructDefinition *definition,
@@ -272,6 +283,14 @@ class Sema {
     void collect_methods(const std::vector<std::unique_ptr<Statement>> &program);
     void collect_method(const std::shared_ptr<StructType> &structure,
                         const FunctionDefinition *method);
+    bool validate_method_signature(const std::shared_ptr<StructType> &structure,
+                                   const FunctionDefinition *method,
+                                   const std::shared_ptr<FunctionType> &signature);
+    void bind_enclosing_type_params(const std::shared_ptr<StructType> &structure);
+    std::shared_ptr<FunctionType>
+    specialize_method(const std::shared_ptr<StructType> &structure,
+                      const FunctionDefinition *definition,
+                      const std::vector<std::shared_ptr<Type>> &arguments, SymbolId &symbol);
     std::unordered_map<const FunctionDefinition *, bool> arena_methods;
     void register_arena_method(const std::shared_ptr<StructType> &structure,
                                const FunctionDefinition *method,

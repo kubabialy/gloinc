@@ -74,10 +74,13 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
                     log_error("Duplicate field or method in generic struct '" + name + "'");
                     valid = false;
                 }
-                if (!method->generic_params.empty()) {
-                    log_error("Generic methods with their own type parameters are not supported");
-                    valid = false;
-                }
+                std::set<std::string> method_parameters;
+                for (const auto &parameter : method->generic_params)
+                    if (!method_parameters.insert(parameter).second ||
+                        parameters.contains(parameter) || get_builtin_type(parameter)) {
+                        log_error("Duplicate or reserved generic method parameter '" + parameter + "'");
+                        valid = false;
+                    }
             }
             if (valid) {
                 current_scope->generic_structs.emplace(name, definition);

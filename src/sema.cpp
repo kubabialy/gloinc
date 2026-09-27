@@ -22,8 +22,9 @@ std::string_view trim_type(std::string_view text) {
         text.remove_suffix(1);
     return text;
 }
+} // namespace
 
-std::vector<std::string> split_type_arguments(std::string_view text) {
+std::vector<std::string> Sema::split_type_arguments(std::string_view text) {
     std::vector<std::string> arguments;
     size_t start = 0;
     int angle = 0;
@@ -52,7 +53,6 @@ std::vector<std::string> split_type_arguments(std::string_view text) {
         arguments.emplace_back(last);
     return arguments;
 }
-} // namespace
 
 void Scope::define(const std::string &name, Symbol symbol) { symbols[name] = symbol; }
 
@@ -249,6 +249,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     collected_struct_types.clear();
     generic_struct_owners.clear();
     generic_specializations.clear();
+    generic_method_specializations.clear();
     generic_function_owners.clear();
     generic_function_specializations.clear();
     generic_specialization_depth = 0;
@@ -302,8 +303,10 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         // every concrete method body has its own semantic bindings.
         size_t struct_index = 0;
         size_t function_index = 0;
+        size_t method_index = 0;
         while (struct_index < generic_specializations.size() ||
-               function_index < generic_function_specializations.size()) {
+               function_index < generic_function_specializations.size() ||
+               method_index < generic_method_specializations.size()) {
             if (struct_index < generic_specializations.size()) {
                 const auto specialization = generic_specializations[struct_index++];
                 const auto *owner = generic_struct_owners.at(specialization.definition);
@@ -315,11 +318,20 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
                 for (const auto *method : specialization.method_instances)
                     if (collected_functions.contains(method))
                         check_statement(method);
-            } else {
+            } else if (function_index < generic_function_specializations.size()) {
                 const auto specialization = generic_function_specializations[function_index++];
                 const auto *owner = generic_function_owners.at(specialization.definition);
                 select_module(owner);
                 current_scope = std::make_shared<Scope>(module_scopes.at(owner));
+                for (size_t argument = 0; argument < specialization.resolved_arguments.size(); ++argument)
+                    current_scope->define_type(specialization.definition->generic_params[argument],
+                                               specialization.resolved_arguments[argument]);
+                check_statement(specialization.instance);
+            } else {
+                const auto specialization = generic_method_specializations[method_index++];
+                select_module(specialization.receiver->owner);
+                current_scope = std::make_shared<Scope>(module_scopes.at(specialization.receiver->owner));
+                bind_enclosing_type_params(specialization.receiver);
                 for (size_t argument = 0; argument < specialization.resolved_arguments.size(); ++argument)
                     current_scope->define_type(specialization.definition->generic_params[argument],
                                                specialization.resolved_arguments[argument]);
@@ -452,26 +464,34 @@ Sema::specialize_function(const FunctionDefinition *definition,
 
 std::shared_ptr<Type> Sema::check_generic_function_call(const CallExpression *call, bool &handled) {
     const auto *callee = dynamic_cast<const Identifier *>(call->function.get());
+    const SourceModule *imported_module = nullptr;
+    std::string qualifier;
+    if (const auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get())) {
+        const auto *module = dynamic_cast<const Identifier *>(member->left.get());
+        if (!module || !imports.contains(module->value) || current_scope->resolve(module->value))
+            return nullptr;
+        callee = dynamic_cast<const Identifier *>(member->member.get());
+        imported_module = imports.at(module->value);
+        qualifier = module->value + ".";
+    }
     if (!callee)
         return nullptr;
     const auto open = callee->value.find('<');
     if (open == std::string::npos || !callee->value.ends_with('>'))
         return nullptr;
     handled = true;
-    const auto base = callee->value.substr(0, open);
+    const auto name = callee->value.substr(0, open);
+    const auto base = qualifier + name;
     const auto argument_names = split_type_arguments(
         std::string_view(callee->value).substr(open + 1, callee->value.size() - open - 2));
     const FunctionDefinition *definition = nullptr;
-    if (const auto dot = base.find('.'); dot != std::string::npos) {
-        auto imported = imports.find(base.substr(0, dot));
-        if (imported != imports.end() && !current_scope->resolve(base.substr(0, dot))) {
-            definition = module_scopes.at(imported->second)->resolve_generic_function(base.substr(dot + 1));
-            if (definition && !definition->is_public)
-                definition = nullptr;
-        }
+    if (imported_module) {
+        definition = module_scopes.at(imported_module)->resolve_generic_function(name);
+        if (definition && !definition->is_public)
+            definition = nullptr;
     } else {
-        if (!current_scope->resolve(base))
-            definition = current_scope->resolve_generic_function(base);
+        if (!current_scope->resolve(name))
+            definition = current_scope->resolve_generic_function(name);
     }
     if (!definition) {
         log_error("Unknown or inaccessible generic function '" + base + "'");

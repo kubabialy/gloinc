@@ -80,7 +80,7 @@ std::unique_ptr<Expression> expression(const Expression *source) {
         return copied<SpawnExpression>(*node, node->op, expression(node->call.get()));
     if (auto *node = dynamic_cast<const AwaitExpression *>(source))
         return copied<AwaitExpression>(*node, expression(node->expr.get()));
-    throw std::logic_error("Unknown expression in generic method clone");
+    throw std::logic_error("Unknown expression in checked specialization clone");
 }
 
 std::unique_ptr<Statement> statement(const Statement *source) {
@@ -115,7 +115,7 @@ std::unique_ptr<Statement> statement(const Statement *source) {
         return copied<WhileStatement>(*node, expression(node->condition.get()), block(node->body.get()));
     if (auto *node = dynamic_cast<const DeferStatement *>(source))
         return copied<DeferStatement>(*node, expression(node->call.get()));
-    throw std::logic_error("Unknown statement in generic method clone");
+    throw std::logic_error("Unknown statement in checked specialization clone");
 }
 } // namespace
 

@@ -8,14 +8,14 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **896 tests**:
+The current source definitions and CTest discovery contain **900 tests**:
 
 | Suite | Tests |
 | --- | ---: |
 | LexerTest | 34 |
 | DiagnosticsTest | 20 |
 | CheckedProgramTest | 13 |
-| ParserTest | 52 |
+| ParserTest | 53 |
 | ScopeTest | 11 |
 | VariablesTest | 17 |
 | NumericTest | 12 |
@@ -31,7 +31,7 @@ The current source definitions and CTest discovery contain **896 tests**:
 | CodeGenStructTest | 2 |
 | CodeGenSpecTest | 2 |
 | CodeGenGenericsTest | 4 |
-| CheckedGenericsTest | 10 |
+| CheckedGenericsTest | 13 |
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
 | ArenaTest | 21 |
@@ -66,9 +66,9 @@ The current source definitions and CTest discovery contain **896 tests**:
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
-The four older generic tests still check unchecked IR strings. Ten checked
-generic tests cover JIT/native execution, specialized structs, methods and
-functions, and diagnostics. The orphaned `tests/lit/spawn.mlir` has been replaced by structured assertions in
+The four older generic tests still check unchecked IR strings. Thirteen checked
+generic tests cover JIT/native execution, specialized structs, functions, and
+methods with their own type arguments, plus diagnostics. The orphaned `tests/lit/spawn.mlir` has been replaced by structured assertions in
 `CodeGenTest.GenerateSpawn`: worker/main functions and returns, the constant i32
 argument, spawn callee, operand, and handle type. No lit/FileCheck installation
 is required. This test now exposes the missing spawn operation instead of

@@ -78,10 +78,12 @@ Struct literals cannot take a control-flow body's opening brace. Generic
 type-prefix lookahead uses token structure rather than identifier capitalization;
 type parsing splits `>>` only when consuming nested type closers and preserves
 each closer's byte position. The lookahead also recognizes module-qualified
-constructors, static method receivers, generic function calls, and fixed-array
-or pointer type arguments. For a generic function call, `<` touches the callee
-name and `(` touches the closing `>`; spaced `a < b > (c)` remains comparison
-syntax.
+constructors, static method receivers, generic function and method calls, and
+fixed-array or pointer type arguments. For a generic function or method call,
+`<` touches the callee name and `(` touches the closing `>`; spaced
+`a < b > (c)` remains comparison syntax. A method's type application belongs
+to the member name: `Box<i32>.make<bool>(true)` retains `Box<i32>` as the
+receiver and `make<bool>` as the member.
 These checks do not establish aggregate layout or concurrency support. Checked generic struct
 specialization is a separate semantic and codegen step.
 
