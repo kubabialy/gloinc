@@ -314,6 +314,11 @@ if(GLOIN_ENABLE_SANITIZERS)
         target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined)
     endforeach()
+    # The prebuilt LLVM/MLIR libraries share a bump allocator with generated
+    # Gloin type storage. Instrumenting only our storage poisons slabs that the
+    # uninstrumented libraries subsequently allocate from without unpoisoning.
+    set_source_files_properties(src/dialect/GloinDialect.cpp PROPERTIES
+        COMPILE_OPTIONS "-fno-sanitize=address")
 endif()
 
 include(GNUInstallDirs)

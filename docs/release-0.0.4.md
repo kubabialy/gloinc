@@ -155,6 +155,10 @@ ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 ```
 
 This checks the compiler, native arena runtime, and C++ test harness. The
+generated dialect type-storage translation unit is compiled without ASan
+instrumentation because it shares LLVM's bump allocator with the prebuilt,
+uninstrumented LLVM/MLIR libraries; it remains subject to UBSan. The other
+project translation units retain ASan and UBSan instrumentation. The
 standalone `gloin_arena_test` target directly exercises native allocation and
 read/write operations under instrumentation; the external LLVM arena test also
 loads the instrumented runtime with ASan initialized at process startup. Prebuilt LLVM/MLIR libraries
