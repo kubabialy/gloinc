@@ -119,9 +119,9 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
         function = builder.create<mlir::LLVM::LLVMFuncOp>(location(), name,
                                                           standard_runtime_type(context, kind));
     }
-    auto call = builder.create<mlir::LLVM::CallOp>(location(), function, native_arguments);
+    auto call = emit_abi_call(function, native_arguments);
     if (kind == StandardPrimitive::StringCopy)
         return emit_standard_primitive(StandardPrimitive::StringView,
                                        mlir::ValueRange{arguments[1], native_arguments[1]});
-    return call.getNumResults() ? call.getResult() : mlir::Value{};
+    return call;
 }

@@ -94,9 +94,9 @@ supported platform, following [the JIT contract](jit.md). They produce no result
 shells may describe the signal and map it to a shell-specific status. The CLI
 does not add signal recovery or execution timeouts.
 
-`--version` reports `gloinc 0.0.3 (LLVM/MLIR 21.1.6)`. This identifies the
+`--version` reports `gloinc 0.0.4 (LLVM/MLIR 21.1.6)`. This identifies the
 scalar-core compiler. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
-core acceptance; [the current release guide](release-0.0.3.md) documents installation,
+core acceptance; [the current release guide](release-0.0.4.md) documents installation,
 packaging, and validation. `import "@std";` enables `std.print(string)` and
 `std.println(string)`. Output preserves exact bytes, including embedded NULs;
 println appends LF. Both return void. Missing modules/members fail before execution.

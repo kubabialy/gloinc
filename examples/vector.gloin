@@ -1,0 +1,19 @@
+import "@arena";
+import "@vector";
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def mut numbers: vector.Vector<i32> = vector.Vector<i32>.create(&memory, 3, 0);
+    if !numbers.push(10) || !numbers.push(20) || !numbers.push(12) { return 1; }
+    if !numbers.push(99) { return 2; } // grows beyond the initial capacity
+    def four: i64 = 4;
+    if numbers.cap() < four { return 4; }
+    def first: *const i32 = numbers.get(0);
+    def second: *i32 = numbers.get_mut(1);
+    def third: *const i32 = numbers.get(2);
+    if first == null || second == null || third == null { return 3; }
+    *second = *second + 0;
+    return *first + *second + *third;
+}

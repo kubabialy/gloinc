@@ -18,7 +18,7 @@ TEST_F(CliTest, HelpAndVersionAreStandaloneSuccessfulCommands) {
             EXPECT_NE(result.out.find(word), std::string::npos);
     }
     for (const std::string option : {"--version", "-V"})
-        expect_success(invoke({option}), "gloinc 0.0.3 (LLVM/MLIR 21.1.6)\n");
+        expect_success(invoke({option}), "gloinc 0.0.4 (LLVM/MLIR 21.1.6)\n");
 }
 
 TEST_F(CliTest, NativeExecutableRunsWithoutJitAndReceivesArguments) {
@@ -198,7 +198,9 @@ TEST_F(CliTest, InspectionDoesNotExecuteTrappingCode) {
         EXPECT_EQ(result.status, 0) << result.err;
         EXPECT_TRUE(result.err.empty());
         EXPECT_NE(result.out.find("module"), std::string::npos);
-        EXPECT_NE(result.out.find("llvm.intr.trap"), std::string::npos);
+        EXPECT_NE(result.out.find(option == "--emit-ir" ? "gloin.checked_int_binary"
+                                                      : "llvm.intr.trap"),
+                  std::string::npos);
     }
 }
 

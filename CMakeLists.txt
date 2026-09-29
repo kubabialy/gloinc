@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gloinc VERSION 0.0.3)
+project(gloinc VERSION 0.0.4)
 
 option(GLOIN_ENABLE_SANITIZERS "Instrument project C++ code with AddressSanitizer and UBSan" OFF)
 if(GLOIN_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -247,6 +247,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/integrated_examples_test.cpp
         tests/module_test.cpp
         tests/ordinary_struct_test.cpp
+        tests/enum_test.cpp
         tests/pointer_test.cpp
         tests/method_test.cpp
         tests/defer_test.cpp
@@ -294,7 +295,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     gtest_discover_tests(gloin_standard_test PROPERTIES TIMEOUT 30)
 
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|CheckedGenericsTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure
@@ -334,7 +335,7 @@ install(FILES examples/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples)
 install(FILES tests/fixtures/core/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/tests/fixtures/core)
 install(FILES third_party/fast_float/LICENSE-MIT third_party/fast_float/README.md third_party/fast_float/SHA256SUMS
     DESTINATION ${CMAKE_INSTALL_DOCDIR}/third_party/fast_float)
-install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/pointer_offsets.gloin examples/arena_lab.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin
+install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/pointer_offsets.gloin examples/arena_lab.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin examples/generic_structs.gloin examples/generic_functions.gloin examples/generic_methods.gloin examples/enums.gloin examples/slices.gloin examples/vector.gloin examples/fixed_vector.gloin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/data DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/modules DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples

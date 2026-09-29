@@ -30,9 +30,32 @@ def GloinInteger : Gloin_Type<"GloinInteger", "int"> {
 
 // Pointer Type
 def GloinPointer : Gloin_Type<"GloinPointer", "ptr"> {
-    let summary = "Pointer type";
-    let parameters = (ins "Type":$pointee);
-    let assemblyFormat = "`<` $pointee `>`";
+    let summary = "Source pointer type with pointee and access qualifiers";
+    let parameters = (ins "Type":$pointee, "bool":$nullable, "bool":$readOnly);
+    let assemblyFormat = "`<` $pointee `,` $nullable `,` $readOnly `>`";
+}
+
+def GloinArray : Gloin_Type<"GloinArray", "array"> {
+    let summary = "Source fixed-array type";
+    let parameters = (ins "Type":$element, "uint64_t":$length);
+    let assemblyFormat = "`<` $element `,` $length `>`";
+}
+
+def GloinSlice : Gloin_Type<"GloinSlice", "slice"> {
+    let summary = "Borrowed source slice type with element access capability";
+    let parameters = (ins "Type":$element, "bool":$readOnly);
+    let assemblyFormat = "`<` $element `,` $readOnly `>`";
+}
+
+def GloinEnum : Gloin_Type<"GloinEnum", "enum"> {
+    let summary = "Nominal source enum type";
+    let parameters = (ins StringRefParameter<"Qualified enum name">:$name);
+    let assemblyFormat = "`<` $name `>`";
+}
+
+def GloinString : Gloin_Type<"GloinString", "string"> {
+    let summary = "Source string type";
+    let assemblyFormat = "";
 }
 
 // Defer Type (Async handle)
@@ -56,8 +79,7 @@ def GloinResult : Gloin_Type<"GloinResult", "result"> {
     let assemblyFormat = "`<` $okType `,` $errType `>`";
 }
 
-// Struct Type (Placeholder for named structs)
-// Realistically, layout info would be in a symbol table or definition Op
+// A struct's field schema and layout live in its gloin.struct_definition symbol.
 def GloinStruct : Gloin_Type<"GloinStruct", "struct"> {
     let summary = "Gloin struct type";
     let parameters = (ins StringRefParameter<"Struct name">:$name);

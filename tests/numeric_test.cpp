@@ -50,8 +50,8 @@ void integer_value(const std::string &type, const std::string &literal, unsigned
         ASSERT_TRUE(result.success()) << errors.str();
         EXPECT_TRUE(mlir::succeeded(mlir::verify(*result.module)));
         int count = 0;
-        result.module->walk([&](mlir::arith::ConstantOp operation) {
-            auto value = llvm::dyn_cast<mlir::IntegerAttr>(operation.getValue());
+        result.module->walk([&](gloin::ConstantOp operation) {
+            auto value = llvm::dyn_cast<mlir::IntegerAttr>(operation.getValueAttr());
             ASSERT_TRUE(value);
             EXPECT_EQ(value.getType().getIntOrFloatBitWidth(), bits);
             EXPECT_EQ(value.getValue().getZExtValue(), expected);

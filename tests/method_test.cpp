@@ -146,7 +146,11 @@ TEST_F(MethodTest, MethodSignaturesContainExactlyOneSelfAndStaticContainsNone) {
     ASSERT_TRUE(instance);
     ASSERT_TRUE(stat);
     ASSERT_EQ(instance.getNumArguments(), 2u);
-    EXPECT_TRUE(llvm::isa<mlir::LLVM::LLVMPointerType>(instance.getArgumentTypes()[0]));
+    EXPECT_TRUE(llvm::isa<gloin::GloinPointerType>(instance.getArgumentTypes()[0]));
+    auto layout = instance->getAttrOfType<mlir::ArrayAttr>("gloin.layout_inputs");
+    ASSERT_TRUE(layout);
+    EXPECT_TRUE(llvm::isa<mlir::LLVM::LLVMPointerType>(
+        mlir::cast<mlir::TypeAttr>(layout[0]).getValue()));
     EXPECT_TRUE(instance.getArgumentTypes()[1].isInteger(64));
     ASSERT_EQ(stat.getNumArguments(), 1u);
     EXPECT_TRUE(stat.getArgumentTypes()[0].isInteger(32));

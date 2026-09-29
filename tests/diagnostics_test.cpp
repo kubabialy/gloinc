@@ -206,7 +206,7 @@ TEST(DiagnosticsTest, GeneratedExpressionUsesItsOwnSourceLocation) {
         compile_source("def main() -> i32 {\n    return 42;\n}", "expression.gloin", context);
     ASSERT_TRUE(result.success());
     auto main = result.module->lookupSymbol<mlir::func::FuncOp>("main");
-    auto constant = llvm::dyn_cast<mlir::arith::ConstantIntOp>(main.getBody().front().front());
+    auto constant = llvm::dyn_cast<gloin::ConstantOp>(main.getBody().front().front());
     ASSERT_TRUE(constant);
     auto loc = llvm::dyn_cast<mlir::FileLineColLoc>(constant.getLoc());
     ASSERT_TRUE(loc);

@@ -22,4 +22,9 @@
 #define GET_OP_CLASSES
 #include "src/dialect/GloinOps.h.inc"
 
+namespace gloin {
+// Check that a source value has the stated LLVM-compatible storage layout.
+bool matchesSourceStorage(mlir::Type source, mlir::Type storage);
+}
+
 #endif // GLOIN_DIALECT_H

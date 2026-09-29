@@ -353,7 +353,7 @@ TEST_F(PointerTest, LoopAddressesUseEntryStorageAndDoNotGrowTheStack) {
     ASSERT_TRUE(compiled.success());
     for (auto function : compiled.module->getOps<mlir::func::FuncOp>()) {
         size_t allocations = 0;
-        function.walk([&](mlir::LLVM::AllocaOp slot) {
+        function.walk([&](gloin::StackAllocOp slot) {
             ++allocations;
             EXPECT_EQ(slot->getBlock(), &function.getBody().front());
         });
@@ -380,8 +380,12 @@ TEST_F(PointerTest, PointerFieldsUseNativeLayoutAndExternalExecution) {
     ASSERT_TRUE(compiled.success());
     auto function = compiled.module->lookupSymbol<mlir::func::FuncOp>("layout");
     auto data = (*compiled.module)->getAttrOfType<mlir::StringAttr>("llvm.data_layout");
-    auto layout =
-        measure_type_layout(function.getArgumentTypes()[0], llvm::DataLayout(data.getValue()));
+    ASSERT_TRUE(function);
+    EXPECT_TRUE(mlir::isa<gloin::GloinStructType>(function.getArgumentTypes()[0]));
+    auto inputs = function->getAttrOfType<mlir::ArrayAttr>("gloin.layout_inputs");
+    ASSERT_TRUE(inputs);
+    auto storage = mlir::cast<mlir::TypeAttr>(inputs[0]).getValue();
+    auto layout = measure_type_layout(storage, llvm::DataLayout(data.getValue()));
     ASSERT_TRUE(static_cast<bool>(layout)) << llvm::toString(layout.takeError());
     EXPECT_EQ(layout->size, 32u);
     EXPECT_EQ(layout->alignment, 8u);

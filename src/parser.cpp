@@ -200,7 +200,23 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
     }
     case GLOIN_TOKEN_LBRACE: {
         advance_token();
-        return std::make_unique<ArrayLiteral>(parse_expression_list(GLOIN_TOKEN_RBRACE), true);
+        if (accept(GLOIN_TOKEN_RBRACE))
+            return std::make_unique<ArrayLiteral>(std::vector<std::unique_ptr<Expression>>{}, true);
+        auto first = parse_expression(0);
+        if (accept(GLOIN_TOKEN_SEMICOLON)) {
+            auto count = parse_expression(0);
+            expect(GLOIN_TOKEN_RBRACE, "Expected '}' after repeated array initializer");
+            std::vector<std::unique_ptr<Expression>> values;
+            values.push_back(std::move(first));
+            values.push_back(std::move(count));
+            return std::make_unique<ArrayLiteral>(std::move(values), true, true);
+        }
+        std::vector<std::unique_ptr<Expression>> values;
+        values.push_back(std::move(first));
+        while (accept(GLOIN_TOKEN_COMMA) && current_token.type != GLOIN_TOKEN_RBRACE)
+            values.push_back(parse_expression(0));
+        expect(GLOIN_TOKEN_RBRACE, "Expected '}' after array initializer");
+        return std::make_unique<ArrayLiteral>(std::move(values), true);
     }
     case GLOIN_TOKEN_SELF:
         return parse_name(true);
@@ -271,7 +287,19 @@ std::unique_ptr<Expression> GloinParser::parse_infix_impl(std::unique_ptr<Expres
     if (type == GLOIN_TOKEN_LBRACKET) {
         advance_token();
         Restore index_context(allow_struct_literal, true);
-        auto index = parse_expression(0);
+        std::unique_ptr<Expression> index;
+        if (current_token.type != GLOIN_TOKEN_RANGE)
+            index = parse_expression(0);
+        if (accept(GLOIN_TOKEN_RANGE)) {
+            std::unique_ptr<Expression> end;
+            if (current_token.type != GLOIN_TOKEN_RBRACKET)
+                end = parse_expression(0);
+            expect(GLOIN_TOKEN_RBRACKET, "Expected ']' after slice range");
+            return std::make_unique<SliceExpression>(std::move(left), std::move(index),
+                                                      std::move(end));
+        }
+        if (!index)
+            fail("Expected index or slice range");
         expect(GLOIN_TOKEN_RBRACKET, "Expected ']' after index");
         return std::make_unique<IndexExpression>(std::move(left), std::move(index));
     }
@@ -351,6 +379,13 @@ std::unique_ptr<Statement> GloinParser::parse_def_statement_impl() {
         static_cast<StructDefinition *>(definition.get())->is_public = is_public;
         return definition;
     }
+    if (!is_const && !spawnable && !deferred && current_token.type == GLOIN_TOKEN_ENUM) {
+        if (block_depth)
+            fail("Enums are only allowed at file scope");
+        auto definition = parse_enum_definition_impl();
+        static_cast<EnumDefinition *>(definition.get())->is_public = is_public;
+        return definition;
+    }
     if (!is_const &&
         (spawnable || deferred ||
          (current_token.type == GLOIN_TOKEN_IDENTIFIER &&
@@ -402,8 +437,25 @@ std::vector<std::string> GloinParser::parse_generic_params() {
     std::vector<std::string> params;
     if (!accept(GLOIN_TOKEN_LT))
         return params;
+    bool sizes = false;
     do {
-        params.push_back(parse_name()->value);
+        if (sizes) {
+            expect(GLOIN_TOKEN_CONST, "Expected 'const' before a size parameter");
+            auto name = parse_name()->value;
+            expect(GLOIN_TOKEN_COLON, "Expected ':' after size parameter");
+            auto kind = parse_type();
+            if (kind->value != "usize" && kind->value != "u64")
+                fail("Size parameter type must be usize or u64");
+            params.push_back("#" + name);
+        } else {
+            params.push_back(parse_name()->value);
+        }
+        if (accept(GLOIN_TOKEN_SEMICOLON)) {
+            if (sizes)
+                fail("Only one size-parameter separator is allowed");
+            sizes = true;
+            continue;
+        }
         if (!accept(GLOIN_TOKEN_COMMA) || current_token.type == GLOIN_TOKEN_GT)
             break;
     } while (true);
@@ -442,10 +494,18 @@ std::unique_ptr<Identifier> GloinParser::parse_type_impl() {
             text += "const ";
     }
     if (accept(GLOIN_TOKEN_LBRACKET)) {
+        const bool read_only = accept(GLOIN_TOKEN_CONST);
         auto element = parse_type();
-        expect(GLOIN_TOKEN_SEMICOLON, "Expected ';' in array type");
-        if (current_token.type != GLOIN_TOKEN_NUMBER)
-            fail("Expected array size number");
+        if (accept(GLOIN_TOKEN_RBRACKET)) {
+            text += "[" + std::string(read_only ? "const " : "") + element->value + "]";
+            return std::make_unique<Identifier>(text);
+        }
+        if (read_only)
+            fail("Fixed-array element type cannot use the slice const qualifier");
+        expect(GLOIN_TOKEN_SEMICOLON, "Expected ';' or ']' in array or slice type");
+        if (current_token.type != GLOIN_TOKEN_NUMBER &&
+            current_token.type != GLOIN_TOKEN_IDENTIFIER)
+            fail("Expected array size number or size parameter");
         std::string size(current_token.literal);
         advance_token();
         expect(GLOIN_TOKEN_RBRACKET, "Expected ']' after array size");
@@ -466,8 +526,18 @@ std::unique_ptr<Identifier> GloinParser::parse_type_impl() {
             do {
                 if (!first)
                     text += ", ";
-                text += parse_type()->value;
+                if (current_token.type == GLOIN_TOKEN_NUMBER) {
+                    text += current_token.literal;
+                    advance_token();
+                } else {
+                    text += parse_type()->value;
+                }
                 first = false;
+                if (accept(GLOIN_TOKEN_SEMICOLON)) {
+                    text += "; ";
+                    first = true;
+                    continue;
+                }
                 if (!accept(GLOIN_TOKEN_COMMA) || current_token.type == GLOIN_TOKEN_GT ||
                     current_token.type == GLOIN_TOKEN_SHR)
                     break;
@@ -639,6 +709,22 @@ std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed
                                               std::move(generics));
 }
 
+std::unique_ptr<Statement> GloinParser::parse_enum_definition_impl() {
+    expect(GLOIN_TOKEN_ENUM, "Expected 'enum'");
+    auto name = parse_name();
+    expect(GLOIN_TOKEN_LBRACE, "Expected '{' after enum name");
+    std::vector<std::unique_ptr<Identifier>> variants;
+    while (current_token.type != GLOIN_TOKEN_RBRACE) {
+        variants.push_back(parse_name());
+        if (!accept(GLOIN_TOKEN_COMMA) && current_token.type != GLOIN_TOKEN_RBRACE)
+            fail("Expected ',' after enum variant");
+    }
+    expect(GLOIN_TOKEN_RBRACE, "Expected closing enum brace");
+    if (variants.empty())
+        fail("Enum requires at least one variant");
+    return std::make_unique<EnumDefinition>(std::move(name), std::move(variants));
+}
+
 std::unique_ptr<ImportStatement> GloinParser::parse_import_statement_impl() {
     if (mode == ParseMode::Core && block_depth != 0)
         fail("Imports are only allowed at file scope");
@@ -697,11 +783,12 @@ std::vector<std::unique_ptr<Statement>> GloinParser::parse_program() {
             auto *variable = dynamic_cast<VariableDeclaration *>(statement.get());
             if (!dynamic_cast<FunctionDefinition *>(statement.get()) &&
                 !dynamic_cast<StructDefinition *>(statement.get()) &&
+                !dynamic_cast<EnumDefinition *>(statement.get()) &&
                 !dynamic_cast<ImportStatement *>(statement.get()) &&
                 !(variable && variable->is_const)) {
                 diagnostics()->error(
                     DiagnosticStage::Parsing, start,
-                    "Only functions, structs, and constants are allowed at file scope");
+                    "Only functions, structs, enums, and constants are allowed at file scope");
                 return {};
             }
         }

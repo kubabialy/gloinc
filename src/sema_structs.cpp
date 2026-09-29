@@ -6,6 +6,8 @@
 std::optional<ValueType> Sema::value_type(const std::shared_ptr<Type> &type) const {
     if (!type)
         return std::nullopt;
+    if (const auto *size = dynamic_cast<const ConstSizeType *>(type.get()))
+        return ValueType::size_argument(size->value);
     if (const auto *pointer = dynamic_cast<const PointerType *>(type.get())) {
         auto value = value_type(pointer->pointee);
         if (!value)
@@ -18,6 +20,11 @@ std::optional<ValueType> Sema::value_type(const std::shared_ptr<Type> &type) con
         return element ? std::optional<ValueType>(ValueType::array(*element, array->length))
                        : std::nullopt;
     }
+    if (const auto *slice = dynamic_cast<const SliceType *>(type.get())) {
+        auto element = value_type(slice->element);
+        return element ? std::optional<ValueType>(ValueType::slice(*element, slice->read_only))
+                       : std::nullopt;
+    }
     if (const auto *structure = dynamic_cast<const StructType *>(type.get())) {
         if (structure->identity)
             return ValueType::record(*structure->identity);
@@ -26,6 +33,81 @@ std::optional<ValueType> Sema::value_type(const std::shared_ptr<Type> &type) con
     if (auto core = resolve_core_type(type->to_string()))
         return ValueType(*core);
     return std::nullopt;
+}
+
+void Sema::collect_enums(const std::vector<std::unique_ptr<Statement>> &program) {
+    for (const auto &statement : program) {
+        const auto *definition = dynamic_cast<const EnumDefinition *>(statement.get());
+        if (!definition)
+            continue;
+        DiagnosticScope location(current_span, definition->span);
+        const auto &name = definition->name->value;
+        if (get_builtin_type(name) || current_scope->types.contains(name) ||
+            current_scope->generic_structs.contains(name) ||
+            current_scope->generic_functions.contains(name) ||
+            current_scope->symbols.contains(name) || imports.contains(name)) {
+            log_error("Duplicate or reserved enum name '" + name + "'");
+            continue;
+        }
+        auto type = std::make_shared<EnumType>(name);
+        type->identity = recording->structures.size();
+        type->owner = current_module;
+        type->is_public = definition->is_public;
+        std::vector<CheckedField> fields{
+            {"__tag", ValueType(CoreType::U32), false, false}};
+        recording->structures.push_back(
+            {current_module ? current_module->module_name + "." + name : name, fields});
+        recording->enum_types.insert(*type->identity);
+        recording->types[definition] = ValueType::record(*type->identity);
+        current_scope->define_type(name, type);
+        for (const auto &variant : definition->variants) {
+            if (type->variants.contains(variant->value)) {
+                DiagnosticScope variant_location(current_span, variant->span);
+                log_error("Duplicate enum variant '" + variant->value + "'");
+            } else {
+                type->variants.emplace(variant->value,
+                                       static_cast<uint32_t>(type->variants.size()));
+            }
+        }
+    }
+}
+
+std::shared_ptr<Type> Sema::check_enum_variant(const MemberAccessExpression *member,
+                                                bool &handled) {
+    handled = false;
+    const auto *variant = dynamic_cast<const Identifier *>(member->member.get());
+    if (!variant)
+        return nullptr;
+    std::shared_ptr<Type> candidate;
+    if (const auto *name = dynamic_cast<const Identifier *>(member->left.get())) {
+        if (!current_scope->resolve(name->value))
+            candidate = current_scope->resolve_type(name->value);
+    } else if (const auto *qualified =
+                   dynamic_cast<const MemberAccessExpression *>(member->left.get())) {
+        const auto *module = dynamic_cast<const Identifier *>(qualified->left.get());
+        const auto *name = dynamic_cast<const Identifier *>(qualified->member.get());
+        if (module && name && imports.contains(module->value) &&
+            !current_scope->resolve(module->value)) {
+            candidate = module_scopes.at(imports.at(module->value))->resolve_type(name->value);
+            if (auto enumeration = std::dynamic_pointer_cast<EnumType>(candidate);
+                enumeration && !enumeration->is_public) {
+                handled = true;
+                log_error("Private enum type '" + name->value + "'");
+                return nullptr;
+            }
+        }
+    }
+    auto type = std::dynamic_pointer_cast<EnumType>(candidate);
+    if (!type)
+        return nullptr;
+    handled = true;
+    auto found = type->variants.find(variant->value);
+    if (found == type->variants.end()) {
+        log_error("Unknown variant '" + variant->value + "' in enum " + type->name);
+        return nullptr;
+    }
+    recording->enum_variants[member] = found->second;
+    return type;
 }
 
 void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &program) {
@@ -42,7 +124,14 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
         const auto &name = definition->name->value;
         const auto primitive = standard_operation(name, standard_primitive_names);
         if (get_builtin_type(name) || current_scope->types.contains(name) ||
-            current_scope->generic_structs.contains(name) ||
+            (current_scope->generic_structs.contains(name) &&
+             (definition->generic_params.empty() ||
+              [&] {
+                  for (auto *existing : current_scope->generic_structs.at(name))
+                      if (existing->generic_params.size() == definition->generic_params.size())
+                          return true;
+                  return false;
+              }())) ||
             current_scope->generic_functions.contains(name) ||
             current_scope->symbols.contains(name) || imports.contains(name) ||
             (current_module && !current_module->standard_name.empty() && name == "__write_stdout") ||
@@ -55,8 +144,10 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
             std::set<std::string> parameters;
             bool valid = true;
             for (const auto &parameter : definition->generic_params)
-                if (!parameters.insert(parameter).second || get_builtin_type(parameter)) {
-                    log_error("Duplicate or reserved generic parameter '" + parameter + "'");
+                if (!parameters.insert(generic_parameter_name(parameter)).second ||
+                    get_builtin_type(generic_parameter_name(parameter))) {
+                    log_error("Duplicate or reserved generic parameter '" +
+                              generic_parameter_name(parameter) + "'");
                     valid = false;
                 }
             std::set<std::string> field_names;
@@ -76,14 +167,17 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
                 }
                 std::set<std::string> method_parameters;
                 for (const auto &parameter : method->generic_params)
-                    if (!method_parameters.insert(parameter).second ||
+                    if (is_const_size_parameter(parameter)) {
+                        log_error("Size parameters are currently supported only on generic structs");
+                        valid = false;
+                    } else if (!method_parameters.insert(parameter).second ||
                         parameters.contains(parameter) || get_builtin_type(parameter)) {
                         log_error("Duplicate or reserved generic method parameter '" + parameter + "'");
                         valid = false;
                     }
             }
             if (valid) {
-                current_scope->generic_structs.emplace(name, definition);
+                current_scope->generic_structs[name].push_back(definition);
                 generic_struct_owners.emplace(definition, current_module);
             }
             continue;
@@ -176,7 +270,8 @@ Sema::specialize_struct(const StructDefinition *definition,
     current_module = owner;
     imports = module_imports.at(owner);
     for (size_t i = 0; i < arguments.size(); ++i)
-        current_scope->define_type(definition->generic_params[i], arguments[i]);
+        current_scope->define_type(generic_parameter_name(definition->generic_params[i]),
+                                   arguments[i]);
     std::set<std::string> names;
     for (const auto &field : definition->fields) {
         DiagnosticScope location(current_span, field.name ? field.name->span : definition->span);
@@ -190,7 +285,8 @@ Sema::specialize_struct(const StructDefinition *definition,
         }
         auto type = resolve_type_from_string(field.type->value);
         auto value = value_type(type);
-        if (!value || dynamic_cast<VoidType *>(type.get())) {
+        if (!value || dynamic_cast<VoidType *>(type.get()) ||
+            dynamic_cast<ConstSizeType *>(type.get())) {
             log_error("Unknown or invalid field type '" + field.type->value + "' in " + name);
             continue;
         }
@@ -217,6 +313,8 @@ void Sema::validate_struct_cycles() {
     std::function<bool(size_t)> visit;
     std::function<bool(const ValueType &)> visit_value = [&](const ValueType &type) {
         if (type.is_pointer())
+            return true;
+        if (type.is_slice())
             return true;
         if (type.is_array())
             return visit_value(*type.array_element);
@@ -268,6 +366,10 @@ std::shared_ptr<Type> Sema::check_struct_literal(const StructLiteral *literal) {
         log_error("Unknown or inaccessible struct type in literal");
         return nullptr;
     }
+    if (std::dynamic_pointer_cast<EnumType>(type)) {
+        log_error("Enum values must be constructed with Type.Variant");
+        return nullptr;
+    }
     const auto &fields = recording->structures.at(*structure->identity).fields;
     std::set<size_t> initialized;
     std::vector<size_t> indices;
@@ -297,16 +399,26 @@ std::shared_ptr<Type> Sema::check_struct_literal(const StructLiteral *literal) {
 
 std::shared_ptr<Type> Sema::check_field(const MemberAccessExpression *member) {
     auto base = check_expression(member->left.get());
+    const auto *name = dynamic_cast<const Identifier *>(member->member.get());
+    if (std::dynamic_pointer_cast<SliceType>(base)) {
+        if (name && name->value == "len")
+            return get_builtin_type("u64");
+        log_error("Slice has only the read-only 'len' member");
+        return nullptr;
+    }
     if (auto pointer = std::dynamic_pointer_cast<PointerType>(base)) {
         base = pointer->pointee;
         recording->indirect_members.insert(member);
     }
     auto structure = std::dynamic_pointer_cast<StructType>(base);
-    const auto *name = dynamic_cast<const Identifier *>(member->member.get());
     if (!base)
         return nullptr;
     if (!structure || !name) {
         log_error("Field access requires an ordinary struct value");
+        return nullptr;
+    }
+    if (std::dynamic_pointer_cast<EnumType>(base)) {
+        log_error("Enum values have no directly accessible fields");
         return nullptr;
     }
     const auto *field = structure->get_field(name->value);
@@ -348,6 +460,12 @@ std::shared_ptr<Type> Sema::expression_type_hint(const Expression *expression) {
                 method && arena_methods.contains(method) && call->arguments.size() == 1) {
                 if (auto type = arena_value_type_hint(call->arguments.front().get()))
                     return std::make_shared<PointerType>(type, arena_methods.at(method), false);
+                return nullptr;
+            }
+            if (const auto *method = method_target(member);
+                method && arena_many_methods.contains(method) && call->arguments.size() == 2) {
+                if (auto type = arena_value_type_hint(call->arguments.front().get()))
+                    return std::make_shared<PointerType>(type, false, false);
                 return nullptr;
             }
         }

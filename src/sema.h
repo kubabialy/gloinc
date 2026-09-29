@@ -3,10 +3,12 @@
 
 #include "AST.h"
 #include "checked_program.h"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct Type {
@@ -35,6 +37,24 @@ struct VoidType : public Type {
         return dynamic_cast<const VoidType *>(&other) != nullptr;
     }
 };
+
+// A compile-time array length carried through generic specialization only.
+struct ConstSizeType : public Type {
+    size_t value;
+    explicit ConstSizeType(size_t value) : value(value) {}
+    std::string to_string() const override { return std::to_string(value); }
+    bool equals(const Type &other) const override {
+        auto *size = dynamic_cast<const ConstSizeType *>(&other);
+        return size && value == size->value;
+    }
+};
+
+inline bool is_const_size_parameter(const std::string &name) {
+    return !name.empty() && name.front() == '#';
+}
+inline std::string generic_parameter_name(const std::string &name) {
+    return is_const_size_parameter(name) ? name.substr(1) : name;
+}
 
 struct FunctionType : public Type {
     std::shared_ptr<Type> return_type;
@@ -107,6 +127,13 @@ struct StructType : public Type {
     }
 };
 
+struct EnumType : public StructType {
+    std::unordered_map<std::string, uint32_t> variants;
+    explicit EnumType(std::string name)
+        : StructType(std::move(name), {}, false) {}
+    std::string to_string() const override { return "enum " + name; }
+};
+
 struct PointerType : public Type {
     std::shared_ptr<Type> pointee;
     bool nullable;
@@ -138,6 +165,20 @@ struct ArrayType : public Type {
     }
 };
 
+struct SliceType : public Type {
+    std::shared_ptr<Type> element;
+    bool read_only;
+    SliceType(std::shared_ptr<Type> element, bool read_only)
+        : element(std::move(element)), read_only(read_only) {}
+    std::string to_string() const override {
+        return "[" + std::string(read_only ? "const " : "") + element->to_string() + "]";
+    }
+    bool equals(const Type &other) const override {
+        const auto *slice = dynamic_cast<const SliceType *>(&other);
+        return slice && read_only == slice->read_only && element->equals(*slice->element);
+    }
+};
+
 struct DeferredType : public Type {
     std::shared_ptr<Type> value_type;
 
@@ -166,7 +207,7 @@ class Scope {
   public:
     std::unordered_map<std::string, Symbol> symbols;
     std::unordered_map<std::string, std::shared_ptr<Type>> types; // Registry for user-defined types
-    std::unordered_map<std::string, const StructDefinition *> generic_structs;
+    std::unordered_map<std::string, std::vector<const StructDefinition *>> generic_structs;
     std::unordered_map<std::string, const FunctionDefinition *> generic_functions;
     std::shared_ptr<Scope> parent;
 
@@ -177,7 +218,8 @@ class Scope {
 
     void define_type(const std::string &name, std::shared_ptr<Type> type);
     std::shared_ptr<Type> resolve_type(const std::string &name);
-    const StructDefinition *resolve_generic_struct(const std::string &name);
+    const StructDefinition *resolve_generic_struct(const std::string &name,
+                                                   size_t arity = 0);
     const FunctionDefinition *resolve_generic_function(const std::string &name);
 };
 
@@ -280,6 +322,9 @@ class Sema {
     specialize_struct(const StructDefinition *definition,
                       const std::vector<std::shared_ptr<Type>> &arguments);
     void collect_structs(const std::vector<std::unique_ptr<Statement>> &program);
+    void collect_enums(const std::vector<std::unique_ptr<Statement>> &program);
+    std::shared_ptr<Type> check_enum_variant(const MemberAccessExpression *member,
+                                             bool &handled);
     void collect_methods(const std::vector<std::unique_ptr<Statement>> &program);
     void collect_method(const std::shared_ptr<StructType> &structure,
                         const FunctionDefinition *method);
@@ -292,6 +337,7 @@ class Sema {
                       const FunctionDefinition *definition,
                       const std::vector<std::shared_ptr<Type>> &arguments, SymbolId &symbol);
     std::unordered_map<const FunctionDefinition *, bool> arena_methods;
+    std::unordered_set<const FunctionDefinition *> arena_many_methods;
     void register_arena_method(const std::shared_ptr<StructType> &structure,
                                const FunctionDefinition *method,
                                const std::shared_ptr<FunctionType> &signature);

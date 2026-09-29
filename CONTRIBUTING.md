@@ -1,7 +1,7 @@
 # Contributing to Gloin
 
 Contributions are welcome, including work on platforms outside the maintained
-release matrix. The 0.0.3 source version supports Apple Silicon macOS. Linux
+release matrix. The 0.0.4 source version supports Apple Silicon macOS. Linux
 support is planned for 0.1.0. Windows support is not planned, but contributors may propose
 and maintain it.
 

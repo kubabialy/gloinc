@@ -28,6 +28,14 @@ std::shared_ptr<Type> Sema::check_typed_expression(const Expression *expression,
         actual = expected_pointer;
         recording->types[expression] = *value_type(actual);
     }
+    auto slice = std::dynamic_pointer_cast<SliceType>(actual);
+    auto expected_slice = std::dynamic_pointer_cast<SliceType>(expected);
+    if (recording && slice && expected_slice &&
+        slice->element->equals(*expected_slice->element) &&
+        (!slice->read_only || expected_slice->read_only)) {
+        actual = expected_slice;
+        recording->types[expression] = *value_type(actual);
+    }
     expected_pointer = previous;
     expected_array = previous_array;
     return actual;
@@ -54,10 +62,19 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
         return {type, !pointer.pointers.front().read_only, true};
     }
     if (const auto *index = dynamic_cast<const IndexExpression *>(expression)) {
+        if (auto slice = std::dynamic_pointer_cast<SliceType>(
+                check_expression(index->left.get())))
+            return {type, !slice->read_only, true};
         auto base = check_place(index->left.get(), take_address);
         return {type, base.writable, base.addressable};
     }
     if (const auto *member = dynamic_cast<const MemberAccessExpression *>(expression)) {
+        if (auto *name = dynamic_cast<const Identifier *>(member->member.get());
+            name && name->value == "len" &&
+            std::dynamic_pointer_cast<SliceType>(check_expression(member->left.get()))) {
+            log_error("Slice length is read-only");
+            return {};
+        }
         if (recording->module_constants.contains(member)) {
             log_error("Address or assignment requires runtime storage, not a constant");
             return {};

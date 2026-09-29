@@ -36,6 +36,7 @@ std::vector<std::string> Sema::split_type_arguments(std::string_view text) {
         case '[': ++square; break;
         case ']': --square; break;
         case ',':
+        case ';':
             if (angle == 0 && square == 0) {
                 arguments.emplace_back(trim_type(text.substr(start, i - start)));
                 start = i + 1;
@@ -80,10 +81,17 @@ std::shared_ptr<Type> Scope::resolve_type(const std::string &name) {
     return nullptr;
 }
 
-const StructDefinition *Scope::resolve_generic_struct(const std::string &name) {
-    if (auto it = generic_structs.find(name); it != generic_structs.end())
-        return it->second;
-    return parent ? parent->resolve_generic_struct(name) : nullptr;
+const StructDefinition *Scope::resolve_generic_struct(const std::string &name, size_t arity) {
+    if (auto it = generic_structs.find(name); it != generic_structs.end()) {
+        if (arity == 0)
+            return it->second.front();
+        for (auto *definition : it->second)
+            if (definition->generic_params.size() == arity)
+                return definition;
+        // Let the caller report the expected arity, even for overloaded names.
+        return it->second.front();
+    }
+    return parent ? parent->resolve_generic_struct(name, arity) : nullptr;
 }
 
 const FunctionDefinition *Scope::resolve_generic_function(const std::string &name) {
@@ -130,16 +138,30 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
             if (read_only)
                 inner = inner.substr(6);
             auto pointee = resolve_type_from_string(inner);
-            if (!pointee || dynamic_cast<VoidType *>(pointee.get()))
+            if (!pointee || dynamic_cast<VoidType *>(pointee.get()) ||
+                dynamic_cast<ConstSizeType *>(pointee.get()))
                 return nullptr;
             return std::make_shared<PointerType>(pointee, name[0] == '*', read_only);
         }
         if (name.starts_with("[") && name.ends_with("]")) {
             const auto separator = name.rfind("; ");
-            if (separator == std::string::npos || separator < 2)
+            if (separator == std::string::npos) {
+                auto inner = name.substr(1, name.size() - 2);
+                const bool read_only = inner.starts_with("const ");
+                if (read_only)
+                    inner = inner.substr(6);
+                auto element = resolve_type_from_string(inner);
+                if (!element || dynamic_cast<VoidType *>(element.get()) ||
+                    dynamic_cast<ConstSizeType *>(element.get()) ||
+                    dynamic_cast<FunctionType *>(element.get()))
+                    return nullptr;
+                return std::make_shared<SliceType>(element, read_only);
+            }
+            if (separator < 2)
                 return nullptr;
             auto element = resolve_type_from_string(name.substr(1, separator - 1));
             if (!element || dynamic_cast<VoidType *>(element.get()) ||
+                dynamic_cast<ConstSizeType *>(element.get()) ||
                 dynamic_cast<FunctionType *>(element.get()))
                 return nullptr;
             const auto digits = std::string_view(name).substr(separator + 2,
@@ -147,8 +169,14 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
             size_t length = 0;
             auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(),
                                                 length);
-            if (error != std::errc{} || end != digits.data() + digits.size() ||
-                length > 1048576)
+            if (error != std::errc{} || end != digits.data() + digits.size()) {
+                auto bound = current_scope->resolve_type(std::string(digits));
+                auto *size = dynamic_cast<ConstSizeType *>(bound.get());
+                if (!size)
+                    return nullptr;
+                length = size->value;
+            }
+            if (length > 1048576)
                 return nullptr;
             return std::make_shared<ArrayType>(element, length);
         }
@@ -163,12 +191,12 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 auto imported = imports.find(base.substr(0, dot));
                 if (imported != imports.end()) {
                     definition = module_scopes.at(imported->second)->resolve_generic_struct(
-                        base.substr(dot + 1));
+                        base.substr(dot + 1), type_arguments.size());
                     if (definition && !definition->is_public)
                         definition = nullptr;
                 }
             } else {
-                definition = current_scope->resolve_generic_struct(base);
+                definition = current_scope->resolve_generic_struct(base, type_arguments.size());
             }
             if (!definition) {
                 log_error("Unknown or inaccessible generic struct '" + base + "'");
@@ -180,8 +208,25 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 return nullptr;
             }
             std::vector<std::shared_ptr<Type>> arguments;
-            for (const auto &argument : type_arguments) {
-                auto type = resolve_type_from_string(argument);
+            for (size_t index = 0; index < type_arguments.size(); ++index) {
+                const auto &argument = type_arguments[index];
+                std::shared_ptr<Type> type;
+                if (is_const_size_parameter(definition->generic_params[index])) {
+                    size_t size = 0;
+                    auto [end, error] = std::from_chars(argument.data(),
+                                                        argument.data() + argument.size(), size);
+                    if (error == std::errc{} && end == argument.data() + argument.size())
+                        type = std::make_shared<ConstSizeType>(size);
+                    else
+                        type = current_scope->resolve_type(argument);
+                    auto *constant = dynamic_cast<ConstSizeType *>(type.get());
+                    if (!constant || constant->value > 1048576)
+                        type = nullptr;
+                } else {
+                    type = resolve_type_from_string(argument);
+                    if (dynamic_cast<ConstSizeType *>(type.get()))
+                        type = nullptr;
+                }
                 if (!type || !value_type(type) || dynamic_cast<VoidType *>(type.get())) {
                     log_error("Unknown or invalid generic type argument '" + argument + "'");
                     return nullptr;
@@ -244,6 +289,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     current_scope = std::make_shared<Scope>();
     collected_functions.clear();
     arena_methods.clear();
+    arena_many_methods.clear();
     for (auto &structure : collected_struct_types)
         structure->fields.clear();
     collected_struct_types.clear();
@@ -313,7 +359,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
                 select_module(owner);
                 current_scope = std::make_shared<Scope>(module_scopes.at(owner));
                 for (size_t argument = 0; argument < specialization.resolved_arguments.size(); ++argument)
-                    current_scope->define_type(specialization.definition->generic_params[argument],
+                    current_scope->define_type(generic_parameter_name(specialization.definition->generic_params[argument]),
                                                specialization.resolved_arguments[argument]);
                 for (const auto *method : specialization.method_instances)
                     if (collected_functions.contains(method))
@@ -788,6 +834,14 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
     }
     if (const auto *ident = dynamic_cast<const Identifier *>(expr)) {
         Symbol *sym = current_scope->resolve(ident->value);
+        if (recording && !sym) {
+            auto bound = current_scope->resolve_type(ident->value);
+            if (auto *size = dynamic_cast<ConstSizeType *>(bound.get())) {
+                recording->literals[expr] =
+                    ConstantValue{CoreType::I64, llvm::APInt(64, size->value)};
+                return get_builtin_type("i64");
+            }
+        }
         if (!sym) {
             if (recording && current_scope->resolve_generic_function(ident->value)) {
                 log_error("Generic function '" + ident->value +
@@ -818,6 +872,30 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
             return nullptr;
         }
         auto target = expected_array;
+        if (array->repeated) {
+            if (array->elements.size() != 2)
+                return nullptr;
+            size_t count = 0;
+            bool valid = false;
+            if (auto *literal = dynamic_cast<IntegerLiteral *>(array->elements[1].get())) {
+                auto [end, error] = std::from_chars(literal->literal.data(),
+                    literal->literal.data() + literal->literal.size(), count);
+                valid = error == std::errc{} &&
+                        end == literal->literal.data() + literal->literal.size();
+            } else if (auto *name = dynamic_cast<Identifier *>(array->elements[1].get())) {
+                auto bound = current_scope->resolve_type(name->value);
+                if (auto *size = dynamic_cast<ConstSizeType *>(bound.get())) {
+                    count = size->value;
+                    valid = true;
+                }
+            }
+            if (!valid || count != target->length)
+                log_error("Repeated-array count must equal the declared length");
+            auto actual = check_typed_expression(array->elements[0].get(), target->element);
+            if (actual && !actual->equals(*target->element))
+                log_error("Repeated-array element type mismatch");
+            return target;
+        }
         if (array->elements.size() != target->length)
             log_error("Fixed-array initializer element count does not match its length");
         for (const auto &element : array->elements) {
@@ -829,18 +907,49 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
     } else if (const auto *index = dynamic_cast<const IndexExpression *>(expr)) {
         auto base = check_expression(index->left.get());
         auto array = std::dynamic_pointer_cast<ArrayType>(base);
-        if (!array) {
+        auto slice = std::dynamic_pointer_cast<SliceType>(base);
+        if (!array && !slice) {
             if (base)
-                log_error("Indexing requires a fixed array");
+                log_error("Indexing requires a fixed array or slice");
             return nullptr;
         }
         auto subscript = check_expression(index->index.get(), CoreType::U64);
         auto core = subscript ? resolve_core_type(subscript->to_string()) : std::nullopt;
         if (core && core_type_info(*core).is_integer)
-            return array->element;
+            return array ? array->element : slice->element;
         if (subscript)
-            log_error("Fixed-array index must be an integer");
+            log_error("Array or slice index must be an integer");
         return nullptr;
+    } else if (const auto *range = dynamic_cast<const SliceExpression *>(expr)) {
+        auto base = check_expression(range->left.get());
+        auto array = std::dynamic_pointer_cast<ArrayType>(base);
+        auto slice = std::dynamic_pointer_cast<SliceType>(base);
+        if (!array && !slice) {
+            if (base)
+                log_error("Slicing requires a fixed array or slice");
+            return nullptr;
+        }
+        bool read_only = slice && slice->read_only;
+        if (array) {
+            auto place = check_place(range->left.get(), true);
+            if (!place.addressable) {
+                log_error("Cannot borrow a temporary fixed array as a slice");
+                return nullptr;
+            }
+            read_only = !place.writable;
+        }
+        for (const Expression *bound : {range->start.get(), range->end.get()}) {
+            if (!bound)
+                continue;
+            auto type = check_expression(bound, CoreType::U64);
+            auto core = type ? resolve_core_type(type->to_string()) : std::nullopt;
+            if (core && core_type_info(*core).is_integer)
+                continue;
+            if (type)
+                log_error("Slice range bound must be an integer");
+            return nullptr;
+        }
+        return std::make_shared<SliceType>(array ? array->element : slice->element, read_only);
     } else if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
         if (recording && (prefix->op == "&" || prefix->op == "*"))
             return check_pointer_unary(prefix);
@@ -869,6 +978,13 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         if (!left_type->equals(*right_type)) {
             log_error("Error: Type mismatch in binary expression. Left: " + left_type->to_string() +
                       ", Right: " + right_type->to_string() + "\n");
+            return nullptr;
+        }
+
+        if (recording && std::dynamic_pointer_cast<EnumType>(left_type)) {
+            if (bin->op == "==" || bin->op == "!=")
+                return get_builtin_type("bool");
+            log_error("Only equality comparisons are supported for enum values");
             return nullptr;
         }
 
@@ -924,6 +1040,9 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
     } else if (const auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
         if (recording) {
             bool handled = false;
+            auto variant = check_enum_variant(member_access, handled);
+            if (handled)
+                return variant;
             auto *symbol = module_member(member_access, handled, true);
             if (handled)
                 return symbol ? symbol->type : nullptr;
@@ -1097,7 +1216,7 @@ std::shared_ptr<Type> Sema::resolve_annotation(const Identifier *annotation, boo
     if (recording) {
         DiagnosticScope location(current_span, annotation->span);
         auto core = value_type(type);
-        if (!core) {
+        if (!core || dynamic_cast<ConstSizeType *>(type.get())) {
             if (annotation->value.starts_with("["))
                 log_error("Invalid fixed-array type '" + annotation->value +
                           "': use a supported element type and a decimal length up to 1048576");

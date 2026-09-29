@@ -308,11 +308,12 @@ def main():
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--check", action="store_true", help="report files that need formatting")
     action.add_argument("--write", action="store_true", help="format files in place")
-    parser.add_argument("files", nargs="*", type=Path, help="default: all tracked .gloin files")
+    parser.add_argument("files", nargs="*", type=Path, help="default: all repository .gloin files")
     arguments = parser.parse_args()
     paths = arguments.files or [ROOT / item.decode() for item in
-                                subprocess.check_output(["git", "ls-files", "-z", "--", "*.gloin"], cwd=ROOT).split(b"\0")
-                                if item]
+                                subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others",
+                                                         "--exclude-standard", "--", "*.gloin"], cwd=ROOT).split(b"\0")
+                                if item and (ROOT / item.decode()).is_file()]
     changed = []
     for path in paths:
         source = path.read_bytes().decode("utf-8")

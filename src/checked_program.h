@@ -6,6 +6,7 @@
 #include "stdlib_abi.h"
 #include "compilation_mode.h"
 #include "numeric.h"
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <unordered_map>
@@ -23,14 +24,22 @@ struct PointerLayer {
 struct ValueType {
     CoreType scalar = CoreType::Void;
     std::optional<size_t> structure;
+    std::optional<size_t> const_size;
     std::vector<PointerLayer> pointers; // Outermost first; base retains its nominal identity.
     std::shared_ptr<ValueType> array_element;
     size_t array_length = 0;
+    std::shared_ptr<ValueType> slice_element;
+    bool slice_read_only = false;
     ValueType() = default;
     ValueType(CoreType scalar) : scalar(scalar) {}
     static ValueType record(size_t id) {
         ValueType type;
         type.structure = id;
+        return type;
+    }
+    static ValueType size_argument(size_t value) {
+        ValueType type;
+        type.const_size = value;
         return type;
     }
     static ValueType array(ValueType element, size_t length) {
@@ -39,8 +48,15 @@ struct ValueType {
         type.array_length = length;
         return type;
     }
+    static ValueType slice(ValueType element, bool read_only) {
+        ValueType type;
+        type.slice_element = std::make_shared<ValueType>(std::move(element));
+        type.slice_read_only = read_only;
+        return type;
+    }
     bool is_pointer() const { return !pointers.empty(); }
     bool is_array() const { return pointers.empty() && static_cast<bool>(array_element); }
+    bool is_slice() const { return pointers.empty() && static_cast<bool>(slice_element); }
     ValueType pointee() const {
         if (!is_pointer())
             throw std::logic_error("Value is not a pointer");
@@ -49,16 +65,21 @@ struct ValueType {
         return result;
     }
     CoreType builtin() const {
-        if (structure || is_pointer() || is_array())
+        if (structure || const_size || is_pointer() || is_array() || is_slice())
             throw std::logic_error("Aggregate/pointer is not a builtin type");
         return scalar;
     }
     bool operator==(const ValueType &other) const {
         return scalar == other.scalar && structure == other.structure &&
+               const_size == other.const_size &&
                pointers == other.pointers && array_length == other.array_length &&
+               slice_read_only == other.slice_read_only &&
                (array_element && other.array_element
                     ? *array_element == *other.array_element
-                    : !array_element && !other.array_element);
+                    : !array_element && !other.array_element) &&
+               (slice_element && other.slice_element
+                    ? *slice_element == *other.slice_element
+                    : !slice_element && !other.slice_element);
     }
 };
 struct CheckedField {
@@ -90,6 +111,7 @@ struct SemanticData {
     std::unordered_map<const CallExpression *, StandardPrimitive> standard_calls;
     // Typed allocation calls target a checked library layout method. true is try_alloc.
     std::unordered_map<const CallExpression *, bool> arena_allocations;
+    std::unordered_set<const CallExpression *> arena_many_allocations;
     std::unordered_map<const FunctionDefinition *, std::vector<const DeferStatement *>> defers;
     // Instance calls pass the receiver once, before explicit arguments.
     // true takes the address of struct storage; false passes a pointer value.
@@ -97,6 +119,8 @@ struct SemanticData {
     std::unordered_set<SymbolId> address_taken;
     std::unordered_set<const MemberAccessExpression *> indirect_members;
     std::vector<CheckedStruct> structures;
+    std::unordered_set<size_t> enum_types;
+    std::unordered_map<const MemberAccessExpression *, uint32_t> enum_variants;
     std::unordered_map<const MemberAccessExpression *, size_t> field_indices;
     std::unordered_map<const StructLiteral *, std::vector<size_t>> literal_fields;
     std::unordered_set<const CallExpression *> runtime_calls;

@@ -13,9 +13,13 @@ arguments to run successfully.
 | `core_counter.gloin` | Scalar core execution | Verified by the CLI tests; broader runnable fixtures are in [core acceptance](../tests/fixtures/core/README.md). |
 | `hello_world.gloin` | Standard output | Runnable with SPEC-022/SPEC-023. |
 | `fixed_arrays.gloin` | Fixed arrays | Version 0.0.3: initializes, indexes, copies, updates, and sums a `[i32; 4]` array. See [the guide](../docs/fixed-arrays.md). |
-| `generic_structs.gloin` | Generic structs, methods, and `zeroed` arrays | Unreleased development compiler: returns 42 using static and instance methods, nested and multi-parameter generic structs, and a 100×100 zeroed array. See [generic structs](../docs/generics.md). |
-| `generic_functions.gloin` | Generic functions | Unreleased development compiler: explicit type arguments, recursive specialization, and generic struct values. See [generics](../docs/generics.md). |
-| `generic_methods.gloin` | Methods with their own type arguments | Unreleased development compiler: `Pair<A, B>.with_third<C>` and `Pairs.create<A, B>` build heterogeneous values. See [generics](../docs/generics.md). |
+| `generic_structs.gloin` | Generic structs, methods, and `zeroed` arrays | Version 0.0.4: returns 42 using static and instance methods, nested and multi-parameter generic structs, and a 100×100 zeroed array. See [generic structs](../docs/generics.md). |
+| `generic_functions.gloin` | Generic functions | Version 0.0.4: explicit type arguments, recursive specialization, and generic struct values. See [generics](../docs/generics.md). |
+| `generic_methods.gloin` | Methods with their own type arguments | Version 0.0.4: `Pair<A, B>.with_third<C>` and `Pairs.create<A, B>` build heterogeneous values. See [generics](../docs/generics.md). |
+| `enums.gloin` | Payloadless enums | Version 0.0.4: named variants, equality, value copies, struct fields, and arrays. See [enums](../docs/enums.md). |
+| `slices.gloin` | Borrowed slices | Version 0.0.4: ranges, checked indexes, mutation, read-only views, and `u64` length. See [slices and vectors](../docs/slices-vectors.md). |
+| `vector.gloin` | Arena vector | Version 0.0.4: automatic growth, push, nullable access, and aligned initialized allocation. See [slices and vectors](../docs/slices-vectors.md). |
+| `fixed_vector.gloin` | Inline vector | Version 0.0.4: compile-time capacity, inline storage, checked full-capacity push, and nullable access. See [slices and vectors](../docs/slices-vectors.md). |
 | `pointer_offsets.gloin` | Nullable pointer offsets | Version 0.0.3: advances a `*i32` through a live fixed array. See [the rules](../docs/pointer-offsets.md). |
 | `standard_library.gloin` | Input and i32 conversions | Runnable with SPEC-030; counted lines, explicit errors, caller-owned arena strings, reset/reuse, and totals. |
 | `strings_lab.gloin` | Byte strings and explicit retention | Runnable with SPEC-030a; allocation-free configuration parsing, checked access, search, independent copies, and 10,000 scratch-arena resets. See [costs and usage](../docs/strings.md). |
@@ -35,7 +39,7 @@ Run the fixed-array example with Gloin 0.0.3:
 ./build/gloinc --jit examples/fixed_arrays.gloin # sum = 42
 ```
 
-Run the development generic example with `./build/gloinc --jit
+Run the generic example with `./build/gloinc --jit
 examples/generic_structs.gloin`; it exits with status 42.
 
 Use the [root README](../README.md) for setup, the [maintained tests](../tests/README.md)

@@ -1,8 +1,8 @@
-# Generics (development version)
+# Generics (0.0.4)
 
-The current development compiler supports explicit type arguments on generic
+Gloin 0.0.4 supports explicit type arguments on generic
 structs, instance and static methods (including methods with their own type
-parameters), and generic functions. These features are not in the 0.0.3 release.
+parameters), and generic functions. These features first ship in 0.0.4.
 
 ```gloin
 def struct Box<T> {
@@ -30,6 +30,17 @@ ordinary or generic structs, pointers/references, or fixed arrays. For example,
 type applications. Generic struct literals repeat the concrete type, as in
 `Box<i32> { value: 42 }`. A module may export a template with `def pub struct`;
 other modules use its qualified name, such as `mod.Box<i32>`.
+
+Generic structs may also declare compile-time size parameters after `;`:
+`def struct Buffer<T; const N: usize> { def data: [T; N], }`. A use supplies a
+decimal size or another bound size parameter, such as `Buffer<i32; 16>`.
+The size is part of the concrete type and may be used as an `i64` constant
+in that struct's methods. An array field `[T; N]` and a repeated initializer
+`{fill; N}` use the same bound. The maximum size is 1,048,576. Different
+numbers produce distinct layouts and nominal specializations. Templates with
+the same name may differ by argument count, as with `vector.Vector<T>` and
+`vector.Vector<T; N>`. Size parameters are currently supported on structs;
+generic functions and methods can declare type parameters only.
 
 Each distinct resolved argument list has one nominal struct identity and
 layout. Aliases for the same scalar type, such as `int` and `i32`, select the
@@ -122,6 +133,6 @@ checked for each specialization.
 
 Built-in `result<T>` and `error` have a separate
 [partial design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented);
-they are not implemented. Slices and vectors are planned after generic types
-and functions. See [fixed arrays](fixed-arrays.md) for the development
-`zeroed` initializer.
+they are not implemented. Gloin 0.0.4 also has
+[borrowed slices and both vector forms](slices-vectors.md). See
+[fixed arrays](fixed-arrays.md) for the `zeroed` initializer.

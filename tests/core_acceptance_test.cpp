@@ -69,6 +69,200 @@ TEST_F(CoreAcceptanceTest, RunFixedArrays) {
     EXPECT_TRUE(read(out).empty());
     EXPECT_TRUE(read(err).empty());
 }
+TEST_F(CoreAcceptanceTest, RunBorrowedSlices) {
+    auto file = source(R"(
+        def sum(view: [const i32]) -> i32 {
+            def mut total: i32 = 0;
+            def mut index: u64 = 0;
+            while index < view.len {
+                total = total + view[index];
+                index = index + 1;
+            }
+            return total;
+        }
+        def main() -> i32 {
+            def mut values: [i32; 4] = {1, 2, 3, 4};
+            def middle: [i32] = values[1..3];
+            middle[0] = 20;
+            def tail: [const i32] = middle[1..];
+            def one: u64 = 1;
+            if tail.len != one { return 1; }
+            return sum(values[..]);
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 28);
+    const auto executable = directory + "/slices";
+    expect_success(invoke_raw({"-o", executable, file}), "");
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, std::nullopt, std::nullopt};
+    std::string message;
+    bool failed = false;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                        10, 0, &message, &failed), 28) << message;
+    EXPECT_FALSE(failed);
+}
+TEST_F(CoreAcceptanceTest, SliceRejectsWriteThroughReadOnlyView) {
+    auto file = source(R"(
+        def main() -> i32 {
+            def values: [i32; 2] = {1, 2};
+            def view: [const i32] = values[..];
+            view[0] = 3;
+            return 0;
+        }
+    )");
+    expect_error(invoke({"--check", file}), 1, "Cannot write");
+}
+TEST_F(CoreAcceptanceTest, SliceRangeAndIndexTrap) {
+    for (const std::string body : {
+             "def view: [i32] = values[2..1];",
+             "def view: [i32] = values[0..3];",
+             "def view: [i32] = values[..]; def item: i32 = view[2];"}) {
+        SCOPED_TRACE(body);
+        auto file = source("def main() -> i32 { def mut values: [i32; 2] = {1, 2}; " +
+                           body + " return 0; }");
+        expect_success(invoke({"--check", file}), "");
+        EXPECT_LT(invoke({file}).status, 0);
+    }
+}
+TEST_F(CoreAcceptanceTest, ArenaVectorGrows) {
+    auto file = source(R"(
+        import "@arena";
+        import "@vector";
+        def main() -> i32 {
+            def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+            defer memory.free();
+            def mut values: vector.Vector<i32> = vector.Vector<i32>.create(&memory, 2, 0);
+            if !values.push(20) || !values.push(22) || !values.push(1) { return 1; }
+            def three: i64 = 3;
+            if values.cap() < three { return 6; }
+            def first: *const i32 = values.get(0);
+            def second: *i32 = values.get_mut(1);
+            if first == null || second == null || values.get(-1) != null ||
+               values.get(3) != null { return 2; }
+            values.clear();
+            def zero: i64 = 0;
+            if values.len() != zero || values.get(0) != null { return 3; }
+            if !values.push(*first + *second) { return 4; }
+            def answer: *const i32 = values.get(0);
+            if answer == null { return 5; }
+            return *answer;
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+}
+TEST_F(CoreAcceptanceTest, InlineVectorHasFixedCapacity) {
+    auto file = source(R"(
+        import "@vector";
+        def main() -> i32 {
+            def mut values: vector.Vector<i32; 3> = vector.Vector<i32; 3>.create(7);
+            if values.len() != 0 || values.cap() != 3 { return 1; }
+            if !values.push(10) || !values.push(20) || !values.push(12) { return 2; }
+            if values.push(99) || values.len() != 3 { return 3; }
+            def middle: *i32 = values.get_mut(1);
+            if middle == null || values.get(-1) != null || values.get(3) != null {
+                return 4;
+            }
+            *middle = *middle + 0;
+            def first: *const i32 = values.get(0);
+            def last: *const i32 = values.get(2);
+            if first == null || last == null { return 5; }
+            return *first + *middle + *last;
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    const auto executable = directory + "/fixed-vector";
+    expect_success(invoke_raw({"-o", executable, file}), "");
+    std::string message;
+    bool failed = false;
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, std::nullopt, std::nullopt};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                        10, 0, &message, &failed), 42) << message;
+    EXPECT_FALSE(failed);
+}
+TEST_F(CoreAcceptanceTest, RepeatedArrayChecksCount) {
+    auto valid = source(R"(
+        def main() -> i32 {
+            def values: [i32; 4] = {10; 4};
+            return values[0] + values[3] + 22;
+        }
+    )");
+    expect_run(invoke({valid}), 42);
+    auto invalid = source(R"(
+        def main() -> i32 {
+            def values: [i32; 4] = {10; 3};
+            return values[0];
+        }
+    )", "bad-repeat.gloin");
+    expect_error(invoke({"--check", invalid}), 1,
+                 "Repeated-array count must equal the declared length");
+}
+TEST_F(CoreAcceptanceTest, InlineVectorZeroCapacity) {
+    auto file = source(R"(
+        import "@vector";
+        def main() -> i32 {
+            def mut values: vector.Vector<i32; 0> = vector.Vector<i32; 0>.create(7);
+            if values.cap() != 0 || values.len() != 0 || values.push(1) ||
+               values.get(0) != null { return 1; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({file}), 42);
+}
+TEST_F(CoreAcceptanceTest, InlineVectorCopiesStructValues) {
+    auto file = source(R"(
+        import "@vector";
+        def struct Item { def pub value: i32, }
+        def main() -> i32 {
+            def mut values: vector.Vector<Item; 2> =
+                vector.Vector<Item; 2>.create(Item { value: 21 });
+            if !values.push(Item { value: 42 }) { return 1; }
+            def first: *const Item = values.get(0);
+            if first == null { return 2; }
+            return first.value;
+        }
+    )");
+    expect_run(invoke({file}), 42);
+}
+TEST_F(CoreAcceptanceTest, SizeParameterCannotBeStoredAsValue) {
+    auto file = source(R"(
+        def struct Invalid<T; const N: usize> { def size: N, }
+        def main() -> i32 {
+            def item: Invalid<i32; 2> = Invalid<i32; 2> { size: 2 };
+            return 0;
+        }
+    )");
+    expect_error(invoke({"--check", file}), 1, "Unknown or invalid field type 'N'");
+}
+TEST_F(CoreAcceptanceTest, ArenaVectorZeroInitialCapacityAndInvalidCapacity) {
+    auto empty = source(R"(
+        import "@arena";
+        import "@vector";
+        def main() -> i32 {
+            def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+            defer memory.free();
+            def mut values: vector.Vector<i32> = vector.Vector<i32>.create(&memory, 0, 0);
+            if values.get(0) != null || !values.push(1) { return 1; }
+            def one: i64 = 1;
+            if values.cap() < one { return 2; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({empty}), 42);
+    auto negative = source(R"(
+        import "@arena";
+        import "@vector";
+        def main() -> i32 {
+            def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+            defer memory.free();
+            def values: vector.Vector<i32> = vector.Vector<i32>.create(&memory, -1, 0);
+            return 0;
+        }
+    )", "negative.gloin");
+    expect_success(invoke({"--check", negative}), "");
+    EXPECT_LT(invoke({negative}).status, 0);
+}
 TEST_F(CoreAcceptanceTest, RunZeroedNestedArray) {
     auto file = source(R"(
         def main() -> i32 {
@@ -387,10 +581,6 @@ TEST_F(CoreAcceptanceTest, RejectBracketArrayLiteral) {
     rejects("reject/deferred_array.gloin", "Array literals");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredSlice) {
-    rejects("reject/deferred_slice.gloin", "Expected ';' in array type");
-}
-
 TEST_F(CoreAcceptanceTest, RejectDeferOperand) { rejects("reject/defer_operand.gloin", "defer requires"); }
 
 TEST_F(CoreAcceptanceTest, RejectFunctionMember) {
@@ -473,8 +663,8 @@ TEST_F(CoreAcceptanceTest, RejectDeferredPacked) {
     rejects("reject/deferred_packed.gloin", "Packed structs");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredEnum) {
-    rejects("reject/deferred_enum.gloin", "identifier");
+TEST_F(CoreAcceptanceTest, RejectEnumPayload) {
+    rejects("reject/enum_payload.gloin", "Expected ',' after enum variant");
 }
 
 TEST_F(CoreAcceptanceTest, RunGenericFunction) { runs("run/generic_function.gloin", "42"); }

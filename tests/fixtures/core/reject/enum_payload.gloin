@@ -1,5 +1,5 @@
 def enum Choice {
-    First,
+    First(i32),
     Second
 }
 

@@ -25,6 +25,13 @@ copies are shallow; referenced memory does not become owned by the arena.
 allocation fails; initializer side effects have already occurred. `alloc` and
 `create` trap on allocation failure. Fatal traps do not run deferred cleanup.
 
+Gloin 0.0.4 also provides `alloc_many(fill, capacity: i64) -> &T`.
+It allocates aligned space for `capacity` elements of the fill value's type,
+checks negative capacity and byte-size overflow, and copies the captured fill
+value into every slot. It traps on allocation failure. A zero capacity returns
+a non-null pointer with no valid element to dereference. This bridge supports
+the growable [arena vector](slices-vectors.md).
+
 Growth never moves existing objects. `reset()` invalidates all objects and keeps
 all blocks for reuse, including large blocks. Never use old references after a
 reset, even if the same addresses are reused. `free()` releases blocks and the

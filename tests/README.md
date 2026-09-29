@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **900 tests**:
+The current source definitions and CTest discovery contain **933 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -23,7 +23,7 @@ The current source definitions and CTest discovery contain **900 tests**:
 | OperatorsTest | 16 |
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
-| LoweringTest | 15 |
+| LoweringTest | 45 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -59,6 +59,7 @@ The current source definitions and CTest discovery contain **900 tests**:
 | StandardRuntimeTest | 17 |
 | ModuleTest | 25 |
 | OrdinaryStructTest | 14 |
+| EnumTest | 3 |
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
@@ -91,8 +92,9 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 ```
 
 All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. The current local parallel run reports **876 passes and
-4 known async/spawn failures**, with no unexpected test-process crashes or skips.
+as expected successes. A local parallel run excluding the four documented
+unsupported async/spawn cases passed **922 of 922 tests**, with no unexpected
+test-process crashes or skips.
 
 ## Integrated examples (SPEC-030h)
 

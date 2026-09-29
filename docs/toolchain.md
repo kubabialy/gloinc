@@ -103,7 +103,7 @@ make clean BUILD_DIR=build-no-tests
 `make run` defaults to `examples/core_counter.gloin`; `RUN_ARGS` overrides its CLI
 arguments. `check-core` requires a tests-enabled build and runs the 817 required
 scalar, module, arena, and standard-output checks. Installation, CPack archives, external runtime dependencies,
-and the sanitizer build option are described in the [current release guide](release-0.0.3.md).
+and the sanitizer build option are described in the [current release guide](release-0.0.4.md).
 `make clean` invokes CMake's clean target in an already configured directory,
 removing build products while retaining the configuration and downloaded sources.
 

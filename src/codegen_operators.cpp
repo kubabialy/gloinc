@@ -2,6 +2,10 @@
 #include "operators.h"
 
 void CodeGen::require_runtime(mlir::Value condition) {
+    if (checked_data) {
+        builder.create<gloin::AssertOp>(location(), condition);
+        return;
+    }
     auto *region = builder.getBlock()->getParent();
     auto *success = new mlir::Block();
     auto *failure = new mlir::Block();
@@ -18,54 +22,9 @@ void CodeGen::require_runtime(mlir::Value condition) {
 mlir::Value CodeGen::checked_integer_arithmetic(std::string_view op, mlir::Value left,
                                                 mlir::Value right, CoreType type) {
     const auto &info = core_type_info(type);
-    if (op == "/" || op == "%") {
-        auto zero = emit_constant({type, llvm::APInt(info.bits, 0)});
-        auto nonzero = builder.create<mlir::arith::CmpIOp>(
-            location(), mlir::arith::CmpIPredicate::ne, right, zero);
-        require_runtime(nonzero);
-        if (info.is_signed) {
-            auto minimum = emit_constant({type, llvm::APInt::getSignedMinValue(info.bits)});
-            auto minus_one = emit_constant({type, llvm::APInt::getAllOnes(info.bits)});
-            auto not_minimum = builder.create<mlir::arith::CmpIOp>(
-                location(), mlir::arith::CmpIPredicate::ne, left, minimum);
-            auto not_minus_one = builder.create<mlir::arith::CmpIOp>(
-                location(), mlir::arith::CmpIPredicate::ne, right, minus_one);
-            require_runtime(
-                builder.create<mlir::arith::OrIOp>(location(), not_minimum, not_minus_one));
-            if (op == "/")
-                return builder.create<mlir::arith::DivSIOp>(location(), left, right);
-            return builder.create<mlir::arith::RemSIOp>(location(), left, right);
-        }
-        if (op == "/")
-            return builder.create<mlir::arith::DivUIOp>(location(), left, right);
-        return builder.create<mlir::arith::RemUIOp>(location(), left, right);
-    }
-
-    // Double width holds every mathematical sum/product of the supported inputs.
-    // Truncation followed by extension detects both signed overflow and unsigned
-    // overflow/underflow, without performing poison-producing narrow arithmetic.
-    auto wide_type = builder.getIntegerType(info.bits * 2);
-    auto extend = [&](mlir::Value value) -> mlir::Value {
-        if (info.is_signed)
-            return builder.create<mlir::arith::ExtSIOp>(location(), wide_type, value);
-        return builder.create<mlir::arith::ExtUIOp>(location(), wide_type, value);
-    };
-    auto wide_left = extend(left);
-    auto wide_right = extend(right);
-    mlir::Value wide_result;
-    if (op == "+")
-        wide_result = builder.create<mlir::arith::AddIOp>(location(), wide_left, wide_right);
-    else if (op == "-")
-        wide_result = builder.create<mlir::arith::SubIOp>(location(), wide_left, wide_right);
-    else if (op == "*")
-        wide_result = builder.create<mlir::arith::MulIOp>(location(), wide_left, wide_right);
-    else
-        fail("Missing checked integer operator");
-    auto result = builder.create<mlir::arith::TruncIOp>(location(), left.getType(), wide_result);
-    auto restored = extend(result);
-    require_runtime(builder.create<mlir::arith::CmpIOp>(location(), mlir::arith::CmpIPredicate::eq,
-                                                        wide_result, restored));
-    return result;
+    return builder.create<gloin::CheckedIntegerBinaryOp>(
+        location(), left.getType(), left, right, builder.getStringAttr(op),
+        builder.getBoolAttr(info.is_signed));
 }
 
 mlir::Value CodeGen::gen_checked_unary(const PrefixExpression *expression) {
@@ -104,22 +63,36 @@ mlir::Value CodeGen::gen_short_circuit(const InfixExpression *expression) {
 }
 
 mlir::Value CodeGen::gen_checked_binary(const InfixExpression *expression) {
+    const auto &left_type = checked_data->types.at(expression->left.get());
+    if (left_type.structure && checked_data->enum_types.contains(*left_type.structure)) {
+        auto left = gen_expression(expression->left.get());
+        auto right = gen_expression(expression->right.get());
+        auto source = source_type(left_type);
+        left = as_source_value(left, source);
+        right = as_source_value(right, source);
+        return builder.create<gloin::EnumCompareOp>(
+            location(), builder.getI1Type(), left, right,
+            builder.getBoolAttr(expression->op == "!="),
+            mlir::TypeAttr::get(source));
+    }
     if (checked_data->types.at(expression->left.get()).is_pointer()) {
         auto left = gen_expression(expression->left.get());
         auto right = gen_expression(expression->right.get());
+        auto pointer = source_type(checked_data->types.at(expression->left.get()));
         if (expression->op == "+") {
-            auto null = builder.create<mlir::LLVM::ZeroOp>(location(), left.getType());
-            require_runtime(builder.create<mlir::LLVM::ICmpOp>(
-                location(), mlir::LLVM::ICmpPredicate::ne, left, null));
             auto element = checked_data->types.at(expression->left.get()).pointee();
-            return builder.create<mlir::LLVM::GEPOp>(
-                location(), left.getType(), lower_type(element), left,
-                llvm::ArrayRef<mlir::LLVM::GEPArg>{right});
+            auto offset = builder.create<gloin::PointerOffsetOp>(
+                location(), pointer, as_source_value(left, pointer), right,
+                mlir::TypeAttr::get(lower_type(element)),
+                mlir::TypeAttr::get(pointer));
+            return builder.create<gloin::ToLayoutOp>(
+                location(), lower_type(checked_data->types.at(expression)), offset);
         }
-        return builder.create<mlir::LLVM::ICmpOp>(
-            location(),
-            expression->op == "==" ? mlir::LLVM::ICmpPredicate::eq : mlir::LLVM::ICmpPredicate::ne,
-            left, right);
+        return builder.create<gloin::PointerCompareOp>(
+            location(), builder.getI1Type(), as_source_value(left, pointer),
+            as_source_value(right, pointer),
+            builder.getBoolAttr(expression->op == "!="),
+            mlir::TypeAttr::get(pointer));
     }
     auto type = checked_data->types.at(expression->left.get()).builtin();
     const auto &op = expression->op;
@@ -134,58 +107,13 @@ mlir::Value CodeGen::gen_checked_binary(const InfixExpression *expression) {
     if (info.is_integer || type == CoreType::Bool) {
         if (arithmetic)
             return checked_integer_arithmetic(op, left, right, type);
-        using Predicate = mlir::arith::CmpIPredicate;
-        auto predicate = Predicate::eq;
-        if (op == "!=")
-            predicate = Predicate::ne;
-        else if (op == "<")
-            predicate = info.is_signed ? Predicate::slt : Predicate::ult;
-        else if (op == "<=")
-            predicate = info.is_signed ? Predicate::sle : Predicate::ule;
-        else if (op == ">")
-            predicate = info.is_signed ? Predicate::sgt : Predicate::ugt;
-        else if (op == ">=")
-            predicate = info.is_signed ? Predicate::sge : Predicate::uge;
-        return builder.create<mlir::arith::CmpIOp>(location(), predicate, left, right);
+        return builder.create<gloin::CheckedIntegerCompareOp>(
+            location(), builder.getI1Type(), left, right,
+            builder.getStringAttr(op), builder.getBoolAttr(info.is_signed));
     }
-    using Predicate = mlir::arith::CmpFPredicate;
-    if (!arithmetic) {
-        auto predicate = Predicate::OEQ;
-        if (op == "!=")
-            predicate = Predicate::UNE;
-        else if (op == "<")
-            predicate = Predicate::OLT;
-        else if (op == "<=")
-            predicate = Predicate::OLE;
-        else if (op == ">")
-            predicate = Predicate::OGT;
-        else if (op == ">=")
-            predicate = Predicate::OGE;
-        return builder.create<mlir::arith::CmpFOp>(location(), predicate, left, right);
-    }
-    mlir::Value result;
-    if (op == "+")
-        result = builder.create<mlir::arith::AddFOp>(location(), left, right);
-    else if (op == "-")
-        result = builder.create<mlir::arith::SubFOp>(location(), left, right);
-    else if (op == "*")
-        result = builder.create<mlir::arith::MulFOp>(location(), left, right);
-    else if (op == "/") {
-        auto zero = emit_constant({type, llvm::APFloat::getZero(float_semantics(type))});
-        require_runtime(
-            builder.create<mlir::arith::CmpFOp>(location(), Predicate::ONE, right, zero));
-        result = builder.create<mlir::arith::DivFOp>(location(), left, right);
-    } else {
-        fail("Missing checked floating operator");
-    }
-    auto largest = llvm::APFloat::getLargest(float_semantics(type));
-    auto upper = emit_constant({type, largest});
-    largest.changeSign();
-    auto lower = emit_constant({type, largest});
-    auto above_lower =
-        builder.create<mlir::arith::CmpFOp>(location(), Predicate::OGE, result, lower);
-    auto below_upper =
-        builder.create<mlir::arith::CmpFOp>(location(), Predicate::OLE, result, upper);
-    require_runtime(builder.create<mlir::arith::AndIOp>(location(), above_lower, below_upper));
-    return result;
+    if (!arithmetic)
+        return builder.create<gloin::CheckedFloatCompareOp>(
+            location(), builder.getI1Type(), left, right, builder.getStringAttr(op));
+    return builder.create<gloin::CheckedFloatBinaryOp>(
+        location(), left.getType(), left, right, builder.getStringAttr(op));
 }

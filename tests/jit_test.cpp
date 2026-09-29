@@ -265,11 +265,12 @@ TEST(JitRunnerTest, VerificationAndLoweringFailuresKeepTheirStage) {
     main.front().getTerminator()->setOperands(mlir::ValueRange{});
     expect_failure(JitRunner::run(*compiled.module), DiagnosticStage::Verification, "return");
     auto module = parse(context, R"(module { func.func @main() -> i32 {
-        %c = "gloin.constant"() {value = 42 : i32} : () -> i32
+        "gloin.defer"() ({ "gloin.yield"() : () -> () }) : () -> ()
+        %c = arith.constant 42 : i32
         return %c : i32
     } })");
     ASSERT_TRUE(module);
-    expect_failure(JitRunner::run(*module), DiagnosticStage::Lowering, "gloin.constant");
+    expect_failure(JitRunner::run(*module), DiagnosticStage::Lowering, "gloin.defer");
 }
 
 TEST(JitRunnerTest, LocatedDiagnosticsAndSuccessDoNotPrintImplicitly) {

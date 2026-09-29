@@ -18,6 +18,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,8 @@ class CodeGen {
     mlir::ModuleOp generate_impl(const std::vector<std::unique_ptr<Statement>> &program);
     void initialize_unchecked_types();
     mlir::Type lower_type(ValueType type);
+    mlir::Type source_type(ValueType type);
+    mlir::Value as_source_value(mlir::Value layout, mlir::Type source);
     std::unordered_map<size_t, mlir::Type> checked_struct_types;
     mlir::Value emit_constant(const ConstantValue &constant);
     mlir::Value gen_checked_unary(const PrefixExpression *expression);
@@ -93,11 +96,17 @@ class CodeGen {
     mlir::Value defer_head;
     std::vector<mlir::LLVM::LLVMStructType> defer_record_types;
     std::vector<mlir::Value> gen_call_arguments(const CallExpression *call);
+    mlir::Value emit_checked_function_call(mlir::func::FuncOp function,
+                                           mlir::ValueRange arguments);
+    mlir::Value emit_abi_call(mlir::LLVM::LLVMFuncOp function, mlir::ValueRange arguments);
     mlir::Value emit_checked_call(const CallExpression *call, mlir::ValueRange arguments);
     mlir::Value emit_standard_primitive(StandardPrimitive kind, mlir::ValueRange arguments);
     mlir::Value emit_arena_primitive(ArenaPrimitive kind, mlir::ValueRange arguments);
     mlir::Value emit_arena_allocation(mlir::func::FuncOp method, bool nullable,
-                                      mlir::ValueRange arguments);
+                                      mlir::ValueRange arguments, mlir::Type result_source);
+    mlir::Value emit_arena_many_allocation(mlir::func::FuncOp method,
+                                           mlir::ValueRange arguments,
+                                           mlir::Type result_source);
     void prepare_defers(const FunctionDefinition *function);
     void register_defer(const DeferStatement *statement);
     mlir::LLVM::LLVMFuncOp defer_allocator(bool allocate);
@@ -139,13 +148,24 @@ class CodeGen {
     mlir::Value gen_expression_impl(const Expression *expr);
     mlir::Value gen_address(const Expression *expr);
     mlir::Value gen_array_address(const IndexExpression *expr, bool allow_temporary);
+    mlir::Value gen_integer_index(const Expression *expression);
+    mlir::Value gen_slice(const SliceExpression *expression);
     mlir::Value gen_pointer_address(const Expression *expr);
     mlir::Type get_expression_type(const Expression *expr);
 
     // Helper to resolve type from AST/String to MLIR Type
     mlir::Type resolve_type(const std::string &type_name);
     int64_t get_type_size(mlir::Type type);
-    mlir::Value create_entry_alloca(mlir::Type type);
+    // `internal` reserves ABI/defer bookkeeping storage outside source GloinIR.
+    mlir::Value create_entry_alloca(mlir::Type type,
+                                   std::optional<ValueType> source = std::nullopt,
+                                   bool internal = false);
+    mlir::Value load_value(mlir::Type type, mlir::Value address,
+                           std::optional<ValueType> source = std::nullopt);
+    void store_value(mlir::Value value, mlir::Value address,
+                     std::optional<ValueType> source = std::nullopt);
+    mlir::Value source_address(mlir::Value layout_address, mlir::Type pointee,
+                               bool writing);
     void create_runtime_functions();
 
     // Import system support

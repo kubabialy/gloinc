@@ -33,7 +33,8 @@ void Sema::register_arena_method(const std::shared_ptr<StructType> &structure,
                                  const std::shared_ptr<FunctionType> &signature) {
     if (!structure->owner || structure->owner->standard_name != "arena" ||
         structure->name != "GeneralArena" ||
-        (method->name->value != "alloc" && method->name->value != "try_alloc"))
+        (method->name->value != "alloc" && method->name->value != "try_alloc" &&
+         method->name->value != "alloc_many"))
         return;
     auto receiver = std::make_shared<PointerType>(structure, false, false);
     auto storage = std::make_shared<PointerType>(get_builtin_type("u8"), true, false);
@@ -46,7 +47,10 @@ void Sema::register_arena_method(const std::shared_ptr<StructType> &structure,
                   "(self: &GeneralArena, size: u64, alignment: u64) -> *u8");
         return;
     }
-    arena_methods.emplace(method, method->name->value == "try_alloc");
+    if (method->name->value == "alloc_many")
+        arena_many_methods.insert(method);
+    else
+        arena_methods.emplace(method, method->name->value == "try_alloc");
 }
 
 std::shared_ptr<Type> Sema::check_arena_primitive(const CallExpression *call, ArenaPrimitive kind) {

@@ -61,7 +61,7 @@ TEST(CheckedProgramTest, EveryCoreScalarHasOneSignatureAndStorageType) {
             EXPECT_TRUE(type.isInteger(info.bits));
         EXPECT_EQ(type, function.getFunctionType().getResult(0));
         int loads = 0;
-        function.walk([&](mlir::LLVM::LoadOp load) {
+        function.walk([&](gloin::LoadOp load) {
             ++loads;
             EXPECT_EQ(load.getType(), type);
         });

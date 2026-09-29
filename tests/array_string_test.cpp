@@ -85,7 +85,12 @@ TEST(ArrayStringTest, CheckedStringSignaturesUseTheSameRepresentation) {
     auto echo = result.module->lookupSymbol<mlir::func::FuncOp>("echo");
     ASSERT_TRUE(echo);
     EXPECT_EQ(echo.getFunctionType().getInput(0), echo.getFunctionType().getResult(0));
-    EXPECT_TRUE(llvm::isa<mlir::LLVM::LLVMStructType>(echo.getFunctionType().getInput(0)));
+    EXPECT_TRUE(llvm::isa<gloin::GloinStringType>(echo.getFunctionType().getInput(0)));
+    auto layouts = echo->getAttrOfType<mlir::ArrayAttr>("gloin.layout_inputs");
+    ASSERT_TRUE(layouts);
+    ASSERT_EQ(layouts.size(), 1u);
+    EXPECT_TRUE(llvm::isa<mlir::LLVM::LLVMStructType>(
+        mlir::cast<mlir::TypeAttr>(layouts[0]).getValue()));
 }
 
 TEST(ArrayStringTest, BracketArrayLiteralsRemainDeferred) {

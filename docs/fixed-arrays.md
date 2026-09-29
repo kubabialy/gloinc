@@ -1,8 +1,8 @@
-# Fixed arrays (0.0.3)
+# Fixed arrays (0.0.3 onward)
 
 Fixed arrays have a known element type and length. They are available in 0.0.3;
 the 0.0.2 release does not contain them. See the
-[0.0.3 HTML guide](site/0.0.3/index.html) for a language overview.
+[0.0.4 HTML guide](site/0.0.4/index.html) for the current language overview.
 
 Run [the example](../examples/fixed_arrays.gloin) with
 `./build/gloinc --jit examples/fixed_arrays.gloin`; it prints `sum = 42`.
@@ -56,13 +56,14 @@ offset rules in [pointer offsets](pointer-offsets.md).
 Array layout follows the target's ordinary contiguous array layout, including
 the element type's alignment and padding.
 
-Slices, vectors, maps, and variable-length arrays are separate future work
-after generics. Fixed arrays have no `.length` member or slice operator yet;
-the length is part of their type.
+Gloin 0.0.4 can borrow a fixed array as a checked
+[`[T]` slice](slices-vectors.md) with `array[start..end]`. This does not copy the
+array. Fixed arrays still have no `.length` member; their length is part of
+their type. Maps and variable-length arrays remain separate future work.
 
-## Development addition after 0.0.3: `zeroed`
+## `zeroed` and repeated initializers
 
-The current development compiler accepts `zeroed` wherever an explicit
+Gloin 0.0.4 accepts `zeroed` wherever an explicit
 fixed-array type supplies the context:
 
 ```gloin
@@ -83,5 +84,11 @@ capacity reservation.
 `def mut grid: [[i32; 100]; 100];` already reserves local storage without
 initializing it, but the definite-initialization rule prevents element writes
 until the whole array has been assigned. A separate `init` keyword is not
-defined for fixed arrays. Vector and slice capacity/length rules remain for
-their later design.
+defined for fixed arrays.
+
+Gloin 0.0.4 also accepts `{value; N}` for a declared `[T; N]`
+array. It evaluates `value` once and copies it into every slot. `N` must match
+the declared length and can be a decimal literal or a bound compile-time size
+parameter. This supports arbitrary copyable `T`, including types without a
+zero value. See the [slice/vector guide](slices-vectors.md) for
+borrowed views and both vector forms.

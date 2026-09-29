@@ -70,12 +70,17 @@ struct StringLiteral : public Expression {
 struct ArrayLiteral : public Expression {
     std::vector<std::unique_ptr<Expression>> elements;
     bool braced;
+    bool repeated = false;
     
-    explicit ArrayLiteral(std::vector<std::unique_ptr<Expression>> elements, bool braced = false)
-        : elements(std::move(elements)), braced(braced) {}
+    explicit ArrayLiteral(std::vector<std::unique_ptr<Expression>> elements, bool braced = false,
+                          bool repeated = false)
+        : elements(std::move(elements)), braced(braced), repeated(repeated) {}
         
     std::string to_string() const override {
         std::stringstream ss;
+        if (repeated && elements.size() == 2)
+            return "{" + elements[0]->to_string() + "; " +
+                   elements[1]->to_string() + "}";
         ss << (braced ? "{" : "[");
         for (size_t i = 0; i < elements.size(); ++i) {
             ss << elements[i]->to_string();
@@ -151,6 +156,21 @@ struct IndexExpression : public Expression {
         
     std::string to_string() const override {
         return "(" + left->to_string() + "[" + index->to_string() + "])";
+    }
+};
+
+struct SliceExpression : public Expression {
+    std::unique_ptr<Expression> left;
+    std::unique_ptr<Expression> start;
+    std::unique_ptr<Expression> end;
+
+    SliceExpression(std::unique_ptr<Expression> left, std::unique_ptr<Expression> start,
+                    std::unique_ptr<Expression> end)
+        : left(std::move(left)), start(std::move(start)), end(std::move(end)) {}
+
+    std::string to_string() const override {
+        return "(" + left->to_string() + "[" + (start ? start->to_string() : "") + ".." +
+               (end ? end->to_string() : "") + "])";
     }
 };
 
@@ -475,6 +495,26 @@ struct StructDefinition : public Statement {
             ss << method->to_string() << " ";
         }
         ss << "}";
+        return ss.str();
+    }
+};
+
+struct EnumDefinition : public Statement {
+    bool is_public = false;
+    std::unique_ptr<Identifier> name;
+    std::vector<std::unique_ptr<Identifier>> variants;
+
+    EnumDefinition(std::unique_ptr<Identifier> n, std::vector<std::unique_ptr<Identifier>> v)
+        : name(std::move(n)), variants(std::move(v)) {}
+
+    std::string to_string() const override {
+        std::stringstream ss;
+        ss << "def " << (is_public ? "pub " : "") << "enum " << name->to_string() << " { ";
+        for (size_t i = 0; i < variants.size(); ++i) {
+            if (i) ss << ", ";
+            ss << variants[i]->to_string();
+        }
+        ss << " }";
         return ss.str();
     }
 };

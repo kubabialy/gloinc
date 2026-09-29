@@ -1,0 +1,28 @@
+// Payloadless enums are nominal values with explicit variants.
+def enum Direction {
+    North,
+    East,
+    South,
+    West
+}
+
+def struct Compass {
+    def mut direction: Direction,
+}
+
+def turn_right(direction: Direction) -> Direction {
+    if direction == Direction.North { return Direction.East; }
+    if direction == Direction.East { return Direction.South; }
+    if direction == Direction.South { return Direction.West; }
+    return Direction.North;
+}
+
+def main() -> i32 {
+    def mut compass: Compass = Compass {
+        direction: Direction.North
+    };
+    compass.direction = turn_right(compass.direction);
+    def path: [Direction; 2] = {compass.direction, turn_right(compass.direction)};
+    if path[0] == Direction.East && path[1] != Direction.East { return 42; }
+    return 1;
+}

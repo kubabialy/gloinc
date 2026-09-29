@@ -40,6 +40,7 @@ void Sema::select_module(const SourceModule *module) {
 }
 
 void Sema::collect_declarations(const std::vector<std::unique_ptr<Statement>> &program) {
+    collect_enums(program);
     collect_structs(program);
     for (const auto &declaration : program) {
         const auto *function = dynamic_cast<const FunctionDefinition *>(declaration.get());
@@ -67,9 +68,12 @@ void Sema::collect_declarations(const std::vector<std::unique_ptr<Statement>> &p
         std::set<std::string> parameters;
         bool valid = true;
         for (const auto &parameter : function->generic_params)
-            if (!parameters.insert(parameter).second || get_builtin_type(parameter) ||
-                current_scope->types.contains(parameter) ||
-                current_scope->generic_structs.contains(parameter)) {
+            if (is_const_size_parameter(parameter)) {
+                log_error("Size parameters are currently supported only on generic structs");
+                valid = false;
+            } else if (!parameters.insert(parameter).second || get_builtin_type(parameter) ||
+                       current_scope->types.contains(parameter) ||
+                       current_scope->generic_structs.contains(parameter)) {
                 log_error("Duplicate or reserved generic parameter '" + parameter + "'");
                 valid = false;
             }
@@ -106,6 +110,8 @@ void Sema::check_bodies(const std::vector<std::unique_ptr<Statement>> &program) 
             continue;
         if (const auto *structure = dynamic_cast<const StructDefinition *>(statement.get())) {
             check_methods(structure);
+        } else if (dynamic_cast<const EnumDefinition *>(statement.get())) {
+            continue;
         } else if (const auto *function = dynamic_cast<const FunctionDefinition *>(statement.get())) {
             if (!function->generic_params.empty())
                 continue;

@@ -37,7 +37,7 @@ mlir::Value CodeGen::emit_checked_call(const CallExpression *call, mlir::ValueRa
             runtime =
                 builder.create<mlir::LLVM::LLVMFuncOp>(location(), standard_output_symbol, type);
         }
-        builder.create<mlir::LLVM::CallOp>(location(), runtime, mlir::ValueRange{ptr, len});
+        emit_abi_call(runtime, mlir::ValueRange{ptr, len});
         return {};
     }
     const auto *callee = dynamic_cast<const Identifier *>(call->function.get());
@@ -49,10 +49,53 @@ mlir::Value CodeGen::emit_checked_call(const CallExpression *call, mlir::ValueRa
     if (found == checked_functions.end())
         fail("Checked function has not been emitted");
     if (auto allocation = checked_data->arena_allocations.find(call);
-        allocation != checked_data->arena_allocations.end())
-        return emit_arena_allocation(found->second, allocation->second, arguments);
-    auto result = builder.create<mlir::func::CallOp>(location(), found->second, arguments);
-    return result.getNumResults() ? result.getResult(0) : mlir::Value{};
+        allocation != checked_data->arena_allocations.end()) {
+        auto result = checked_data->types.at(call->arguments.front().get());
+        result.pointers.insert(result.pointers.begin(),
+                               {allocation->second, false});
+        return emit_arena_allocation(found->second, allocation->second, arguments,
+                                     source_type(result));
+    }
+    if (checked_data->arena_many_allocations.contains(call)) {
+        auto result = checked_data->types.at(call->arguments.front().get());
+        result.pointers.insert(result.pointers.begin(), {false, false});
+        return emit_arena_many_allocation(found->second, arguments, source_type(result));
+    }
+    return emit_checked_function_call(found->second, arguments);
+}
+
+mlir::Value CodeGen::emit_abi_call(mlir::LLVM::LLVMFuncOp function,
+                                   mlir::ValueRange arguments) {
+    auto result_type = function.getFunctionType().getReturnType();
+    llvm::SmallVector<mlir::Type> results;
+    if (!mlir::isa<mlir::LLVM::LLVMVoidType>(result_type))
+        results.push_back(result_type);
+    auto call = builder.create<gloin::AbiCallOp>(
+        location(), results, mlir::FlatSymbolRefAttr::get(&context, function.getName()),
+        arguments);
+    return call.getNumResults() ? call.getResult(0) : mlir::Value{};
+}
+
+mlir::Value CodeGen::emit_checked_function_call(mlir::func::FuncOp function,
+                                                 mlir::ValueRange arguments) {
+    auto inputs = function.getFunctionType().getInputs();
+    if (inputs.size() != arguments.size())
+        fail("Checked call argument count disagrees with the function signature");
+    std::vector<mlir::Value> source_arguments;
+    for (auto [argument, type] : llvm::zip(arguments, inputs)) {
+        source_arguments.push_back(as_source_value(argument, type));
+    }
+    auto call = builder.create<mlir::func::CallOp>(location(), function, source_arguments);
+    if (!call.getNumResults())
+        return {};
+    auto result = call.getResult(0);
+    auto layouts = function->getAttrOfType<mlir::ArrayAttr>("gloin.layout_results");
+    if (!layouts || layouts.size() != 1)
+        fail("Checked function is missing its result layout");
+    auto layout = mlir::cast<mlir::TypeAttr>(layouts[0]).getValue();
+    if (result.getType() != layout)
+        return builder.create<gloin::ToLayoutOp>(location(), layout, result);
+    return result;
 }
 
 mlir::LLVM::LLVMFuncOp CodeGen::defer_allocator(bool allocate) {
@@ -89,7 +132,7 @@ void CodeGen::prepare_defers(const FunctionDefinition *function) {
             fields.push_back(checked_type(argument.get()));
         defer_record_types.push_back(mlir::LLVM::LLVMStructType::getLiteral(&context, fields));
     }
-    defer_head = create_entry_alloca(pointer);
+    defer_head = create_entry_alloca(pointer, std::nullopt, true);
     auto zero = builder.create<mlir::LLVM::ZeroOp>(location(), pointer);
     builder.create<mlir::LLVM::StoreOp>(location(), zero, defer_head);
 }
@@ -108,9 +151,7 @@ void CodeGen::register_defer(const DeferStatement *statement) {
     // leave the new call unregistered, with the existing no-unwind semantics.
     auto arguments = gen_call_arguments(call);
     auto size = builder.create<mlir::arith::ConstantIntOp>(location(), get_type_size(record), 64);
-    auto allocation = builder.create<mlir::LLVM::CallOp>(location(), defer_allocator(true),
-                                                         mlir::ValueRange{size});
-    auto node = allocation.getResult();
+    auto node = emit_abi_call(defer_allocator(true), mlir::ValueRange{size});
     auto pointer = mlir::LLVM::LLVMPointerType::get(&context);
     auto zero = builder.create<mlir::LLVM::ZeroOp>(location(), pointer);
     require_runtime(
@@ -170,8 +211,7 @@ void CodeGen::emit_deferred() {
                 location(), record.getBody()[field], defer_field(record, node, field)));
         // Captures are now SSA values. Release the record before invoking user
         // code, so nested defers/recursive calls own only their own frame's log.
-        builder.create<mlir::LLVM::CallOp>(location(), defer_allocator(false),
-                                           mlir::ValueRange{node});
+        emit_abi_call(defer_allocator(false), mlir::ValueRange{node});
         const auto *call =
             static_cast<const CallExpression *>(current_function_defers[i]->call.get());
         emit_checked_call(call, arguments);

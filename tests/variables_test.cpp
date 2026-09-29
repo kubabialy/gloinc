@@ -223,9 +223,9 @@ TEST(VariablesTest, FoldedConstantsHaveNoRuntimeStorageOrArithmetic) {
     result.module->walk([&](mlir::Operation *operation) {
         EXPECT_FALSE((llvm::isa<mlir::LLVM::AllocaOp, mlir::LLVM::GlobalOp, mlir::arith::MulIOp,
                                 mlir::arith::DivSIOp>(operation)));
-        if (auto value = llvm::dyn_cast<mlir::arith::ConstantIntOp>(operation)) {
+        if (auto value = llvm::dyn_cast<gloin::ConstantOp>(operation)) {
             ++constants;
-            EXPECT_EQ(value.value(), 21);
+            EXPECT_EQ(llvm::cast<mlir::IntegerAttr>(value.getValueAttr()).getInt(), 21);
         }
     });
     EXPECT_EQ(constants, 1);
@@ -242,8 +242,8 @@ TEST(VariablesTest, FloatConstantsRoundToF32AndPreserveNegativeZero) {
     for (const std::string name : {"f", "z"}) {
         auto function = result.module->lookupSymbol<mlir::func::FuncOp>(name);
         int constants = 0;
-        function.walk([&](mlir::arith::ConstantOp operation) {
-            auto value = llvm::cast<mlir::FloatAttr>(operation.getValue()).getValue();
+        function.walk([&](gloin::ConstantOp operation) {
+            auto value = llvm::cast<mlir::FloatAttr>(operation.getValueAttr()).getValue();
             EXPECT_TRUE(value.isZero());
             EXPECT_EQ(value.isNegative(), name == "z");
             ++constants;
@@ -271,9 +271,9 @@ TEST(VariablesTest, InitializationAndConstantValuesDoNotLeakBetweenChecks) {
         ASSERT_TRUE(module);
         EXPECT_TRUE(mlir::succeeded(mlir::verify(*module)));
         int constants = 0;
-        module->walk([&](mlir::arith::ConstantIntOp operation) {
+        module->walk([&](gloin::ConstantOp operation) {
             ++constants;
-            EXPECT_EQ(operation.value(), value);
+            EXPECT_EQ(llvm::cast<mlir::IntegerAttr>(operation.getValueAttr()).getInt(), value);
         });
         EXPECT_EQ(constants, 1);
     }

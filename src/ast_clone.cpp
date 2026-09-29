@@ -47,7 +47,7 @@ std::unique_ptr<Expression> expression(const Expression *source) {
         std::vector<std::unique_ptr<Expression>> elements;
         for (const auto &element : node->elements)
             elements.push_back(expression(element.get()));
-        return copied<ArrayLiteral>(*node, std::move(elements), node->braced);
+        return copied<ArrayLiteral>(*node, std::move(elements), node->braced, node->repeated);
     }
     if (auto *node = dynamic_cast<const PrefixExpression *>(source))
         return copied<PrefixExpression>(*node, node->op, expression(node->right.get()));
@@ -64,6 +64,9 @@ std::unique_ptr<Expression> expression(const Expression *source) {
     if (auto *node = dynamic_cast<const IndexExpression *>(source))
         return copied<IndexExpression>(*node, expression(node->left.get()),
                                        expression(node->index.get()));
+    if (auto *node = dynamic_cast<const SliceExpression *>(source))
+        return copied<SliceExpression>(*node, expression(node->left.get()),
+                                       expression(node->start.get()), expression(node->end.get()));
     if (auto *node = dynamic_cast<const MemberAccessExpression *>(source))
         return copied<MemberAccessExpression>(*node, expression(node->left.get()),
                                               expression(node->member.get()));

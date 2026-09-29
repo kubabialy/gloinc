@@ -27,9 +27,11 @@ void Sema::collect_method(const std::shared_ptr<StructType> &structure,
     if (!method->generic_params.empty()) {
         std::set<std::string> parameters;
         for (const auto &parameter : method->generic_params)
-            if (!parameters.insert(parameter).second || get_builtin_type(parameter) ||
-                current_scope->resolve_type(parameter) ||
-                current_scope->resolve_generic_struct(parameter))
+            if (is_const_size_parameter(parameter))
+                log_error("Size parameters are currently supported only on generic structs");
+            else if (!parameters.insert(parameter).second || get_builtin_type(parameter) ||
+                     current_scope->resolve_type(parameter) ||
+                     current_scope->resolve_generic_struct(parameter))
                 log_error("Duplicate or reserved generic method parameter '" + parameter + "'");
         return;
     }
@@ -76,7 +78,7 @@ void Sema::bind_enclosing_type_params(const std::shared_ptr<StructType> &structu
         if (specialization.type->identity != structure->identity)
             continue;
         for (size_t i = 0; i < specialization.resolved_arguments.size(); ++i)
-            current_scope->define_type(specialization.definition->generic_params[i],
+            current_scope->define_type(generic_parameter_name(specialization.definition->generic_params[i]),
                                        specialization.resolved_arguments[i]);
         return;
     }
@@ -294,6 +296,26 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
         recording->arena_allocations[call] = bridge->second;
         recording->bindings[name] = symbol;
         return std::make_shared<PointerType>(value, bridge->second, false);
+    }
+    if (arena_many_methods.contains(method)) {
+        if (call->arguments.size() != 2) {
+            log_error("Arena alloc_many expects a fill value and i64 capacity");
+            return nullptr;
+        }
+        auto previous = expected_pointer;
+        expected_pointer.reset();
+        auto value = check_expression(call->arguments[0].get());
+        expected_pointer = previous;
+        if (!value || !value_type(value) || value_type(value) == ValueType(CoreType::Void))
+            return nullptr;
+        auto capacity = check_typed_expression(call->arguments[1].get(), get_builtin_type("i64"));
+        if (!capacity || !capacity->equals(*get_builtin_type("i64"))) {
+            log_error("Arena alloc_many capacity must be i64");
+            return nullptr;
+        }
+        recording->arena_many_allocations.insert(call);
+        recording->bindings[name] = symbol;
+        return std::make_shared<PointerType>(value, false, false);
     }
     if (call->arguments.size() != signature->param_types.size() - offset) {
         log_error("Incorrect number of method arguments");

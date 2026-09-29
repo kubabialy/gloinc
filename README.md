@@ -12,22 +12,26 @@ Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR
 The release archive links to its shared libraries and does not bundle them.
 Install the pinned toolchain with `bash scripts/install-llvm.sh` from a source
 checkout, or run `bash share/gloinc/scripts/install-llvm.sh` from an extracted
-0.0.3 archive before using `bin/gloinc`. Executables produced by `gloinc`
+0.0.4 archive before using `bin/gloinc`. Executables produced by `gloinc`
 link the Gloin runtime statically and do not need LLVM at runtime.
 The CLI builds native executables by default and can run scalar and ordinary struct
 programs through the in-process JIT with `--jit`.
-The 0.0.3 executable core has 152 source-file acceptance cases covering successful
+The executable core has source-file acceptance cases covering successful
 programs, rejected source, and runtime arithmetic traps. Checking and IR inspection
-modes are also available. Version 0.0.3 adds fixed arrays, nullable pointer
-offsets, and opt-in native `-O2` output to the published 0.0.2 feature set.
+modes are also available. Version 0.0.4 adds generics, payloadless enums,
+`zeroed` and repeated array initialization, borrowed slices, and inline and
+arena vectors to the 0.0.3 language.
 Installation and package validation are documented
-in the [0.0.3 release guide](docs/release-0.0.3.md). The [versioned HTML
-guide](docs/site/0.0.3/index.html) documents the 0.0.3 language and compiler.
+in the [0.0.4 release guide](docs/release-0.0.4.md). The [versioned HTML
+guide](docs/site/0.0.4/index.html) documents the 0.0.4 language and compiler.
 Native object and executable output are supported on Apple Silicon macOS.
 
-The unreleased development tree adds checked [generic structs and functions](docs/generics.md)
-and the [fixed-array `zeroed` initializer](docs/fixed-arrays.md#development-addition-after-003-zeroed).
+Version 0.0.4 includes checked [generic structs and functions](docs/generics.md)
+and the [fixed-array `zeroed` initializer](docs/fixed-arrays.md#zeroed-and-repeated-initializers).
 Methods can also declare their own type parameters and require explicit call arguments.
+It supports [payloadless enums](docs/enums.md) with nominal values and checked equality.
+Borrowed [slices, inline fixed-capacity vectors, and growable arena vectors](docs/slices-vectors.md) are also
+available; each has a runnable example.
 Built-in `result<T>` and `error` have a
 [partial design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented),
 but are not implemented.
@@ -36,13 +40,14 @@ but are not implemented.
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | The 0.0.3 release validation found 880 tests: 876 passed and 4 documented deferred-feature tests failed on reserved async/spawn syntax. The development tree discovers 900 tests; all 853 required supported-language checks pass. |
-| Core acceptance | The 0.0.3 release has 152 CLI-driven source cases; development adds three `zeroed` array cases. |
+| Full test suite | The 0.0.4 candidate discovers 942 tests: 938 pass, the same 4 documented deferred async/spawn tests fail, and all 895 required supported-language checks pass. |
+| Core acceptance | CLI-driven source cases cover `zeroed` arrays, enums, borrowed slices, and both vector forms in addition to the 0.0.3 cases. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 53 development parser tests pass: core grammar, precedence, strict annotations/delimiters, generic call/literal lookahead, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
 | Semantic analysis | Resolved types/scopes, initialization, scalar operators, calls, return paths, and executable entry signatures are verified. Nested if/unless/while/for execution, loop-variable scope, and omitted for components are verified. |
 | Generics | Checked generic structs, functions, and methods with their own type parameters execute with explicit arguments, nested types, arrays, pointers, module visibility, and recursive calls. Four older unchecked IR-string tests also pass. |
 | IR verification/lowering | One pipeline verifies source output and conversions, rejects unsupported IR, and produces LLVM-compatible modules for output and execution consumers. |
+| GloinIR coverage | Checked scalar constants, arithmetic, comparisons, guards, nominal struct definitions, aggregate and string literal construction, pointer access, local storage, struct access, and payloadless enum operations remain in GloinIR until a dedicated pass lowers them. Checked function signatures, calls, returns, enum operations, array/struct/string literals, value-field extraction, pointer construction/offsets/checks/comparisons, typed arena allocation, stack/field/array addresses, loads, and stores retain source types, with explicit source/layout bridges. Runtime calls use a verified Gloin ABI operation; string byte globals, ABI preparation, and defer internals still emit LLVM operations directly. See [the lowering audit and migration boundary](docs/lowering.md#gloinir-coverage). |
 | JIT | All 16 tests pass: native execution, validated entry/signatures, separate results/errors, repeated runs, and integer/float trap behavior. |
 | CLI | All 20 process tests pass: file loading, JIT and native results, object/executable output, `-O2`, checking, verified IR, diagnostics, usage, and exit behavior. |
 | Standard output | `@std` loads `stdlib/std.gloin`, which defines `print` and `println`; all 17 standard-module tests pass. |
@@ -69,7 +74,7 @@ semantic data and ownership boundary required by normal codegen.
 
 [The JIT API](docs/jit.md) executes compiled modules in process. The
 [core acceptance matrix](tests/fixtures/core/README.md) maps the release contract
-to source fixtures. [The release guide](docs/release-0.0.3.md) describes package contents,
+to source fixtures. [The release guide](docs/release-0.0.4.md) describes package contents,
 runtime dependencies, and the SPEC-046 validation gate.
 
 Test pass counts are not specification-coverage percentages. The compiler is not
@@ -224,19 +229,19 @@ Ordinary structs support named literals, nested fields, value parameters/returns
 and checked mutation. See [the struct example](tests/fixtures/core/run/ordinary_struct.gloin).
 `*T`/`&T` and read-only `*const T`/`&const T` support manually managed resources;
 see [the pointer fixture](tests/fixtures/core/run/pointers.gloin).
-In 0.0.3, fixed arrays use `[T; N]` and brace initializers such as
+Fixed arrays use `[T; N]` and brace initializers such as
 `def values: [i32; 2] = {1, 2};`. Indexed reads and writes check bounds; see
 [the fixed-array guide](docs/fixed-arrays.md).
 Nullable pointers also support [signed element offsets](docs/pointer-offsets.md).
 Native object and executable output accepts opt-in `-O2`; the default remains
-`-O0`. Both features are documented in the 0.0.3 guide.
+`-O0`. Both features are documented in the versioned guide.
 Ordinary structs also support instance methods with explicit `self` pointers and
 static calls such as `Counter.make(40)`; see [the method fixture](tests/fixtures/core/run/methods.gloin).
 `defer call(...)` captures arguments immediately and runs registered calls in
 reverse order on normal function return; see [the defer fixture](tests/fixtures/core/run/defer.gloin).
 Local imports such as `import "./utils";` resolve relative to their source file;
 see [the module example](examples/module_lab.gloin).
-There are no implicit numeric conversions. Package imports, slices, packed
+There are no implicit numeric conversions. Package imports, packed
 structs, and concurrency remain deferred. `examples/hello_world.gloin` is a
 runnable standard-output example.
 
@@ -303,11 +308,11 @@ cmake --build build --target package
 bash scripts/check-package.sh build build/package-check
 ```
 
-CPack writes `build/gloinc-0.0.3-macos-arm64.tar.gz` and its `.sha256` checksum.
+CPack writes `build/gloinc-0.0.4-macos-arm64.tar.gz` and its `.sha256` checksum.
 The archive contains `bin/gloinc`, standard modules, native arena libraries and header,
 documentation, runnable examples, and the core source fixtures. The verification script runs the CLI, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
-spaces. See [the release guide](docs/release-0.0.3.md) for extraction, dependencies,
+spaces. See [the release guide](docs/release-0.0.4.md) for extraction, dependencies,
 sanitizer checks, and the supported-platform limits.
 
 ## Verify the build
@@ -335,13 +340,13 @@ executables link these libraries. The CLI and tests use the same compilation,
 lowering, and execution APIs. `gloin_runtime` supplies the LLVM-independent
 native arena allocator and standard input/conversions; a shared variant is installed for external LLVM execution.
 
-Native output is the default. Version 0.0.3 also offers opt-in `-O2` native
+Native output is the default. Version 0.0.4 offers opt-in `-O2` native
 compilation and nullable pointer offsets; see [CLI options](docs/cli.md) and
 [pointer rules](docs/pointer-offsets.md). Concurrency remains deferred. The
 [implementation checklist](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist)
 tracks the remaining work.
 
-Version 0.0.3 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
+Version 0.0.4 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
 support is not planned, although contributions are welcome. See
 [contributing rules](CONTRIBUTING.md) for the manual verification and deterministic
 change requirements.

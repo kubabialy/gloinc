@@ -1,0 +1,127 @@
+import "@arena";
+
+// A growable sequence backed by GeneralArena allocations.
+// Copying this value aliases its current elements but copies its length/capacity counters.
+def pub struct Vector<T> {
+    def mut data: *T,
+    def mut length: i64,
+    def mut capacity: i64,
+    def memory: &arena.GeneralArena,
+    def fill: T,
+
+    // Every capacity slot receives a copy of fill, including unused slots.
+    def pub static create(memory: &arena.GeneralArena, capacity: i64, fill: T) -> Vector<T> {
+        def storage: *T = memory.alloc_many(fill, capacity);
+        return Vector<T> {
+            data: storage,
+            length: 0,
+            capacity: capacity,
+            memory: memory,
+            fill: fill
+        };
+    }
+
+    def pub len(self: &const Vector<T>) -> i64 {
+        return self.length;
+    }
+
+    def pub cap(self: &const Vector<T>) -> i64 {
+        return self.capacity;
+    }
+
+    // Allocates a new buffer when requested capacity exceeds the current one.
+    // The old buffer remains allocated until the arena is reset or freed.
+    def pub reserve(self: &Vector<T>, requested: i64) -> bool {
+        if requested < 0 { return false; }
+        if requested <= self.capacity { return true; }
+        def storage: *T = self.memory.alloc_many(self.fill, requested);
+        def mut index: i64 = 0;
+        while index < self.length {
+            *(storage + index) = *(self.data + index);
+            index = index + 1;
+        }
+        self.data = storage;
+        self.capacity = requested;
+        return true;
+    }
+
+    def pub push(self: &Vector<T>, value: T) -> bool {
+        if self.length >= self.capacity {
+            def mut next: i64 = 1;
+            if self.capacity > 0 {
+                if self.capacity > 4611686018427387903 { return false; }
+                next = self.capacity * 2;
+            }
+            if !self.reserve(next) { return false; }
+        }
+        *(self.data + self.length) = value;
+        self.length = self.length + 1;
+        return true;
+    }
+
+    def pub get(self: &const Vector<T>, index: i64) -> *const T {
+        if index < 0 || index >= self.length { return null; }
+        return self.data + index;
+    }
+
+    def pub get_mut(self: &Vector<T>, index: i64) -> *T {
+        if index < 0 || index >= self.length { return null; }
+        return self.data + index;
+    }
+
+    def pub clear(self: &Vector<T>) -> void {
+        self.length = 0;
+    }
+
+}
+
+// Fixed capacity and inline storage. No arena is needed and push never grows.
+def pub struct Vector<T;
+const N: usize> {
+    def mut data: [T; N],
+    def mut length: i64,
+
+    def pub static create(fill: T) -> Vector<T;
+    N> {
+        return Vector<T;
+        N> {
+            data: {fill; N},
+            length: 0
+        };
+    }
+
+    def pub len(self: &const Vector<T;
+    N>) -> i64 {
+        return self.length;
+    }
+
+    def pub cap(self: &const Vector<T;
+    N>) -> i64 {
+        return N;
+    }
+
+    def pub push(self: &Vector<T;
+    N>, value: T) -> bool {
+        if self.length >= N { return false; }
+        self.data[self.length] = value;
+        self.length = self.length + 1;
+        return true;
+    }
+
+    def pub get(self: &const Vector<T;
+    N>, index: i64) -> *const T {
+        if index < 0 || index >= self.length { return null; }
+        return &self.data[index];
+    }
+
+    def pub get_mut(self: &Vector<T;
+    N>, index: i64) -> *T {
+        if index < 0 || index >= self.length { return null; }
+        return &self.data[index];
+    }
+
+    def pub clear(self: &Vector<T;
+    N>) -> void {
+        self.length = 0;
+    }
+}
