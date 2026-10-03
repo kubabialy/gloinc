@@ -48,9 +48,12 @@ def main() -> i32 {
     if !strings.equal(saved.value, "count = 42") { return 4; }
 
     // Exercise counted bytes and explicit failures: NUL is data, not the end.
-    def nul: strings.ByteResult = strings.byte_at("a\0b", 1);
-    def beyond: strings.StringResult = strings.slice_bytes("abc", 2, 18446744073709551615);
-    if nul.status != status.OK || nul.value != 0 || beyond.status != status.OUT_OF_RANGE {
+    def nul: result<u8> = strings.byte_at_checked("a\0b", 1);
+    if nul.erroneous { return 5; }
+    def beyond: result<string> = strings.slice_bytes_checked("abc", 2, 18446744073709551615);
+    if !beyond.erroneous { return 5; }
+    def zero_byte: u8 = 0;
+    if nul.value != zero_byte || !strings.equal(beyond.error.message, "string byte range is out of bounds") {
         return 5;
     }
     if strings.byte_length("café") != 5 || strings.is_empty(saved.value) { return 6; }

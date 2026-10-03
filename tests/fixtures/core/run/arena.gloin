@@ -15,7 +15,7 @@ def main() -> i32 {
     value.count = value.count + 2;
     if value.tag != 255 || value.count != 42 { return 1; }
     memory.reset();
-    def result: *i32 = memory.try_alloc(42);
-    if result == null { return 2; }
-    return *result;
+    def outcome: *i32 = memory.try_alloc(42);
+    if outcome == null { return 2; }
+    return *outcome;
 }

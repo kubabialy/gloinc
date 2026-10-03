@@ -31,7 +31,7 @@ mlir::Value CodeGen::gen_checked_unary(const PrefixExpression *expression) {
     auto type = checked_data->types.at(expression->right.get()).builtin();
     if (!unary_operator_type(expression->op, type))
         fail("Invalid checked unary operator");
-    auto operand = gen_expression(expression->right.get());
+    auto operand = gen_layout_expression(expression->right.get());
     if (expression->op == "!")
         return builder.create<mlir::arith::XOrIOp>(location(), operand,
                                                    emit_constant({CoreType::Bool, true}));
@@ -42,7 +42,7 @@ mlir::Value CodeGen::gen_checked_unary(const PrefixExpression *expression) {
 }
 
 mlir::Value CodeGen::gen_short_circuit(const InfixExpression *expression) {
-    auto left = gen_expression(expression->left.get());
+    auto left = gen_layout_expression(expression->left.get());
     auto *region = builder.getBlock()->getParent();
     auto *right_block = new mlir::Block();
     auto *merge = new mlir::Block();
@@ -56,7 +56,7 @@ mlir::Value CodeGen::gen_short_circuit(const InfixExpression *expression) {
         builder.create<mlir::cf::CondBranchOp>(location(), left, merge, mlir::ValueRange{left},
                                                right_block, mlir::ValueRange{});
     builder.setInsertionPointToStart(right_block);
-    auto right = gen_expression(expression->right.get());
+    auto right = gen_layout_expression(expression->right.get());
     builder.create<mlir::cf::BranchOp>(location(), merge, mlir::ValueRange{right});
     builder.setInsertionPointToStart(merge);
     return result;
@@ -65,8 +65,8 @@ mlir::Value CodeGen::gen_short_circuit(const InfixExpression *expression) {
 mlir::Value CodeGen::gen_checked_binary(const InfixExpression *expression) {
     const auto &left_type = checked_data->types.at(expression->left.get());
     if (left_type.structure && checked_data->enum_types.contains(*left_type.structure)) {
-        auto left = gen_expression(expression->left.get());
-        auto right = gen_expression(expression->right.get());
+        auto left = gen_layout_expression(expression->left.get());
+        auto right = gen_layout_expression(expression->right.get());
         auto source = source_type(left_type);
         left = as_source_value(left, source);
         right = as_source_value(right, source);
@@ -76,8 +76,8 @@ mlir::Value CodeGen::gen_checked_binary(const InfixExpression *expression) {
             mlir::TypeAttr::get(source));
     }
     if (checked_data->types.at(expression->left.get()).is_pointer()) {
-        auto left = gen_expression(expression->left.get());
-        auto right = gen_expression(expression->right.get());
+        auto left = gen_layout_expression(expression->left.get());
+        auto right = gen_layout_expression(expression->right.get());
         auto pointer = source_type(checked_data->types.at(expression->left.get()));
         if (expression->op == "+") {
             auto element = checked_data->types.at(expression->left.get()).pointee();
@@ -100,8 +100,8 @@ mlir::Value CodeGen::gen_checked_binary(const InfixExpression *expression) {
         fail("Invalid checked binary operator");
     if (op == "&&" || op == "||")
         return gen_short_circuit(expression);
-    auto left = gen_expression(expression->left.get());
-    auto right = gen_expression(expression->right.get());
+    auto left = gen_layout_expression(expression->left.get());
+    auto right = gen_layout_expression(expression->right.get());
     const auto &info = core_type_info(type);
     bool arithmetic = op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
     if (info.is_integer || type == CoreType::Bool) {

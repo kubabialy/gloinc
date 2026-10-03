@@ -267,13 +267,13 @@ TEST(E2ETest, MutualRecursion) {
 TEST(E2ETest, ShadowInitializerUsesOuterBindingAndRestoresFunction) {
     expect_result(run_code(R"(
         def main() -> i32 {
-            def mut result: i32 = 0;
+            def mut outcome: i32 = 0;
             {
                 def answer: i32 = answer();
-                { def answer: i32 = answer + 1; result = answer; }
-                result = result + answer;
+                { def answer: i32 = answer + 1; outcome = answer; }
+                outcome = outcome + answer;
             }
-            return result - answer() - 1;
+            return outcome - answer() - 1;
         }
         def answer() -> i32 { return 42; }
     )"),
@@ -283,18 +283,18 @@ TEST(E2ETest, ShadowInitializerUsesOuterBindingAndRestoresFunction) {
 TEST(E2ETest, SiblingAndLoopScopesKeepIndependentBindings) {
     expect_result(run_code(R"(
         def main() -> i32 {
-            def mut result: i32 = 0;
+            def mut outcome: i32 = 0;
             def x: i32 = 30;
-            if true { def x: i32 = 5; result = x; }
-            else { def x: i32 = 99; result = x; }
-            { def x: i32 = 7; result = result + x; }
+            if true { def x: i32 = 5; outcome = x; }
+            else { def x: i32 = 99; outcome = x; }
+            { def x: i32 = 7; outcome = outcome + x; }
             def mut count: i32 = 0;
             while count < 2 {
                 def x: i32 = count;
-                result = result + x;
+                outcome = outcome + x;
                 count = count + 1;
             }
-            return result + x - 1;
+            return outcome + x - 1;
         }
     )"),
                   42);

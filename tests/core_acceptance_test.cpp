@@ -151,6 +151,178 @@ TEST_F(CoreAcceptanceTest, ArenaVectorGrows) {
     expect_success(invoke({"--check", file}), "");
     expect_run(invoke({file}), 42);
 }
+TEST_F(CoreAcceptanceTest, CollectionOperationsPreserveLivePrefixAndSelfAppend) {
+    auto file = source(R"(
+        import "@arena";
+        import "@vector";
+        import "@slices";
+        def struct Item { def value: i32, }
+        def main() -> i32 {
+            def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+            defer memory.free();
+            def mut growing: vector.Vector<Item> = vector.Vector<Item>.empty(&memory, 1);
+            if !growing.push(Item { value: 2 }) ||
+               !growing.append_from(growing.as_const_slice()) ||
+               !growing.insert(0, Item { value: 1 }) { return 1; }
+            if growing.len() != 3 || !growing.remove(1) { return 2; }
+            def removed: *Item = growing.pop();
+            if removed == null || removed.value != 2 || growing.len() != 1 { return 3; }
+            if !growing.truncate(0) || growing.pop() != null { return 4; }
+
+            def mut fixed: vector.Vector<Item; 2> = vector.Vector<Item; 2>.create(Item { value: 99 });
+            def source_items: [Item; 2] = {Item { value: 4 }, Item { value: 5 }};
+            if !fixed.append_from(source_items[..]) || fixed.append_from(source_items[..]) ||
+               fixed.len() != 2 { return 5; }
+            if !fixed.remove(0) || !fixed.insert(1, Item { value: 6 }) { return 6; }
+            if fixed.get(0).value != 5 || fixed.get(1).value != 6 { return 7; }
+
+            def mut numbers: [i32; 3] = {1, 2, 3};
+            slices.reverse<i32>(numbers[..]);
+            def mut copy: [i32; 3] = zeroed;
+            if !slices.copy_nonoverlapping<i32>(copy[..], numbers[..]) { return 8; }
+            slices.fill<i32>(numbers[..], 0);
+            if copy[0] != 3 || copy[2] != 1 || numbers[0] != 0 { return 9; }
+            return 42;
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+}
+TEST_F(CoreAcceptanceTest, TypedReservedArenaStorageIsInternalToVector) {
+    auto file = source(R"(
+        import "@arena";
+        def main() -> i32 {
+            def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+            def data: *i32 = memory.reserve_typed<i32>(2);
+            memory.free();
+            return 0;
+        }
+    )");
+    expect_error(invoke({"--check", file}), 1,
+                 "Typed arena reservation is internal to @vector");
+}
+TEST_F(CoreAcceptanceTest, ArenaVectorBorrowsOnlyLiveElements) {
+    auto file = source(R"(
+        import "@arena";
+        import "@vector";
+        def sum(values: [const i32]) -> i32 {
+            def mut total: i32 = 0;
+            def mut index: u64 = 0;
+            while index < values.len {
+                total = total + values[index];
+                index = index + 1;
+            }
+            return total;
+        }
+        def main() -> i32 {
+            def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+            defer memory.free();
+            def mut values: vector.Vector<i32> = vector.Vector<i32>.create(&memory, 4, 0);
+            def empty: [i32] = values.as_slice();
+            def zero: u64 = 0;
+            def two: u64 = 2;
+            if empty.len != zero { return 1; }
+            if !values.push(20) || !values.push(22) { return 2; }
+            def view: [i32] = values.as_slice();
+            if view.len != two { return 3; }
+            view[0] = 21;
+            def readonly: [const i32] = values.as_const_slice();
+            if sum(readonly) != 43 { return 4; }
+            values.reserve(8);
+            def grown: [i32] = values.as_slice();
+            if grown.len != two { return 5; }
+            grown[1] = 21;
+            return sum(values.as_const_slice());
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+}
+TEST_F(CoreAcceptanceTest, RawMemorySupportsFallibleTypedPlacement) {
+    auto file = source(R"(
+        import "@memory";
+        def main() -> i32 {
+            def four: i64 = 4;
+            def seven: i64 = 7;
+            def negative: i64 = -1;
+            if memory.size_of<i32>() != four || memory.align_of<i32>() != four {
+                return 1;
+            }
+            if memory.alloc(-1, 8) != null || memory.alloc(8, 3) != null {
+                return 2;
+            }
+            def empty: *u8 = memory.alloc(0, 1);
+            if empty == null { return 3; }
+            memory.free(empty);
+            def block: *u8 = memory.alloc(32, 16);
+            if block == null { return 4; }
+            def good: *i32 = memory.place<i32>(block, 32, 40);
+            def short: *i32 = memory.place<i32>(block, 3, 42);
+            def skew: *i32 = memory.place<i32>(block + 1, 31, 42);
+            def missing: *i32 = memory.place<i32>(null, 32, 42);
+            if good == null || short != null || skew != null || missing != null {
+                memory.free(block);
+                return 5;
+            }
+            if memory.padding<i64>(block + 1) != seven ||
+               memory.padding<i64>(null) != negative || *good != 40 {
+                memory.free(block);
+                return 6;
+            }
+            def outcome: i32 = *good + 2;
+            memory.free(block);
+            memory.free(null);
+            return outcome;
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    const auto executable = directory + "/raw-memory";
+    expect_success(invoke_raw({"-o", executable, file}), "");
+    std::string message;
+    bool failed = false;
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, std::nullopt, std::nullopt};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                        10, 0, &message, &failed), 42) << message;
+    EXPECT_FALSE(failed);
+}
+TEST_F(CoreAcceptanceTest, CustomArenaIsWrittenInGloin) {
+    const std::string file = gloin_test::custom_arena_example;
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+}
+TEST_F(CoreAcceptanceTest, InlineVectorBorrowsOnlyLiveElements) {
+    auto file = source(R"(
+        import "@vector";
+        def main() -> i32 {
+            def mut values: vector.Vector<i32; 4> = vector.Vector<i32; 4>.create(99);
+            def zero: u64 = 0;
+            def two: u64 = 2;
+            if values.as_slice().len != zero { return 1; }
+            if !values.push(20) || !values.push(22) { return 2; }
+            def view: [i32] = values.as_slice();
+            if view.len != two { return 3; }
+            view[0] = 21;
+            def readonly: [const i32] = values.as_const_slice();
+            return readonly[0] + readonly[1] - 1;
+        }
+    )");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+}
+TEST_F(CoreAcceptanceTest, VectorReadOnlyViewRejectsMutation) {
+    auto file = source(R"(
+        import "@vector";
+        def main() -> i32 {
+            def mut values: vector.Vector<i32; 2> = vector.Vector<i32; 2>.create(0);
+            values.push(1);
+            def view: [const i32] = values.as_const_slice();
+            view[0] = 2;
+            return 0;
+        }
+    )");
+    expect_error(invoke({"--check", file}), 1, "Cannot write");
+}
 TEST_F(CoreAcceptanceTest, InlineVectorHasFixedCapacity) {
     auto file = source(R"(
         import "@vector";
@@ -203,8 +375,10 @@ TEST_F(CoreAcceptanceTest, InlineVectorZeroCapacity) {
         import "@vector";
         def main() -> i32 {
             def mut values: vector.Vector<i32; 0> = vector.Vector<i32; 0>.create(7);
+            def zero: u64 = 0;
             if values.cap() != 0 || values.len() != 0 || values.push(1) ||
-               values.get(0) != null { return 1; }
+               values.get(0) != null || values.as_slice().len != zero ||
+               values.as_const_slice().len != zero { return 1; }
             return 42;
         }
     )");
@@ -243,7 +417,9 @@ TEST_F(CoreAcceptanceTest, ArenaVectorZeroInitialCapacityAndInvalidCapacity) {
             def mut memory: arena.GeneralArena = arena.GeneralArena.create();
             defer memory.free();
             def mut values: vector.Vector<i32> = vector.Vector<i32>.create(&memory, 0, 0);
-            if values.get(0) != null || !values.push(1) { return 1; }
+            def zero: u64 = 0;
+            if values.as_slice().len != zero || values.as_const_slice().len != zero ||
+               values.get(0) != null || !values.push(1) { return 1; }
             def one: i64 = 1;
             if values.cap() < one { return 2; }
             return 42;

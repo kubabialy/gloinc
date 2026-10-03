@@ -144,6 +144,55 @@ def StringLiteralOp : Gloin_Op<"string_literal", [Pure]> {
     let hasVerifier = 1;
 }
 
+def ErrorLiteralOp : Gloin_Op<"error_literal", [Pure]> {
+    let summary = "Construct an error from a checked static string literal";
+    let arguments = (ins AnyType:$message, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def ErrorMessageOp : Gloin_Op<"error_message", [Pure]> {
+    let summary = "Read the public message of an error";
+    let arguments = (ins AnyType:$error, TypeAttr:$layout_type);
+    let results = (outs AnyType:$message);
+    let hasVerifier = 1;
+}
+
+def ResultSuccessOp : Gloin_Op<"result_success", [Pure]> {
+    let summary = "Construct the success variant of a result";
+    let arguments = (ins Variadic<AnyType>:$payload, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def ResultFailureOp : Gloin_Op<"result_failure", [Pure]> {
+    let summary = "Construct the error variant of a result";
+    let arguments = (ins AnyType:$error, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def ResultIsErrorOp : Gloin_Op<"result_is_error", [Pure]> {
+    let summary = "Inspect the active result variant";
+    let arguments = (ins AnyType:$value);
+    let results = (outs I1:$erroneous);
+    let hasVerifier = 1;
+}
+
+def ResultValueOp : Gloin_Op<"result_value"> {
+    let summary = "Extract a statically proven success value";
+    let arguments = (ins AnyType:$outcome, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def ResultErrorOp : Gloin_Op<"result_error"> {
+    let summary = "Extract a statically proven error";
+    let arguments = (ins AnyType:$outcome, TypeAttr:$layout_type);
+    let results = (outs AnyType:$error);
+    let hasVerifier = 1;
+}
+
 def NullOp : Gloin_Op<"null", [Pure]> {
     let summary = "Construct a checked nullable pointer null value";
     let arguments = (ins TypeAttr:$source_type);
@@ -156,6 +205,22 @@ def ArenaTypedPointerOp : Gloin_Op<"arena_typed_pointer"> {
     let arguments = (ins AnyType:$storage, TypeAttr:$source_type,
                      TypeAttr:$element_type);
     let results = (outs AnyType:$pointer);
+    let hasVerifier = 1;
+}
+
+def RawPlaceOp : Gloin_Op<"raw_place"> {
+    let summary = "Check raw storage and initialize one typed value";
+    let arguments = (ins AnyType:$storage, I64:$available, AnyType:$initial,
+                     TypeAttr:$source_type, TypeAttr:$element_source_type,
+                     TypeAttr:$element_type);
+    let results = (outs AnyType:$pointer);
+    let hasVerifier = 1;
+}
+
+def RawPaddingOp : Gloin_Op<"raw_padding", [Pure]> {
+    let summary = "Compute padding for a typed raw storage address";
+    let arguments = (ins AnyType:$storage, TypeAttr:$element_type);
+    let results = (outs I64:$padding);
     let hasVerifier = 1;
 }
 
@@ -194,6 +259,15 @@ def SliceFromArrayOp : Gloin_Op<"slice_from_array"> {
     let summary = "Borrow a checked subrange of fixed-array storage";
     let arguments = (ins AnyType:$base, I64:$start, I64:$end,
                      TypeAttr:$array_type, TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def SliceFromPointerOp : Gloin_Op<"slice_from_pointer"> {
+    let summary = "Borrow a checked range of trusted pointer storage";
+    let arguments = (ins AnyType:$base, I64:$start, I64:$end,
+                     TypeAttr:$source_type, TypeAttr:$layout_type,
+                     TypeAttr:$element_type);
     let results = (outs AnyType:$value);
     let hasVerifier = 1;
 }

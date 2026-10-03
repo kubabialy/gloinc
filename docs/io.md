@@ -68,6 +68,7 @@ threads; this first library does not supply concurrent file ownership.
 | `io.IoResult` | `status: i32`, `os_error: i32` | Flush/close outcome |
 | `io.FileResult` | `status`, `os_error`, `value: io.File` | Open outcome; failed value is closed |
 | `io.ReadResult` | `status`, `os_error`, `value: string` | Text or counted binary bytes, including defined partial progress |
+| `io.ByteReadResult` | `status`, `os_error`, `read: u64` | Direct read count, including progress before failure |
 | `io.WriteResult` | `status`, `os_error`, `written: u64` | Bytes accepted, **including progress before failure** |
 | `io.MessageResult` | `status`, `value: string` | OS diagnostic text, or static empty text on failure |
 
@@ -141,6 +142,26 @@ not rolled back. No automatic EINTR retry hides a partial failure.
 A closed handle returns `CLOSED` first; reading a write-only stream returns
 `INVALID`; then bounds and allocation are checked. Those preflight failures
 return empty text and do not access the scratch arena.
+
+## Direct byte I/O
+
+`read_into(destination: [u8])` is available on mutable `io.Stream` and
+`io.File`. It reads directly into the caller's writable slice, with no arena
+allocation or trailing NUL. An empty destination returns `INVALID` without
+consuming input. `ByteReadResult.read` is the count written, including bytes
+received before an I/O error. A nonempty read returns `OK`, even if shorter
+than the destination; a later zero-byte read at EOF returns `END`. Closed and
+wrong-direction handles retain their existing `CLOSED`/`INVALID` precedence.
+Like `read_chunk`, the native read can block while filling the requested size.
+
+`write_bytes([const u8])` makes one native write; `write_all_bytes([const u8])`
+retries short successful writes. Both return the same `WriteResult` contract
+as their string counterparts and accept an empty slice on a live writable
+handle. They do not allocate, retain the slice, append a terminator, or flush.
+Use `written` to decide how to recover after an error; retrying the entire
+slice can duplicate accepted bytes. Source and destination slices must remain
+live for the call. The [binary filter example](../examples/strip_nuls.gloin)
+uses a fixed input array and a growable `Vector<u8>` output buffer.
 
 ## Writes and flush
 

@@ -1,0 +1,27 @@
+import "@std";
+
+def quotient(a: i32, b: i32) -> result<i32> {
+    if b == 0 { return error("cannot divide by zero"); }
+    return a / b;
+}
+
+def twice_quotient(a: i32, b: i32) -> result<i32> {
+    def first: result<i32> = quotient(a, b);
+    if first.erroneous { return first.error; }
+    return first.value * 2;
+}
+
+def main() -> i32 {
+    def parsed: result<i32> = std.parse_i32_checked("84");
+    if parsed.erroneous {
+        std.println(parsed.error.message);
+        return 1;
+    }
+    def answer: result<i32> = twice_quotient(parsed.value, 2);
+    if answer.erroneous {
+        std.println(answer.error.message);
+        return 1;
+    }
+    std.println("The answer was computed successfully.");
+    return answer.value;
+}

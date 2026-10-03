@@ -79,8 +79,9 @@ bool temporary(const std::string &output, llvm::SmallString<256> &path, Diagnost
 bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput kind,
                  NativeOptimization optimization, const std::string &compiler_path,
                  Diagnostics &diagnostics) {
-#if !defined(__APPLE__) || !defined(__aarch64__)
-    error(diagnostics, "Native output in 0.0.1 supports Apple Silicon macOS only");
+#if !((defined(__APPLE__) && defined(__aarch64__)) || \
+      (defined(__linux__) && (defined(__aarch64__) || defined(__x86_64__))))
+    error(diagnostics, "Native output requires Apple Silicon macOS or 64-bit Linux");
     return false;
 #else
     if (llvm::InitializeNativeTarget() || llvm::InitializeNativeTargetAsmPrinter()) {
@@ -92,6 +93,11 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
         error(diagnostics, llvm::toString(builder.takeError()));
         return false;
     }
+#if defined(__linux__)
+    // Linux toolchains link PIE executables by default. The emitted object must
+    // also work when users link --emit-object with their ordinary compiler.
+    builder->setRelocationModel(llvm::Reloc::PIC_);
+#endif
     builder->setCodeGenOptLevel(optimization == NativeOptimization::O2
                                     ? llvm::CodeGenOptLevel::Default
                                     : llvm::CodeGenOptLevel::None);

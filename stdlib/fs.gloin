@@ -108,10 +108,10 @@ def copied(memory: &arena.GeneralArena, text: string, max_bytes: u64) -> PathRes
             value: ""
         };
     }
-    def result: strings.StringResult = strings.copy(memory, text);
+    def outcome: strings.StringResult = strings.copy(memory, text);
     return PathResult {
-        status: result.status,
-        value: result.value
+        status: outcome.status,
+        value: outcome.value
     };
 }
 
@@ -166,10 +166,10 @@ def pub join(memory: &arena.GeneralArena, base: string, child: string, max_bytes
             value: ""
         };
     }
-    def result: strings.StringResult = strings.concat(memory, prefix.value, child, max_bytes);
+    def outcome: strings.StringResult = strings.concat(memory, prefix.value, child, max_bytes);
     return PathResult {
-        status: result.status,
-        value: result.value
+        status: outcome.status,
+        value: outcome.value
     };
 }
 
@@ -179,11 +179,11 @@ def pub join(memory: &arena.GeneralArena, base: string, child: string, max_bytes
 def pub metadata(path: string) -> MetadataResult {
     def mut kind: i32 = 0;
     def mut size: u64 = 0;
-    def mut error: i32 = 0;
-    def code: i32 = __fs_metadata(path, &kind, &size, &error);
+    def mut failure_code: i32 = 0;
+    def code: i32 = __fs_metadata(path, &kind, &size, &failure_code);
     return MetadataResult {
         status: code,
-        os_error: error,
+        os_error: failure_code,
         kind: kind,
         size: size
     };
@@ -193,11 +193,11 @@ def pub metadata(path: string) -> MetadataResult {
 // O(path bytes) plus blocking native mkdir; temporary native length+1 path bytes, freed on return.
 // Existing entry -> ALREADY_EXISTS (not proof of a directory); empty/NUL -> INVALID; errno retained.
 def pub mkdir(path: string) -> FsResult {
-    def mut error: i32 = 0;
-    def code: i32 = __fs_mkdir(path, &error);
+    def mut failure_code: i32 = 0;
+    def code: i32 = __fs_mkdir(path, &failure_code);
     return FsResult {
         status: code,
-        os_error: error
+        os_error: failure_code
     };
 }
 
@@ -205,11 +205,11 @@ def pub mkdir(path: string) -> FsResult {
 // O(path bytes) plus native unlink; temporary native length+1 path bytes, freed on return.
 // Missing -> NOT_FOUND; empty/NUL -> INVALID; other failures preserve errno. No retained input reference.
 def pub remove_file(path: string) -> FsResult {
-    def mut error: i32 = 0;
-    def code: i32 = __fs_remove_file(path, &error);
+    def mut failure_code: i32 = 0;
+    def code: i32 = __fs_remove_file(path, &failure_code);
     return FsResult {
         status: code,
-        os_error: error
+        os_error: failure_code
     };
 }
 
@@ -218,10 +218,10 @@ def pub remove_file(path: string) -> FsResult {
 // Both paths validate before allocation/mutation. Cross-filesystem rename fails (IO_ERROR/EXDEV); no copy fallback.
 // Existing regular file or empty compatible directory can be replaced; symlinks themselves are renamed.
 def pub rename_replace(from: string, to: string) -> FsResult {
-    def mut error: i32 = 0;
-    def code: i32 = __fs_rename_replace(from, to, &error);
+    def mut failure_code: i32 = 0;
+    def code: i32 = __fs_rename_replace(from, to, &failure_code);
     return FsResult {
         status: code,
-        os_error: error
+        os_error: failure_code
     };
 }

@@ -383,6 +383,10 @@ std::string token_type_to_string(const GloinTokenType type) {
         return "USIZE";
     case GLOIN_TOKEN_CHAR_TYPE:
         return "CHAR_TYPE";
+    case GLOIN_TOKEN_RESULT:
+        return "RESULT";
+    case GLOIN_TOKEN_ERROR:
+        return "ERROR";
     case GLOIN_TOKEN_STRING_LITERAL:
         return "STRING_LITERAL";
 
@@ -665,6 +669,8 @@ GloinTokenType get_keyword_type(std::string_view identifier) {
         {"f128", GLOIN_TOKEN_F128},
         {"string", GLOIN_TOKEN_STRING},
         {"void", GLOIN_TOKEN_VOID},
+        {"result", GLOIN_TOKEN_RESULT},
+        {"error", GLOIN_TOKEN_ERROR},
         {"true", GLOIN_TOKEN_TRUE},
         {"false", GLOIN_TOKEN_FALSE},
         {"null", GLOIN_TOKEN_NULL},
@@ -739,5 +745,6 @@ bool is_type_token(GloinTokenType type) {
     return (type >= GLOIN_TOKEN_BOOL && type <= GLOIN_TOKEN_VOID) ||
            (type >= GLOIN_TOKEN_BE_I8 && type <= GLOIN_TOKEN_LE_U128) ||
            type == GLOIN_TOKEN_STRING || type == GLOIN_TOKEN_BIT ||
+           type == GLOIN_TOKEN_RESULT || type == GLOIN_TOKEN_ERROR ||
            type == GLOIN_TOKEN_CUSTOM_WIDTH_INT;
 }

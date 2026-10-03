@@ -396,8 +396,8 @@ TEST_F(IntegratedExamplesTest, ReportWriteFlushAndCloseFailuresAreObserved) {
                     "def pub flush(self: &Stream) -> IoResult { if self.standard == 0 && "
                     "!self.readable { return IoResult { status: status.IO_ERROR, os_error: 5 }; }");
         if (operation == "close")
-            replace(io, "def code: i32 = __io_close(handle, &error);",
-                    "def mut code: i32 = __io_close(handle, &error); if !self.readable { code = "
+            replace(io, "def code: i32 = __io_close(handle, &failure_code);",
+                    "def mut code: i32 = __io_close(handle, &failure_code); if !self.readable { code = "
                     "status.IO_ERROR; }");
         source(io, "io.gloin");
         Backing backing;
@@ -410,8 +410,8 @@ TEST_F(IntegratedExamplesTest, ReportWriteFlushAndCloseFailuresAreObserved) {
 TEST_F(IntegratedExamplesTest, InputCloseFailuresPreventSuccessAndOutputCreation) {
     copy_modules();
     auto io = read((library() / "io.gloin").string());
-    replace(io, "def code: i32 = __io_close(handle, &error);",
-            "__io_close(handle, &error); def code: i32 = status.IO_ERROR;");
+    replace(io, "def code: i32 = __io_close(handle, &failure_code);",
+            "__io_close(handle, &failure_code); def code: i32 = status.IO_ERROR;");
     source(io, "io.gloin");
     Backing a, b;
     auto output = directory + "/absent";

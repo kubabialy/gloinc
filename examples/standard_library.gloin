@@ -23,10 +23,10 @@ def main() -> i32 {
             std.println(std.to_string(&memory, line.status));
             return 2;
         } else {
-            def parsed: std.IntResult = std.to_int(line.value);
-            if parsed.status != std.OK {
+            def parsed: result<i32> = std.parse_i32_checked(line.value);
+            if parsed.erroneous {
                 std.print("conversion error: ");
-                std.println(std.to_string(&memory, parsed.status));
+                std.println(parsed.error.message);
                 return 3;
             }
             total = total + parsed.value;

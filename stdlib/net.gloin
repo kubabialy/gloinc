@@ -1,0 +1,282 @@
+// Nonblocking IPv4 TCP. All calls are single-attempt except wait(), which has
+// an explicit millisecond timeout. See docs/networking.md for ownership and I/O.
+import "@arena";
+import "@status";
+import "@strings";
+
+def pub const READABLE: i32 = 1;
+def pub const WRITABLE: i32 = 2;
+
+// host is a host-order IPv4 integer; loopback is 0x7f000001.
+def pub struct Address {
+    def pub host: u32,
+    def pub port: u16,
+
+    def pub static loopback(port: u16) -> Address {
+        return Address {
+            host: 2130706433,
+            port: port
+        };
+    }
+
+    def pub static any(port: u16) -> Address {
+        return Address {
+            host: 0,
+            port: port
+        };
+    }
+
+    // Converts four IPv4 octets into a host-order address without allocation.
+    def pub static ipv4(a: u32, b: u32, c: u32, d: u32,
+    port: u16) -> result<Address> {
+        if a > 255 || b > 255 || c > 255 || d > 255 {
+            return error("IPv4 octet is out of range");
+        }
+        return Address {
+            host: a * 16777216 + b * 65536 + c * 256 + d,
+            port: port
+        };
+    }
+
+}
+
+// Expected states are values. Actual syscall failures are built-in errors.
+def pub struct AcceptOutcome {
+    def pub available: bool,
+    def pub socket: Socket,
+    def pub peer: Address,
+}
+
+def pub struct ReadOutcome {
+    def pub state: i32, // OK, END, or WOULD_BLOCK
+    def pub count: u64,
+}
+
+def pub struct WriteOutcome {
+    def pub would_block: bool,
+    def pub count: u64,
+}
+
+def struct SocketState {
+    def mut descriptor: i32,
+    def mut connecting: bool,
+}
+
+// Copies alias shared state. Close exactly once before the owner arena is reset
+// or freed. No native handle is closed automatically by arena cleanup.
+def pub struct Socket {
+    def state: *SocketState,
+
+    def pub static open(owner: &arena.GeneralArena) -> result<Socket> {
+        def state: *SocketState = owner.try_alloc(SocketState {
+            descriptor: -1,
+            connecting: false
+        });
+        if state == null { return error("socket metadata allocation failed"); }
+        def mut descriptor: i32 = -1;
+        def mut failure: i32 = 0;
+        def code: i32 = __net_open(&descriptor, &failure);
+        if code != status.OK { return error("TCP socket creation failed"); }
+        state.descriptor = descriptor;
+        return Socket {
+            state: state
+        };
+    }
+
+    def pub is_open(self: &const Socket) -> bool {
+        return self.state != null && self.state.descriptor >= 0;
+    }
+
+    def descriptor(self: &const Socket) -> i32 {
+        if self.state == null { return -1; }
+        return self.state.descriptor;
+    }
+
+    // An unbound socket may bind to port 0 for a kernel-assigned port.
+    def pub bind(self: &Socket, address: Address) -> result<void> {
+        def mut failure: i32 = 0;
+        def code: i32 = __net_bind(self.descriptor(), address.host, address.port, &failure);
+        if code != status.OK { return error("TCP bind failed"); }
+        return;
+    }
+
+    def pub listen(self: &Socket, backlog: i32) -> result<void> {
+        def mut failure: i32 = 0;
+        def code: i32 = __net_listen(self.descriptor(), backlog, &failure);
+        if code != status.OK { return error("TCP listen failed"); }
+        return;
+    }
+
+    def pub local_address(self: &const Socket) -> result<Address> {
+        def mut host: u32 = 0;
+        def mut port: u16 = 0;
+        def mut failure: i32 = 0;
+        def code: i32 = __net_local(self.descriptor(), &host, &port, &failure);
+        if code != status.OK { return error("TCP local address lookup failed"); }
+        return Address {
+            host: host,
+            port: port
+        };
+    }
+
+    // available=false means retry after readable readiness. On success the
+    // returned socket owns its descriptor; close it before owner reset.
+    def pub accept(self: &Socket, owner: &arena.GeneralArena) -> result<AcceptOutcome> {
+        if !self.is_open() { return error("accept on closed TCP socket"); }
+        def mut accepted: i32 = -1;
+        def mut host: u32 = 0;
+        def mut port: u16 = 0;
+        def mut failure: i32 = 0;
+        def code: i32 = __net_accept(self.descriptor(), &accepted, &host, &port, &failure);
+        if code == status.WOULD_BLOCK {
+            return AcceptOutcome {
+                available: false,
+                socket: Socket {
+                    state: null
+                },
+                peer: Address.any(0)
+            };
+        }
+        if code != status.OK { return error("TCP accept failed"); }
+        def state: *SocketState = owner.try_alloc(SocketState {
+            descriptor: -1,
+            connecting: false
+        });
+        if state == null {
+            def mut close_error: i32 = 0;
+            __net_close(accepted, &close_error);
+            return error("accepted socket metadata allocation failed");
+        }
+        state.descriptor = accepted;
+        return AcceptOutcome {
+            available: true,
+            socket: Socket {
+                state: state
+            },
+            peer: Address {
+                host: host,
+                port: port
+            }
+        };
+    }
+
+    // false means wait(WRITABLE, ...) then finish_connect(). On failure close
+    // this socket; POSIX does not define reuse after failed connect.
+    def pub connect(self: &Socket, address: Address) -> result<bool> {
+        if !self.is_open() { return error("connect on closed TCP socket"); }
+        if self.state.connecting { return error("TCP connection is already pending"); }
+        def mut failure: i32 = 0;
+        def code: i32 = __net_connect(self.descriptor(), address.host, address.port, &failure);
+        if code == status.IN_PROGRESS {
+            self.state.connecting = true;
+            return false;
+        }
+        if code != status.OK { return error("TCP connect failed"); }
+        return true;
+    }
+
+    def pub finish_connect(self: &Socket) -> result<bool> {
+        if !self.is_open() || !self.state.connecting {
+            return error("no pending TCP connection");
+        }
+        def mut failure: i32 = 0;
+        def code: i32 = __net_finish_connect(self.descriptor(), &failure);
+        if code == status.IN_PROGRESS { return false; }
+        self.state.connecting = false;
+        if code != status.OK { return error("TCP connection failed"); }
+        return true;
+    }
+
+    // 0 means no readiness by the deadline. A zero timeout polls immediately;
+    // positive timeout may block. Readiness is only a hint; retry may still block.
+    def pub wait(self: &Socket, events: i32, timeout_ms: i32) -> result<i32> {
+        def mut ready: i32 = 0;
+        def mut failure: i32 = 0;
+        def code: i32 = __net_wait(self.descriptor(), events, timeout_ms, &ready, &failure);
+        if code == status.WOULD_BLOCK || code == status.TIMED_OUT { return 0; }
+        if code != status.OK { return error("TCP readiness wait failed"); }
+        return ready;
+    }
+
+    // One recv. END means peer closed cleanly; WOULD_BLOCK means retry later.
+    // No allocation; the destination must stay live during this call.
+    def pub read(self: &Socket, destination: [u8]) -> result<ReadOutcome> {
+        def zero: u64 = 0;
+        if destination.len == zero { return error("TCP read needs nonempty storage"); }
+        def mut count: u64 = 0;
+        def mut failure: i32 = 0;
+        def code: i32 = __net_recv(self.descriptor(), &destination[0], destination.len,
+        &count, &failure);
+        if code != status.OK && code != status.END && code != status.WOULD_BLOCK {
+            return error("TCP read failed");
+        }
+        return ReadOutcome {
+            state: code,
+            count: count
+        };
+    }
+
+    // One send; count can be short. The caller advances and retries.
+    def pub write(self: &Socket, bytes: [const u8]) -> result<WriteOutcome> {
+        if !self.is_open() { return error("write on closed TCP socket"); }
+        def zero: u64 = 0;
+        if bytes.len == zero {
+            return WriteOutcome {
+                would_block: false,
+                count: 0
+            };
+        }
+        def mut count: u64 = 0;
+        def mut failure: i32 = 0;
+        def code: i32 = __net_send(self.descriptor(), &bytes[0], bytes.len,
+        &count, &failure);
+        if code == status.WOULD_BLOCK {
+            return WriteOutcome {
+                would_block: true,
+                count: 0
+            };
+        }
+        if code != status.OK { return error("TCP write failed"); }
+        return WriteOutcome {
+            would_block: false,
+            count: count
+        };
+    }
+
+    // Send a borrowed text byte sequence, including embedded NUL. No copy.
+    def pub write_text(self: &Socket, text: string) -> result<WriteOutcome> {
+        if !self.is_open() { return error("write on closed TCP socket"); }
+        if strings.is_empty(text) {
+            return WriteOutcome {
+                would_block: false,
+                count: 0
+            };
+        }
+        def mut count: u64 = 0;
+        def mut failure: i32 = 0;
+        def code: i32 = __net_send_text(self.descriptor(), text, &count, &failure);
+        if code == status.WOULD_BLOCK {
+            return WriteOutcome {
+                would_block: true,
+                count: 0
+            };
+        }
+        if code != status.OK { return error("TCP text write failed"); }
+        return WriteOutcome {
+            would_block: false,
+            count: count
+        };
+    }
+
+    // Invalidates every alias before closing. A failed close still consumes it.
+    def pub close(self: &Socket) -> result<void> {
+        if !self.is_open() { return error("TCP socket already closed"); }
+        def descriptor: i32 = self.state.descriptor;
+        self.state.descriptor = -1;
+        def mut failure: i32 = 0;
+        def code: i32 = __net_close(descriptor, &failure);
+        if code != status.OK { return error("TCP socket close failed"); }
+        return;
+    }
+
+}

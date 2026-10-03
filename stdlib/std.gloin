@@ -132,6 +132,20 @@ def pub parse_i32(value: string) -> IntResult {
     return to_int(value);
 }
 
+// Example: parse_i32_checked("42") -> success 42. O(n), no allocation.
+// Malformed text and overflow return distinct static error messages.
+// The caller must inspect .erroneous before reading .value or .error.
+def pub parse_i32_checked(value: string) -> result<i32> {
+    def parsed: IntResult = to_int(value);
+    if parsed.status == status.INVALID {
+        return error("invalid signed decimal i32");
+    }
+    if parsed.status == status.OVERFLOW {
+        return error("signed decimal i32 is out of range");
+    }
+    return parsed.value;
+}
+
 // Example: parse_i64("-9223372036854775808") returns OK and that value.
 // Signed ASCII decimal; INVALID precedes OVERFLOW.
 // O(n), bounded auxiliary storage, no allocation; complete input required, no trimming.

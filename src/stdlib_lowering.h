@@ -20,6 +20,26 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
         return mlir::LLVM::LLVMFunctionType::get(i32, args, false);
     }
     switch (kind) {
+    case StandardPrimitive::NetOpen:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false);
+    case StandardPrimitive::NetFinishConnect:
+    case StandardPrimitive::NetClose:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer}, false);
+    case StandardPrimitive::NetBind:
+    case StandardPrimitive::NetConnect:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, mlir::IntegerType::get(&context, 16), pointer}, false);
+    case StandardPrimitive::NetListen:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, pointer}, false);
+    case StandardPrimitive::NetAccept:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer, pointer, pointer, pointer}, false);
+    case StandardPrimitive::NetWait:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, i32, pointer, pointer}, false);
+    case StandardPrimitive::NetRecv:
+    case StandardPrimitive::NetSend:
+    case StandardPrimitive::NetSendText:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::NetLocal:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer, pointer, pointer}, false);
     case StandardPrimitive::TimeMonotonic:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false);
     case StandardPrimitive::RandomSplitMix64:
@@ -46,9 +66,14 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
         return mlir::LLVM::LLVMFunctionType::get(pointer, {pointer, i64, i32, pointer, pointer},
                                                  false);
     case StandardPrimitive::IoRead:
+    case StandardPrimitive::IoReadBytes:
         return mlir::LLVM::LLVMFunctionType::get(
-            i32, {pointer, pointer, i64, i32, pointer, pointer}, false);
+            i32, kind == StandardPrimitive::IoRead
+                     ? llvm::SmallVector<mlir::Type>{pointer, pointer, i64, i32, pointer, pointer}
+                     : llvm::SmallVector<mlir::Type>{pointer, pointer, i64, pointer, pointer},
+            false);
     case StandardPrimitive::IoWrite:
+    case StandardPrimitive::IoWriteBytes:
         return mlir::LLVM::LLVMFunctionType::get(
             i32, {pointer, pointer, i64, i32, pointer, pointer}, false);
     case StandardPrimitive::IoFlush:

@@ -58,8 +58,9 @@ Runs use fresh engines. Tests repeat the same borrowed module and use test-only
 LLVM globals to prove no engine state survives into the next run. Separate
 contexts can run concurrently; the tests check independent results. The caller
 must keep its context alive throughout each synchronous invocation. These tests
-establish repeatability on the supported Apple Silicon macOS/LLVM 21.1.6 platform,
-not cross-platform or native-file reproducibility.
+establish repeatability on the tested Apple Silicon macOS/LLVM 21.1.6 and Ubuntu
+24.04 ARM64/LLVM 21.1.8 configurations. They do not claim cross-target or
+native-file reproducibility.
 
 ## Runtime failure
 

@@ -1,0 +1,52 @@
+// Copy a binary file to a NEW destination, removing NUL bytes.
+// build/gloinc --jit examples/strip_nuls.gloin -- input.bin output.bin
+// The destination may remain partial if a later read, write, or close fails.
+import "@arena";
+import "@io";
+import "@process";
+import "@status";
+import "@vector";
+
+def main() -> i32 {
+    if process.arg_count() != 3 { return 1; }
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def source: process.TextResult = process.arg(&owner, 1);
+    def target: process.TextResult = process.arg(&owner, 2);
+    if source.status != status.OK || target.status != status.OK { return 2; }
+
+    def opened: io.FileResult = io.File.open_read(&owner, source.value);
+    if opened.status != status.OK { return 3; }
+    def mut reader: io.File = opened.value;
+    defer reader.close();
+    def created: io.FileResult = io.File.create_new(&owner, target.value);
+    if created.status != status.OK { return 4; }
+    def mut writer: io.File = created.value;
+    defer writer.close();
+
+    def mut input: [u8; 4096] = zeroed;
+    def mut filtered: vector.Vector<u8> = vector.Vector<u8>.empty(&owner, 4096);
+    def zero: u8 = 0;
+    def mut reading: bool = true;
+    while reading {
+        def chunk: io.ByteReadResult = reader.read_into(input[..]);
+        if chunk.status == status.END {
+            reading = false;
+        } else {
+            if chunk.status != status.OK { return 5; }
+            filtered.clear();
+            def mut index: u64 = 0;
+            while index < chunk.read {
+                if input[index] != zero && !filtered.push(input[index]) { return 6; }
+                index = index + 1;
+            }
+            def written: io.WriteResult = writer.write_all_bytes(filtered.as_const_slice());
+            if written.status != status.OK { return 7; }
+        }
+    }
+    if writer.flush().status != status.OK { return 8; }
+    def output_close: io.IoResult = writer.close();
+    def input_close: io.IoResult = reader.close();
+    if output_close.status != status.OK || input_close.status != status.OK { return 9; }
+    return 0;
+}

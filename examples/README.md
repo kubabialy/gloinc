@@ -18,10 +18,14 @@ arguments to run successfully.
 | `generic_methods.gloin` | Methods with their own type arguments | Version 0.0.4: `Pair<A, B>.with_third<C>` and `Pairs.create<A, B>` build heterogeneous values. See [generics](../docs/generics.md). |
 | `enums.gloin` | Payloadless enums | Version 0.0.4: named variants, equality, value copies, struct fields, and arrays. See [enums](../docs/enums.md). |
 | `slices.gloin` | Borrowed slices | Version 0.0.4: ranges, checked indexes, mutation, read-only views, and `u64` length. See [slices and vectors](../docs/slices-vectors.md). |
-| `vector.gloin` | Arena vector | Version 0.0.4: automatic growth, push, nullable access, and aligned initialized allocation. See [slices and vectors](../docs/slices-vectors.md). |
-| `fixed_vector.gloin` | Inline vector | Version 0.0.4: compile-time capacity, inline storage, checked full-capacity push, and nullable access. See [slices and vectors](../docs/slices-vectors.md). |
+| `vector.gloin` | Arena vector | Automatic growth, push, nullable access, live-element slice views, and aligned reserved storage. See [slices and vectors](../docs/slices-vectors.md). |
+| `fixed_vector.gloin` | Inline vector | Compile-time capacity, inline storage, checked full-capacity push, nullable access, and live-element slice views. See [slices and vectors](../docs/slices-vectors.md). |
+| `strip_nuls.gloin` | Binary file processing | Direct byte reads into an array, an empty growable byte vector, and direct slice writes. See [direct byte I/O](../docs/io.md#direct-byte-io). |
+| `custom_arena.gloin` | User-written bump arena | Raw aligned allocation, typed placement, exhaustion, reset, and release. See [raw memory](../docs/raw-memory.md). |
+| `result_handling.gloin` | Built-in result and error | Checked success, explicit failure forwarding, and error message access. See [results](../docs/results.md). |
+| `network_http.gloin` | Nonblocking local TCP and HTTP/1.1 | Connect, readiness, accept, partial writes, incremental bounded head parsing, and explicit `result<T>` handling. See [networking](../docs/networking.md). |
 | `pointer_offsets.gloin` | Nullable pointer offsets | Version 0.0.3: advances a `*i32` through a live fixed array. See [the rules](../docs/pointer-offsets.md). |
-| `standard_library.gloin` | Input and i32 conversions | Runnable with SPEC-030; counted lines, explicit errors, caller-owned arena strings, reset/reuse, and totals. |
+| `standard_library.gloin` | Input and i32 conversions | Counted lines, checked integer results, caller-owned arena strings, reset/reuse, and totals. |
 | `strings_lab.gloin` | Byte strings and explicit retention | Runnable with SPEC-030a; allocation-free configuration parsing, checked access, search, independent copies, and 10,000 scratch-arena resets. See [costs and usage](../docs/strings.md). |
 | `text_lab.gloin` | Traversal and bounded construction | Runnable with SPEC-030b; borrowed cursors, escaped report construction, transformations, shared builder state, scratch reuse, and an independent snapshot. See [costs and usage](../docs/text-construction.md). |
 | `module_lab.gloin`, `modules/*.gloin` | Local modules | Runnable with SPEC-029; shared nominal types, exported constants, methods, linked particles, and arena reset/reuse. |
@@ -63,6 +67,16 @@ return 1; conversion/allocation failures return 5/6/7. See [the API guide](../do
 This example runs in the required and installed/relocated test suites.
 
 ### Streams and files (SPEC-030d)
+
+`strip_nuls.gloin` removes NUL bytes from a binary file and creates a new
+destination. It exercises the current development tree's byte slice I/O and
+collection methods without converting file contents to strings:
+
+```sh
+./build/gloinc --jit examples/strip_nuls.gloin -- input.bin output.bin
+```
+
+The destination must not already exist. On failure it may remain partial.
 
 `io_copy.gloin` reads source/destination paths as two stdin lines and creates a
 **new** destination. It copies binary 4096-byte chunks, resets scratch storage,

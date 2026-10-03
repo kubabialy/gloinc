@@ -16,3 +16,6 @@ def pub const NOT_FOUND: i32 = 10;
 def pub const PERMISSION_DENIED: i32 = 11;
 def pub const ALREADY_EXISTS: i32 = 12;
 def pub const CLOSED: i32 = 13;
+def pub const WOULD_BLOCK: i32 = 14; // Nonblocking operation needs readiness; retry later.
+def pub const IN_PROGRESS: i32 = 15; // Nonblocking connection has not completed.
+def pub const TIMED_OUT: i32 = 16; // A timed readiness wait expired.

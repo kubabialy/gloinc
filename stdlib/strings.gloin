@@ -4,6 +4,14 @@
 import "@arena";
 import "@status";
 
+// Borrow an existing byte slice as counted text without copying or validating
+// UTF-8. The source must stay live and unchanged while the string is used.
+def pub view_bytes(bytes: [const u8]) -> string {
+    def zero: u64 = 0;
+    if bytes.len == zero { return ""; }
+    return __strings_buffer_view(&bytes[0], bytes.len);
+}
+
 // value is valid on status.OK; failure has value 0 (also a valid byte).
 def pub struct ByteResult {
     def pub status: i32,
@@ -47,6 +55,16 @@ def pub byte_at(text: string, index: u64) -> ByteResult {
     };
 }
 
+// Example: byte_at_checked("abc", 1) succeeds with 98. O(1), no allocation.
+// An out-of-range index returns a static error; inspect .erroneous before .value.
+def pub byte_at_checked(text: string, index: u64) -> result<u8> {
+    def byte: ByteResult = byte_at(text, index);
+    if byte.status == status.OUT_OF_RANGE {
+        return error("string byte index is out of range");
+    }
+    return byte.value;
+}
+
 // Example: slice_bytes("abc", 1, 2) returns OK and borrowed "bc".
 // O(1), no allocation. Empty end slices are valid. Invalid bounds return
 // OUT_OF_RANGE and "" without wrapping/trapping on oversized arguments.
@@ -62,6 +80,17 @@ def pub slice_bytes(text: string, start: u64, length: u64) -> StringResult {
         status: status.OK,
         value: __strings_slice(text, start, length)
     };
+}
+
+// Example: slice_bytes_checked("abc", 1, 2) succeeds with borrowed "bc".
+// O(1), no allocation. Invalid bounds return a static error.
+// The success value borrows the original text's bytes.
+def pub slice_bytes_checked(text: string, start: u64, length: u64) -> result<string> {
+    def view: StringResult = slice_bytes(text, start, length);
+    if view.status == status.OUT_OF_RANGE {
+        return error("string byte range is out of bounds");
+    }
+    return view.value;
 }
 
 // Example: equal("a\0b", "a") is false. Exact bytes; no allocation.
@@ -150,8 +179,8 @@ def pub find(text: string, needle: string) -> FindResult {
 // Example: contains("abc", "bc") is true; empty needle always matches.
 // O(1 + text length * needle length) worst case, no allocation.
 def pub contains(text: string, needle: string) -> bool {
-    def result: FindResult = find(text, needle);
-    return result.found;
+    def outcome: FindResult = find(text, needle);
+    return outcome.found;
 }
 
 def ascii_whitespace(byte: u8) -> bool {

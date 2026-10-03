@@ -9,6 +9,90 @@ permissions:
   contents: read
 
 jobs:
+  linux:
+    name: Ubuntu 24.04 x86_64 / LLVM 21.1.8
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Install build tools and pinned LLVM/MLIR
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cmake ninja-build g++ python3
+          bash scripts/install-llvm-linux.sh
+
+      - name: Record environment
+        run: |
+          mkdir -p ci-reports-linux
+          {
+            uname -a
+            cmake --version
+            ninja --version
+            "$GLOIN_LLVM_PREFIX/bin/llvm-config" --version
+          } | tee ci-reports-linux/environment.log
+
+      - name: Check documentation and Gloin source style
+        run: |
+          python3 scripts/check-doc-links.py
+          python3 scripts/format-gloin.py --check
+
+      - name: Build compiler and tests
+        id: build
+        run: |
+          cmake -S . -B build-ci-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DLLVM_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/llvm" \
+            -DMLIR_DIR="$GLOIN_LLVM_PREFIX/lib/cmake/mlir" \
+            2>&1 | tee ci-reports-linux/configure.log
+          cmake --build build-ci-linux -j 2 2>&1 | tee ci-reports-linux/build.log
+          ctest --test-dir build-ci-linux --show-only=json-v1 > ci-reports-linux/inventory.json
+
+      - name: Verify executable core acceptance
+        id: core
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          cmake --build build-ci-linux --target check-core 2>&1 | tee ci-reports-linux/core.log
+          cp build-ci-linux/core.xml ci-reports-linux/core.xml
+
+      - name: Verify installation and relocated Linux package
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
+        run: |
+          bash scripts/check-package.sh build-ci-linux ci-reports-linux/package \
+            2>&1 | tee ci-reports-linux/package.log
+
+      - name: Classify complete suite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set +e
+          ctest --test-dir build-ci-linux -j 1 --output-on-failure \
+            --output-junit "$PWD/ci-reports-linux/serial.xml" 2>&1 | tee ci-reports-linux/serial.log
+          serial_status=${PIPESTATUS[0]}
+          ctest --test-dir build-ci-linux -j 4 --output-on-failure \
+            --output-junit "$PWD/ci-reports-linux/parallel.xml" 2>&1 | tee ci-reports-linux/parallel.log
+          parallel_status=${PIPESTATUS[0]}
+          set -e
+          test "$serial_status" -ne 0 && test "$parallel_status" -ne 0
+          python3 scripts/check-full-suite.py ci-reports-linux/serial.xml ci-reports-linux/parallel.xml
+
+      - name: Publish Linux build and test evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: compiler-linux-ci-reports
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ci-reports-linux/
+            build-ci-linux/Testing/Temporary/
+            build-ci-linux/compile_commands.json
+            build-ci-linux/CMakeCache.txt
+
   macos:
     name: macOS 15 arm64 / LLVM 21.1.6
     runs-on: macos-15

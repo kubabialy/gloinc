@@ -44,8 +44,14 @@ compiler now emits these checked Gloin operations:
 | `gloin.struct_literal` | Exact named fields in source evaluation order | LLVM struct construction at checked field indices |
 | `gloin.zeroed_array` | Contextual recursive zero initialization | LLVM zero aggregate |
 | `gloin.string_literal` | Checked string literal backed by static bytes and an exact byte length | LLVM string struct construction |
+| `gloin.error_literal`, `gloin.error_message` | Construct an error from a static message and read that message | Static string layout and field extraction |
+| `gloin.result_success`, `gloin.result_failure` | Construct exactly one active result variant, including `result<void>` | Tag and initialized value/error storage |
+| `gloin.result_is_error` | Inspect the active result variant | Read the tag |
+| `gloin.result_value`, `gloin.result_error` | Extract the semantically proven active variant | Runtime tag guard, then payload extraction |
 | `gloin.null` | Contextual nullable pointer null value | LLVM zero pointer |
 | `gloin.arena_typed_pointer` | Give raw arena byte storage a checked element pointer, trapping if a required allocation failed | Null guard when required, then the same LLVM address |
+| `gloin.raw_place` | Check raw storage, available bytes, alignment, and source element type before placement | Conditional typed store and nullable result pointer |
+| `gloin.raw_padding` | Query padding for a target element type at a raw address | Native address alignment arithmetic |
 | `gloin.pointer_offset` | Checked pointer offset measured in pointee elements | Null guard, then LLVM GEP |
 | `gloin.require_nonnull` | Nullable pointer access must trap on null | Pointer comparison and trap guard |
 | `gloin.pointer_compare` | Checked pointer equality or inequality | LLVM pointer comparison |
@@ -64,7 +70,7 @@ compiler now emits these checked Gloin operations:
 | `gloin.enum_compare` | Equality or inequality of operands with the same nominal enum SSA type | Compare extracted tags |
 
 Checked `func.func` signatures now use Gloin source types for pointers, arrays, slices,
-structs, strings, and enums. Calls and returns use those types too. Each checked
+structs, strings, enums, errors, and results. Calls and returns use those types too. Each checked
 function records its LLVM-compatible argument and result layouts in
 `gloin.layout_inputs` and `gloin.layout_results`; lowering rejects missing or
 incompatible layout metadata. `gloin.to_layout` converts an entry argument or
@@ -103,8 +109,13 @@ function boundaries, checked pointer construction, typed arena allocation,
 offsets, non-null checks, comparisons, stack/field/array addresses, loads, and
 stores also retain source types. A checked load records its LLVM layout
 separately; the signature lowering pass resolves these types and removes their
-bridges before core lowering. Other expression SSA results and aggregate storage
-still use LLVM-compatible types.
+bridges before core lowering. Checked expression results, immutable bindings,
+parameters, function calls, and returns now keep their source SSA type. Mutable
+storage uses a typed Gloin address and explicit source/layout bridges. Pointer
+and slice values may lose only an outer access capability through a checked
+bridge. The remaining checked `cf` branch arguments are booleans, and MLIR
+verifies their type at each edge. `!gloin.result<T>` and `!gloin.error` are
+nominal source types with Gloin operations for construction and access.
 
 The Gloin passes remove these operations before standard conversion;
 `--emit-ir` shows them and `--emit-llvm` contains none. The older custom async
@@ -124,16 +135,9 @@ initialized value with an LLVM store. Source-typed aggregate construction,
 field extraction, and enum operations reject operands with the wrong nominal
 source type, even when the LLVM layouts match. Checked pointer and storage
 operations have typed SSA addresses and values, so their verifiers reject a
-wrong pointee or a store through a read-only address. Some other source
-operations still carry only Gloin type attributes and cannot prove that every
-operand producer has the matching source type. Checked `cf` branch arguments
-currently carry only booleans for short-circuit expressions; MLIR verifies
-exact operand and block-argument types, including Gloin nominal types, if a
-future construct adds aggregate joins. The next migration work is to move Gloin
-types through remaining expression SSA values and make the runtime/ABI boundary
-explicit.
-New language features
-should not add another direct LLVM path while that migration is open.
+wrong pointee or a store through a read-only address. Backend preparation
+still uses layout values after explicit bridges. New source constructs should
+use typed Gloin operations and cross to layout only at storage or ABI boundaries.
 
 In particular, field and array element addresses verify source-typed bases
 and results. A field address checks its field index and projected source type
@@ -142,25 +146,14 @@ of a pointer field, such as viewing a writable pointer as read-only, but cannot
 change its nominal pointee or strengthen that capability. Struct literals also
 check their field types and layout against the same definition. Semantic
 analysis still selects field indices and checks visibility and mutability.
-An LLVM struct holding an enum tag also loses the enum's
-nominal identity after the source/layout bridge, even though Gloin enum
-operations verify nominal SSA operands. Semantic analysis prevents mismatches
-in source programs; imported
-or hand-built IR needs Gloin SSA value types before its verifier can make the
-same guarantee. The remaining migration should proceed in this order:
-
-1. Extend source types through remaining expression SSA values and branch
-   arguments. Preserve pointer qualifiers and nominal
-   identity through every producer and consumer.
-2. Convert the typed values and the existing Gloin operations together at the
-   Gloin-to-LLVM boundary. Keep explicit casts only where source values cross
-   runtime or foreign ABI calls; `gloin.abi_call` already marks runtime calls.
-3. Move string and defer internals behind that ABI boundary, then reject the
-   remaining direct LLVM operations in checked high-level source IR. Retain `func`, `arith`, and
-   `cf` for generic MLIR machinery.
-
-Built-in `result<T>` and `error` should enter the compiler only after this type
-boundary exists, so their exclusive states and handling rules survive in IR.
+After the source/layout bridge, an LLVM struct holding an enum or result loses
+its nominal identity. The compiler keeps those values source typed until the
+single Gloin-to-LLVM boundary, where the signature pass converts them and
+removes the bridges. The remaining backend cleanup is to move string and
+defer internals behind the ABI boundary and reject unrelated direct LLVM
+operations in checked high-level IR. This cleanup retains `func`, `arith`,
+and `cf` for generic MLIR machinery; the current result operations already
+have typed GloinIR representation and verification.
 
 ## One conversion pipeline
 
@@ -236,4 +229,4 @@ All existing external language tests now use production lowering, including
 arithmetic trap tests. SPEC-019 adds [JIT translation registration, validated
 invocation, and separate execution failure/results](jit.md). [The file CLI](cli.md)
 uses these APIs. [SPEC-021's source fixtures](../tests/fixtures/core/README.md) check
-core acceptance; [the current release guide](release-0.0.4.md) covers installation and packaging.
+core acceptance; the [0.1.0 candidate guide](release-0.1.0.md) covers installation and packaging.

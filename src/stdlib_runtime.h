@@ -18,7 +18,10 @@ enum {
     GLOIN_STD_NOT_FOUND = 10,
     GLOIN_STD_PERMISSION_DENIED = 11,
     GLOIN_STD_ALREADY_EXISTS = 12,
-    GLOIN_STD_CLOSED = 13
+    GLOIN_STD_CLOSED = 13,
+    GLOIN_STD_WOULD_BLOCK = 14,
+    GLOIN_STD_IN_PROGRESS = 15,
+    GLOIN_STD_TIMED_OUT = 16
 };
 int32_t gloin_std_parse_i32(const char *bytes, uint64_t length, int32_t *value);
 // Destination has at least 12 bytes, including the trailing NUL.

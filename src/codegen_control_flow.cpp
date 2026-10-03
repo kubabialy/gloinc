@@ -19,7 +19,7 @@ bool CodeGen::branch_if_open(mlir::Block *destination) {
 
 mlir::Value CodeGen::gen_condition(const Expression *condition, std::string_view construct) {
     DiagnosticScope source(current_span, condition ? condition->span : SourceSpan{});
-    auto value = gen_expression(condition);
+    auto value = gen_layout_expression(condition);
     if (!value.getType().isInteger(1))
         fail(std::string(construct) + " condition must be bool");
     return value;
@@ -107,7 +107,7 @@ void CodeGen::gen_for(const ForStatement *statement) {
     gen_statement(statement->body.get());
     if (has_open_block()) {
         if (statement->increment)
-            gen_expression(statement->increment.get(), true);
+            gen_layout_expression(statement->increment.get(), true);
         branch_if_open(condition_block);
     }
     builder.setInsertionPointToStart(exit_block);

@@ -91,6 +91,14 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
             } else
                 native_arguments.push_back(arguments[i]);
         }
+    } else if (kind == StandardPrimitive::NetSendText) {
+        native_arguments.push_back(arguments[0]);
+        native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
+            location(), arguments[1], llvm::ArrayRef<int64_t>{0}));
+        native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
+            location(), arguments[1], llvm::ArrayRef<int64_t>{1}));
+        native_arguments.push_back(arguments[2]);
+        native_arguments.push_back(arguments[3]);
     } else if (kind == StandardPrimitive::IoOpen || kind == StandardPrimitive::IoWrite) {
         const size_t index = kind == StandardPrimitive::IoOpen ? 0 : 1;
         if (index)

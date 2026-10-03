@@ -1,6 +1,8 @@
 #include "jit_runner.h"
 #include "arena_lowering.h"
 #include "arena_runtime.h"
+#include "memory_runtime.h"
+#include "memory_lowering.h"
 #include "lowering.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
@@ -12,6 +14,7 @@
 #include "stdlib_lowering.h"
 #include "stdlib_runtime.h"
 #include "io_runtime.h"
+#include "net_runtime.h"
 #include "context_runtime.h"
 #include "math_runtime.h"
 #include "time_runtime_internal.h"
@@ -77,7 +80,7 @@ mlir::LLVM::LLVMFuncOp validate_entry(mlir::ModuleOp module, Diagnostics &diagno
                         "convention and emitted linkage");
         return {};
     }
-    // Only explicitly registered output, defer, and arena ABIs can be external.
+    // Only explicitly registered output, defer, and memory ABIs can be external.
     for (auto function : module.getOps<mlir::LLVM::LLVMFuncOp>()) {
         if (auto kind = standard_operation(function.getName().str(), standard_runtime_names)) {
             if (!function.isExternal() ||
@@ -93,6 +96,14 @@ mlir::LLVM::LLVMFuncOp validate_entry(mlir::ModuleOp module, Diagnostics &diagno
                 function.getCConv() != mlir::LLVM::CConv::C ||
                 function.getLinkage() != mlir::LLVM::Linkage::External)
                 execution_error(diagnostics, function.getLoc(), "Invalid arena runtime ABI");
+            continue;
+        }
+        if (auto kind = memory_operation(function.getName().str(), memory_runtime_names)) {
+            if (!function.isExternal() ||
+                function.getFunctionType() != memory_runtime_type(*module.getContext(), *kind) ||
+                function.getCConv() != mlir::LLVM::CConv::C ||
+                function.getLinkage() != mlir::LLVM::Linkage::External)
+                execution_error(diagnostics, function.getLoc(), "Invalid raw memory runtime ABI");
             continue;
         }
         if (function.getName() == "malloc" || function.getName() == "free") {
@@ -218,6 +229,12 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::str
             symbols[mangle("gloin_arena_zero_bytes")] = llvm::orc::ExecutorSymbolDef(
                 llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_zero_bytes),
                 llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_memory_alloc")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_memory_alloc),
+                llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_memory_free")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_memory_free),
+                llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_std_parse_i32")] = llvm::orc::ExecutorSymbolDef(
                 llvm::orc::ExecutorAddr::fromPtr(&gloin_std_parse_i32), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_std_format_i32")] = llvm::orc::ExecutorSymbolDef(
@@ -251,9 +268,23 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::str
             symbols[mangle("gloin_io_open")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_open), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_io_read")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_read), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_io_write")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_write), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_io_read_bytes")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_read_bytes), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_io_write_bytes")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_write_bytes), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_io_flush")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_flush), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_io_close")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_close), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_io_error_message")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_io_error_message), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_open")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_open), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_bind")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_bind), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_listen")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_listen), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_accept")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_accept), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_connect")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_connect), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_finish_connect")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_finish_connect), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_wait")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_wait), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_recv")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_recv), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_send")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_send), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_send_text")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_send_text), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_local")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_local), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_close")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_close), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_fs_metadata")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_fs_metadata), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_fs_mkdir")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_fs_mkdir), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_fs_remove_file")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_fs_remove_file), llvm::JITSymbolFlags::Exported);

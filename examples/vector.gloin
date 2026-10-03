@@ -15,5 +15,6 @@ def main() -> i32 {
     def third: *const i32 = numbers.get(2);
     if first == null || second == null || third == null { return 3; }
     *second = *second + 0;
-    return *first + *second + *third;
+    def live: [const i32] = numbers.as_const_slice();
+    return live[0] + live[1] + live[2];
 }

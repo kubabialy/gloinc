@@ -1,0 +1,411 @@
+// Bounded HTTP/1.1 head parsing and formatting for @net. This module never
+// performs I/O. Bodies remain caller-owned; see docs/networking.md.
+import "@arena";
+import "@status";
+import "@std";
+import "@strings";
+
+def struct HeadResult {
+    def pub status: i32,
+    def pub header_bytes: u64,
+    def pub content_length: u64,
+    def pub has_content_length: bool,
+    def pub start_line: string,
+    def pub host: string,
+}
+
+def pub struct RequestHead {
+    def pub complete: bool,
+    def pub header_bytes: u64,
+    def pub content_length: u64,
+    def pub method: string,
+    def pub target: string,
+    def pub host: string,
+}
+
+def pub struct ResponseHead {
+    def pub complete: bool,
+    def pub header_bytes: u64,
+    def pub content_length: u64,
+    def pub has_content_length: bool,
+    def pub code: i32,
+}
+
+// A complete fixed-length message borrows body bytes from the input buffer.
+// consumed marks the first byte of a possible following message.
+def pub struct Frame {
+    def pub complete: bool,
+    def pub consumed: u64,
+    def pub body: string,
+}
+
+def incomplete_frame() -> Frame {
+    return Frame {
+        complete: false,
+        consumed: 0,
+        body: ""
+    };
+}
+
+def body_frame(bytes: string, header_bytes: u64, content_length: u64,
+max_body_bytes: u64) -> result<Frame> {
+    if content_length > max_body_bytes { return error("HTTP body exceeds limit"); }
+    def available: u64 = strings.byte_length(bytes) - header_bytes;
+    if content_length > available { return incomplete_frame(); }
+    return Frame {
+        complete: true,
+        consumed: header_bytes + content_length,
+        body: strings.slice_bytes(bytes, header_bytes, content_length).value
+    };
+}
+
+def empty_head(code: i32) -> HeadResult {
+    return HeadResult {
+        status: code,
+        header_bytes: 0,
+        content_length: 0,
+        has_content_length: false,
+        start_line: "",
+        host: ""
+    };
+}
+
+def ascii_lower(byte: u8) -> u8 {
+    if byte >= 65 && byte <= 90 { return byte + 32; }
+    return byte;
+}
+
+def equals_header_name(name: string, expected: string) -> bool {
+    def count: u64 = strings.byte_length(name);
+    if count != strings.byte_length(expected) { return false; }
+    for def mut index: u64 = 0; index < count; index = index + 1 {
+        if ascii_lower(strings.byte_at(name, index).value) !=
+        ascii_lower(strings.byte_at(expected, index).value) {
+            return false;
+        }
+    }
+    return true;
+}
+
+def token(text: string) -> bool {
+    if strings.is_empty(text) { return false; }
+    for def mut index: u64 = 0; index < strings.byte_length(text); index = index + 1 {
+        def byte: u8 = strings.byte_at(text, index).value;
+        if !((byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) ||
+        (byte >= 48 && byte <= 57) || byte == 45 || byte == 95) {
+            return false;
+        }
+    }
+    return true;
+}
+
+def header_value(text: string) -> bool {
+    for def mut index: u64 = 0; index < strings.byte_length(text); index = index + 1 {
+        def byte: u8 = strings.byte_at(text, index).value;
+        if byte != 9 && (byte < 32 || byte == 127) { return false; }
+    }
+    return true;
+}
+
+def request_target(text: string) -> bool {
+    if !strings.starts_with(text, "/") { return false; }
+    for def mut index: u64 = 0; index < strings.byte_length(text); index = index + 1 {
+        def byte: u8 = strings.byte_at(text, index).value;
+        if byte < 33 || byte > 126 || byte == 35 { return false; }
+    }
+    return true;
+}
+
+// IN_PROGRESS means the caller should append more bytes. TOO_LONG means the
+// complete head exceeds max_header_bytes. On OK views borrow the input bytes.
+// Only Content-Length framing is supported. Transfer-Encoding is rejected.
+def parse_head(bytes: string, max_header_bytes: u64) -> HeadResult {
+    def marker: strings.FindResult = strings.find(bytes, "\r\n\r\n");
+    if !marker.found {
+        if strings.byte_length(bytes) > max_header_bytes {
+            return empty_head(status.TOO_LONG);
+        }
+        return empty_head(status.IN_PROGRESS);
+    }
+    def end: u64 = marker.offset + 4;
+    if end > max_header_bytes { return empty_head(status.TOO_LONG); }
+    // Reject lone line breaks, NUL, and other control bytes in the head.
+    for def mut i: u64 = 0; i < end; i = i + 1 {
+        def byte: u8 = strings.byte_at(bytes, i).value;
+        if byte == 13 {
+            if i + 1 >= end || strings.byte_at(bytes, i + 1).value != 10 {
+                return empty_head(status.INVALID);
+            }
+        } else if byte == 10 {
+            if i == 0 || strings.byte_at(bytes, i - 1).value != 13 {
+                return empty_head(status.INVALID);
+            }
+        } else if byte != 9 && (byte < 32 || byte == 127) {
+            return empty_head(status.INVALID);
+        }
+    }
+    def first_end: strings.FindResult = strings.find(
+    strings.slice_bytes(bytes, 0, end).value, "\r\n");
+    if !first_end.found || first_end.offset == 0 { return empty_head(status.INVALID); }
+    def first: string = strings.slice_bytes(bytes, 0, first_end.offset).value;
+    def mut cursor: u64 = first_end.offset + 2;
+    def mut length: u64 = 0;
+    def mut has_length: bool = false;
+    def mut host: string = "";
+    while cursor < marker.offset + 2 {
+        def remaining: string = strings.slice_bytes(bytes, cursor, end - cursor).value;
+        def line_end: strings.FindResult = strings.find(remaining, "\r\n");
+        if !line_end.found || line_end.offset == 0 { return empty_head(status.INVALID); }
+        def line: string = strings.slice_bytes(remaining, 0, line_end.offset).value;
+        def colon: strings.FindResult = strings.find(line, ":");
+        if !colon.found { return empty_head(status.INVALID); }
+        def name: string = strings.slice_bytes(line, 0, colon.offset).value;
+        def value: string = strings.trim_ascii(strings.slice_bytes(
+        line, colon.offset + 1, strings.byte_length(line) - colon.offset - 1).value);
+        if !token(name) || !header_value(value) { return empty_head(status.INVALID); }
+        if equals_header_name(name, "Transfer-Encoding") {
+            return empty_head(status.INVALID);
+        }
+        if equals_header_name(name, "Content-Length") {
+            def parsed: std.U64Result = std.parse_u64(value);
+            if parsed.status != status.OK { return empty_head(parsed.status); }
+            if has_length && length != parsed.value { return empty_head(status.INVALID); }
+            length = parsed.value;
+            has_length = true;
+        }
+        if equals_header_name(name, "Host") {
+            if !strings.is_empty(host) || strings.is_empty(value) {
+                return empty_head(status.INVALID);
+            }
+            host = value;
+        }
+        cursor = cursor + line_end.offset + 2;
+    }
+    return HeadResult {
+        status: status.OK,
+        header_bytes: end,
+        content_length: length,
+        has_content_length: has_length,
+        start_line: first,
+        host: host
+    };
+}
+
+def incomplete_request() -> RequestHead {
+    return RequestHead {
+        complete: false,
+        header_bytes: 0,
+        content_length: 0,
+        method: "",
+        target: "",
+        host: ""
+    };
+}
+
+// Parses one request head. The caller must retain the input buffer until all
+// returned views have been consumed and then read content_length body bytes.
+// HTTP/1.1 Host is required; absolute-form targets and upgrades are not parsed.
+def pub parse_request(bytes: string, max_header_bytes: u64) -> result<RequestHead> {
+    def head: HeadResult = parse_head(bytes, max_header_bytes);
+    if head.status == status.IN_PROGRESS { return incomplete_request(); }
+    if head.status == status.TOO_LONG { return error("HTTP request head exceeds limit"); }
+    if head.status != status.OK { return error("invalid HTTP request head"); }
+    def first_space: strings.FindResult = strings.find(head.start_line, " ");
+    if !first_space.found { return error("invalid HTTP request line"); }
+    def method: string = strings.slice_bytes(head.start_line, 0, first_space.offset).value;
+    def rest: string = strings.slice_bytes(head.start_line, first_space.offset + 1,
+    strings.byte_length(head.start_line) - first_space.offset - 1).value;
+    def second_space: strings.FindResult = strings.find(rest, " ");
+    if !second_space.found { return error("invalid HTTP request line"); }
+    def target: string = strings.slice_bytes(rest, 0, second_space.offset).value;
+    def version: string = strings.slice_bytes(rest, second_space.offset + 1,
+    strings.byte_length(rest) - second_space.offset - 1).value;
+    if !token(method) || !request_target(target) || !strings.equal(version, "HTTP/1.1") ||
+    strings.is_empty(head.host) {
+        return error("invalid HTTP request line or Host");
+    }
+    return RequestHead {
+        complete: true,
+        header_bytes: head.header_bytes,
+        content_length: head.content_length,
+        method: method,
+        target: target,
+        host: head.host
+    };
+}
+
+def incomplete_response() -> ResponseHead {
+    return ResponseHead {
+        complete: false,
+        header_bytes: 0,
+        content_length: 0,
+        has_content_length: false,
+        code: 0
+    };
+}
+
+// Responses without Content-Length report has_content_length=false. The caller
+// must supply its own body framing policy (e.g. EOF); no chunk decoder exists.
+def pub parse_response(bytes: string, max_header_bytes: u64) -> result<ResponseHead> {
+    def head: HeadResult = parse_head(bytes, max_header_bytes);
+    if head.status == status.IN_PROGRESS { return incomplete_response(); }
+    if head.status == status.TOO_LONG { return error("HTTP response head exceeds limit"); }
+    if head.status != status.OK { return error("invalid HTTP response head"); }
+    if !strings.starts_with(head.start_line, "HTTP/1.1 ") {
+        return error("invalid HTTP response line");
+    }
+    def rest: string = strings.slice_bytes(head.start_line, 9,
+    strings.byte_length(head.start_line) - 9).value;
+    if strings.byte_length(rest) < 3 { return error("invalid HTTP response code"); }
+    def digits: string = strings.slice_bytes(rest, 0, 3).value;
+    for def mut index: u64 = 0; index < 3; index = index + 1 {
+        def digit: u8 = strings.byte_at(digits, index).value;
+        if digit < 48 || digit > 57 { return error("invalid HTTP response code"); }
+    }
+    def parsed: std.IntResult = std.parse_i32(digits);
+    if parsed.status != status.OK || parsed.value < 100 || parsed.value > 599 {
+        return error("invalid HTTP response code");
+    }
+    if parsed.value < 200 || parsed.value == 204 || parsed.value == 205 ||
+    parsed.value == 304 {
+        return error("unsupported bodyless HTTP response code");
+    }
+    if strings.byte_length(rest) > 3 {
+        if strings.byte_at(rest, 3).value != 32 ||
+        !header_value(strings.slice_bytes(rest, 4, strings.byte_length(rest) - 4).value) {
+            return error("invalid HTTP response reason");
+        }
+    }
+    return ResponseHead {
+        complete: true,
+        header_bytes: head.header_bytes,
+        content_length: head.content_length,
+        has_content_length: head.has_content_length,
+        code: parsed.value
+    };
+}
+
+// Full fixed-length request framing. A missing Content-Length means an empty
+// body. complete=false asks the caller to append more bytes and parse again.
+def pub frame_request(bytes: string, max_header_bytes: u64,
+max_body_bytes: u64) -> result<Frame> {
+    def parsed: result<RequestHead> = parse_request(bytes, max_header_bytes);
+    if parsed.erroneous { return parsed.error; }
+    if !parsed.value.complete { return incomplete_frame(); }
+    def framed: result<Frame> = body_frame(bytes, parsed.value.header_bytes,
+    parsed.value.content_length, max_body_bytes);
+    if framed.erroneous { return framed.error; }
+    return framed.value;
+}
+
+// Full fixed-length response framing. Responses without Content-Length need
+// separate EOF framing and therefore return an error here.
+def pub frame_response(bytes: string, max_header_bytes: u64,
+max_body_bytes: u64) -> result<Frame> {
+    def parsed: result<ResponseHead> = parse_response(bytes, max_header_bytes);
+    if parsed.erroneous { return parsed.error; }
+    if !parsed.value.complete { return incomplete_frame(); }
+    if !parsed.value.has_content_length {
+        return error("HTTP response needs Content-Length for fixed framing");
+    }
+    def framed: result<Frame> = body_frame(bytes, parsed.value.header_bytes,
+    parsed.value.content_length, max_body_bytes);
+    if framed.erroneous { return framed.error; }
+    return framed.value;
+}
+
+def valid_field(text: string) -> bool {
+    return !strings.is_empty(text) && !strings.contains(text, "\r") &&
+    !strings.contains(text, "\n") && header_value(text);
+}
+
+def valid_host(text: string) -> bool {
+    if !valid_field(text) { return false; }
+    for def mut index: u64 = 0; index < strings.byte_length(text); index = index + 1 {
+        def byte: u8 = strings.byte_at(text, index).value;
+        if byte <= 32 || byte == 127 { return false; }
+    }
+    return true;
+}
+
+// Creates a complete GET head; caller sends it using Socket.write_text and
+// advances on short sends. No implicit network I/O or body allocation.
+def pub format_get(memory: &arena.GeneralArena, host: string,
+target: string, max_bytes: u64) -> result<string> {
+    if !valid_host(host) || !request_target(target) {
+        return error("invalid HTTP host or request target");
+    }
+    def fixed: u64 = strings.byte_length("GET ") +
+    strings.byte_length(" HTTP/1.1\r\nHost: ") +
+    strings.byte_length("\r\nConnection: close\r\n\r\n");
+    if fixed > max_bytes { return error("HTTP request head exceeds output limit"); }
+    def mut remaining: u64 = max_bytes - fixed;
+    def host_bytes: u64 = strings.byte_length(host);
+    if host_bytes > remaining { return error("HTTP request head exceeds output limit"); }
+    remaining = remaining - host_bytes;
+    def target_bytes: u64 = strings.byte_length(target);
+    if target_bytes > remaining { return error("HTTP request head exceeds output limit"); }
+    remaining = remaining - target_bytes;
+    def made: strings.BuilderResult = strings.StringBuilder.create(memory, max_bytes - remaining);
+    if made.status != status.OK { return error("HTTP request buffer allocation failed"); }
+    def mut builder: strings.StringBuilder = made.value;
+    if builder.append("GET ") != status.OK || builder.append(target) != status.OK ||
+    builder.append(" HTTP/1.1\r\nHost: ") != status.OK ||
+    builder.append(host) != status.OK ||
+    builder.append("\r\nConnection: close\r\n\r\n") != status.OK {
+        return error("HTTP request head exceeds output limit");
+    }
+    def completed: strings.StringResult = builder.to_string(memory);
+    if completed.status != status.OK { return error("HTTP request copy failed"); }
+    return completed.value;
+}
+
+// Fixed-length response head. Body bytes are sent separately and must match
+// content_length. This helper uses Connection: close to avoid reuse ambiguity.
+def pub format_response(memory: &arena.GeneralArena, code: i32, reason: string,
+content_type: string, content_length: u64,
+max_bytes: u64) -> result<string> {
+    if code < 200 || code > 599 || code == 204 || code == 205 ||
+    code == 304 || !valid_field(reason) ||
+    !valid_field(content_type) {
+        return error("invalid HTTP response fields");
+    }
+    def number: std.FormatResult = std.format_i32(memory, code);
+    if number.status != status.OK { return error("HTTP status formatting failed"); }
+    def size: std.FormatResult = std.format_u64(memory, content_length);
+    if size.status != status.OK { return error("HTTP body length formatting failed"); }
+    def fixed: u64 = strings.byte_length("HTTP/1.1 ") + strings.byte_length(" ") +
+    strings.byte_length("\r\nContent-Type: ") +
+    strings.byte_length("\r\nContent-Length: ") +
+    strings.byte_length("\r\nConnection: close\r\n\r\n");
+    if fixed > max_bytes { return error("HTTP response head exceeds output limit"); }
+    def mut remaining: u64 = max_bytes - fixed;
+    def number_bytes: u64 = strings.byte_length(number.value);
+    if number_bytes > remaining { return error("HTTP response head exceeds output limit"); }
+    remaining = remaining - number_bytes;
+    def reason_bytes: u64 = strings.byte_length(reason);
+    if reason_bytes > remaining { return error("HTTP response head exceeds output limit"); }
+    remaining = remaining - reason_bytes;
+    def type_bytes: u64 = strings.byte_length(content_type);
+    if type_bytes > remaining { return error("HTTP response head exceeds output limit"); }
+    remaining = remaining - type_bytes;
+    def size_bytes: u64 = strings.byte_length(size.value);
+    if size_bytes > remaining { return error("HTTP response head exceeds output limit"); }
+    remaining = remaining - size_bytes;
+    def made: strings.BuilderResult = strings.StringBuilder.create(memory, max_bytes - remaining);
+    if made.status != status.OK { return error("HTTP response buffer allocation failed"); }
+    def mut builder: strings.StringBuilder = made.value;
+    if builder.append("HTTP/1.1 ") != status.OK ||
+    builder.append(number.value) != status.OK || builder.append(" ") != status.OK ||
+    builder.append(reason) != status.OK ||
+    builder.append("\r\nContent-Type: ") != status.OK ||
+    builder.append(content_type) != status.OK ||
+    builder.append("\r\nContent-Length: ") != status.OK ||
+    builder.append(size.value) != status.OK ||
+    builder.append("\r\nConnection: close\r\n\r\n") != status.OK {
+        return error("HTTP response head exceeds output limit");
+    }
+    def completed: strings.StringResult = builder.to_string(memory);
+    if completed.status != status.OK { return error("HTTP response copy failed"); }
+    return completed.value;
+}

@@ -1,0 +1,36 @@
+// Small generic operations on borrowed slices. No allocation or ownership.
+
+// Copy one value into each element; works with zero-length slices.
+def pub fill<T>(destination: [T], value: T) -> void {
+    def mut index: u64 = 0;
+    while index < destination.len {
+        destination[index] = value;
+        index = index + 1;
+    }
+}
+
+// Reverse elements in place, including arrays viewed as slices.
+def pub reverse<T>(values: [T]) -> void {
+    def mut left: u64 = 0;
+    def mut right: u64 = values.len;
+    while left < right {
+        right = right - 1;
+        if left >= right { return; }
+        def saved: T = values[left];
+        values[left] = values[right];
+        values[right] = saved;
+        left = left + 1;
+    }
+}
+
+// Returns false without writing when destination is too short. Source and
+// destination must not overlap; borrowed views can alias and are not tracked.
+def pub copy_nonoverlapping<T>(destination: [T], source: [const T]) -> bool {
+    if destination.len < source.len { return false; }
+    def mut index: u64 = 0;
+    while index < source.len {
+        destination[index] = source[index];
+        index = index + 1;
+    }
+    return true;
+}

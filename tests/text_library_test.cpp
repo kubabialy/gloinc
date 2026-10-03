@@ -154,8 +154,8 @@ TEST_F(TextLibraryTest, CursorCopiesAdvanceIndependentlyAndEmptyDelimiterIsInval
         def bad: strings.SplitCursorResult = strings.SplitCursor.create("abc", "");
         if bad.status != status.INVALID { return 1; }
         def mut invalid: strings.SplitCursor = bad.value;
-        def error: strings.StringResult = invalid.next();
-        if error.status != status.INVALID || !strings.is_empty(error.value) { return 2; }
+        def invalid_step: strings.StringResult = invalid.next();
+        if invalid_step.status != status.INVALID || !strings.is_empty(invalid_step.value) { return 2; }
         def made: strings.SplitCursorResult = strings.SplitCursor.create("a,b,c", ",");
         def mut a: strings.SplitCursor = made.value;
         if !ok(a.next(), "a") { return 3; }
@@ -348,9 +348,9 @@ TEST_F(TextLibraryTest, TransformAllocationFailuresHaveEmptyResults) {
           "strings.replace_all(&memory,\"abc\",\"b\",\"X\",3)",
           "strings.lower_ascii(&memory,\"ABC\",3)", "strings.upper_ascii(&memory,\"abc\",3)"}) {
         fail_allocation(1);
-        auto file = program("def result: strings.StringResult = " + call +
-                            "; if result.status != status.NO_MEMORY || "
-                            "!strings.is_empty(result.value) { return 1; } return 0;");
+        auto file = program("def outcome: strings.StringResult = " + call +
+                            "; if outcome.status != status.NO_MEMORY || "
+                            "!strings.is_empty(outcome.value) { return 1; } return 0;");
         expect_run(invoke({"--stdlib-dir", directory, file}), 0);
     }
 }

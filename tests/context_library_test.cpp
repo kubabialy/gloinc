@@ -226,8 +226,8 @@ TEST_F(ContextLibraryTest, ArgumentEnvironmentAndCwdAllocationFailuresAreRecover
                0);
 }
 TEST_F(ContextLibraryTest, CwdUsesHostWorkingDirectoryAndReportsTooSmallBounds) {
-    auto file = program(R"(def result: process.TextResult = process.cwd(&memory,4096);
-        if result.status != status.OK || result.os_error != 0 { return 1; } std.println(result.value);
+    auto file = program(R"(def outcome: process.TextResult = process.cwd(&memory,4096);
+        if outcome.status != status.OK || outcome.os_error != 0 { return 1; } std.println(outcome.value);
         def small: process.TextResult = process.cwd(&memory,0);
         if small.status != status.TOO_LONG || small.os_error == 0 || !strings.is_empty(small.value) { return 2; } return 0;)");
     CwdGuard cwd(directory);

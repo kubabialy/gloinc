@@ -6,9 +6,9 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
-`tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
+`tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **933 tests**:
+The current source definitions and CTest discovery contain **965 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -23,7 +23,7 @@ The current source definitions and CTest discovery contain **933 tests**:
 | OperatorsTest | 16 |
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
-| LoweringTest | 45 |
+| LoweringTest | 47 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -32,6 +32,7 @@ The current source definitions and CTest discovery contain **933 tests**:
 | CodeGenSpecTest | 2 |
 | CodeGenGenericsTest | 4 |
 | CheckedGenericsTest | 13 |
+| ResultTest | 8 |
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
 | ArenaTest | 21 |
@@ -47,8 +48,10 @@ The current source definitions and CTest discovery contain **933 tests**:
 | TextLibraryTest | 17 |
 | NumericLibraryTest | 12 |
 | NumericRuntimeTest | 16 |
-| IoLibraryTest | 15 |
+| IoLibraryTest | 16 |
 | IoRuntimeTest | 14 |
+| NetworkLibraryTest | 3 |
+| NetRuntimeTest | 2 |
 | ContextLibraryTest | 14 |
 | ContextRuntimeTest | 9 |
 | MathLibraryTest | 12 |
@@ -63,7 +66,7 @@ The current source definitions and CTest discovery contain **933 tests**:
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 155 |
+| CoreAcceptanceTest | 171 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -78,7 +81,7 @@ passing on a non-null module.
 Maintained tests cover loops (SPEC-017), standard modules (SPEC-023), and local
 modules (SPEC-029). The CLI also exercises `core_counter.gloin`, `hello_world.gloin`,
 `arena_lab.gloin`, `module_lab.gloin`, `standard_library.gloin`, and
-`strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, and `statistics_tool.gloin`. Every remaining example passes `gloinc --check`.
+`strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, `statistics_tool.gloin`, and `network_http.gloin`. All 32 source files under `examples/` pass `gloinc --check`.
 
 ## Running and inspecting tests
 
@@ -91,10 +94,31 @@ ctest --test-dir build -j 4 --output-on-failure
 ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failure
 ```
 
-All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. A local parallel run excluding the four documented
-unsupported async/spawn cases passed **922 of 922 tests**, with no unexpected
-test-process crashes or skips.
+Compiler CTest cases have a 30-second timeout on macOS and 120 seconds on
+Linux, where trap cases take longer under VM/CI load. No known failures are
+disabled or marked as expected successes. The latest 0.1.0 candidate parallel
+run passed **961 of 965 tests** on both macOS and Ubuntu ARM64.
+The four failures are the documented unsupported async/spawn cases. The required
+core gate passed **918 of 918 tests** on both, with no unexpected test-process crashes
+or skips. Installed and relocated candidate packages each passed 479/479
+acceptance checks.
+
+## Development features after 0.0.4
+
+Eight `ResultTest` cases check success and failure returns, explicit forwarding,
+required `.erroneous` proofs including early returns, invalid construction and
+storage, `result<void>`, static error messages, source-typed struct/array/string
+payloads, JIT and native output, and checked `@std`/`@strings` APIs. Raw memory
+and custom arena acceptance cases check allocation, alignment, typed placement,
+release, and rejected unsafe arguments. Direct byte-slice I/O and vector live
+views/collection methods run through compiler, runtime, and packaged examples.
+Three `NetworkLibraryTest` cases exercise local HTTP over JIT and native
+executables, strict head framing, result handling, address construction, and
+socket alias close state. Two `NetRuntimeTest` cases check nonblocking and
+close-on-exec flags, readiness, partial-I/O statuses, and invalid arguments.
+The [network guide](../docs/networking.md) states the first HTTP subset.
+See the [development HTML guide](../docs/site/development/index.html) for the
+implemented language boundary and the linked API guides for exact rules.
 
 ## Integrated examples (SPEC-030h)
 
@@ -227,7 +251,8 @@ with a 2 MiB stack.
 
 ## Byte strings (SPEC-030a)
 
-Eighteen `StringLibraryTest` cases cover all 14 public functions, shared status
+Eighteen `StringLibraryTest` cases cover the byte-string functions, including
+two checked result alternatives, shared status
 compatibility, unsigned ordering, NUL/arbitrary bytes, UTF-8 byte slicing,
 extreme/empty bounds, first/absent/empty search, exact ASCII trimming, and a
 64-case independent search/order oracle. They exercise copy lifetime independence,

@@ -72,11 +72,15 @@ def GloinSpawn : Gloin_Type<"GloinSpawn", "spawn"> {
     let assemblyFormat = "`<` $valueType `>`";
 }
 
-// Result Type <T, E>
+def GloinError : Gloin_Type<"GloinError", "error"> {
+    let summary = "Language error with a static message";
+    let assemblyFormat = "";
+}
+
 def GloinResult : Gloin_Type<"GloinResult", "result"> {
-    let summary = "Result type for operations that can fail";
-    let parameters = (ins "Type":$okType, "Type":$errType);
-    let assemblyFormat = "`<` $okType `,` $errType `>`";
+    let summary = "Exclusive success or error result";
+    let parameters = (ins "Type":$valueType);
+    let assemblyFormat = "`<` $valueType `>`";
 }
 
 // A struct's field schema and layout live in its gloin.struct_definition symbol.

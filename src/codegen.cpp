@@ -326,8 +326,6 @@ void CodeGen::gen_statement(const Statement *stmt) {
             mlir::Value argVal = entryBlock->getArgument(i);
             auto layout = checked_data ? checked_type(func_def->parameters[i].type.get())
                                        : argTypes[i];
-            if (argVal.getType() != layout)
-                argVal = builder.create<gloin::ToLayoutOp>(location(), layout, argVal);
             const auto *name = func_def->parameters[i].name.get();
             if (checked_data && checked_data->address_taken.contains(checked_binding(name))) {
                 auto source = checked_data->symbols.at(checked_binding(name)).type;
@@ -335,6 +333,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
                 store_value(argVal, slot, source);
                 declare_binding(name, slot, true, layout, func_def->parameters[i].type->value);
             } else {
+                if (!checked_data && argVal.getType() != layout)
+                    fail("Unchecked parameter layout mismatch");
                 declare_binding(name, argVal, false, layout,
                                 func_def->parameters[i].type->value);
             }
@@ -454,12 +454,28 @@ void CodeGen::gen_statement(const Statement *stmt) {
             if (checked_data) {
                 auto function =
                     llvm::dyn_cast<mlir::func::FuncOp>(builder.getBlock()->getParentOp());
-                if (checked_data->types.at(return_stmt->return_value.get()) !=
-                        checked_return_type ||
-                    !function || function.getFunctionType().getNumResults() != 1 ||
+                if (!function || function.getFunctionType().getNumResults() != 1 ||
                     function.getFunctionType().getResult(0) !=
                         source_type(checked_return_type))
                     fail("Return value disagrees with the checked function signature (SPEC-014)");
+                if (checked_return_type.is_result()) {
+                    auto actual = checked_data->types.at(return_stmt->return_value.get());
+                    auto result_source = source_type(checked_return_type);
+                    auto layout = lower_type(checked_return_type);
+                    if (actual == *checked_return_type.result_value) {
+                        val = builder.create<gloin::ResultSuccessOp>(
+                            location(), result_source, mlir::ValueRange{val},
+                            mlir::TypeAttr::get(layout));
+                    } else if (actual.is_error()) {
+                        val = builder.create<gloin::ResultFailureOp>(
+                            location(), result_source, val, mlir::TypeAttr::get(layout));
+                    } else {
+                        fail("Result return is neither its value nor error");
+                    }
+                } else if (checked_data->types.at(return_stmt->return_value.get()) !=
+                           checked_return_type) {
+                    fail("Return value disagrees with the checked function signature (SPEC-014)");
+                }
                 val = as_source_value(val, function.getFunctionType().getResult(0));
             }
             emit_deferred();
@@ -468,8 +484,20 @@ void CodeGen::gen_statement(const Statement *stmt) {
             if (checked_data) {
                 auto function =
                     llvm::dyn_cast<mlir::func::FuncOp>(builder.getBlock()->getParentOp());
-                if (!function || function.getFunctionType().getNumResults() != 0)
+                if (!function ||
+                    (function.getFunctionType().getNumResults() != 0 &&
+                     !(checked_return_type.is_result() &&
+                       *checked_return_type.result_value == ValueType(CoreType::Void))))
                     fail("Missing value for checked return signature (SPEC-014)");
+                if (checked_return_type.is_result()) {
+                    auto value = builder.create<gloin::ResultSuccessOp>(
+                        location(), source_type(checked_return_type), mlir::ValueRange{},
+                        mlir::TypeAttr::get(lower_type(checked_return_type)));
+                    emit_deferred();
+                    builder.create<mlir::func::ReturnOp>(location(), value.getValue());
+                    builder.clearInsertionPoint();
+                    return;
+                }
             }
             emit_deferred();
             builder.create<mlir::func::ReturnOp>(location());
@@ -519,14 +547,45 @@ mlir::Value CodeGen::gen_expression(const Expression *expr, bool allow_void) {
         fail("Expression has no live continuation in code generation");
     auto value = gen_expression_impl(expr);
     if (checked_data) {
-        auto expected = checked_type(expr);
-        if ((value && value.getType() != expected) ||
-            (!value && !llvm::isa<mlir::NoneType>(expected)))
-            fail("Generated value disagrees with its checked type");
+        auto layout = checked_type(expr);
+        auto source_type_value = source_type(checked_data->types.at(expr));
+        if (value && value.getType() != layout && value.getType() != source_type_value) {
+            auto from = mlir::dyn_cast<gloin::GloinPointerType>(value.getType());
+            auto to = mlir::dyn_cast<gloin::GloinPointerType>(source_type_value);
+            bool weaken = from && to && from.getPointee() == to.getPointee() &&
+                          (!from.getNullable() || to.getNullable()) &&
+                          (!from.getReadOnly() || to.getReadOnly());
+            auto from_slice = mlir::dyn_cast<gloin::GloinSliceType>(value.getType());
+            auto to_slice = mlir::dyn_cast<gloin::GloinSliceType>(source_type_value);
+            weaken |= from_slice && to_slice &&
+                      from_slice.getElement() == to_slice.getElement() &&
+                      (!from_slice.getReadOnly() || to_slice.getReadOnly());
+            if (weaken)
+                value = builder.create<gloin::ToLayoutOp>(location(), layout, value);
+        }
+        if ((value && value.getType() != layout && value.getType() != source_type_value) ||
+            (!value && !llvm::isa<mlir::NoneType>(layout))) {
+            std::string actual, expected;
+            llvm::raw_string_ostream(actual) << (value ? value.getType() : mlir::Type{});
+            llvm::raw_string_ostream(expected) << source_type_value;
+            fail("Generated value has type " + actual + ", expected " + expected);
+        }
+        if (value)
+            value = as_source_value(value, source_type_value);
     }
     if (!value && !allow_void)
         fail("A void call cannot be used as a value");
     return value;
+}
+
+mlir::Value CodeGen::gen_layout_expression(const Expression *expr, bool allow_void) {
+    auto value = gen_expression(expr, allow_void);
+    if (!checked_data || !value)
+        return value;
+    auto layout = checked_type(expr);
+    if (value.getType() == layout)
+        return value;
+    return builder.create<gloin::ToLayoutOp>(location(), layout, value);
 }
 
 mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
@@ -581,7 +640,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             auto source = source_type(checked_data->types.at(array_lit));
             auto element_source = mlir::cast<gloin::GloinArrayType>(source).getElement();
             if (array_lit->repeated) {
-                auto fill = as_source_value(gen_expression(array_lit->elements[0].get()),
+                auto fill = as_source_value(gen_layout_expression(array_lit->elements[0].get()),
                                             element_source);
                 auto value = builder.create<gloin::RepeatArrayOp>(
                     location(), source, fill, mlir::TypeAttr::get(source),
@@ -590,7 +649,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             }
             llvm::SmallVector<mlir::Value> elements;
             for (const auto &element : array_lit->elements)
-                elements.push_back(as_source_value(gen_expression(element.get()),
+                elements.push_back(as_source_value(gen_layout_expression(element.get()),
                                                    element_source));
             auto value = builder.create<gloin::ArrayLiteralOp>(
                 location(), source, elements, mlir::TypeAttr::get(source),
@@ -599,7 +658,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         if (array_lit->elements.empty())
             fail("Unsupported expression or unresolved value in code generation");
-        auto firstElem = gen_expression(array_lit->elements[0].get());
+        auto firstElem = gen_layout_expression(array_lit->elements[0].get());
         if (!firstElem)
             fail("Unsupported expression or unresolved value in code generation");
         mlir::Type elemType = firstElem.getType();
@@ -608,7 +667,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         currentArray = builder.create<mlir::LLVM::InsertValueOp>(
             location(), currentArray, firstElem, llvm::ArrayRef<int64_t>{0});
         for (size_t i = 1; i < array_lit->elements.size(); ++i) {
-            auto elem = gen_expression(array_lit->elements[i].get());
+            auto elem = gen_layout_expression(array_lit->elements[i].get());
             if (!elem || elem.getType() != elemType)
                 fail("Array element type mismatch in code generation");
             currentArray = builder.create<mlir::LLVM::InsertValueOp>(
@@ -627,7 +686,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return gen_checked_unary(prefix);
         }
         if (prefix->op == "*") {
-            auto ptr = gen_expression(prefix->right.get());
+            auto ptr = gen_layout_expression(prefix->right.get());
             if (!ptr)
                 fail("Unsupported expression or unresolved value in code generation");
             const auto *name = dynamic_cast<const Identifier *>(prefix->right.get());
@@ -665,6 +724,29 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         fail("Unsupported expression or unresolved value in code generation");
     } else if (auto *member_access = dynamic_cast<const MemberAccessExpression *>(expr)) {
         if (checked_data) {
+            if (auto base = checked_data->types.find(member_access->left.get());
+                base != checked_data->types.end() && base->second.is_result()) {
+                auto outcome = gen_expression(member_access->left.get());
+                auto name = static_cast<const Identifier *>(member_access->member.get())->value;
+                if (name == "erroneous")
+                    return builder.create<gloin::ResultIsErrorOp>(location(),
+                                                                   builder.getI1Type(), outcome);
+                if (name == "value")
+                    return builder.create<gloin::ResultValueOp>(
+                        location(), source_type(checked_data->types.at(expr)), outcome,
+                        mlir::TypeAttr::get(checked_type(expr)));
+                if (name == "error")
+                    return builder.create<gloin::ResultErrorOp>(
+                        location(), source_type(checked_data->types.at(expr)), outcome,
+                        mlir::TypeAttr::get(checked_type(expr)));
+            }
+            if (auto base = checked_data->types.find(member_access->left.get());
+                base != checked_data->types.end() && base->second.is_error()) {
+                return builder.create<gloin::ErrorMessageOp>(
+                    location(), source_type(checked_data->types.at(expr)),
+                    gen_expression(member_access->left.get()),
+                    mlir::TypeAttr::get(checked_type(expr)));
+            }
             if (auto variant = checked_data->enum_variants.find(member_access);
                 variant != checked_data->enum_variants.end()) {
                 auto layout = checked_type(member_access);
@@ -683,7 +765,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                 auto source = source_type(base->second);
                 return builder.create<gloin::SliceLengthOp>(
                     location(), builder.getI64Type(),
-                    as_source_value(gen_expression(member_access->left.get()), source),
+                    as_source_value(gen_layout_expression(member_access->left.get()), source),
                     mlir::TypeAttr::get(source),
                     mlir::TypeAttr::get(lower_type(base->second)));
             }
@@ -692,7 +774,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                 return load_value(checked_type(member_access), address,
                                   checked_data->types.at(member_access));
             }
-            auto value = gen_expression(member_access->left.get());
+            auto value = gen_layout_expression(member_access->left.get());
             auto record_source = source_type(
                 checked_data->types.at(member_access->left.get()));
             auto field_source = source_type(checked_data->types.at(member_access));
@@ -714,7 +796,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
 
         // If base is NOT addressable (e.g. value type struct in register/SSA value),
         // we extract the value using ExtractValueOp.
-        auto baseVal = gen_expression(member_access->left.get());
+        auto baseVal = gen_layout_expression(member_access->left.get());
         if (baseVal) {
             auto baseType = baseVal.getType();
             if (auto structType = llvm::dyn_cast<mlir::LLVM::LLVMStructType>(baseType)) {
@@ -748,8 +830,8 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     } else if (auto *bin = dynamic_cast<const InfixExpression *>(expr)) {
         if (checked_data)
             return gen_checked_binary(bin);
-        auto left = gen_expression(bin->left.get());
-        auto right = gen_expression(bin->right.get());
+        auto left = gen_layout_expression(bin->left.get());
+        auto right = gen_layout_expression(bin->right.get());
 
         if (!left || !right)
             fail("Unsupported expression or unresolved value in code generation");
@@ -784,7 +866,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                                                        left, right);
     } else if (auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
         auto lhsAddr = gen_address(assign->left.get());
-        auto right = gen_expression(assign->right.get());
+        auto right = gen_layout_expression(assign->right.get());
         if (lhsAddr) {
             if (llvm::isa<mlir::LLVM::LLVMPointerType>(lhsAddr.getType())) {
                 store_value(right, lhsAddr,
@@ -812,7 +894,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                 auto index = indices.at(i);
                 auto field_source = source_type(structure.fields.at(index).type);
                 fields.push_back(as_source_value(
-                    gen_expression(struct_lit->fields[i].second.get()), field_source));
+                    gen_layout_expression(struct_lit->fields[i].second.get()), field_source));
                 field_indices.push_back(static_cast<int64_t>(index));
             }
             auto value = builder.create<gloin::StructLiteralOp>(
@@ -832,7 +914,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
 
         for (const auto &field : struct_lit->fields) {
             std::string fieldName = field.first;
-            auto val = gen_expression(field.second.get());
+            auto val = gen_layout_expression(field.second.get());
             if (!val)
                 fail("Unsupported expression or unresolved value in code generation");
 
@@ -845,6 +927,12 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
+        if (checked_data && checked_data->error_constructors.contains(call)) {
+            auto message = gen_expression(call->arguments.front().get());
+            return builder.create<gloin::ErrorLiteralOp>(
+                location(), source_type(checked_data->types.at(expr)), message,
+                mlir::TypeAttr::get(checked_type(expr)));
+        }
         if (checked_data)
             return emit_checked_call(call, gen_call_arguments(call));
         std::string funcName;
@@ -860,7 +948,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                 // If address generation fails (e.g. temporary), try gen_expression and store to
                 // temp
                 if (!selfArg) {
-                    auto val = gen_expression(member->left.get());
+                    auto val = gen_layout_expression(member->left.get());
                     if (val) {
                         auto one = builder.create<mlir::LLVM::ConstantOp>(
                             location(), builder.getI64Type(), builder.getI64IntegerAttr(1));
@@ -902,7 +990,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
 
         for (const auto &arg : call->arguments) {
-            auto val = gen_expression(arg.get());
+            auto val = gen_layout_expression(arg.get());
             if (!val)
                 fail("Unsupported expression or unresolved value in code generation");
             args.push_back(val);
@@ -975,7 +1063,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                 argVal = builder.create<mlir::LLVM::ZeroOp>(
                     location(), mlir::LLVM::LLVMPointerType::get(&context));
             } else if (call->arguments.size() == 1) {
-                argVal = gen_expression(call->arguments[0].get());
+                argVal = gen_layout_expression(call->arguments[0].get());
                 if (!argVal)
                     fail("Unsupported expression or unresolved value in code generation");
 
@@ -1065,7 +1153,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return callOp.getResult();
         }
     } else if (auto *awaitExpr = dynamic_cast<const AwaitExpression *>(expr)) {
-        auto handle = gen_expression(awaitExpr->expr.get());
+        auto handle = gen_layout_expression(awaitExpr->expr.get());
         if (!handle)
             fail("Unsupported expression or unresolved value in code generation");
 
@@ -1178,7 +1266,7 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
         auto baseAddr = gen_address(member_access->left.get());
         // If base is not addressable, check if it is a pointer
         if (!baseAddr) {
-            auto val = gen_expression(member_access->left.get());
+            auto val = gen_layout_expression(member_access->left.get());
             if (val && llvm::isa<mlir::LLVM::LLVMPointerType>(val.getType())) {
                 baseAddr = val;
             }
@@ -1228,7 +1316,7 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
     } else if (auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
         if (prefix->op == "*") {
             return checked_data ? gen_pointer_address(prefix->right.get())
-                                : gen_expression(prefix->right.get());
+                                : gen_layout_expression(prefix->right.get());
         }
     }
     return nullptr;
@@ -1238,7 +1326,7 @@ mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_t
     auto array_type = checked_data->types.at(expr->left.get());
     if (array_type.is_slice()) {
         auto source = source_type(array_type);
-        auto base = as_source_value(gen_expression(expr->left.get()), source);
+        auto base = as_source_value(gen_layout_expression(expr->left.get()), source);
         auto index = gen_integer_index(expr->index.get());
         auto element_source = source_type(*array_type.slice_element);
         auto pointer = gloin::GloinPointerType::get(
@@ -1256,7 +1344,7 @@ mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_t
     if (!base) {
         if (!allow_temporary)
             return {};
-        auto value = gen_expression(expr->left.get());
+        auto value = gen_layout_expression(expr->left.get());
         base = create_entry_alloca(lower_type(array_type), array_type);
         store_value(value, base, array_type);
     }
@@ -1275,7 +1363,7 @@ mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_t
 }
 
 mlir::Value CodeGen::gen_integer_index(const Expression *expression) {
-    auto index = gen_expression(expression);
+    auto index = gen_layout_expression(expression);
     auto index_type = checked_data->types.at(expression).builtin();
     const auto &info = core_type_info(index_type);
     if (!info.is_integer)
@@ -1303,7 +1391,9 @@ mlir::Value CodeGen::gen_slice(const SliceExpression *expression) {
             &context, source_type(base_type), false, result_type.slice_read_only);
         base = as_source_value(base, pointer);
     } else if (base_type.is_slice()) {
-        base = as_source_value(gen_expression(expression->left.get()), result_source);
+        base = as_source_value(gen_layout_expression(expression->left.get()), result_source);
+    } else if (base_type.is_pointer()) {
+        base = as_source_value(gen_layout_expression(expression->left.get()), source_type(base_type));
     } else {
         fail("Slice source is not an array or slice");
     }
@@ -1326,8 +1416,13 @@ mlir::Value CodeGen::gen_slice(const SliceExpression *expression) {
             location(), result_source, base, start, end,
             mlir::TypeAttr::get(lower_type(base_type)),
             mlir::TypeAttr::get(result_source), mlir::TypeAttr::get(result_layout));
-    } else {
+    } else if (base_type.is_slice()) {
         value = builder.create<gloin::SliceSubrangeOp>(
+            location(), result_source, base, start, end,
+            mlir::TypeAttr::get(result_source), mlir::TypeAttr::get(result_layout),
+            mlir::TypeAttr::get(lower_type(*result_type.slice_element)));
+    } else {
+        value = builder.create<gloin::SliceFromPointerOp>(
             location(), result_source, base, start, end,
             mlir::TypeAttr::get(result_source), mlir::TypeAttr::get(result_layout),
             mlir::TypeAttr::get(lower_type(*result_type.slice_element)));
@@ -1336,7 +1431,7 @@ mlir::Value CodeGen::gen_slice(const SliceExpression *expression) {
 }
 
 mlir::Value CodeGen::gen_pointer_address(const Expression *expression) {
-    auto value = gen_expression(expression);
+    auto value = gen_layout_expression(expression);
     const auto type = checked_data->types.at(expression);
     if (!type.is_pointer())
         fail("Address requires a checked pointer type");
@@ -1536,6 +1631,15 @@ mlir::Type CodeGen::lower_type(ValueType value_type) {
     if (value_type.is_slice())
         return mlir::LLVM::LLVMStructType::getLiteral(
             &context, {mlir::LLVM::LLVMPointerType::get(&context), builder.getI64Type()}, false);
+    if (value_type.is_error())
+        return string_type();
+    if (value_type.is_result()) {
+        llvm::SmallVector<mlir::Type> fields{builder.getI1Type()};
+        if (*value_type.result_value != ValueType(CoreType::Void))
+            fields.push_back(lower_type(*value_type.result_value));
+        fields.push_back(lower_type(ValueType::error()));
+        return mlir::LLVM::LLVMStructType::getLiteral(&context, fields, false);
+    }
     if (value_type.structure) {
         const auto id = *value_type.structure;
         if (auto found = checked_struct_types.find(id); found != checked_struct_types.end())
@@ -1575,6 +1679,11 @@ mlir::Type CodeGen::source_type(ValueType value_type) {
     if (value_type.is_slice())
         return gloin::GloinSliceType::get(
             &context, source_type(*value_type.slice_element), value_type.slice_read_only);
+    if (value_type.is_error())
+        return gloin::GloinErrorType::get(&context);
+    if (value_type.is_result())
+        return gloin::GloinResultType::get(&context,
+                                           source_type(*value_type.result_value));
     if (value_type.structure) {
         const auto id = *value_type.structure;
         const auto name = nominal_ir_name(*checked_data, id);
@@ -1714,7 +1823,8 @@ void CodeGen::declare_binding(const Identifier *name, mlir::Value value, bool ad
         return;
     }
     auto id = checked_binding(name);
-    if (lower_type(checked_data->symbols[id].type) != type || (!address && value.getType() != type))
+    if (lower_type(checked_data->symbols[id].type) != type ||
+        (!address && value.getType() != this->source_type(checked_data->symbols[id].type)))
         fail("Generated binding disagrees with its checked type");
     checked_values[id] = {value, address, type, source_type};
 }

@@ -96,6 +96,33 @@ TEST_F(IoLibraryTest, FileModesPreserveExclusiveCreateAppendAndExplicitTruncatio
                0);
     EXPECT_EQ(read(directory + "/a file.bin"), "");
 }
+TEST_F(IoLibraryTest, DirectByteIOPreservesBinaryDataAndReportsEOF) {
+    const auto input = source(std::string("a\0b\xff", 4), "direct-input.bin");
+    const auto output = directory + "/direct-output.bin";
+    expect_run(invoke({program("def input_path: string = " + literal(input) +
+                               "; def output_path: string = " + literal(output) + R"(;
+        def opened: io.FileResult = io.File.open_read(&owner, input_path);
+        if opened.status != status.OK { return 1; }
+        def mut reader: io.File = opened.value;
+        defer reader.close();
+        def mut empty: [u8; 0] = zeroed;
+        if reader.read_into(empty[..]).status != status.INVALID { return 2; }
+        def mut bytes: [u8; 4] = zeroed;
+        def chunk: io.ByteReadResult = reader.read_into(bytes[..]);
+        def last: u8 = 255;
+        if chunk.status != status.OK || chunk.read != 4 || bytes[3] != last { return 3; }
+        if reader.read_into(bytes[..]).status != status.END { return 4; }
+        def made: io.FileResult = io.File.create_new(&owner, output_path);
+        if made.status != status.OK { return 5; }
+        def mut writer: io.File = made.value;
+        defer writer.close();
+        if writer.write_all_bytes(empty[..]).written != 0 { return 6; }
+        def written: io.WriteResult = writer.write_all_bytes(bytes[..]);
+        if written.status != status.OK || written.written != 4 { return 7; }
+        if writer.close().status != status.OK || reader.close().status != status.OK { return 8; }
+        return 0;)")}), 0);
+    EXPECT_EQ(read(output), std::string("a\0b\xff", 4));
+}
 TEST_F(IoLibraryTest, FileAndBorrowedAliasesSharePositionAndCloseState) {
     const auto path = source("abc\ndef\n", "data.txt");
     expect_run(invoke({program("def made: io.FileResult = io.File.open_read(&owner," +
@@ -209,8 +236,8 @@ TEST_F(IoLibraryTest, FailedCloseInvalidatesAliasesAndWriteLineReportsSuffixFail
     copy_modules();
     auto io = read((library() / "io.gloin").string());
     // Still consume the actual resource, then inject an observable close failure.
-    replace(io, "def code: i32 = __io_close(handle, &error);",
-            "__io_close(handle, &error); error = 123; def code: i32 = status.IO_ERROR;");
+    replace(io, "def code: i32 = __io_close(handle, &failure_code);",
+            "__io_close(handle, &failure_code); failure_code = 123; def code: i32 = status.IO_ERROR;");
     replace(io, "def write_mode(self: &Stream, text: string, all: i32) -> WriteResult {",
             "def write_mode(self: &Stream, text: string, all: i32) -> WriteResult { if "
             "strings.equal(text, \"\\n\") { return WriteResult { status: status.IO_ERROR, "

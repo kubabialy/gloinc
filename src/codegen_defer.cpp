@@ -8,10 +8,10 @@ std::vector<mlir::Value> CodeGen::gen_call_arguments(const CallExpression *call)
         receiver != checked_data->method_receivers.end()) {
         const auto *member = static_cast<const MemberAccessExpression *>(call->function.get());
         arguments.push_back(receiver->second ? gen_address(member->left.get())
-                                             : gen_expression(member->left.get()));
+                                             : gen_layout_expression(member->left.get()));
     }
     for (const auto &argument : call->arguments)
-        arguments.push_back(gen_expression(argument.get()));
+        arguments.push_back(gen_layout_expression(argument.get()));
     return arguments;
 }
 
@@ -22,6 +22,12 @@ mlir::Value CodeGen::emit_checked_call(const CallExpression *call, mlir::ValueRa
     if (auto primitive = checked_data->arena_runtime_calls.find(call);
         primitive != checked_data->arena_runtime_calls.end())
         return emit_arena_primitive(primitive->second, arguments);
+    if (auto primitive = checked_data->memory_runtime_calls.find(call);
+        primitive != checked_data->memory_runtime_calls.end())
+        return emit_memory_primitive(primitive->second, arguments);
+    if (auto intrinsic = checked_data->memory_intrinsics.find(call);
+        intrinsic != checked_data->memory_intrinsics.end())
+        return emit_memory_intrinsic(intrinsic->second.first, intrinsic->second.second, arguments);
     if (checked_data->runtime_calls.contains(call)) {
         auto ptr = builder.create<mlir::LLVM::ExtractValueOp>(location(), arguments.front(),
                                                               llvm::ArrayRef<int64_t>{0});
@@ -56,11 +62,17 @@ mlir::Value CodeGen::emit_checked_call(const CallExpression *call, mlir::ValueRa
         return emit_arena_allocation(found->second, allocation->second, arguments,
                                      source_type(result));
     }
-    if (checked_data->arena_many_allocations.contains(call)) {
+    if (checked_data->arena_many_allocations.contains(call) ||
+        checked_data->arena_reserved_allocations.contains(call)) {
         auto result = checked_data->types.at(call->arguments.front().get());
         result.pointers.insert(result.pointers.begin(), {false, false});
-        return emit_arena_many_allocation(found->second, arguments, source_type(result));
+        return emit_arena_many_allocation(
+            found->second, arguments, source_type(result),
+            checked_data->arena_many_allocations.contains(call));
     }
+    if (checked_data->arena_typed_reservations.contains(call))
+        return emit_arena_typed_reservation(found->second, arguments,
+                                             checked_data->types.at(call));
     return emit_checked_function_call(found->second, arguments);
 }
 
@@ -89,12 +101,6 @@ mlir::Value CodeGen::emit_checked_function_call(mlir::func::FuncOp function,
     if (!call.getNumResults())
         return {};
     auto result = call.getResult(0);
-    auto layouts = function->getAttrOfType<mlir::ArrayAttr>("gloin.layout_results");
-    if (!layouts || layouts.size() != 1)
-        fail("Checked function is missing its result layout");
-    auto layout = mlir::cast<mlir::TypeAttr>(layouts[0]).getValue();
-    if (result.getType() != layout)
-        return builder.create<gloin::ToLayoutOp>(location(), layout, result);
     return result;
 }
 

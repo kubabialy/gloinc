@@ -34,9 +34,23 @@ enum class StandardPrimitive {
     IoOpen,
     IoRead,
     IoWrite,
+    IoReadBytes,
+    IoWriteBytes,
     IoFlush,
     IoClose,
     IoErrorMessage,
+    NetOpen,
+    NetBind,
+    NetListen,
+    NetAccept,
+    NetConnect,
+    NetFinishConnect,
+    NetWait,
+    NetRecv,
+    NetSend,
+    NetSendText,
+    NetLocal,
+    NetClose,
     FsMetadata,
     FsMkdir,
     FsRemoveFile,
@@ -61,7 +75,7 @@ enum class StandardPrimitive {
     StringStore,
     StringWrite
 };
-inline constexpr std::array<std::string_view, 55> standard_primitive_names{"__std_parse_i32",
+inline constexpr std::array<std::string_view, 69> standard_primitive_names{"__std_parse_i32",
                                                                            "__std_format_i32",
                                                                            "__std_input",
                                                                            "__strings_copy",
@@ -90,9 +104,23 @@ inline constexpr std::array<std::string_view, 55> standard_primitive_names{"__st
                                                                            "__io_open",
                                                                            "__io_read",
                                                                            "__io_write",
+                                                                           "__io_read_bytes",
+                                                                           "__io_write_bytes",
                                                                            "__io_flush",
                                                                            "__io_close",
                                                                            "__io_error_message",
+                                                                           "__net_open",
+                                                                           "__net_bind",
+                                                                           "__net_listen",
+                                                                           "__net_accept",
+                                                                           "__net_connect",
+                                                                           "__net_finish_connect",
+                                                                           "__net_wait",
+                                                                           "__net_recv",
+                                                                           "__net_send",
+                                                                           "__net_send_text",
+                                                                           "__net_local",
+                                                                           "__net_close",
                                                                            "__fs_metadata",
                                                                            "__fs_mkdir",
                                                                            "__fs_remove_file",
@@ -116,7 +144,7 @@ inline constexpr std::array<std::string_view, 55> standard_primitive_names{"__st
                                                                            "__strings_buffer_view",
                                                                            "__strings_store",
                                                                            "__strings_write"};
-inline constexpr std::array<std::string_view, 46> standard_runtime_names{
+inline constexpr std::array<std::string_view, 60> standard_runtime_names{
     "gloin_std_parse_i32",
     "gloin_std_format_i32",
     "gloin_std_input",
@@ -146,9 +174,23 @@ inline constexpr std::array<std::string_view, 46> standard_runtime_names{
     "gloin_io_open",
     "gloin_io_read",
     "gloin_io_write",
+    "gloin_io_read_bytes",
+    "gloin_io_write_bytes",
     "gloin_io_flush",
     "gloin_io_close",
     "gloin_io_error_message",
+    "gloin_net_open",
+    "gloin_net_bind",
+    "gloin_net_listen",
+    "gloin_net_accept",
+    "gloin_net_connect",
+    "gloin_net_finish_connect",
+    "gloin_net_wait",
+    "gloin_net_recv",
+    "gloin_net_send",
+    "gloin_net_send_text",
+    "gloin_net_local",
+    "gloin_net_close",
     "gloin_fs_metadata",
     "gloin_fs_mkdir",
     "gloin_fs_remove_file",
@@ -178,6 +220,8 @@ inline bool standard_primitive_allowed(StandardPrimitive kind, std::string_view 
     if ((kind >= StandardPrimitive::IoStandard && kind <= StandardPrimitive::IoErrorMessage) ||
         kind == StandardPrimitive::IoStringView)
         return module == "io";
+    if (kind >= StandardPrimitive::NetOpen && kind <= StandardPrimitive::NetClose)
+        return module == "net";
     const bool strings =
         kind == StandardPrimitive::StringCopy || kind == StandardPrimitive::StringLength ||
         kind == StandardPrimitive::StringByte || kind == StandardPrimitive::StringSlice ||

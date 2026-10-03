@@ -1,7 +1,8 @@
 # Command-line interface (SPEC-020)
 
-Build instructions are in [the README](../README.md). The supported development
-platform is Apple Silicon macOS with LLVM/MLIR 21.1.6.
+Build instructions are in [the README](../README.md). The 0.1.0 candidate
+targets Apple Silicon macOS with LLVM/MLIR 21.1.6 and 64-bit Ubuntu 24.04 Linux
+with LLVM/MLIR 21.1.8.
 
 ```text
 gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] [-O0 | -O2] [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
@@ -37,12 +38,12 @@ run `./build/gloinc --jit --stdlib-dir stdlib examples/hello_world.gloin`.
 
 | Mode | Behavior on success |
 | --- | --- |
-| Default / `--emit-exe` | Compile and link a standalone macOS arm64 executable. Write `a.out` unless `-o PATH` is supplied. |
+| Default / `--emit-exe` | Compile and link a standalone executable for the supported host. Write `a.out` unless `-o PATH` is supplied. |
 | `--jit` / `--run` | Compile and execute `def main() -> i32` in process; return its low eight bits as the compiler process exit status. Only explicit output calls write to stdout. |
 | `--check` | Compile and verify high-level IR without execution; stdout is empty. |
 | `--emit-ir` | Print verified high-level MLIR with source locations without execution. |
 | `--emit-llvm` | Lower and print verified LLVM-dialect MLIR with source locations without execution. This is MLIR syntax, not native LLVM `.ll` syntax. |
-| `--emit-object -o PATH` | Compile a macOS arm64 object file with a native entry point. |
+| `--emit-object -o PATH` | Compile a native object file with an entry point; link it with the Gloin runtime. Linux objects use PIC and work with the host compiler's default PIE link. |
 | `--emit-exe` | Explicit spelling for the default executable mode. |
 
 Checking and inspection accept helper-only and empty modules. If `main` is
@@ -69,7 +70,10 @@ CLI, they do not use the `FILE -- ARG...` forwarding delimiter.
 ./hello
 ./build/gloinc --emit-object -o hello.o examples/hello_world.gloin
 ./build/gloinc -O2 -o fast-hello examples/hello_world.gloin
+# macOS:
 /opt/homebrew/opt/llvm/bin/clang++ hello.o build/libgloin_runtime.a -o hello-from-object
+# Ubuntu 24.04:
+# /usr/lib/llvm-21/bin/clang++ hello.o build/libgloin_runtime.a -o hello-from-object
 ./hello-from-object
 ```
 
@@ -94,9 +98,10 @@ supported platform, following [the JIT contract](jit.md). They produce no result
 shells may describe the signal and map it to a shell-specific status. The CLI
 does not add signal recovery or execution timeouts.
 
-`--version` reports `gloinc 0.0.4 (LLVM/MLIR 21.1.6)`. This identifies the
-scalar-core compiler. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
-core acceptance; [the current release guide](release-0.0.4.md) documents installation,
+The 0.1.0 candidate reports `gloinc 0.1.0 (LLVM/MLIR 21.1.6)` on macOS or
+`gloinc 0.1.0 (LLVM/MLIR 21.1.8)` on Linux with
+`--version`; this version has not been published. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
+core acceptance; [the candidate guide](release-0.1.0.md) documents installation,
 packaging, and validation. `import "@std";` enables `std.print(string)` and
 `std.println(string)`. Output preserves exact bytes, including embedded NULs;
 println appends LF. Both return void. Missing modules/members fail before execution.

@@ -255,6 +255,71 @@ TEST(LoweringTest, TypedArenaAllocationHasExplicitGloinIRBoundary) {
     expect_exportable(*low);
 }
 
+TEST(LoweringTest, ArenaVectorSliceAndReservedStorageHaveCheckedIR) {
+    mlir::MLIRContext context;
+    auto high = compile_source(R"(
+        import "@arena";
+        import "@vector";
+        def main() -> i32 {
+            def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+            def mut values: vector.Vector<i32> = vector.Vector<i32>.create(&memory, 1, 0);
+            values.push(42);
+            def mut fresh: vector.Vector<i32> = vector.Vector<i32>.empty(&memory, 0);
+            fresh.push(0);
+            def view: [const i32] = values.as_const_slice();
+            def answer: i32 = view[0];
+            memory.free();
+            return answer;
+        }
+    )", "vector_slice_ir.gloin", context, CompilationMode::Executable);
+    ASSERT_TRUE(high.success()) << render(*high.diagnostics);
+    unsigned typed_allocations = 0;
+    unsigned pointer_slices = 0;
+    unsigned fills = 0;
+    high.module->walk([&](gloin::ArenaTypedPointerOp) { ++typed_allocations; });
+    high.module->walk([&](gloin::SliceFromPointerOp) { ++pointer_slices; });
+    high.module->walk([&](gloin::ArenaFillOp) { ++fills; });
+    EXPECT_GE(typed_allocations, 2u);
+    EXPECT_GT(pointer_slices, 0u);
+    EXPECT_EQ(fills, 0u);
+    Diagnostics diagnostics;
+    auto low = lower_to_llvm(std::move(high.module), diagnostics);
+    ASSERT_TRUE(low) << render(diagnostics);
+    expect_exportable(*low);
+}
+
+TEST(LoweringTest, RawMemoryPlacementAndCallsUseGloinIR) {
+    mlir::MLIRContext context;
+    auto high = compile_source(R"(
+        import "@memory";
+        def main() -> i32 {
+            def block: *u8 = memory.alloc(8, memory.align_of<i32>());
+            if block == null { return 1; }
+            def zero: i64 = 0;
+            if memory.padding<i32>(block) != zero { memory.free(block); return 3; }
+            def value: *i32 = memory.place<i32>(block, 8, 42);
+            if value == null { memory.free(block); return 2; }
+            def answer: i32 = *value;
+            memory.free(block);
+            return answer;
+        }
+    )", "raw_memory_ir.gloin", context, CompilationMode::Executable);
+    ASSERT_TRUE(high.success()) << render(*high.diagnostics);
+    unsigned placements = 0;
+    unsigned paddings = 0;
+    unsigned abi_calls = 0;
+    high.module->walk([&](gloin::RawPlaceOp) { ++placements; });
+    high.module->walk([&](gloin::RawPaddingOp) { ++paddings; });
+    high.module->walk([&](gloin::AbiCallOp) { ++abi_calls; });
+    EXPECT_GT(placements, 0u);
+    EXPECT_GT(paddings, 0u);
+    EXPECT_GE(abi_calls, 2u);
+    Diagnostics diagnostics;
+    auto low = lower_to_llvm(std::move(high.module), diagnostics);
+    ASSERT_TRUE(low) << render(diagnostics);
+    expect_exportable(*low);
+}
+
 TEST(LoweringTest, CheckedModuleRejectsDirectLLVMCalls) {
     mlir::MLIRContext context;
     auto module = parse(context, R"(

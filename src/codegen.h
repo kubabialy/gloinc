@@ -102,11 +102,17 @@ class CodeGen {
     mlir::Value emit_checked_call(const CallExpression *call, mlir::ValueRange arguments);
     mlir::Value emit_standard_primitive(StandardPrimitive kind, mlir::ValueRange arguments);
     mlir::Value emit_arena_primitive(ArenaPrimitive kind, mlir::ValueRange arguments);
+    mlir::Value emit_memory_primitive(MemoryPrimitive kind, mlir::ValueRange arguments);
+    mlir::Value emit_memory_intrinsic(MemoryIntrinsic kind, const ValueType &type,
+                                      mlir::ValueRange arguments);
     mlir::Value emit_arena_allocation(mlir::func::FuncOp method, bool nullable,
                                       mlir::ValueRange arguments, mlir::Type result_source);
     mlir::Value emit_arena_many_allocation(mlir::func::FuncOp method,
                                            mlir::ValueRange arguments,
-                                           mlir::Type result_source);
+                                           mlir::Type result_source, bool initialize);
+    mlir::Value emit_arena_typed_reservation(mlir::func::FuncOp method,
+                                             mlir::ValueRange arguments,
+                                             const ValueType &result);
     void prepare_defers(const FunctionDefinition *function);
     void register_defer(const DeferStatement *statement);
     mlir::LLVM::LLVMFuncOp defer_allocator(bool allocate);
@@ -145,6 +151,7 @@ class CodeGen {
     void gen_while(const WhileStatement *statement);
     void gen_statement(const Statement *stmt);
     mlir::Value gen_expression(const Expression *expr, bool allow_void = false);
+    mlir::Value gen_layout_expression(const Expression *expr, bool allow_void = false);
     mlir::Value gen_expression_impl(const Expression *expr);
     mlir::Value gen_address(const Expression *expr);
     mlir::Value gen_array_address(const IndexExpression *expr, bool allow_temporary);

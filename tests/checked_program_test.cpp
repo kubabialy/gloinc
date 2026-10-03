@@ -161,7 +161,7 @@ TEST(CheckedProgramTest, ShadowedDeclarationsHaveDifferentIdentities) {
 
 TEST(CheckedProgramTest, CallsUseResolvedFunctionIdentity) {
     auto program = check("def f(x: int) -> i32 { return x; } "
-                         "def main() -> i32 { def result: int = f(42); return result; }");
+                         "def main() -> i32 { def outcome: int = f(42); return outcome; }");
     ASSERT_NE(program, nullptr);
     mlir::MLIRContext context;
     CodeGen codegen(context);

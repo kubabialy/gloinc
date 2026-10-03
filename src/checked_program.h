@@ -3,6 +3,7 @@
 
 #include "AST.h"
 #include "arena_abi.h"
+#include "memory_abi.h"
 #include "stdlib_abi.h"
 #include "compilation_mode.h"
 #include "numeric.h"
@@ -30,6 +31,8 @@ struct ValueType {
     size_t array_length = 0;
     std::shared_ptr<ValueType> slice_element;
     bool slice_read_only = false;
+    std::shared_ptr<ValueType> result_value;
+    bool error_type = false;
     ValueType() = default;
     ValueType(CoreType scalar) : scalar(scalar) {}
     static ValueType record(size_t id) {
@@ -54,9 +57,21 @@ struct ValueType {
         type.slice_read_only = read_only;
         return type;
     }
+    static ValueType result(ValueType value) {
+        ValueType type;
+        type.result_value = std::make_shared<ValueType>(std::move(value));
+        return type;
+    }
+    static ValueType error() {
+        ValueType type;
+        type.error_type = true;
+        return type;
+    }
     bool is_pointer() const { return !pointers.empty(); }
     bool is_array() const { return pointers.empty() && static_cast<bool>(array_element); }
     bool is_slice() const { return pointers.empty() && static_cast<bool>(slice_element); }
+    bool is_result() const { return pointers.empty() && static_cast<bool>(result_value); }
+    bool is_error() const { return pointers.empty() && error_type; }
     ValueType pointee() const {
         if (!is_pointer())
             throw std::logic_error("Value is not a pointer");
@@ -65,7 +80,8 @@ struct ValueType {
         return result;
     }
     CoreType builtin() const {
-        if (structure || const_size || is_pointer() || is_array() || is_slice())
+        if (structure || const_size || is_pointer() || is_array() || is_slice() || is_result() ||
+            is_error())
             throw std::logic_error("Aggregate/pointer is not a builtin type");
         return scalar;
     }
@@ -73,13 +89,16 @@ struct ValueType {
         return scalar == other.scalar && structure == other.structure &&
                const_size == other.const_size &&
                pointers == other.pointers && array_length == other.array_length &&
-               slice_read_only == other.slice_read_only &&
+               slice_read_only == other.slice_read_only && error_type == other.error_type &&
                (array_element && other.array_element
                     ? *array_element == *other.array_element
                     : !array_element && !other.array_element) &&
                (slice_element && other.slice_element
                     ? *slice_element == *other.slice_element
-                    : !slice_element && !other.slice_element);
+                    : !slice_element && !other.slice_element) &&
+               (result_value && other.result_value
+                    ? *result_value == *other.result_value
+                    : !result_value && !other.result_value);
     }
 };
 struct CheckedField {
@@ -108,10 +127,15 @@ struct SemanticData {
     std::vector<std::unique_ptr<FunctionDefinition>> specialized_functions;
     std::unordered_map<const MemberAccessExpression *, SymbolId> module_constants;
     std::unordered_map<const CallExpression *, ArenaPrimitive> arena_runtime_calls;
+    std::unordered_map<const CallExpression *, MemoryPrimitive> memory_runtime_calls;
+    std::unordered_map<const CallExpression *, std::pair<MemoryIntrinsic, ValueType>> memory_intrinsics;
     std::unordered_map<const CallExpression *, StandardPrimitive> standard_calls;
+    std::unordered_set<const CallExpression *> error_constructors;
     // Typed allocation calls target a checked library layout method. true is try_alloc.
     std::unordered_map<const CallExpression *, bool> arena_allocations;
     std::unordered_set<const CallExpression *> arena_many_allocations;
+    std::unordered_set<const CallExpression *> arena_reserved_allocations;
+    std::unordered_set<const CallExpression *> arena_typed_reservations;
     std::unordered_map<const FunctionDefinition *, std::vector<const DeferStatement *>> defers;
     // Instance calls pass the receiver once, before explicit arguments.
     // true takes the address of struct storage; false passes a pointer value.

@@ -15,9 +15,15 @@ void *gloin_io_open(const char *path, uint64_t length, int32_t mode, int32_t *st
 // read_all TOO_LONG preserves capacity bytes and pushes back the excess probe.
 int32_t gloin_io_read(void *stream, char *bytes, uint64_t capacity, int32_t mode, uint64_t *length,
                       int32_t *os_error);
+// Reads directly into exactly capacity writable bytes; no terminator or allocation.
+// A zero capacity is invalid. On failure, length includes any bytes already read.
+int32_t gloin_io_read_bytes(void *stream, uint8_t *bytes, uint64_t capacity, uint64_t *length,
+                            int32_t *os_error);
 // all=0 makes one fwrite; all=1 repeats short successful writes. No implicit flush.
 int32_t gloin_io_write(void *stream, const char *bytes, uint64_t length, int32_t all,
                        uint64_t *written, int32_t *os_error);
+int32_t gloin_io_write_bytes(void *stream, const uint8_t *bytes, uint64_t length, int32_t all,
+                             uint64_t *written, int32_t *os_error);
 int32_t gloin_io_flush(void *stream, int32_t *os_error);
 // Consumes an owned stream even on failure. Never retry the native pointer.
 int32_t gloin_io_close(void *stream, int32_t *os_error);

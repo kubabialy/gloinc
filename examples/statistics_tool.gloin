@@ -33,7 +33,7 @@ def struct Column {
 
 }
 
-def error(message: string, code: i32) -> i32 {
+def report_error(message: string, code: i32) -> i32 {
     def mut errors: io.Stream = io.stderr();
 
     errors.write_line(message);
@@ -71,7 +71,7 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
 
     def selection: strings.SplitCursorResult = strings.SplitCursor.create(columns, ",");
 
-    if selection.status != status.OK { return error("statistics: invalid columns", 2); }
+    if selection.status != status.OK { return report_error("statistics: invalid columns", 2); }
 
     def mut choices: strings.SplitCursor = selection.value;
     def mut head: *Column                = null;
@@ -90,14 +90,14 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
                 || number.status != status.OK
                 || number.value > 63
                 || selected == 16 {
-                return error("statistics: invalid columns", 2);
+                return report_error("statistics: invalid columns", 2);
             }
 
             def mut prior: *Column = head;
 
             while prior != null {
                 if prior.index == number.value {
-                    return error("statistics: duplicate column", 2);
+                    return report_error("statistics: duplicate column", 2);
                 }
                 prior = prior.next;
             }
@@ -111,7 +111,7 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
                 mean: 0.0
             });
 
-            if node == null { return error("statistics: allocation failed", 3); }
+            if node == null { return report_error("statistics: allocation failed", 3); }
             if tail == null {
                 head = node;
             } else {
@@ -123,10 +123,10 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
         }
     }
 
-    if selected == 0 { return error("statistics: invalid columns", 2); }
+    if selected == 0 { return report_error("statistics: invalid columns", 2); }
 
     def opened: io.FileResult = io.File.open_read(&owner, input_path);
-    if opened.status != status.OK { return error("statistics: cannot open input", 2); }
+    if opened.status != status.OK { return report_error("statistics: cannot open input", 2); }
 
     def mut input: io.File = opened.value;
     defer input.close();
@@ -142,19 +142,19 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
             reading = false;
         } else {
             if line.status != status.OK {
-                return error("statistics: read failed or line too long", 2);
+                return report_error("statistics: read failed or line too long", 2);
             }
 
-            if rows == 1000000 { return error("statistics: row limit exceeded", 2); }
+            if rows == 1000000 { return report_error("statistics: row limit exceeded", 2); }
 
             if strings.is_empty(line.value)
                 || strings.contains(line.value, "\"")
                 || strings.contains(line.value, "\0") {
-                return error("statistics: invalid row", 2);
+                return report_error("statistics: invalid row", 2);
             }
 
             def split: strings.SplitCursorResult = strings.SplitCursor.create(line.value, ",");
-            if split.status != status.OK { return error("statistics: invalid row", 2); }
+            if split.status != status.OK { return report_error("statistics: invalid row", 2); }
 
             def mut fields: strings.SplitCursor = split.value;
             def mut index: u64 = 0;
@@ -166,7 +166,7 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
                     scanning = false;
                 } else {
                     if field.status != status.OK || index == 64 {
-                        return error("statistics: too many fields", 2);
+                        return report_error("statistics: too many fields", 2);
                     }
 
                     def mut node: *Column = head;
@@ -176,7 +176,7 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
                             if value.status != status.OK
                                 || value.value < -1000000000000.0
                                 || value.value > 1000000000000.0 {
-                                return error("statistics: invalid number", 2);
+                                return report_error("statistics: invalid number", 2);
                             }
                             (&*node).add(value.value);
                         }
@@ -186,13 +186,13 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
                 }
             }
             if rows == 0 { width = index; }
-            if index != width { return error("statistics: inconsistent row width", 2); }
+            if index != width { return report_error("statistics: inconsistent row width", 2); }
 
             def mut node: *Column = head;
 
             while node != null {
                 if node.index >= width {
-                    return error("statistics: missing column", 2);
+                    return report_error("statistics: missing column", 2);
                 }
                 node = node.next;
             }
@@ -201,23 +201,23 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
     }
 
     if rows == 0 {
-        return error("statistics: empty input", 2);
+        return report_error("statistics: empty input", 2);
     }
 
     if input.close().status != status.OK {
-        return error("statistics: input close failed", 2);
+        return report_error("statistics: input close failed", 2);
     }
 
     def made: io.FileResult = io.File.create_new(&owner, output_path);
 
     if made.status != status.OK {
-        return error("statistics: cannot create new output", 3);
+        return report_error("statistics: cannot create new output", 3);
     }
 
     def mut output: io.File = made.value;
     defer output.close();
     if output.write_line("column,count,min,max,mean").status != status.OK {
-        return error("statistics: report write failed", 3);
+        return report_error("statistics: report write failed", 3);
     }
 
     def mut node: *Column = head;
@@ -228,18 +228,22 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
             || !decimal(&output, &scratch, node.minimum) || output.write_all(",").status != status.OK
             || !decimal(&output, &scratch, node.maximum) || output.write_all(",").status != status.OK
             || !decimal(&output, &scratch, node.mean) || output.write_line("").status != status.OK {
-            return error("statistics: report write failed", 3);
+            return report_error("statistics: report write failed", 3);
         }
         node = node.next;
     }
-    if output.flush().status != status.OK { return error("statistics: report flush failed", 3); }
-    if output.close().status != status.OK { return error("statistics: report close failed", 3); }
+    if output.flush().status != status.OK {
+        return report_error("statistics: report flush failed", 3);
+    }
+    if output.close().status != status.OK {
+        return report_error("statistics: report close failed", 3);
+    }
     return 0;
 }
 
 def main() -> i32 {
     if process.arg_count() != 4 {
-        return error("usage: statistics_tool INPUT NEW_OUTPUT COLUMNS", 2);
+        return report_error("usage: statistics_tool INPUT NEW_OUTPUT COLUMNS", 2);
     }
 
     def mut arguments: arena.GeneralArena = arena.GeneralArena.create();
@@ -252,7 +256,7 @@ def main() -> i32 {
     if input.status != status.OK
         || output.status != status.OK
         || columns.status != status.OK {
-        return error("statistics: arguments unavailable", 2);
+        return report_error("statistics: arguments unavailable", 2);
     }
 
     return execute(input.value, output.value, columns.value);

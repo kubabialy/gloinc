@@ -163,6 +163,22 @@ extern "C" int32_t gloin_io_read(void *handle, char *bytes, uint64_t capacity, i
         return failure(errno, os_error);
     return GLOIN_STD_TOO_LONG;
 }
+extern "C" int32_t gloin_io_read_bytes(void *handle, uint8_t *bytes, uint64_t capacity,
+                                       uint64_t *length, int32_t *os_error) {
+    *length = 0;
+    *os_error = 0;
+    if (!handle)
+        return GLOIN_STD_CLOSED;
+    if (!capacity || !bytes || capacity > uint64_t(std::numeric_limits<ptrdiff_t>::max()))
+        return GLOIN_STD_INVALID;
+    auto *stream = static_cast<FILE *>(handle);
+    std::clearerr(stream);
+    errno = 0;
+    *length = std::fread(bytes, 1, static_cast<size_t>(capacity), stream);
+    if (std::ferror(stream))
+        return failure(errno, os_error);
+    return *length ? GLOIN_STD_OK : GLOIN_STD_EOF;
+}
 int32_t gloin::io::write(void *context, Writer writer, const char *bytes, uint64_t length, bool all,
                          uint64_t *written, int32_t *os_error) noexcept {
     *written = 0;
@@ -201,6 +217,16 @@ extern "C" int32_t gloin_io_write(void *handle, const char *bytes, uint64_t leng
         gloin::io::write(stream, stdio_write, bytes, length, all, written, os_error);
     signal.broken_pipe = *os_error == EPIPE;
     return code;
+}
+extern "C" int32_t gloin_io_write_bytes(void *handle, const uint8_t *bytes, uint64_t length,
+                                        int32_t all, uint64_t *written, int32_t *os_error) {
+    if (length && !bytes) {
+        *written = 0;
+        *os_error = 0;
+        return GLOIN_STD_INVALID;
+    }
+    return gloin_io_write(handle, reinterpret_cast<const char *>(bytes), length, all, written,
+                          os_error);
 }
 extern "C" int32_t gloin_io_flush(void *handle, int32_t *os_error) {
     *os_error = 0;

@@ -43,13 +43,47 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
         parameters = {
             byte_pointer,     reference("u8"), get_builtin_type("u64"), get_builtin_type("i32"),
             reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::IoReadBytes)
+        parameters = {byte_pointer, reference("u8"), get_builtin_type("u64"),
+                      reference("u64"), reference("i32")};
     else if (kind == StandardPrimitive::IoWrite)
         parameters = {byte_pointer, get_builtin_type("string"), get_builtin_type("i32"),
                       reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::IoWriteBytes)
+        parameters = {byte_pointer,
+                      std::make_shared<PointerType>(get_builtin_type("u8"), false, true),
+                      get_builtin_type("u64"), get_builtin_type("i32"), reference("u64"),
+                      reference("i32")};
     else if (kind == StandardPrimitive::IoFlush || kind == StandardPrimitive::IoClose)
         parameters = {byte_pointer, reference("i32")};
     else if (kind == StandardPrimitive::IoErrorMessage)
         parameters = {get_builtin_type("i32"), reference("u8"), reference("u64")};
+    else if (kind == StandardPrimitive::NetOpen)
+        parameters = {reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetBind || kind == StandardPrimitive::NetConnect)
+        parameters = {get_builtin_type("i32"), get_builtin_type("u32"),
+                      get_builtin_type("u16"), reference("i32")};
+    else if (kind == StandardPrimitive::NetListen)
+        parameters = {get_builtin_type("i32"), get_builtin_type("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetAccept)
+        parameters = {get_builtin_type("i32"), reference("i32"), reference("u32"),
+                      reference("u16"), reference("i32")};
+    else if (kind == StandardPrimitive::NetFinishConnect || kind == StandardPrimitive::NetClose)
+        parameters = {get_builtin_type("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetWait)
+        parameters = {get_builtin_type("i32"), get_builtin_type("i32"),
+                      get_builtin_type("i32"), reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetRecv || kind == StandardPrimitive::NetSend)
+        parameters = {get_builtin_type("i32"),
+                      std::make_shared<PointerType>(get_builtin_type("u8"), false,
+                                                    kind == StandardPrimitive::NetSend),
+                      get_builtin_type("u64"), reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::NetSendText)
+        parameters = {get_builtin_type("i32"), get_builtin_type("string"),
+                      reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::NetLocal)
+        parameters = {get_builtin_type("i32"), reference("u32"), reference("u16"),
+                      reference("i32")};
     else if (auto spec = numeric_signature(kind)) {
         if (spec->group == NumericPrimitiveGroup::Parse)
             parameters = {get_builtin_type("string"), reference(spec->output)};

@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include "llvm/Config/llvm-config.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "support/cli_fixture.h"
@@ -18,7 +19,7 @@ TEST_F(CliTest, HelpAndVersionAreStandaloneSuccessfulCommands) {
             EXPECT_NE(result.out.find(word), std::string::npos);
     }
     for (const std::string option : {"--version", "-V"})
-        expect_success(invoke({option}), "gloinc 0.0.4 (LLVM/MLIR 21.1.6)\n");
+        expect_success(invoke({option}), "gloinc 0.1.0 (LLVM/MLIR " LLVM_VERSION_STRING ")\n");
 }
 
 TEST_F(CliTest, NativeExecutableRunsWithoutJitAndReceivesArguments) {
@@ -82,7 +83,11 @@ TEST_F(CliTest, NativeObjectAndFailurePaths) {
     auto buffer = llvm::MemoryBuffer::getFile(object);
     ASSERT_TRUE(buffer);
     EXPECT_GT((*buffer)->getBufferSize(), 4u);
+#ifdef __linux__
+    EXPECT_EQ((*buffer)->getBuffer().substr(0, 4), "\x7f" "ELF");
+#else
     EXPECT_EQ((*buffer)->getBuffer().substr(0, 4), "\xcf\xfa\xed\xfe");
+#endif
     expect_error(invoke({"--emit-object", file}), 2, "-o PATH");
     expect_error(invoke_raw({"--jit", "-o", object, file}), 2, "-o PATH");
     expect_error(invoke({"--run", "-o", object, file}), 2, "-o PATH");

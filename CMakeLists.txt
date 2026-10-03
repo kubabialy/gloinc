@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gloinc VERSION 0.0.4)
+project(gloinc VERSION 0.1.0)
 
 option(GLOIN_ENABLE_SANITIZERS "Instrument project C++ code with AddressSanitizer and UBSan" OFF)
 if(GLOIN_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -18,13 +18,20 @@ if(NOT DEFINED LLVM_DIR AND NOT DEFINED MLIR_DIR)
     endif()
 endif()
 
-# Keep headers, generated dialect code, and shared libraries on the tested release.
-find_package(MLIR 21.1.6 EXACT REQUIRED CONFIG)
+# Keep headers, generated dialect code, and shared libraries on the tested
+# release for each platform. apt.llvm.org provides the shared 21.1.8 build on
+# Linux; the pinned Homebrew formula provides 21.1.6 on macOS.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(GLOIN_REQUIRED_LLVM_VERSION 21.1.8)
+else()
+    set(GLOIN_REQUIRED_LLVM_VERSION 21.1.6)
+endif()
+find_package(MLIR ${GLOIN_REQUIRED_LLVM_VERSION} EXACT REQUIRED CONFIG)
 
 foreach(toolchain_target IN ITEMS MLIR LLVM MLIRExecutionEngineShared)
     if(NOT TARGET ${toolchain_target})
         message(FATAL_ERROR
-            "Gloin requires the ${toolchain_target} shared target from LLVM/MLIR 21.1.6. "
+            "Gloin requires the ${toolchain_target} shared target from LLVM/MLIR ${GLOIN_REQUIRED_LLVM_VERSION}. "
             "Set LLVM_DIR and MLIR_DIR to a matching installation built with "
             "LLVM_BUILD_LLVM_DYLIB=ON, LLVM_LINK_LLVM_DYLIB=ON, "
             "MLIR_BUILD_MLIR_DYLIB=ON, MLIR_LINK_MLIR_DYLIB=ON, and MLIR_ENABLE_EXECUTION_ENGINE=ON. "
@@ -76,8 +83,8 @@ add_public_tablegen_target(GloinOpsIncGen)
 
 # LLVM-independent runtime. The JIT links it statically; external runners load
 # the shared variant, which is also shipped for emitted LLVM programs.
-add_library(gloin_runtime STATIC src/arena_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
-add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
+add_library(gloin_runtime STATIC src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
+add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
 foreach(runtime_target gloin_runtime gloin_runtime_shared)
     target_include_directories(${runtime_target} SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fast_float/include")
 endforeach()
@@ -93,6 +100,7 @@ add_library(gloin_frontend STATIC
     src/sema_pointers.cpp
     src/sema_methods.cpp
     src/sema_arena.cpp
+    src/sema_memory.cpp
     src/sema_modules.cpp
     src/sema_standard.cpp
     src/numeric.cpp
@@ -113,6 +121,7 @@ add_library(gloin_backend STATIC
     src/codegen_defer.cpp
     src/codegen_standard.cpp
     src/codegen_arena.cpp
+    src/codegen_memory.cpp
     src/compiler.cpp
     src/module_loader.cpp
     src/target_layout.cpp
@@ -143,7 +152,9 @@ target_link_libraries(gloin_backend PUBLIC
 
 add_executable(gloinc main.cpp)
 target_link_libraries(gloinc PRIVATE gloin_backend)
-if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+if((APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64") OR
+   (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND
+    CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|x86_64)$"))
     if(GLOIN_ENABLE_SANITIZERS)
         # The runtime archive is instrumented by the build compiler. Its ASan
         # runtime must come from that same compiler when linking generated code.
@@ -198,6 +209,7 @@ inline constexpr auto standard_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/exa
 inline constexpr auto strings_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/strings_lab.gloin)tool\";
 inline constexpr auto strings_guide = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/docs/strings.md)tool\";
 inline constexpr auto module_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/module_lab.gloin)tool\";
+inline constexpr auto custom_arena_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/custom_arena.gloin)tool\";
 inline constexpr auto core_fixtures = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/core)tool\";
 inline constexpr auto mlir_opt = R\"tool(${GLOIN_MLIR_OPT})tool\";
 inline constexpr auto mlir_runner = R\"tool(${GLOIN_MLIR_RUNNER})tool\";
@@ -241,12 +253,14 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/text_library_test.cpp
         tests/numeric_library_test.cpp
         tests/io_library_test.cpp
+        tests/network_library_test.cpp
         tests/context_library_test.cpp
         tests/math_library_test.cpp
         tests/time_random_library_test.cpp
         tests/integrated_examples_test.cpp
         tests/module_test.cpp
         tests/ordinary_struct_test.cpp
+        tests/result_test.cpp
         tests/enum_test.cpp
         tests/pointer_test.cpp
         tests/method_test.cpp
@@ -282,20 +296,27 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     list(APPEND GLOIN_TARGETS gloinc_test)
 
     include(GoogleTest)
-    gtest_discover_tests(gloinc_test PROPERTIES TIMEOUT 30)
+    # Linux signal termination can take longer under a shared CI/VM host when
+    # multiple arithmetic-trap cases run together.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(GLOIN_COMPILER_TEST_TIMEOUT 120)
+    else()
+        set(GLOIN_COMPILER_TEST_TIMEOUT 30)
+    endif()
+    gtest_discover_tests(gloinc_test PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
 
     add_executable(gloin_arena_test tests/runtime/arena_test.cpp)
     target_link_libraries(gloin_arena_test PRIVATE gloin_runtime GTest::gtest_main)
     list(APPEND GLOIN_TARGETS gloin_arena_test)
     gtest_discover_tests(gloin_arena_test PROPERTIES TIMEOUT 30)
 
-    add_executable(gloin_standard_test tests/runtime/standard_test.cpp tests/runtime/numeric_test.cpp tests/runtime/io_test.cpp tests/runtime/context_test.cpp tests/runtime/math_test.cpp tests/runtime/time_random_test.cpp)
+    add_executable(gloin_standard_test tests/runtime/standard_test.cpp tests/runtime/numeric_test.cpp tests/runtime/io_test.cpp tests/runtime/net_test.cpp tests/runtime/context_test.cpp tests/runtime/math_test.cpp tests/runtime/time_random_test.cpp)
     target_link_libraries(gloin_standard_test PRIVATE gloin_runtime GTest::gtest_main)
     list(APPEND GLOIN_TARGETS gloin_standard_test)
     gtest_discover_tests(gloin_standard_test PROPERTIES TIMEOUT 30)
 
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure
@@ -329,10 +350,11 @@ install(TARGETS gloin_runtime gloin_runtime_shared
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES src/arena_runtime.h src/stdlib_runtime.h src/io_runtime.h src/context_runtime.h src/math_runtime.h src/time_runtime.h src/random_runtime.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gloin)
+install(FILES src/arena_runtime.h src/memory_runtime.h src/stdlib_runtime.h src/io_runtime.h src/net_runtime.h src/context_runtime.h src/math_runtime.h src/time_runtime.h src/random_runtime.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gloin)
 install(DIRECTORY stdlib/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/stdlib
     FILES_MATCHING PATTERN "*.gloin")
-install(FILES scripts/install-llvm.sh DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/scripts)
+install(FILES scripts/install-llvm.sh scripts/install-llvm-linux.sh
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/scripts)
 install(FILES README.md CONTRIBUTING.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs
     PATTERN ".DS_Store" EXCLUDE)
@@ -340,7 +362,7 @@ install(FILES examples/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples)
 install(FILES tests/fixtures/core/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/tests/fixtures/core)
 install(FILES third_party/fast_float/LICENSE-MIT third_party/fast_float/README.md third_party/fast_float/SHA256SUMS
     DESTINATION ${CMAKE_INSTALL_DOCDIR}/third_party/fast_float)
-install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/pointer_offsets.gloin examples/arena_lab.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin examples/generic_structs.gloin examples/generic_functions.gloin examples/generic_methods.gloin examples/enums.gloin examples/slices.gloin examples/vector.gloin examples/fixed_vector.gloin
+install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/pointer_offsets.gloin examples/arena_lab.gloin examples/custom_arena.gloin examples/result_handling.gloin examples/network_http.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/strip_nuls.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin examples/generic_structs.gloin examples/generic_functions.gloin examples/generic_methods.gloin examples/enums.gloin examples/slices.gloin examples/vector.gloin examples/fixed_vector.gloin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/data DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/modules DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples
@@ -349,12 +371,18 @@ install(DIRECTORY tests/fixtures/core/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloi
 
 # Packages depend on the same LLVM/MLIR installation used at configure time.
 # Sanitizer builds are diagnostic tools, never distribution artifacts.
-if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" AND NOT GLOIN_ENABLE_SANITIZERS)
+if(NOT GLOIN_ENABLE_SANITIZERS AND APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+    set(GLOIN_PACKAGE_PLATFORM "macos-arm64")
+elseif(NOT GLOIN_ENABLE_SANITIZERS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+       CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|x86_64)$")
+    set(GLOIN_PACKAGE_PLATFORM "linux-${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+if(GLOIN_PACKAGE_PLATFORM)
     set(CPACK_GENERATOR TGZ)
     set(CPACK_PACKAGE_NAME gloinc)
     set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
-    set(CPACK_PACKAGE_FILE_NAME "gloinc-${PROJECT_VERSION}-macos-arm64")
-    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Gloin native compiler and JIT; requires LLVM/MLIR 21.1.6")
+    set(CPACK_PACKAGE_FILE_NAME "gloinc-${PROJECT_VERSION}-${GLOIN_PACKAGE_PLATFORM}")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Gloin native compiler and JIT; requires LLVM/MLIR ${GLOIN_REQUIRED_LLVM_VERSION}")
     set(CPACK_PACKAGE_CHECKSUM SHA256)
     include(CPack)
 endif()

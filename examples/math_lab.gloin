@@ -34,7 +34,7 @@ def struct Statistics {
 
 }
 
-def error(message: string) -> i32 {
+def report_error(message: string) -> i32 {
     def mut stream: io.Stream = io.stderr();
     stream.write_line(message);
     stream.flush();
@@ -69,44 +69,48 @@ def main() -> i32 {
             reading = false;
         } else {
             if line.status != status.OK {
-                return error("input read failed or line exceeds 256 bytes");
+                return report_error("input read failed or line exceeds 256 bytes");
             }
             def split: strings.SplitCursorResult = strings.SplitCursor.create(line.value, ",");
-            if split.status != status.OK { return error("invalid point"); }
+            if split.status != status.OK { return report_error("invalid point"); }
             def mut fields: strings.SplitCursor = split.value;
             def first: strings.StringResult = fields.next();
             def second: strings.StringResult = fields.next();
             if first.status != status.OK
                 || second.status != status.OK
                 || fields.next().status != status.END {
-                return error("invalid point");
+                return report_error("invalid point");
             }
             def x: std.F64Result = std.parse_f64(strings.trim_ascii(first.value));
             def y: std.F64Result = std.parse_f64(strings.trim_ascii(second.value));
-            if x.status != status.OK || y.status != status.OK { return error("invalid point"); }
+            if x.status != status.OK || y.status != status.OK {
+                return report_error("invalid point");
+            }
             def ax: math.F64Result = math.abs_f64(x.value);
             def ay: math.F64Result = math.abs_f64(y.value);
             if ax.status != status.OK
                 || ay.status != status.OK
                 || ax.value > 1000000.0
                 || ay.value > 1000000.0 {
-                return error("invalid point");
+                return report_error("invalid point");
             }
             def radius: math.F64Result = math.hypot_f64(x.value, y.value);
             def angle: math.F64Result = math.atan2_f64(y.value, x.value);
             if radius.status != status.OK || angle.status != status.OK {
-                return error("geometry failed");
+                return report_error("geometry failed");
             }
-            if stats.add(radius.value) != status.OK { return error("statistics limit exceeded"); }
+            if stats.add(radius.value) != status.OK {
+                return report_error("statistics limit exceeded");
+            }
             last_angle = angle.value;
         }
     }
-    if stats.count == 0 { return error("expected x,y records"); }
+    if stats.count == 0 { return report_error("expected x,y records"); }
     def n: std.F64Result = std.f64_from_u64_exact(stats.count);
-    if n.status != status.OK { return error("count conversion failed"); }
+    if n.status != status.OK { return report_error("count conversion failed"); }
     // Roundoff can make accumulated variance slightly negative; explicitly clamp to zero.
     def spread: math.F64Result = math.sqrt_f64(math.max_f64(0.0, stats.m2 / n.value));
-    if spread.status != status.OK { return error("variance failed"); }
+    if spread.status != status.OK { return report_error("variance failed"); }
     scratch.reset();
     def count: std.FormatResult = std.format_u64(&scratch, stats.count);
     if count.status != status.OK
