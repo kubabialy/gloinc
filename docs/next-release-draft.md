@@ -12,7 +12,8 @@ runs through the JIT, emits PIC objects, links native executables, and passes
 the full 918-case required core gate. Installed and relocated ARM64 packages
 each passed 479 acceptance cases. Its serial and parallel complete suites each
 passed 961/965, with only four documented async/spawn failures. The hosted
-x86_64 CI gate remains before publication.
+Ubuntu x86_64 CI passed the same core, package, and full-suite classification
+gates. Publication still requires final review.
 
 ## Linux release gate
 
@@ -25,7 +26,7 @@ x86_64 CI gate remains before publication.
   including version, checksum, native output, and module relocation checks.
 - The required core suite passed 918/918 on Ubuntu ARM64 after correcting an
   ELF object assertion and raising the Linux trap-test timeout to account for
-  four-way VM contention. The x86_64 CI job must also pass before publication.
+  four-way VM contention. The hosted x86_64 CI core gate also passed 918/918.
 
 ## Proposed contents
 
@@ -100,7 +101,12 @@ outside this proposed release. A Windows port is outside the maintained plan.
 | Relocated extracted package acceptance | 479/479 passed, including checksum, dependency, and network example checks |
 | Complete suite | Serial and parallel each passed 961/965; exactly the four documented async/spawn cases failed |
 
-The Linux x86_64 CI job is prepared but has not yet run on this candidate.
+## Candidate validation on Ubuntu 24.04 x86_64
+
+The [hosted CI run](https://github.com/kubabialy/gloinc/actions/runs/37146653312)
+passed its Linux job. The core gate passed 918/918. Installed and relocated
+packages each passed 479/479 checks. The serial and parallel complete suites
+each passed 961/965; the four failures are the documented async/spawn cases.
 
 These checks were rerun after the candidate version bump. Build metadata
 reports 0.1.0, and the numbered guide and release notes are prepared. The
@@ -109,9 +115,8 @@ package gate. Publication has not occurred.
 
 ## Before publication
 
-1. Run the hosted Ubuntu 24.04 x86_64 CI gate and review its results. ARM64
-   Linux and macOS local validation have passed. Review the 0.1.0 candidate
-   boundary and compatibility notes before publication.
+1. Review the 0.1.0 candidate boundary and compatibility notes. Hosted Ubuntu
+   x86_64 CI and local ARM64 Linux and macOS validation have passed.
 2. Keep the site root on published 0.0.4 while this is a candidate. After
    approval, remove candidate wording and update `latestVersion` and the root
    redirect; keep older numbered pages unchanged.

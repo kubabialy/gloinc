@@ -4,8 +4,9 @@ This page describes an **unreleased candidate**. The latest published version
 is 0.0.4. The candidate targets Apple Silicon macOS with LLVM/MLIR 21.1.6 and
 Ubuntu 24.04 Linux with LLVM/MLIR 21.1.8. Linux ARM64 passed local build,
 JIT/native execution, core, complete-suite classification, and package
-acceptance; hosted x86_64 CI remains a release gate. Windows support is not planned, though
-contributions are welcome.
+acceptance. Hosted x86_64 CI passed the core, package, and complete-suite
+classification gates. Windows support is not planned, though contributions
+are welcome.
 
 The [0.1.0 HTML guide](site/0.1.0/index.html) teaches the language accepted by
 this candidate. The [release notes](release-notes-0.1.0.md) list changes since
@@ -141,5 +142,6 @@ local results. A public tag and release require a separate final decision.
 Linux acceptance results are recorded separately in the
 [release draft](next-release-draft.md). Ubuntu 24.04 ARM64 passed 918/918 core
 tests, 479/479 installed and relocated package checks, and 961/965 in both
-serial and parallel complete suites. Hosted x86_64 CI evidence is still
-required before publication.
+serial and parallel complete suites. Hosted x86_64 CI passed the same gates;
+the [CI report](https://github.com/kubabialy/gloinc/actions/runs/37146653312)
+records its results.

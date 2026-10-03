@@ -9,7 +9,7 @@ verification evidence in order.
 
 Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR
 21.1.6. The 0.1.0 candidate also builds on Ubuntu 24.04 ARM64 with LLVM/MLIR
-21.1.8; local ARM64 release acceptance passed, while hosted x86_64 CI is pending.
+21.1.8; local ARM64 release acceptance and hosted x86_64 CI passed.
 **The matching LLVM/MLIR version must also be installed to run a downloaded
 `gloinc` compiler.**
 The release archive links to its shared libraries and does not bundle them.
@@ -58,13 +58,14 @@ remains the reference for the published release. Build metadata now reports
 [installation guide](docs/release-0.1.0.md), and
 [scope and validation draft](docs/next-release-draft.md).
 Linux support remains a required 0.1.0 release gate. Ubuntu 24.04 ARM64 has
-passed the local core and package suites; x86_64 hosted CI is still pending.
+passed the local core and package suites; x86_64 hosted CI passed its core,
+package, and full-suite classification gates.
 
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | The development tree discovers 965 tests: 961 pass and the four documented unsupported async/spawn tests fail on macOS and Ubuntu ARM64. The required `check-core` gate passes 918/918 on both. |
+| Full test suite | The development tree discovers 965 tests: 961 pass and the four documented unsupported async/spawn tests fail on macOS, Ubuntu ARM64, and Ubuntu x86_64. The required `check-core` gate passes 918/918 on all three. |
 | Core acceptance | CLI-driven source cases cover `zeroed` arrays, enums, borrowed slices, and both vector forms in addition to the 0.0.3 cases. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 53 development parser tests pass: core grammar, precedence, strict annotations/delimiters, generic call/literal lookahead, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |

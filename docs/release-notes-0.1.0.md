@@ -50,8 +50,9 @@ bookkeeping. Maps, enum payloads and matching, package imports, and async/spawn
 remain unsupported. Windows support is not planned, though contributors may
 work on it.
 
-This candidate still needs hosted x86_64 CI validation before 0.1.0 can be
-published. Ubuntu 24.04 ARM64 passed the 918-case core gate, installed and
+Hosted Ubuntu 24.04 x86_64 CI passed its 918-case core gate, installed and
+relocated package suites at 479/479 each, and serial and parallel full-suite
+classification. Ubuntu 24.04 ARM64 passed the 918-case core gate, installed and
 relocated package suites at 479/479 each, and direct JIT/native output checks.
 Its serial and parallel complete suites each passed 961/965; only the four
 documented async/spawn cases failed.
