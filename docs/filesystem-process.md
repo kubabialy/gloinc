@@ -103,9 +103,42 @@ Rename replaces compatible regular-file destinations or empty directory
 destinations under host rules. It renames symlinks themselves, is subject to host
 permissions, and fails across filesystems (`IO_ERROR`, EXDEV) instead of copying.
 Naming the operation `rename_replace` makes its replacement policy visible.
-Directory removal, iteration, recursive operations, and a no-replace rename API
-remain follow-ups. Use `io.error_message(&arena, result.os_error)` to format an
+Directory removal, recursive operations, and a no-replace rename API remain
+follow-ups. Use `io.error_message(&arena, result.os_error)` to format an
 OS diagnostic separately if desired.
+
+## Directory iteration
+
+`fs.Directory.open(&owner, path)` returns `fs.DirectoryResult { status,
+os_error, value }`. It opens a native directory cursor; the owner arena holds
+shared cursor metadata. Copies of `Directory` alias that metadata. Close the
+cursor before resetting or freeing the owner arena. Opening an empty or
+NUL-containing path returns `INVALID`; missing paths and access errors use the
+same status and OS error mapping as `metadata`. A symlink in the path may resolve
+to a directory, as with native `opendir`. Open attempts one owner-arena metadata
+allocation before the host call; that allocation remains until arena reset/free
+even if the host open fails.
+
+`directory.next(&scratch)` returns `fs.DirectoryEntryResult { status, os_error,
+name }`. `OK` has a relative entry name copied into `scratch`; `END` means the
+cursor is exhausted and has an empty name. `.` and `..` are omitted. A failed
+call has an empty name; an allocation failure returns `NO_MEMORY` and can
+consume that entry. Names are counted bytes, including any non-UTF-8 bytes; they
+remain valid until `scratch` is reset or freed, independent of later calls to
+`next`. Each nonempty name makes one exact-size arena allocation; `END` and host
+errors allocate no name storage. Directory order is host-defined and is not
+sorted or snapshotted.
+Callers requiring deterministic order must collect and sort names. To inspect
+an entry's kind, join its name to the parent path and call `fs.metadata`; the
+directory cursor itself does not promise `d_type` information.
+
+`directory.close()` consumes the native cursor, even on an OS close failure,
+and invalidates every alias. Later `next` or `close` calls return `CLOSED`.
+No arena cleanup closes a native cursor automatically. Opening, advancing,
+and closing can block on the host filesystem. Calls through aliases must not
+advance or close the same cursor concurrently. Concurrent directory mutation
+may change which entries are seen. See [directory_walk.gloin](../examples/directory_walk.gloin)
+for a complete single-directory CLI example.
 
 ## CLI forwarding and argument ownership
 

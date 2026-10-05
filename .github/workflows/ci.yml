@@ -24,7 +24,7 @@ jobs:
       - name: Install build tools and pinned LLVM/MLIR
         run: |
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cmake ninja-build g++ python3
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cmake ninja-build g++ python3 openssl libssl-dev
           bash scripts/install-llvm-linux.sh
 
       - name: Record environment
@@ -37,10 +37,8 @@ jobs:
             "$GLOIN_LLVM_PREFIX/bin/llvm-config" --version
           } | tee ci-reports-linux/environment.log
 
-      - name: Check documentation and Gloin source style
-        run: |
-          python3 scripts/check-doc-links.py
-          python3 scripts/format-gloin.py --check
+      - name: Check documentation links
+        run: python3 scripts/check-doc-links.py
 
       - name: Build compiler and tests
         id: build
@@ -52,6 +50,9 @@ jobs:
             2>&1 | tee ci-reports-linux/configure.log
           cmake --build build-ci-linux -j 2 2>&1 | tee ci-reports-linux/build.log
           ctest --test-dir build-ci-linux --show-only=json-v1 > ci-reports-linux/inventory.json
+
+      - name: Check Gloin source style
+        run: build-ci-linux/gloinfmt --check .
 
       - name: Verify executable core acceptance
         id: core
@@ -117,7 +118,7 @@ jobs:
 
       - name: Install build tools and pinned LLVM/MLIR
         run: |
-          brew install cmake ninja
+          brew install cmake ninja openssl@3
           bash scripts/install-llvm.sh 2>&1 | tee ci-reports/toolchain-install.log
 
       - name: Record environment
@@ -133,9 +134,6 @@ jobs:
 
       - name: Check versioned documentation links
         run: python3 scripts/check-doc-links.py
-
-      - name: Check Gloin source style
-        run: python3 scripts/format-gloin.py --check
 
       - name: Build without test dependencies
         run: |
@@ -191,6 +189,9 @@ jobs:
             2>&1 | tee ci-reports/configure.log
           cmake --build build-ci -j 2 2>&1 | tee ci-reports/build.log
           ctest --test-dir build-ci --show-only=json-v1 > ci-reports/inventory.json
+
+      - name: Check Gloin source style
+        run: build-ci/gloinfmt --check .
 
       - name: Verify executable core acceptance
         id: core

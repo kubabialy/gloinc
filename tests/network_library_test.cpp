@@ -2,7 +2,15 @@
 #include <filesystem>
 
 namespace {
-class NetworkLibraryTest : public gloin_test::CliFixture {};
+class NetworkLibraryTest : public gloin_test::CliFixture {
+  protected:
+    void SetUp() override {
+        CliFixture::SetUp();
+        // Compiling the complete HTTP module can exceed ten seconds when several
+        // JIT cases run together, including against cold relocated packages.
+        timeout_seconds = 60;
+    }
+};
 }
 
 TEST_F(NetworkLibraryTest, LocalHttpRoundTripWorksInJitAndNativeExecutable) {
@@ -72,7 +80,10 @@ def main() -> i32 {
     if !no_body.erroneous { memory.free(); return 11; }
     def parsed_no_body: result<http.ResponseHead> = http.parse_response(
         "HTTP/1.1 204 No Content\r\n\r\n", 128);
-    if !parsed_no_body.erroneous { memory.free(); return 12; }
+    if parsed_no_body.erroneous { memory.free(); return 12; }
+    if !parsed_no_body.value.complete || parsed_no_body.value.code != 204 {
+        memory.free(); return 20;
+    }
     memory.free();
     return 0;
 })");
@@ -89,16 +100,273 @@ def main() -> i32 {
     if address.value.host != expected { owner.free(); return 2; }
     def bad_address: result<net.Address> = net.Address.ipv4(256, 0, 0, 1, 80);
     if !bad_address.erroneous { owner.free(); return 3; }
+    def mut hosts: [u32; 2] = zeroed;
+    def lookup: result<u64> = net.resolve_ipv4("127.0.0.1", hosts[..]);
+    if lookup.erroneous { owner.free(); return 10; }
+    def one: u64 = 1;
+    if lookup.value != one || hosts[0] != expected { owner.free(); return 11; }
+    def bad_host: result<u64> = net.resolve_ipv4("lo\0calhost", hosts[..]);
+    if !bad_host.erroneous { owner.free(); return 12; }
     def opened: result<net.Socket> = net.Socket.open(&owner);
     if opened.erroneous { owner.free(); return 4; }
     def mut socket: net.Socket = opened.value;
+    def reusable: result<void> = socket.set_reuse_address(true);
+    if reusable.erroneous { owner.free(); return 8; }
     def mut alias: net.Socket = socket;
     def closed: result<void> = socket.close();
     if closed.erroneous { owner.free(); return 5; }
     if alias.is_open() { owner.free(); return 6; }
     def attempted: result<net.WriteOutcome> = alias.write_text("");
     if !attempted.erroneous { owner.free(); return 7; }
+    def reuse_after_close: result<void> = alias.set_reuse_address(false);
+    if !reuse_after_close.erroneous { owner.free(); return 9; }
     owner.free();
+    return 0;
+})");
+    expect_success(invoke({file}), "");
+}
+
+TEST_F(NetworkLibraryTest, RequestHeadersHaveExactBoundsAndPreventFramingInjection) {
+    const auto file = source(R"(import "@arena"; import "@http"; import "@strings";
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def headers: [http.Header; 2] = {
+        http.Header { name: "Authorization", value: "Bearer test" },
+        http.Header { name: "X!#$%&'*+-.^_`|~", value: "ok" }
+    };
+    def made: result<string> = http.format_request(&owner, "POST", "localhost:8080",
+        "/echo?q=1", headers[..], 3, 1024);
+    if made.erroneous { return 1; }
+    def text: string = made.value;
+    if !strings.contains(text, "Content-Length: 3\r\n") ||
+        !strings.contains(text, "Authorization: Bearer test\r\n") { return 2; }
+    def exact: result<string> = http.format_request(&owner, "POST", "localhost:8080",
+        "/echo?q=1", headers[..], 3, strings.byte_length(text));
+    if exact.erroneous { return 3; }
+    def short: result<string> = http.format_request(&owner, "POST", "localhost:8080",
+        "/echo?q=1", headers[..], 3, strings.byte_length(text) - 1);
+    if !short.erroneous { return 4; }
+    def names: [string; 8] = {"Host", "content-length", "TRANSFER-ENCODING", "Connection",
+        "Trailer", "TE", "Upgrade", "Expect"};
+    for def mut i: u64 = 0; i < 8; i = i + 1 {
+        def bad: [http.Header; 1] = {http.Header { name: names[i], value: "x" }};
+        def rejected: result<string> = http.format_request(&owner, "POST", "local", "/", bad[..], 0, 1024);
+        if !rejected.erroneous { return 5; }
+    }
+    def injected: [http.Header; 1] = {http.Header { name: "X-Test", value: "yes\r\nEvil: true" }};
+    def rejected: result<string> = http.format_request(&owner, "POST", "local", "/", injected[..], 0, 1024);
+    if !rejected.erroneous { return 6; }
+    def fields: result<http.Headers> = http.headers(text, 1024);
+    if fields.erroneous { return 7; }
+    def mut iterator: http.Headers = fields.value;
+    def mut field: http.HeaderItem = iterator.next();
+    def mut found: bool = false;
+    while field.available {
+        if http.header_name_equal(field.field.name, "authorization") {
+            found = strings.equal(field.field.value, "Bearer test");
+        }
+        field = iterator.next();
+    }
+    if !found { return 8; }
+    return 0;
+})");
+    expect_success(invoke({file}), "");
+}
+
+TEST_F(NetworkLibraryTest, ResponseReaderHandlesEverySplitAndPreservesFollowingBytes) {
+    const auto file = source(R"(import "@http"; import "@strings";
+def verify(wire: string, expected: string, method: string, eof: bool) -> i32 {
+    for def mut split: u64 = 0; split <= strings.byte_length(wire); split = split + 1 {
+        def mut head: [u8; 256] = zeroed;
+        def mut body: [u8; 16] = zeroed;
+        def made: result<http.ResponseReader> = http.ResponseReader.create(head[..], body[..], method, 1024);
+        if made.erroneous { return 1; }
+        def mut reader: http.ResponseReader = made.value;
+        def first: result<http.ResponseProgress> = reader.feed(strings.slice_bytes(wire, 0, split).value, false);
+        if first.erroneous { return 2; }
+        def second: result<http.ResponseProgress> = reader.feed(strings.slice_bytes(wire, split,
+            strings.byte_length(wire) - split).value, eof);
+        if second.erroneous { return 3; }
+        if !second.value.complete { return 4; }
+        def response: result<http.Response> = reader.response();
+        if response.erroneous { return 5; }
+        if !strings.equal(response.value.body, expected) { return 6; }
+    }
+    return 0;
+}
+def main() -> i32 {
+    if verify("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\na\0b", "a\0b", "POST", true) != 0 { return 1; }
+    if verify("HTTP/1.1 103 Hints\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: ChUnKeD\r\n\r\n"
+        , "", "GET", true) == 0 { return 2; }
+    def wire: string = "HTTP/1.1 103 Hints\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: ChUnKeD\r\n\r\n3;foo=\"b\\\"ar\";flag\r\na\0b\r\n0\r\nX-End: yes\r\n\r\n";
+    if verify(wire, "a\0b", "GET", true) != 0 { return 3; }
+    if verify("HTTP/1.1 200 OK\r\n\r\nabc", "abc", "GET", true) != 0 { return 4; }
+    if verify("HTTP/1.1 200 OK\r\nContent-Length: 999\r\n\r\n", "", "HEAD", false) != 0 { return 5; }
+    if verify("HTTP/1.1 204 No Content\r\n\r\n", "", "GET", false) != 0 { return 6; }
+    if verify("HTTP/1.1 304 Not Modified\r\nContent-Length: 999\r\n\r\n", "", "GET", false) != 0 { return 7; }
+    if verify("HTTP/1.1 205 Reset\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", "", "GET", false) != 0 { return 8; }
+    def mut head: [u8; 128] = zeroed;
+    def mut body: [u8; 3] = zeroed;
+    def made: result<http.ResponseReader> = http.ResponseReader.create(head[..], body[..], "GET", 256);
+    if made.erroneous { return 9; }
+    def mut reader: http.ResponseReader = made.value;
+    for def mut i: u64 = 0; i < strings.byte_length(wire); i = i + 1 {
+        def step: result<http.ResponseProgress> = reader.feed(strings.slice_bytes(wire, i, 1).value, false);
+        if step.erroneous { return 10; }
+    }
+    def tail: result<http.ResponseProgress> = reader.feed("NEXT", false);
+    if tail.erroneous { return 11; }
+    def zero: u64 = 0;
+    if !tail.value.complete || tail.value.consumed != zero { return 12; }
+    def response: result<http.Response> = reader.response();
+    if response.erroneous { return 13; }
+    if !strings.equal(response.value.body, "a\0b") { return 14; }
+    return 0;
+})");
+    expect_success(invoke({file}), "");
+}
+
+TEST_F(NetworkLibraryTest, ResponseReaderRejectsMalformedOversizedAndTruncatedMessages) {
+    const auto file = source(R"(import "@http";
+def rejects(wire: string, metadata: u64) -> bool {
+    def mut head: [u8; 256] = zeroed;
+    def mut body: [u8; 3] = zeroed;
+    def made: result<http.ResponseReader> = http.ResponseReader.create(head[..], body[..], "GET", metadata);
+    if made.erroneous { return false; }
+    def mut reader: http.ResponseReader = made.value;
+    def step: result<http.ResponseProgress> = reader.feed(wire, true);
+    if !step.erroneous { return false; }
+    def retried: result<http.ResponseProgress> = reader.feed("", false);
+    if !retried.erroneous { return false; }
+    return true;
+}
+def main() -> i32 {
+    def bad: [string; 18] = {
+        "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nabcd",
+        "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nab",
+        "HTTP/1.1 200 OK\r\nContent-Length: +3\r\n\r\nabc",
+        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n0\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n10000000000000000\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\naX\n0\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nContent-Length: 0\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;bad=\"unfinished\r\na\r\n0\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n+1\r\na\r\n0\r\n\r\n",
+        "HTTP/1.1 204 No Content\r\nContent-Length: 1\r\n\r\nx",
+        "HTTP/1.1 205 Reset\r\nContent-Length: 1\r\n\r\nx",
+        "HTTP/1.1 101 Switching Protocols\r\n\r\n",
+        "HTTP/1.1 200 OK\r\n\r\nabcd",
+        "HTTP/1.1 200 OK\r\nX: incomplete"
+    };
+    for def mut i: u64 = 0; i < 18; i = i + 1 {
+        if !rejects(bad[i], 1024) { return 1; }
+    }
+    if !rejects("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 10) { return 2; }
+    if !rejects("HTTP/1.1 103 Hints\r\n\r\nHTTP/1.1 103 Hints\r\n\r\n", 30) { return 3; }
+    return 0;
+})");
+    expect_success(invoke({file}), "");
+}
+
+TEST_F(NetworkLibraryTest, StreamingDecoderStopsAtHeadAndOutputBoundaries) {
+    const auto file = source(R"(import "@http"; import "@strings";
+def check(wire: string, eof: bool, suffix: u64) -> bool {
+    def zero: u64 = 0;
+    for def mut split: u64 = 0; split <= strings.byte_length(wire); split = split + 1 {
+        for def mut capacity: u64 = 1; capacity <= 3; capacity = capacity + 1 {
+            def mut head: [u8; 256] = zeroed;
+            def mut output: [u8; 3] = zeroed;
+            def made: result<http.ResponseDecoder> = http.ResponseDecoder.create(head[..], 6, "GET", 1024);
+            if made.erroneous { return false; }
+            def mut decoder: http.ResponseDecoder = made.value;
+            def mut cursor: u64 = 0;
+            def mut count: u64 = 0;
+            def mut complete: bool = false;
+            def mut head_seen: bool = false;
+            for def mut part: i32 = 0; part < 2; part = part + 1 {
+                def mut end: u64 = split;
+                if part == 1 { end = strings.byte_length(wire); }
+                def mut again: bool = true;
+                while again {
+                    def bytes: string = strings.slice_bytes(wire, cursor, end - cursor).value;
+                    def fed: result<http.StreamProgress> = decoder.feed(bytes, eof && part == 1, output[0..capacity]);
+                    if fed.erroneous { return false; }
+                    def step: http.StreamProgress = fed.value;
+                    if step.head_ready && !head_seen {
+                        if step.produced != zero { return false; }
+                        head_seen = true;
+                        def info: result<http.ResponseInfo> = decoder.head();
+                        if info.erroneous { return false; }
+                        if info.value.code != 200 { return false; }
+                        // A full output buffer must leave the next body byte untouched.
+                        def mut probe: string = "a";
+                        if strings.contains(info.value.head, "chunked") { probe = ""; }
+                        def paused: result<http.StreamProgress> = decoder.feed(probe, false, output[0..0]);
+                        if paused.erroneous { return false; }
+                        if paused.value.consumed != zero || paused.value.produced != zero { return false; }
+                    }
+                    for def mut i: u64 = 0; i < step.produced; i = i + 1 {
+                        if output[i] != strings.byte_at("a\0bcde", count + i).value { return false; }
+                    }
+                    count = count + step.produced;
+                    cursor = cursor + step.consumed;
+                    complete = step.complete;
+                    again = !complete && cursor < end;
+                }
+            }
+            if !complete || !head_seen || count != 6 || cursor + suffix != strings.byte_length(wire) { return false; }
+            def after: result<http.StreamProgress> = decoder.feed("NEXT", true, output[..]);
+            if after.erroneous { return false; }
+            if !after.value.complete || after.value.consumed != zero || after.value.produced != zero { return false; }
+        }
+    }
+    return true;
+}
+def main() -> i32 {
+    if !check("HTTP/1.1 103 Hints\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\na\0bcdeNEXT", false, 4) { return 1; }
+    if !check("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\na\0bcde\r\n0\r\nX-End: yes\r\n\r\nNEXT", false, 4) { return 2; }
+    if !check("HTTP/1.1 200 OK\r\n\r\na\0bcde", true, 0) { return 3; }
+    return 0;
+})");
+    expect_success(invoke({file}), "");
+}
+
+TEST_F(NetworkLibraryTest, StreamingDecoderEnforcesTotalLimitAcrossOutputReuse) {
+    const auto file = source(R"(import "@http"; import "@strings";
+def check(head_text: string, suffix: string) -> bool {
+    def mut head: [u8; 128] = zeroed;
+    def mut output: [u8; 1] = zeroed;
+    def made: result<http.ResponseDecoder> = http.ResponseDecoder.create(head[..], 2, "GET", 1024);
+    if made.erroneous { return false; }
+    def mut decoder: http.ResponseDecoder = made.value;
+    def parsed: result<http.StreamProgress> = decoder.feed(head_text, false, output[..]);
+    if parsed.erroneous { return false; }
+    if !parsed.value.head_ready { return false; }
+    def mut cursor: u64 = 0;
+    def mut count: u64 = 0;
+    while cursor < strings.byte_length(suffix) {
+        def next: result<http.StreamProgress> = decoder.feed(strings.slice_bytes(suffix, cursor, 1).value, false, output[..]);
+        if next.erroneous {
+            if count != 2 { return false; }
+            def again: result<http.StreamProgress> = decoder.feed("", false, output[..]);
+            if !again.erroneous { return false; }
+            def info: result<http.ResponseInfo> = decoder.head();
+            if !info.erroneous { return false; }
+            return true;
+        }
+        def step: http.StreamProgress = next.value;
+        cursor = cursor + step.consumed;
+        count = count + step.produced;
+    }
+    return false;
+}
+def main() -> i32 {
+    if !check("HTTP/1.1 200 OK\r\n\r\n", "abc") { return 1; }
+    if !check("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", "1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n") { return 2; }
     return 0;
 })");
     expect_success(invoke({file}), "");

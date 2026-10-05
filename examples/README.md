@@ -24,11 +24,16 @@ arguments to run successfully.
 | `custom_arena.gloin` | User-written bump arena | Raw aligned allocation, typed placement, exhaustion, reset, and release. See [raw memory](../docs/raw-memory.md). |
 | `result_handling.gloin` | Built-in result and error | Checked success, explicit failure forwarding, and error message access. See [results](../docs/results.md). |
 | `network_http.gloin` | Nonblocking local TCP and HTTP/1.1 | Connect, readiness, accept, partial writes, incremental bounded head parsing, and explicit `result<T>` handling. See [networking](../docs/networking.md). |
+| `http_stream.gloin` | Concurrent streaming HTTP/HTTPS | 32 exchanges through `net.wait_many`, bounded binary downloads, independent progress, and cancellation. Requires a local peer; see [the guide](../docs/http-client.md#streaming-exchanges). |
+| `http_client.gloin` | Bounded HTTP/HTTPS client | JSON POST, application headers, status/header inspection, and caller-owned response buffers. Requires a local listener; see [the guide](../docs/http-client.md). |
+| `json.gloin` | Bounded JSON construction and reading | Nested request payload, escaped strings, exact `u64`, pull events, and explicit `result<T>` handling. Runs without external services; see [JSON](../docs/json.md). |
+| `directory_walk.gloin` | Directory iteration | Opens a native directory cursor, copies each entry name into a resettable scratch arena, and closes the cursor. See [filesystem helpers](../docs/filesystem-process.md#directory-iteration). |
 | `pointer_offsets.gloin` | Nullable pointer offsets | Version 0.0.3: advances a `*i32` through a live fixed array. See [the rules](../docs/pointer-offsets.md). |
 | `standard_library.gloin` | Input and i32 conversions | Counted lines, checked integer results, caller-owned arena strings, reset/reuse, and totals. |
 | `strings_lab.gloin` | Byte strings and explicit retention | Runnable with SPEC-030a; allocation-free configuration parsing, checked access, search, independent copies, and 10,000 scratch-arena resets. See [costs and usage](../docs/strings.md). |
 | `text_lab.gloin` | Traversal and bounded construction | Runnable with SPEC-030b; borrowed cursors, escaped report construction, transformations, shared builder state, scratch reuse, and an independent snapshot. See [costs and usage](../docs/text-construction.md). |
 | `module_lab.gloin`, `modules/*.gloin` | Local modules | Runnable with SPEC-029; shared nominal types, exported constants, methods, linked particles, and arena reset/reuse. |
+| `module_discovery.gloin`, `modules/calculator/*.gloin`, `packages/math/*.gloin` | Directory and package discovery | `./modules/calculator` and `#math` collect public declarations from their directories without an entry file. See [modules](../docs/modules.md). |
 | `arena_lab.gloin` | Typed arena allocation | Runnable with SPEC-028; linked particles, native layout, methods, reset/reuse, independent arenas, and deferred free. |
 
 Standard output and local/standard module dependencies are implemented. Package

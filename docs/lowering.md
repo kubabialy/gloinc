@@ -63,7 +63,7 @@ compiler now emits these checked Gloin operations:
 | `gloin.arena_fill` | Initialize every typed arena slot with one captured source value | Counted loop of typed element stores |
 | `gloin.stack_alloc` | One checked local slot placed at function entry | LLVM alloca |
 | `gloin.load` | Checked source value read from an address | LLVM load |
-| `gloin.store` | Checked source value write to an address | LLVM store |
+| `gloin.store` | Checked source value write to an address | LLVM store; direct zero-array stores use a bulk memset |
 | `gloin.field_address` | Addressable checked struct field at a verified index | LLVM GEP |
 | `gloin.extract_field` | Value-field read at a verified index | LLVM extractvalue |
 | `gloin.enum_constant` | Construct a nominal payloadless enum SSA value | Private `u32` tag in enum storage |

@@ -1,0 +1,198 @@
+import "@arena";
+import "@http";
+import "@http_client";
+import "@net";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+
+def const PORT: u16 = 8080;
+
+def cleanup(exchange: &http_client.Exchange) -> void {
+    def cancelled: result<void> = exchange.cancel();
+    if cancelled.erroneous { std.println(cancelled.error.message); }
+}
+
+def run_case(path: string, tls: bool, trust_file: string) -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def mut length: u64 = 0;
+    def mut method: string = "GET";
+    if strings.equal(path, "/upload") { length = 1048576; }
+    if strings.equal(path, "/early") { length = 67108864; }
+    if strings.equal(path, "/input-wait") || strings.equal(path, "/input-timeout")
+        || strings.equal(path, "/short") || strings.equal(path, "/excess") { length = 1; }
+    if length > 0 { method = "POST"; }
+    def mut timeout: i32 = 15000;
+    if strings.equal(path, "/input-timeout") || strings.equal(path, "/output-timeout") { timeout = 500; }
+    def endpoint: http_client.Endpoint = http_client.Endpoint {
+        address: net.Address.loopback(PORT),
+        tls: tls,
+        hostname: "localhost",
+        trust_file: trust_file
+    };
+    def headers: [http.Header; 0] = {};
+    def mut head: [u8; 1024] = zeroed;
+    def mut receive: [u8; 4096] = zeroed;
+    def mut send: [u8; 1024] = zeroed;
+    def mut body: [u8; 257] = zeroed;
+    def opened: result<http_client.Exchange> = http_client.Exchange.open(&owner, endpoint,
+        http_client.StreamingRequest {
+        method: method,
+        host: "localhost",
+        target: path,
+        content_length: length
+        }, headers[..], http_client.Buffers {
+        head: head[..],
+        receive: receive[..],
+        send: send[..],
+        body: body[..]
+        }, http_client.Limits {
+        request_head: 1024,
+        response_metadata: 4096,
+        response_body: 1048576,
+        timeout_ms: timeout
+    });
+    if opened.erroneous {
+        std.println(opened.error.message);
+        return 2;
+    }
+    def mut exchange: http_client.Exchange = opened.value;
+    defer cleanup(&exchange);
+    def mut alias: http_client.Exchange = exchange;
+    def repeated: strings.StringResult = strings.repeat(&owner, "a", 8192, 8192);
+    if repeated.status != status.OK { return 3; }
+    def upload: string = repeated.value;
+    def mut supplied: u64 = 0;
+    def mut received: u64 = 0;
+    def mut ready: i32 = 0;
+    def mut held: bool = false;
+    while true {
+        def advanced: result<http_client.Progress> = exchange.step(ready);
+        if advanced.erroneous {
+            def failure: error = advanced.error;
+            if strings.equal(path, "/input-timeout") || strings.equal(path, "/output-timeout") {
+                if !strings.equal(failure.message, "HTTP request timed out") {
+                    std.println(failure.message);
+                    return 4;
+                }
+                def again: result<http_client.Progress> = alias.step(0);
+                if !again.erroneous { return 4; }
+                if !strings.equal(again.error.message, failure.message) { return 4; }
+                def socket: net.Socket = exchange.socket();
+                if socket.is_open() { return 4; }
+                return 0;
+            }
+            if strings.equal(path, "/truncated") && received == 3 { return 0; }
+            std.println(failure.message);
+            return 5;
+        }
+        def step: http_client.Progress = advanced.value;
+        ready = 0;
+        if step.state == http_client.COMPLETE {
+            def head: result<http.ResponseInfo> = exchange.head();
+            if head.erroneous { return 6; }
+            if strings.equal(path, "/early") || strings.equal(path, "/input-wait") {
+                if head.value.code != 413 || received != 3 || supplied >= length { return 7; }
+                return 0;
+            }
+            if head.value.code != 200 { return 8; }
+            if strings.equal(path, "/upload") && received == 1048576 { return 0; }
+            if strings.equal(path, "/backpressure") && received == 10003 && held { return 0; }
+            return 9;
+        }
+        if step.state == http_client.HAVE_OUTPUT {
+            def bytes: string = exchange.output();
+            def mut count: u64 = strings.byte_length(bytes);
+            if strings.equal(path, "/cancel") {
+                def cancelled: result<void> = alias.cancel();
+                if cancelled.erroneous { return 10; }
+                def twice: result<void> = exchange.cancel();
+                if twice.erroneous { return 10; }
+                def again: result<http_client.Progress> = exchange.step(0);
+                if !again.erroneous { return 10; }
+                if !strings.equal(again.error.message, "HTTP exchange cancelled") { return 10; }
+                def socket: net.Socket = alias.socket();
+                if socket.is_open() { return 10; }
+                return 0;
+            }
+            if strings.equal(path, "/output-timeout") {
+                def mut socket: net.Socket = exchange.socket();
+                def waited: result<i32> = socket.wait(net.READABLE, 600);
+                if waited.erroneous { return 11; }
+            } else {
+                if strings.equal(path, "/backpressure") && !held {
+                    for def mut i: i32 = 0; i < 8; i = i + 1 {
+                        def again: result<http_client.Progress> = alias.step(0);
+                        if again.erroneous { return 12; }
+                        if again.value.state != http_client.HAVE_OUTPUT || !strings.equal(alias.output(), bytes) { return 12; }
+                    }
+                    count = 1;
+                    held = true;
+                }
+                for def mut i: u64 = 0; i < count; i = i + 1 {
+                    if strings.byte_at(bytes, i).value != 97 { return 13; }
+                }
+                received = received + count;
+                def consumed: result<void> = exchange.consume(count);
+                if consumed.erroneous { return 14; }
+            }
+        } else if step.state == http_client.NEED_INPUT {
+            if strings.equal(path, "/short") {
+                def ended: result<void> = exchange.finish_input();
+                if !ended.erroneous { return 15; }
+                def socket: net.Socket = exchange.socket();
+                if socket.is_open() { return 15; }
+                return 0;
+            }
+            if strings.equal(path, "/excess") {
+                def accepted: result<u64> = exchange.supply("aa");
+                if !accepted.erroneous { return 16; }
+                return 0;
+            }
+            if strings.equal(path, "/input-wait") || strings.equal(path, "/input-timeout") {
+                def mut socket: net.Socket = exchange.socket();
+                def waited: result<i32> = socket.wait(step.wait_for, step.timeout_ms);
+                if waited.erroneous { return 17; }
+                ready = waited.value;
+            } else {
+                def mut count: u64 = length - supplied;
+                if count > 8192 { count = 8192; }
+                def accepted: result<u64> = exchange.supply(strings.slice_bytes(upload, 0, count).value);
+                if accepted.erroneous { return 18; }
+                supplied = supplied + accepted.value;
+                if supplied == length {
+                    def ended: result<void> = exchange.finish_input();
+                    if ended.erroneous { return 19; }
+                }
+            }
+        } else if step.state == http_client.WAIT {
+            def mut socket: net.Socket = exchange.socket();
+            def waited: result<i32> = socket.wait(step.wait_for, step.timeout_ms);
+            if waited.erroneous { return 20; }
+            ready = waited.value;
+        }
+    }
+    return 21;
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def mode: process.TextResult = process.arg(&owner, 1);
+    def trust: process.TextResult = process.arg(&owner, 2);
+    if mode.status != status.OK || trust.status != status.OK { return 1; }
+    def cases: [string; 10] = {
+        "/upload", "/early", "/input-wait", "/input-timeout", "/output-timeout",
+        "/backpressure", "/cancel", "/short", "/excess", "/truncated"
+    };
+    for def mut i: u64 = 0; i < 10; i = i + 1 {
+        def code: i32 = run_case(cases[i], strings.equal(mode.value, "tls"), trust.value);
+        if code != 0 {
+            std.println(cases[i]);
+            return code;
+        }
+    }
+    return 0;
+}

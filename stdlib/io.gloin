@@ -154,7 +154,7 @@ def pub struct Stream {
         def mut received: u64 = 0;
         def mut failure_code: i32 = 0;
         def code: i32 = __io_read_bytes(handle, &destination[0], destination.len,
-        &received, &failure_code);
+            &received, &failure_code);
         return ByteReadResult {
             status: code,
             os_error: failure_code,
@@ -237,7 +237,7 @@ def pub struct Stream {
         def mut written: u64 = 0;
         def mut failure_code: i32 = 0;
         def code: i32 = __io_write_bytes(handle, &bytes[0], bytes.len, all,
-        &written, &failure_code);
+            &written, &failure_code);
         return WriteResult {
             status: code,
             os_error: failure_code,

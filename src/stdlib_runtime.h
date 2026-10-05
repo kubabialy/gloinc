@@ -43,6 +43,12 @@ int32_t gloin_std_parse_f64(const char *bytes, uint64_t length, double *value);
 int32_t gloin_std_parse_bool(const char *bytes, uint64_t length, uint8_t *value);
 int32_t gloin_std_format_i64(int64_t value, char *bytes, uint64_t *length);
 int32_t gloin_std_format_u64(uint64_t value, char *bytes, uint64_t *length);
+int32_t gloin_std_format_u16(uint16_t value, char *bytes, uint64_t *length);
+// Narrow signed source values are extended to i32 at the runtime ABI boundary.
+int32_t gloin_std_format_i8(int32_t value, char *bytes, uint64_t *length);
+int32_t gloin_std_format_i16(int32_t value, char *bytes, uint64_t *length);
+int32_t gloin_std_format_u8(uint8_t value, char *bytes, uint64_t *length);
+int32_t gloin_std_format_u32(uint32_t value, char *bytes, uint64_t *length);
 int32_t gloin_std_format_f32(float value, char *bytes, uint64_t *length);
 int32_t gloin_std_format_f64(double value, char *bytes, uint64_t *length);
 int32_t gloin_std_format_f32_fixed(float value, uint32_t precision, char *bytes, uint64_t *length);

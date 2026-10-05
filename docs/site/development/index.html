@@ -1,18 +1,19 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gloin development — Guide and language reference</title><link rel="stylesheet" href="../style.css"><script src="../versions.js"></script></head><body>
 <header><h1>Gloin development</h1><p>Unreleased guide and language reference · macOS and Ubuntu Linux</p><label>Documentation version <select id="version" aria-label="Documentation version"></select></label></header>
-<main><nav aria-label="Contents"><a href="#start">First program</a><a href="#cli">Compile and run</a><a href="#syntax">Source and declarations</a><a href="#types">Types and expressions</a><a href="#arrays">Fixed arrays</a><a href="#slices">Slices and vectors</a><a href="#generics">Generics and enums</a><a href="#flow">Functions and control flow</a><a href="#data">Structs and methods</a><a href="#references">Pointers and references</a><a href="#memory">Raw memory</a><a href="#results">Results and errors</a><a href="#modules">Modules</a><a href="#library">Input and standard library</a><a href="#network">Networking</a><a href="#limits">Limits</a><a href="#reference">Further reference</a></nav><article>
+<main><nav aria-label="Contents"><a href="#start">First program</a><a href="#cli">Compile and run</a><a href="#syntax">Source and declarations</a><a href="#types">Types and expressions</a><a href="#arrays">Fixed arrays</a><a href="#slices">Slices and vectors</a><a href="#generics">Generics and enums</a><a href="#flow">Functions and control flow</a><a href="#data">Structs and methods</a><a href="#references">Pointers and references</a><a href="#memory">Raw memory</a><a href="#results">Results and errors</a><a href="#modules">Modules</a><a href="#library">Input and standard library</a><a href="#json">JSON</a><a href="#network">Networking</a><a href="#limits">Limits</a><a href="#reference">Further reference</a></nav><article>
 <section id="start"><h2>Get started</h2>
 <p>This guide covers the current development tree after 0.0.4. It is a preview, not the documentation for the published 0.0.4 binary. Work through the programs in order: write a source file, check it, run it, then build a native executable. The later sections explain values, arrays, slices, vectors, generics, enums, control flow, structs, pointers, raw memory, results, imports, input, and networking. Links at the end give full API contracts.</p>
-<p>On Apple Silicon macOS, install Xcode Command Line Tools, CMake 3.28+, Ninja, and LLVM/MLIR 21.1.6. From a source checkout:</p>
-<pre><code>bash scripts/install-llvm.sh
+<p>On Apple Silicon macOS, install Xcode Command Line Tools, CMake 3.28+, Ninja, OpenSSL 3, and LLVM/MLIR 21.1.6. From a source checkout:</p>
+<pre><code>brew install cmake ninja openssl@3
+bash scripts/install-llvm.sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
   -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir
 cmake --build build -j 2</code></pre>
-<p>On Ubuntu 24.04 ARM64 or x86_64, install CMake 3.28+, Ninja, a C++23 compiler, and the shared LLVM/MLIR 21.1.8 packages:</p>
+<p>On Ubuntu 24.04 ARM64 or x86_64, install CMake 3.28+, Ninja, a C++23 compiler, OpenSSL 3, and the shared LLVM/MLIR 21.1.8 packages:</p>
 <pre><code>sudo apt-get update
-sudo apt-get install -y cmake ninja-build g++ python3
+sudo apt-get install -y cmake ninja-build g++ python3 openssl libssl-dev
 bash scripts/install-llvm-linux.sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR=/usr/lib/llvm-21/lib/cmake/llvm \
@@ -234,7 +235,7 @@ def main() -&gt; i32 {
 <pre><code>import "./guide_utils";
 
 def main() -&gt; i32 { return guide_utils.twice(21); }</code></pre>
-<p><code>gloinc --jit main.gloin</code> exits with status 42; <code>gloinc main.gloin</code> writes <code>a.out</code>. <code>@name</code> loads <code>name.gloin</code> from the standard library directory. Relative imports resolve from the importing source file; you can include or omit the <code>.gloin</code> extension. A module exposes its <code>pub</code> functions, constants, and structs through its namespace. Only the root file supplies <code>main</code>; imports have no runtime initialization. Import cycles, missing files, and private access produce diagnostics.</p></section>
+<p><code>gloinc --jit main.gloin</code> exits with status 42; <code>gloinc main.gloin</code> writes <code>a.out</code>. <code>@name</code> loads <code>name.gloin</code> from the standard library directory. Relative imports resolve from the importing source file. <code>import "./foo";</code> loads <code>foo.gloin</code> when there is no <code>foo/</code> directory; if the directory exists, it collects its immediate <code>.gloin</code> files into one <code>foo</code> namespace. Use <code>./foo.gloin</code> to choose the file when both exist. <code>import "#foo";</code> collects <code>packages/foo/*.gloin</code> beside the root source file. Directory imports need no entry file and do not download packages. A module exposes its <code>pub</code> declarations through its namespace. Only the root file supplies <code>main</code>; imports have no runtime initialization. Import cycles, missing files, duplicate declarations, and private access produce diagnostics. See the <a href="../../modules.md">module guide</a> and <a href="../../../examples/module_discovery.gloin">runnable example</a>.</p></section>
 <section id="library"><h2>Input and standard library</h2>
 <p>Standard modules use the same import and namespace rules. Output is explicit: a return value sets the exit status but does not print. <code>std.print</code> writes bytes without a newline and <code>std.println</code> adds one. <code>std.input</code> returns a status-bearing struct because EOF is a normal outcome; checked parsing returns <code>result&lt;i32&gt;</code> for invalid text or overflow. This program reads a decimal integer, adds one, and prints it. Try <code>printf '41\n' | gloinc --jit next.gloin</code>.</p>
 <pre><code>import "@std";
@@ -263,13 +264,72 @@ def main() -&gt; i32 {
 <tr><td><code>@strings</code>, <code>@status</code></td><td>Counted bytes, checked byte access/slicing, comparison, search, trimming, copies, statuses. <a href="../../strings.md">Guide</a></td></tr>
 <tr><td><code>@std</code> numeric APIs</td><td>Parsing, formatting, checked conversion. <a href="../../numbers.md">Guide</a></td></tr>
 <tr><td><code>@io</code></td><td>Streams, files, bounded reads, direct byte slice I/O, counted writes, OS errors. <a href="../../io.md">Guide</a></td></tr>
-<tr><td><code>@net</code>, <code>@http</code></td><td>Nonblocking IPv4 TCP and bounded HTTP/1.1 heads, with built-in <code>result&lt;T&gt;</code> errors. <a href="../../networking.md">Guide</a></td></tr>
-<tr><td><code>@fs</code>, <code>@process</code></td><td>Paths, metadata, mutations, arguments, environment, cwd. <a href="../../filesystem-process.md">Guide</a></td></tr>
+<tr><td><code>@net</code>, <code>@http</code>, <code>@http_client</code></td><td>Nonblocking IPv4 TCP, verified client TLS, and bounded HTTP/HTTPS exchanges, with built-in <code>result&lt;T&gt;</code> errors. <a href="../../networking.md">Guide</a></td></tr>
+<tr><td><code>@json</code></td><td>Bounded JSON events, validation, Unicode strings, and writing with built-in <code>result&lt;T&gt;</code>. <a href="../../json.md">Guide</a></td></tr>
+<tr><td><code>@fs</code>, <code>@process</code></td><td>Paths, metadata, directory iteration, mutations, arguments, environment, cwd. <a href="../../filesystem-process.md">Guide</a></td></tr>
 <tr><td><code>@math</code></td><td>Concrete numerical utilities, domain checks, rounding. <a href="../../math.md">Guide</a></td></tr>
 <tr><td><code>@time</code>, <code>@random</code></td><td>Monotonic time, checked durations, seeded SplitMix64. <a href="../../time-random.md">Guide</a></td></tr></table>
 <p>Modules live in <code>stdlib/</code> in a build and <code>share/gloinc/stdlib/</code> after installation. Arena-backed strings borrow caller-owned storage. Direct <code>io.File.read_into([u8])</code> writes into an existing mutable byte slice, and <code>write_bytes([const u8])</code> writes counted bytes without string conversion; see the packaged <code>strip_nuls.gloin</code> example. The linked guides give signatures, ownership, errors, and costs. The <a href="../../integrated-examples.md">integrated examples</a> combine modules for file processing, statistics, and simulation.</p></section>
-<section id="network"><h2>Nonblocking TCP and HTTP</h2>
-<p>The 0.1.0 candidate adds <code>@net</code> for IPv4 TCP and <code>@http</code> for bounded HTTP/1.1 request and response heads. Socket operations return built-in <code>result&lt;T&gt;</code>; inspect <code>.erroneous</code> before reading a success value. Ordinary network states stay in the success payload: a pending connection is <code>false</code>, an unavailable accept has <code>available == false</code>, a read can report <code>status.WOULD_BLOCK</code> or <code>status.END</code>, and a timed readiness wait returns zero bits. Socket copies share ownership state, so close a socket before freeing its arena.</p>
+<section id="json"><h2>Bounded JSON</h2>
+<p><code>import "@json";</code> adds a reader and writer implemented in Gloin. Both use built-in <code>result&lt;T&gt;</code> for errors, caller-owned byte storage, and an explicit nesting limit up to 64. The reader consumes a complete input string and produces structural, key, and scalar events. It checks UTF-8 and Unicode escapes while keeping number tokens exact until you request a native numeric conversion.</p>
+<h3>Read strings from a document</h3>
+<pre><code>import &quot;@json&quot;;
+import &quot;@std&quot;;
+
+def main() -&gt; i32 {
+    def made: result&lt;json.Reader&gt; = json.Reader.create(
+        &quot;{\&quot;message\&quot;:\&quot;Hello, \\u4e16\\u754c!\&quot;}&quot;, 256, 8
+    );
+    if made.erroneous { return 1; }
+    def mut reader: json.Reader = made.value;
+    def mut storage: [u8; 64] = zeroed;
+    def mut complete: bool = false;
+    while !complete {
+        def next: result&lt;json.Event&gt; = reader.next();
+        if next.erroneous {
+            std.println(next.error.message);
+            return 2;
+        }
+        def event: json.Event = next.value;
+        if event.kind == json.DONE {
+            complete = true;
+        } else if event.kind == json.STRING {
+            def decoded: result&lt;string&gt; = event.as_string(storage[..]);
+            if decoded.erroneous { return 3; }
+            std.println(decoded.value);
+        }
+    }
+    return 0;
+}</code></pre>
+<p>This prints <code>Hello, 世界!</code>. A <code>KEY</code> event precedes its value; decode keys before comparing them so escaped spellings are handled correctly. Decoded text borrows <code>storage</code> until its next modification. <code>event.raw</code> borrows the original token, and <code>event.offset</code> gives its byte position. Object and array begin/end events let you track a nested schema.</p>
+<p>Consume <code>DONE</code> to validate the whole input. Earlier events can precede a later syntax error. Use <code>json.validate(text, max_bytes, max_depth)</code> first when application changes must wait for a valid document. Duplicate keys remain separate events in input order; enforce uniqueness in the application if required.</p>
+<h3>Build a request body</h3>
+<pre><code>import &quot;@json&quot;;
+import &quot;@std&quot;;
+
+def main() -&gt; i32 {
+    def mut bytes: [u8; 128] = zeroed;
+    def made: result&lt;json.Writer&gt; = json.Writer.create(bytes[..], 4);
+    if made.erroneous { return 1; }
+    def mut writer: json.Writer = made.value;
+    def opened: result&lt;void&gt; = writer.begin_object();
+    if opened.erroneous { return 2; }
+    def key: result&lt;void&gt; = writer.key(&quot;message&quot;);
+    if key.erroneous { return 3; }
+    def value: result&lt;void&gt; = writer.string_value(&quot;Hello\nworld&quot;);
+    if value.erroneous { return 4; }
+    def closed: result&lt;void&gt; = writer.end_object();
+    if closed.erroneous { return 5; }
+    def finished: result&lt;string&gt; = writer.finish();
+    if finished.erroneous { return 6; }
+    std.println(finished.value);
+    return 0;
+}</code></pre>
+<p>The writer inserts commas, colons and escapes. It also provides arrays, <code>number(text)</code>, <code>boolean(value)</code>, and <code>null_value()</code>. Number text is validated without conversion through floating point. For a typed integer, use <code>std.to_string_&lt;width&gt;</code>, check its result, then pass the text to <code>number</code>.</p>
+<p>Only publish a successful <code>finish()</code> value. A failed operation poisons the writer and may leave partial output; create a new writer to retry. Writer copies share bytes but copy counters, so pass one owner through <code>&amp;json.Writer</code>. Reader copies advance independently over shared immutable input. No automatic object tree or struct serialization is provided.</p>
+<p>A finished writer view can be an HTTP request body with <code>Content-Type: application/json</code>. Keep its storage live until upload finishes. JSON reading requires a complete buffered body even when HTTP transport is streaming. The <a href="../../json.md">full JSON guide</a> specifies grammar, Unicode policy, limits, ownership, and exact numeric conversions. The <a href="../../../examples/json.gloin">packaged example</a> builds and reads a nested payload, including the largest <code>u64</code>.</p></section>
+<section id="network"><h2>Nonblocking TCP, client TLS, and HTTP</h2>
+<p>The 0.1.0 candidate adds <code>@net</code> for IPv4 TCP and verified client TLS, and <code>@http</code> for bounded HTTP/1.1 request and response heads. Socket operations return built-in <code>result&lt;T&gt;</code>; inspect <code>.erroneous</code> before reading a success value. Ordinary network states stay in the success payload: a pending connection is <code>false</code>, an unavailable accept has <code>available == false</code>, a read can report <code>status.WOULD_BLOCK</code> or <code>status.END</code>, and a timed readiness wait returns zero bits. Socket copies share ownership state, so close a socket before freeing its arena.</p>
 <pre><code>import "@arena";
 import "@net";
 
@@ -301,11 +361,24 @@ def main() -&gt; i32 {
     return 0;
 }</code></pre>
 <p>This sketch expects a listener on localhost:8080; its deferred cleanup closes the socket before freeing its arena. The packaged <code>network_http.gloin</code> example creates its own listener, cleans up on every path, and completes a local HTTP exchange. It is runnable with <code>gloinc --jit examples/network_http.gloin</code> or as a native executable.</p>
-<p><code>Socket.read([u8])</code> and <code>write([const u8])</code>/<code>write_text(string)</code> each make one nonblocking call. Check the returned byte count and retry after readiness; a successful write may be short. <code>strings.view_bytes(buffer[0..count])</code> borrows received bytes as counted text. Pass that view to <code>http.parse_request</code> or <code>http.parse_response</code>, append more bytes while the successful payload has <code>complete == false</code>, then use <code>header_bytes</code> to locate the body. <code>http.frame_request</code> and <code>http.frame_response</code> report when a bounded fixed-length body is complete and return its borrowed view. <code>http.format_get</code> and <code>http.format_response</code> build heads in a caller-owned arena and return <code>result&lt;string&gt;</code>. Transfer-Encoding, TLS, DNS, IPv6, UDP, and full HTTP body handling are not yet supplied. The <a href="../../networking.md">networking guide</a> gives the exact ownership, framing, and error rules.</p></section>
+<p><code>Socket.read([u8])</code> and <code>write([const u8])</code>/<code>write_text(string)</code> each make one nonblocking call. Check the returned byte count and retry after readiness; a successful write may be short. <code>strings.view_bytes(buffer[0..count])</code> borrows received bytes as counted text. Pass that view to <code>http.parse_request</code> or <code>http.parse_response</code>, append more bytes while the successful payload has <code>complete == false</code>, then use <code>header_bytes</code> to locate the body. <code>http.frame_request</code> and <code>http.frame_response</code> report when a bounded fixed-length body is complete and return its borrowed view. <code>http.format_get</code> and <code>http.format_response</code> build heads in a caller-owned arena and return <code>result&lt;string&gt;</code>. The incremental <code>http.ResponseReader</code> also decodes chunked and clean-EOF response bodies and handles HEAD, bodyless statuses, and informational responses. Chunked requests, asynchronous DNS, IPv6, and UDP remain pending. The <a href="../../networking.md">networking guide</a> gives the exact ownership, framing, and error rules.</p>
+<p><code>@http_client</code> provides a streaming <code>Exchange</code> state machine and a synchronous <code>request</code> wrapper over it. Both accept an explicit address, verified TLS settings, validated headers, caller-owned buffers, and an overall deadline. HTTP 4xx/5xx statuses are response values; transport, framing, and limit failures return <code>error</code>. Each exchange closes on completion, failure, or explicit cancellation. URL parsing, redirects, decompression, connection pooling, and unknown-length uploads remain future work. The separate <a href="../../json.md">JSON module</a> handles bounded request construction and complete buffered response bodies. See the <a href="../../http-client.md">complete client guide</a> and <a href="../../../examples/http_client.gloin">JSON POST example</a>.</p>
+<h3>Streaming several HTTP exchanges</h3>
+<p>Create each <code>Exchange</code> with a <code>StreamingRequest</code> containing a known <code>content_length</code>, four disjoint <code>Buffers</code> (<code>head</code>, <code>receive</code>, <code>send</code>, <code>body</code>), and <code>Limits</code> for request head, total response metadata/body, and timeout. The total body limit is independent of the reusable body-buffer size. Keep all buffers and the arena live until cleanup; copies of an exchange share one state.</p>
+<table><thead><tr><th><code>step(ready)</code> state</th><th>What the program does next</th></tr></thead><tbody>
+<tr><td><code>PROGRESS</code></td><td>Give other exchanges a turn, then call <code>step(0)</code> again.</td></tr>
+<tr><td><code>WAIT</code></td><td>Watch the borrowed socket with <code>net.wait_many</code>, then pass returned readiness bits to <code>step</code>.</td></tr>
+<tr><td><code>NEED_INPUT</code></td><td>Call <code>supply(bytes)</code> and advance by its accepted byte count. If input is paused, keep watching for early responses and schedule the deadline.</td></tr>
+<tr><td><code>HAVE_OUTPUT</code></td><td>Process the borrowed <code>output()</code> bytes and call <code>consume(count)</code>. Unconsumed output pauses socket I/O for this exchange.</td></tr>
+<tr><td><code>COMPLETE</code></td><td>Framing succeeded and the connection closed; inspect <code>head()</code> for status and headers.</td></tr>
+</tbody></table>
+<p>Use a zero-timeout poll while any exchange can run; otherwise wait until the nearest active deadline. Deadlines include pauses for input and output, but require the program to call <code>step</code> when they expire. A final response stops further upload bytes. <code>cancel()</code> closes resources and affects every alias; defer it before freeing the arena. Output can precede a later truncation or TLS error, so treat only <code>COMPLETE</code> as a successful response. The <a href="../../../examples/http_stream.gloin">32-connection example</a> validates large binary bodies through 1 KiB output buffers while a stalled peer remains open, then cancels it. The <a href="../../http-client.md#streaming-exchanges">streaming guide</a> explains ownership, scheduling, and exact limits. For custom transports, <code>http.ResponseDecoder</code> exposes the same framing logic with consumed/produced byte counts and no I/O.</p>
+<p>A listener can call <code>set_reuse_address(true)</code> before binding. To print an OS-assigned <code>u16</code> port, use <code>std.to_string_u16(&amp;memory, address.port)</code> and check the returned <code>result&lt;string&gt;</code>. The <a href="../../networking-roadmap.md">networking milestones</a> cover concurrent servers, DNS, outbound HTTPS, and WebSocket support.</p>
+<p><code>net.wait_many</code> watches several sockets with caller-owned output and scratch arrays; <code>Socket.shutdown_write()</code> sends an orderly TCP FIN. <code>net.resolve_ipv4</code> resolves hostnames synchronously and may block on DNS. On a connected socket, <code>start_tls_client(&amp;owner, hostname, trust_file)</code> begins a verified TLS client session. Call <code>handshake()</code> until it returns zero, waiting for the returned readiness bit between attempts; use <code>TlsClient.read</code> and <code>write</code> for encrypted bytes, then close TLS before the socket. See the <a href="../../networking.md">TLS client contract</a> for ownership and retry rules. IPv6, concurrent HTTPS servers, WebSockets, and complete Slack integrations remain unfinished.</p></section>
 <section id="limits"><h2>Support and limits</h2>
-<p>This development snapshot targets Apple Silicon macOS and Ubuntu 24.04 Linux on ARM64 and x86_64. Ubuntu ARM64 passed local core, complete-suite classification, and package acceptance; hosted x86_64 CI remains. Windows support is not planned; contributions are welcome. Cross compilation and Intel macOS are outside the validated target. Maps, enum payloads and pattern matching, packed bitfields, external packages, and concurrency remain future work. Results currently require direct checks on named bindings, and errors contain static messages only.</p>
+<p>This development snapshot targets Apple Silicon macOS and Ubuntu 24.04 Linux on ARM64 and x86_64. Ubuntu ARM64 passed local core, complete-suite classification, and package acceptance; hosted macOS and x86_64 CI passed. Windows support is not planned; contributions are welcome. Cross compilation and Intel macOS are outside the validated target. Maps, enum payloads and pattern matching, packed bitfields, external packages, and concurrency remain future work. Results currently require direct checks on named bindings, and errors contain static messages only.</p>
 <p>Native objects and executables target the current supported host. Executables do not need LLVM at runtime. The compiler and native linking step require the pinned toolchain. Objects require the static Gloin runtime at link time.</p></section>
-<section id="reference"><h2>Further reference</h2><p>The <a href="https://github.com/kubabialy/gloinc/wiki/Language-Spec">language specification</a> includes future designs; use this page for the implemented development feature boundary. The <a href="../../release-0.0.4.md">0.0.4 release guide</a> covers the latest published package, whose feature set is smaller. The <a href="../../../examples/README.md">examples guide</a> lists runnable programs, and the <a href="../../../tests/fixtures/core/README.md">acceptance matrix</a> maps features to source tests.</p></section>
+<section id="reference"><h2>Further reference</h2><p>The <a href="https://github.com/kubabialy/gloinc/wiki/Language-Spec">language specification</a> includes future designs; use this page for the implemented development feature boundary. The <a href="../../release-0.0.4.md">0.0.4 release guide</a> covers the latest published package, whose feature set is smaller. The <a href="../../../examples/README.md">examples guide</a> lists runnable programs, and the <a href="../../../tests/fixtures/core/README.md">acceptance matrix</a> maps features to source tests. Use <a href="../../gloinfmt.md">the formatter guide</a> and <a href="../../gloin-style.md">source style guide</a> when editing Gloin source.</p></section>
 </article></main><footer>Gloin development documentation · after 0.0.4</footer>
 <script>const select=document.getElementById('version');for(const version of window.gloinDocs.versions){const option=document.createElement('option');option.value=version;option.textContent=version==='development'?'Development':version;option.selected=version==='development';select.append(option)}select.addEventListener('change',()=>{location.href='../'+encodeURIComponent(select.value)+'/'})</script>
 </body></html>

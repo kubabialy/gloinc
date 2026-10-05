@@ -283,6 +283,178 @@ def pub format_u64(memory: &arena.GeneralArena, value: u64) -> FormatResult {
     };
 }
 
+// Canonical decimal for a u16, including 0 and 65535. One arena allocation
+// of six bytes including NUL; NO_MEMORY is recoverable.
+def pub format_u16(memory: &arena.GeneralArena, value: u16) -> FormatResult {
+    def bytes: *u8 = memory.try_alloc_bytes(6);
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
+    def mut length: u64 = 0;
+    def code: i32 = __std_format_u16(value, &*bytes, &length);
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
+}
+
+// Checked convenience for callers using built-in result<T>.
+def pub to_string_u16(memory: &arena.GeneralArena, value: u16) -> result<string> {
+    def formatted: FormatResult = format_u16(memory, value);
+    if formatted.status != status.OK { return error("u16 formatting failed"); }
+    return formatted.value;
+}
+
+// Canonical decimal for i8; requests 5 arena bytes including NUL.
+def pub format_i8(memory: &arena.GeneralArena, value: i8) -> FormatResult {
+    def bytes: *u8 = memory.try_alloc_bytes(5);
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
+    def mut length: u64 = 0;
+    def code: i32 = __std_format_i8(value, &*bytes, &length);
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
+}
+
+// Canonical decimal for i16; requests 7 arena bytes including NUL.
+def pub format_i16(memory: &arena.GeneralArena, value: i16) -> FormatResult {
+    def bytes: *u8 = memory.try_alloc_bytes(7);
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
+    def mut length: u64 = 0;
+    def code: i32 = __std_format_i16(value, &*bytes, &length);
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
+}
+
+// Canonical decimal for u8; requests 4 arena bytes including NUL.
+def pub format_u8(memory: &arena.GeneralArena, value: u8) -> FormatResult {
+    def bytes: *u8 = memory.try_alloc_bytes(4);
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
+    def mut length: u64 = 0;
+    def code: i32 = __std_format_u8(value, &*bytes, &length);
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
+}
+
+// Canonical decimal for u32; requests 11 arena bytes including NUL.
+def pub format_u32(memory: &arena.GeneralArena, value: u32) -> FormatResult {
+    def bytes: *u8 = memory.try_alloc_bytes(11);
+    if bytes == null {
+        return FormatResult {
+            status: status.NO_MEMORY,
+            value: ""
+        };
+    }
+    def mut length: u64 = 0;
+    def code: i32 = __std_format_u32(value, &*bytes, &length);
+    if code != status.OK {
+        return FormatResult {
+            status: code,
+            value: ""
+        };
+    }
+    return FormatResult {
+        status: status.OK,
+        value: __std_string_view(bytes, length)
+    };
+}
+
+// Checked decimal conversion; returned text borrows memory.
+def pub to_string_i8(memory: &arena.GeneralArena, value: i8) -> result<string> {
+    def formatted: FormatResult = format_i8(memory, value);
+    if formatted.status != status.OK { return error("i8 formatting failed"); }
+    return formatted.value;
+}
+
+// Checked decimal conversion; returned text borrows memory.
+def pub to_string_i16(memory: &arena.GeneralArena, value: i16) -> result<string> {
+    def formatted: FormatResult = format_i16(memory, value);
+    if formatted.status != status.OK { return error("i16 formatting failed"); }
+    return formatted.value;
+}
+
+// Checked decimal conversion; returned text borrows memory.
+def pub to_string_i32(memory: &arena.GeneralArena, value: i32) -> result<string> {
+    def formatted: FormatResult = format_i32(memory, value);
+    if formatted.status != status.OK { return error("i32 formatting failed"); }
+    return formatted.value;
+}
+
+// Checked decimal conversion; returned text borrows memory.
+def pub to_string_i64(memory: &arena.GeneralArena, value: i64) -> result<string> {
+    def formatted: FormatResult = format_i64(memory, value);
+    if formatted.status != status.OK { return error("i64 formatting failed"); }
+    return formatted.value;
+}
+
+// Checked decimal conversion; returned text borrows memory.
+def pub to_string_u8(memory: &arena.GeneralArena, value: u8) -> result<string> {
+    def formatted: FormatResult = format_u8(memory, value);
+    if formatted.status != status.OK { return error("u8 formatting failed"); }
+    return formatted.value;
+}
+
+// Checked decimal conversion; returned text borrows memory.
+def pub to_string_u32(memory: &arena.GeneralArena, value: u32) -> result<string> {
+    def formatted: FormatResult = format_u32(memory, value);
+    if formatted.status != status.OK { return error("u32 formatting failed"); }
+    return formatted.value;
+}
+
+// Checked decimal conversion; returned text borrows memory.
+def pub to_string_u64(memory: &arena.GeneralArena, value: u64) -> result<string> {
+    def formatted: FormatResult = format_u64(memory, value);
+    if formatted.status != status.OK { return error("u64 formatting failed"); }
+    return formatted.value;
+}
+
 // Example: format_f32(&memory, 1.25) -> OK/"1.25".
 // Shortest round-trip decimal, preserves -0; locale-independent.
 // Bounded O(1) byte work plus arena allocation; requests 32 bytes including NUL.

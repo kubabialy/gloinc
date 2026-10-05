@@ -300,10 +300,12 @@ Codegen declares and compiles those function bodies through the same path as
 application functions. Only library calls to `__write_stdout` receive a separate
 runtime-call marker; `print` and `println` have no special compiler handling.
 Local imports and dependencies between standard files use the same graph.
+Directory and `#name` imports discover immediate source files in sorted order,
+then combine their declarations into one checked module scope while retaining
+each file's source spans and canonical relative-import base.
 Dependencies are collected before importers; qualified constants bind to folded
 values, and codegen emits each file once. Only the root defines the executable
-entry. See [module ownership and resolution](modules.md). Package imports remain
-deferred.
+entry. See [module ownership and resolution](modules.md).
 
 ## Ordinary struct layout
 

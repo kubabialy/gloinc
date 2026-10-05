@@ -37,6 +37,81 @@ TEST_F(ModuleTest, NestedParentPathsExplicitExtensionsAndSpacesResolve) {
     expect_run(invoke({main}), 42);
 }
 
+TEST_F(ModuleTest, DirectoryImportCollectsPublicMembersWithoutEntryFile) {
+    file("def pub struct Item { def pub value: i32, }", "app/math/types.gloin");
+    file("import \"@std\"; def hidden() -> i32 { return 40; }", "app/math/helpers.gloin");
+    file("import \"@std\"; def pub answer() -> Item { return Item { value: hidden() + 2 }; }",
+         "app/math/api.gloin");
+    const auto main = file("import \"./math\"; def main() -> i32 { "
+                           "def value: math.Item = math.answer(); return value.value; }",
+                           "app/main.gloin");
+    expect_run(invoke({main}), 42);
+    expect_success(invoke({"--check", main}), "");
+    rejects(file("import \"./math\"; def main() -> i32 { return math.hidden(); }",
+                 "app/private.gloin"),
+            "private member");
+}
+
+TEST_F(ModuleTest, PackageImportUsesPackagesBesideRootSource) {
+    file("def pub answer() -> i32 { return 42; }", "app/packages/math/answer.gloin");
+    file("def pub const OFFSET: i32 = 1;", "app/packages/math/constants.gloin");
+    const auto main = file("import \"#math\"; def main() -> i32 { "
+                           "return math.answer() + math.OFFSET - 1; }", "app/main.gloin");
+    expect_run(invoke({main}), 42);
+    expect_success(invoke({"--check", main}), "");
+    file("import \"#math\"; def pub answer() -> i32 { return math.answer(); }",
+         "app/sub/worker.gloin");
+    const auto nested = file("import \"./sub/worker\"; def main() -> i32 { "
+                             "return worker.answer(); }", "app/nested.gloin");
+    expect_run(invoke({nested}), 42);
+    rejects(file("import \"#missing\"; def main() -> i32 { return 0; }",
+                 "app/missing.gloin"),
+            "Cannot load module '#missing'");
+    file("import \"#math\";", "app/packages/math/cycle.gloin");
+    rejects(main, "Import cycle:");
+}
+
+TEST_F(ModuleTest, DirectoryMembersAreSortedAndKeepTheirDiagnosticFiles) {
+    file("def pub const ANSWER: i32 = BASE + 2;", "app/numbers/b.gloin");
+    file("def const BASE: i32 = 40;", "app/numbers/a.gloin");
+    const auto main = file(
+        "import \"./numbers\"; def main() -> i32 { return numbers.ANSWER; }",
+        "app/main.gloin");
+    expect_run(invoke({main}), 42);
+    const auto bad = file("def pub wrong() -> i32 { return true; }", "app/numbers/c.gloin");
+    rejects(main, bad + ":1:");
+}
+
+TEST_F(ModuleTest, DirectoryDiscoveryPrefersDirectoryAndRejectsInvalidMembers) {
+    file("def pub answer() -> i32 { return 7; }", "app/dual.gloin");
+    file("def pub answer() -> i32 { return 42; }", "app/dual/api.gloin");
+    const auto directory_main = file(
+        "import \"./dual\"; def main() -> i32 { return dual.answer(); }",
+        "app/directory_main.gloin");
+    expect_run(invoke({directory_main}), 42);
+    const auto explicit_file = file(
+        "import \"./dual.gloin\"; def main() -> i32 { return dual.answer(); }",
+        "app/explicit.gloin");
+    expect_run(invoke({explicit_file}), 7);
+    fs::create_directory(fs::path(directory) / "app/empty");
+    rejects(file("import \"./empty\"; def main() -> i32 { return 0; }", "app/empty_main.gloin"),
+            "no .gloin files");
+    file("def pub answer() -> i32 { return 1; }", "app/repeated/a.gloin");
+    file("def pub answer() -> i32 { return 2; }", "app/repeated/b.gloin");
+    rejects(file("import \"./repeated\"; def main() -> i32 { return 0; }",
+                 "app/repeated_main.gloin"),
+            "Duplicate");
+    fs::create_directories(fs::path(directory) / "app/invalid/entry.gloin");
+    rejects(file("import \"./invalid\"; def main() -> i32 { return 0; }",
+                 "app/invalid_main.gloin"),
+            "not a regular file");
+    file("import \"../dual.gloin\";", "app/conflicting/a.gloin");
+    file("import \"../dual\";", "app/conflicting/b.gloin");
+    rejects(file("import \"./conflicting\"; def main() -> i32 { return 0; }",
+                 "app/conflicting_main.gloin"),
+            "Conflicting imports");
+}
+
 TEST_F(ModuleTest, DiamondGraphSharesNominalTypesAndEmitsEachDefinitionOnce) {
     file(R"(def pub struct Item { def pub value: i32, }
         def pub create(value: i32) -> Item { return Item { value: value }; })",
@@ -74,14 +149,14 @@ TEST_F(ModuleTest, IdenticalBasenamesKeepSeparateTypesAndLinkage) {
         file("import \"./" + dir + "/common\"; def pub answer() -> i32 { return common.answer(); }",
              dir + ".gloin");
     }
-    auto main = source("import \"./left\"; import \"./right\"; def main() -> i32 { return "
+    auto main = source("import \"./left.gloin\"; import \"./right.gloin\"; def main() -> i32 { return "
                        "left.answer() + right.answer(); }");
     expect_run(invoke({main}), 42);
     file("import \"./left/common\"; def pub make() -> common.Item { return common.Item { n: 1 }; }",
          "left.gloin");
     file("import \"./right/common\"; def pub read(value: common.Item) -> i32 { return value.n; }",
          "right.gloin");
-    rejects(source("import \"./left\"; import \"./right\"; def main() -> i32 { return "
+    rejects(source("import \"./left.gloin\"; import \"./right.gloin\"; def main() -> i32 { return "
                    "right.read(left.make()); }"),
             "type mismatch");
 }

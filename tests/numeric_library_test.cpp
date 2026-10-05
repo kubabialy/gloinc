@@ -64,6 +64,27 @@ TEST_F(NumericLibraryTest, EveryFormatterAndSignedZeroRoundTrip) {
         if !same(std.format_i32(&memory,-2147483648),"-2147483648") { return 1; }
         if !same(std.format_i64(&memory,-9223372036854775808),"-9223372036854775808") { return 2; }
         if !same(std.format_u64(&memory,18446744073709551615),"18446744073709551615") { return 3; }
+        def port: u16 = 30000;
+        def largest: u16 = 65535;
+        if !same(std.format_u16(&memory,port),"30000") ||
+        !same(std.format_u16(&memory,largest),"65535") { return 10; }
+        def small_signed: i8 = -128;
+        def signed16: i16 = -32768;
+        def unsigned8: u8 = 255;
+        def unsigned32: u32 = 4294967295;
+        if !same(std.format_i8(&memory,small_signed),"-128") { return 13; }
+        if !same(std.format_i16(&memory,signed16),"-32768") { return 18; }
+        if !same(std.format_u8(&memory,unsigned8),"255") { return 19; }
+        if !same(std.format_u32(&memory,unsigned32),"4294967295") { return 20; }
+        def port_text: result<string> = std.to_string_u16(&memory, port);
+        if port_text.erroneous { return 11; }
+        if !strings.equal(port_text.value,"30000") { return 12; }
+        def text8: result<string> = std.to_string_i8(&memory,small_signed);
+        if text8.erroneous { return 14; }
+        if !strings.equal(text8.value,"-128") { return 15; }
+        def text32: result<string> = std.to_string_u32(&memory,unsigned32);
+        if text32.erroneous { return 16; }
+        if !strings.equal(text32.value,"4294967295") { return 17; }
         if !same(std.format_f32(&memory,1.25),"1.25") || !same(std.format_f64(&memory,1.25),"1.25") { return 4; }
         if !same(std.format_f32_fixed(&memory,2.5,0),"2") || !same(std.format_f64_fixed(&memory,3.5,0),"4") { return 5; }
         if !same(std.format_f64_fixed(&memory,-0.125,2),"-0.12") { return 6; }
@@ -119,11 +140,16 @@ TEST_F(NumericLibraryTest, AllocationFailureAndInvalidPrecisionAreRecoverable) {
     std::string body;
     for (std::string call :
          {"format_i32(&memory,1)", "format_i64(&memory,1)", "format_u64(&memory,1)",
+          "format_u16(&memory,1)", "format_i8(&memory,1)", "format_i16(&memory,1)",
+          "format_u8(&memory,1)", "format_u32(&memory,1)",
           "format_f32(&memory,1.0)", "format_f64(&memory,1.0)", "format_f32_fixed(&memory,1.0,18)",
           "format_f64_fixed(&memory,1.0,18)"})
         body += "{ def r: std.FormatResult = std." + call +
                 "; if r.status != status.NO_MEMORY || !strings.is_empty(r.value) { return 1; } }";
-    body += R"(memory.free();
+    body += R"(def port: u16 = 30000;
+        def checked: result<string> = std.to_string_u16(&memory,port);
+        if !checked.erroneous { return 4; }
+        memory.free();
         if std.format_f32_fixed(&memory,1.0,19).status != status.INVALID || std.format_f64_fixed(&memory,1.0,4294967295).status != status.INVALID { return 2; }
         if std.parse_f64("1.25").value != 1.25 || std.f64_from_i64_exact(42).value != 42.0 || !strings.equal(std.format_bool(true),"true") { return 3; }
         return 0;)";
@@ -133,6 +159,8 @@ TEST_F(NumericLibraryTest, NamedConversionsDoNotEnableImplicitCastsAndSignatures
     for (const std::string body :
          {"std.parse_f64(1);", "std.parse_bool(true);", "std.format_bool(1);",
           "def n: i64 = 42; std.format_i32(&memory,n);",
+          "def n: i32 = 42; std.format_u16(&memory,n);",
+          "def n: i32 = 42; std.format_u8(&memory,n);",
           "def n: f64 = 1.0; std.format_f32(&memory,n);",
           "def p: i32 = 2; std.format_f64_fixed(&memory,1.0,p);",
           "def n: i64 = 42; def f: f64 = n;", "def n: f64 = 1.0; def f: f32 = n;",

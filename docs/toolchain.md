@@ -13,6 +13,9 @@ used macOS 15.7.9 arm64, AppleClang 17.0.0, CMake 4.4.3, Ninja 1.13.2, and the
 same LLVM/MLIR release. The project requires CMake 3.28 or newer and uses C++23.
 The 0.1.0 candidate has also been built locally on Ubuntu 24.04 ARM64 with
 LLVM/MLIR 21.1.8. Linux x86_64 CI acceptance is required before publication.
+The networking runtime additionally requires OpenSSL 3 development headers and
+libraries. Install `openssl@3` with Homebrew or `openssl libssl-dev` on Ubuntu.
+The compiler and TLS-enabled native executables need OpenSSL runtime libraries.
 
 `bash scripts/install-llvm.sh` reuses this release or installs the historical
 [Homebrew formula](https://github.com/Homebrew/homebrew-core/blob/67ebbe50b3d4f240f8c34f998edac9a2898cba86/Formula/l/llvm.rb)
@@ -39,7 +42,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j 2
 ```
 
-Install CMake 3.28+, Ninja, a C++23 compiler, and Python 3 first. An official
+Install CMake 3.28+, Ninja, a C++23 compiler, Python 3, `openssl`, and
+`libssl-dev` first. An official
 LLVM 21.1.6 Linux binary archive is insufficient for this compiler's shared
 `MLIR`, `LLVM`, and `MLIRExecutionEngineShared` target requirements. The Linux
 package from apt.llvm.org provides those targets. A downloaded Gloin compiler

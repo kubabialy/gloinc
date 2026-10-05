@@ -1,0 +1,172 @@
+// Gloin source formatter. Explicit files print to stdout; --check accepts trees.
+import "./format";
+import "@arena";
+import "@fs";
+import "@io";
+import "@process";
+import "@status";
+import "@strings";
+import "@vector";
+
+def struct Counts {
+    def mut changed: i32,
+}
+
+def report(message: string) -> void {
+    def mut output: io.Stream = io.stderr();
+    output.write_line(message);
+}
+
+def close_file(file: &io.File) -> void {
+    if file.is_open() { file.close(); }
+}
+
+def close_directory(directory: &fs.Directory) -> void {
+    if directory.is_open() { directory.close(); }
+}
+
+def read_source(memory: &arena.GeneralArena, path: string) -> result<string> {
+    def opened: io.FileResult = io.File.open_read(memory, path);
+    if opened.status != status.OK { return error("cannot open source file"); }
+    def mut file: io.File = opened.value;
+    defer close_file(&file);
+    def read: io.ReadResult = file.read_all(memory, 8388608);
+    if read.status != status.OK { return error("cannot read source file or it exceeds 8 MiB"); }
+    def closed: io.IoResult = file.close();
+    if closed.status != status.OK { return error("cannot close source file"); }
+    return read.value;
+}
+
+def format_file(path: string, changes: &Counts, print_text: bool) -> result<void> {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+    def read: result<string> = read_source(&memory, path);
+    if read.erroneous { return read.error; }
+    def formatted: result<string> = format.format_text(&memory, read.value);
+    if formatted.erroneous { return formatted.error; }
+    if print_text {
+        def mut output: io.Stream = io.stdout();
+        def written: io.WriteResult = output.write_all(formatted.value);
+        if written.status != status.OK { return error("cannot write formatted source"); }
+        if output.flush().status != status.OK { return error("cannot flush formatted source"); }
+    } else if !strings.equal(read.value, formatted.value) {
+        def mut output: io.Stream = io.stdout();
+        def written: io.WriteResult = output.write_line(path);
+        if written.status != status.OK { return error("cannot print changed path"); }
+        if output.flush().status != status.OK { return error("cannot flush changed path"); }
+        changes.changed = changes.changed + 1;
+    }
+    return;
+}
+
+def skip_directory(name: string) -> bool {
+    return strings.equal(name, ".git") || strings.equal(name, ".idea") ||
+        strings.equal(name, "node_modules") || strings.equal(name, ".cache") ||
+        strings.equal(name, "build") || strings.starts_with(name, "build-");
+}
+
+def sort_names(names: &vector.Vector<string>) -> void {
+    for def mut index: i64 = 1; index < names.len(); index = index + 1 {
+        def mut cursor: i64 = index;
+        def mut swapping: bool = true;
+        while cursor > 0 && swapping {
+            def left: *string = names.get_mut(cursor - 1);
+            def right: *string = names.get_mut(cursor);
+            if strings.compare(*left, *right) > 0 {
+                def old: string = *left;
+                *left = *right;
+                *right = old;
+                cursor = cursor - 1;
+            } else {
+                swapping = false;
+            }
+        }
+    }
+}
+
+def visit_path(path: string, changes: &Counts, explicit: bool) -> result<void> {
+    def metadata: fs.MetadataResult = fs.metadata(path);
+    if metadata.status != status.OK { return error("cannot inspect input path"); }
+    if metadata.kind == fs.FILE {
+        if explicit || strings.ends_with(path, ".gloin") {
+            def checked: result<void> = format_file(path, changes, false);
+            if checked.erroneous { return checked.error; }
+        }
+        return;
+    }
+    if metadata.kind != fs.DIRECTORY {
+        if explicit { return error("input is not a regular file or directory"); }
+        return;
+    }
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+    def opened: fs.DirectoryResult = fs.Directory.open(&owner, path);
+    if opened.status != status.OK { return error("cannot open input directory"); }
+    def mut directory: fs.Directory = opened.value;
+    defer close_directory(&directory);
+    def mut names: vector.Vector<string> = vector.Vector<string>.empty(&owner, 0);
+    def mut scanning: bool = true;
+    while scanning {
+        scratch.reset();
+        def entry: fs.DirectoryEntryResult = directory.next(&scratch);
+        if entry.status == status.END {
+            scanning = false;
+        } else if entry.status != status.OK {
+            return error("cannot read input directory");
+        } else if !skip_directory(entry.name) {
+            def copied: strings.StringResult = strings.copy(&owner, entry.name);
+            if copied.status != status.OK || !names.push(copied.value) {
+                return error("cannot retain directory entry name");
+            }
+        }
+    }
+    def closed: fs.FsResult = directory.close();
+    if closed.status != status.OK { return error("cannot close input directory"); }
+    sort_names(&names);
+    for def mut index: i64 = 0; index < names.len(); index = index + 1 {
+        scratch.reset();
+        def name: *string = names.get_mut(index);
+        def child: fs.PathResult = fs.join(&scratch, path, *name, 65536);
+        if child.status != status.OK { return error("input path exceeds 65536 bytes"); }
+        def visited: result<void> = visit_path(child.value, changes, false);
+        if visited.erroneous { return visited.error; }
+    }
+    return;
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def count: u64 = process.arg_count();
+    if count < 2 {
+        report("usage: gloinfmt FILE | gloinfmt --check [PATH ...]");
+        return 2;
+    }
+    def first: process.TextResult = process.arg(&owner, 1);
+    if first.status != status.OK { return 2; }
+    def mut changes: Counts = Counts { changed: 0 };
+    if strings.equal(first.value, "--check") {
+        if count == 2 {
+            def checked: result<void> = visit_path(".", &changes, true);
+            if checked.erroneous { report(checked.error.message); return 2; }
+        } else {
+            for def mut index: u64 = 2; index < count; index = index + 1 {
+                def path: process.TextResult = process.arg(&owner, index);
+                if path.status != status.OK { return 2; }
+                def checked: result<void> = visit_path(path.value, &changes, true);
+                if checked.erroneous { report(checked.error.message); return 2; }
+            }
+        }
+        if changes.changed > 0 { return 1; }
+        return 0;
+    }
+    if count != 2 {
+        report("usage: gloinfmt FILE | gloinfmt --check [PATH ...]");
+        return 2;
+    }
+    def printed: result<void> = format_file(first.value, &changes, true);
+    if printed.erroneous { report(printed.error.message); return 2; }
+    return 0;
+}

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -189,4 +190,49 @@ extern "C" int32_t gloin_fs_rename_replace(const char *from, uint64_t from_size,
         return GLOIN_STD_NO_MEMORY;
     errno = 0;
     return std::rename(source.get(), destination.get()) ? failure(errno, os_error) : GLOIN_STD_OK;
+}
+extern "C" int32_t gloin_fs_dir_open(const char *path, uint64_t size, void **handle,
+                                     int32_t *os_error) {
+    *handle = nullptr;
+    *os_error = 0;
+    if (!valid_path(path, size))
+        return GLOIN_STD_INVALID;
+    auto name = terminated(path, size);
+    if (!name)
+        return GLOIN_STD_NO_MEMORY;
+    errno = 0;
+    auto *directory = opendir(name.get());
+    if (!directory)
+        return failure(errno, os_error);
+    *handle = directory;
+    return GLOIN_STD_OK;
+}
+extern "C" const char *gloin_fs_dir_next(void *handle, uint64_t *length, int32_t *status,
+                                           int32_t *os_error) {
+    *length = 0;
+    *status = GLOIN_STD_INVALID;
+    *os_error = 0;
+    if (!handle)
+        return nullptr;
+    while (true) {
+        errno = 0;
+        auto *entry = readdir(static_cast<DIR *>(handle));
+        if (!entry) {
+            *status = errno ? failure(errno, os_error) : GLOIN_STD_EOF;
+            return nullptr;
+        }
+        if (std::strcmp(entry->d_name, ".") == 0 ||
+            std::strcmp(entry->d_name, "..") == 0)
+            continue;
+        *length = std::strlen(entry->d_name);
+        *status = GLOIN_STD_OK;
+        return entry->d_name;
+    }
+}
+extern "C" int32_t gloin_fs_dir_close(void *handle, int32_t *os_error) {
+    *os_error = 0;
+    if (!handle)
+        return GLOIN_STD_INVALID;
+    errno = 0;
+    return closedir(static_cast<DIR *>(handle)) ? failure(errno, os_error) : GLOIN_STD_OK;
 }

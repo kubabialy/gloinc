@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <set>
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -140,6 +141,41 @@ TEST_F(ContextRuntimeTest, PermissionDeniedIsNotAbsence) {
     EXPECT_EQ(gloin_fs_metadata(path.data(), path.size(), &kind, &size, &error),
               GLOIN_STD_NOT_FOUND);
     EXPECT_EQ(error, ENOTDIR);
+}
+TEST_F(ContextRuntimeTest, DirectoryCursorReturnsNamesAndDistinguishesEnd) {
+    file("alpha");
+    file("é.txt");
+    ASSERT_EQ(mkdir((directory + "/sub").c_str(), 0700), 0);
+    void *handle = nullptr;
+    int32_t error = 99;
+    EXPECT_EQ(gloin_fs_dir_open("", 0, &handle, &error), GLOIN_STD_INVALID);
+    EXPECT_EQ(handle, nullptr);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(gloin_fs_dir_open(directory.data(), directory.size(), &handle, &error), GLOIN_STD_OK);
+    ASSERT_NE(handle, nullptr);
+    std::set<std::string> names;
+    for (int i = 0; i < 10; ++i) {
+        uint64_t length = 99;
+        int32_t status = 99;
+        const char *name = gloin_fs_dir_next(handle, &length, &status, &error);
+        if (status == GLOIN_STD_EOF) {
+            EXPECT_EQ(name, nullptr);
+            EXPECT_EQ(length, 0u);
+            EXPECT_EQ(error, 0);
+            break;
+        }
+        ASSERT_EQ(status, GLOIN_STD_OK);
+        ASSERT_NE(name, nullptr);
+        names.emplace(name, length);
+    }
+    EXPECT_EQ(names, (std::set<std::string>{"alpha", "é.txt", "sub"}));
+    EXPECT_EQ(gloin_fs_dir_close(handle, &error), GLOIN_STD_OK);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(gloin_fs_dir_close(nullptr, &error), GLOIN_STD_INVALID);
+    EXPECT_EQ(gloin_fs_dir_open((directory + "/missing").c_str(),
+                                directory.size() + 8, &handle, &error), GLOIN_STD_NOT_FOUND);
+    EXPECT_EQ(handle, nullptr);
+    EXPECT_EQ(error, ENOENT);
 }
 TEST_F(ContextRuntimeTest, CArgumentsAreOwnedAndNestedScopesRestoreTheirPredecessors) {
     EXPECT_EQ(gloin_process_arg_count(), 0u);

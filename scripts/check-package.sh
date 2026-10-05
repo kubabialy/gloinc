@@ -30,12 +30,21 @@ mkdir -p "$2"
 report_dir=$(cd "$2" && pwd)
 work_dir=$(mktemp -d "$report_dir/work.XXXXXX")
 cmake --install "$build_dir" --prefix "$work_dir/install prefix"
+[[ -x "$work_dir/install prefix/bin/gloinfmt" ]]
+"$work_dir/install prefix/bin/gloinfmt" --check "$work_dir/install prefix/share/gloinc/examples/hello_world.gloin"
 cmake -E env "GLOIN_TEST_CLI=$work_dir/install prefix/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$work_dir/install prefix/share/gloinc/core-fixtures" \
   "GLOIN_TEST_ARENA_RUNTIME=$work_dir/install prefix/lib/libgloin_runtime.$runtime_suffix" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
   -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/installed.xml"
+python3 "$(dirname "$0")/../tests/tls_client_smoke.py" "$work_dir/install prefix/bin/gloinc"
+python3 "$(dirname "$0")/../tests/http_client_smoke.py" "$work_dir/install prefix/bin/gloinc" \
+  --example "$work_dir/install prefix/share/gloinc/examples/http_client.gloin"
+python3 "$(dirname "$0")/../tests/http_stream_smoke.py" "$work_dir/install prefix/bin/gloinc" \
+  --example "$work_dir/install prefix/share/gloinc/examples/http_stream.gloin"
+python3 "$(dirname "$0")/../tests/json_smoke.py" "$work_dir/install prefix/bin/gloinc" \
+  --example "$work_dir/install prefix/share/gloinc/examples/json.gloin"
 
 cpack --config "$build_dir/CPackConfig.cmake" -B "$work_dir/packages"
 archives=("$work_dir/packages/"*.tar.gz)
@@ -51,12 +60,22 @@ fi
 mkdir "$work_dir/extracted prefix"
 tar -xzf "$archive" -C "$work_dir/extracted prefix"
 package_root="$work_dir/extracted prefix/$archive_name"
+[[ -x "$package_root/bin/gloinfmt" ]]
+"$package_root/bin/gloinfmt" --check "$package_root/share/gloinc/examples/hello_world.gloin"
+[[ "$("$package_root/bin/gloinfmt" "$package_root/share/gloinc/examples/hello_world.gloin")" == "$(cat "$package_root/share/gloinc/examples/hello_world.gloin")" ]]
 cmake -E env "GLOIN_TEST_CLI=$package_root/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$package_root/share/gloinc/core-fixtures" \
   "GLOIN_TEST_ARENA_RUNTIME=$package_root/lib/libgloin_runtime.$runtime_suffix" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
   -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/extracted.xml"
+python3 "$(dirname "$0")/../tests/tls_client_smoke.py" "$package_root/bin/gloinc"
+python3 "$(dirname "$0")/../tests/http_client_smoke.py" "$package_root/bin/gloinc" \
+  --example "$package_root/share/gloinc/examples/http_client.gloin"
+python3 "$(dirname "$0")/../tests/http_stream_smoke.py" "$package_root/bin/gloinc" \
+  --example "$package_root/share/gloinc/examples/http_stream.gloin"
+python3 "$(dirname "$0")/../tests/json_smoke.py" "$package_root/bin/gloinc" \
+  --example "$package_root/share/gloinc/examples/json.gloin"
 program_status=0
 result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/core_counter.gloin") || program_status=$?
 [[ "$program_status" == 42 && -z "$result" ]]
@@ -66,6 +85,8 @@ result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/a
 [[ "$result" == 'arena lab: ok' ]]
 result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/module_lab.gloin")
 [[ "$result" == 'module lab: ok' ]]
+result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/module_discovery.gloin")
+[[ "$result" == 'module discovery: ok' ]]
 [[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" && -f "$package_root/include/gloin/memory_runtime.h" && -f "$package_root/include/gloin/stdlib_runtime.h" && -f "$package_root/include/gloin/io_runtime.h" && -f "$package_root/include/gloin/net_runtime.h" && -f "$package_root/include/gloin/context_runtime.h" && -f "$package_root/include/gloin/math_runtime.h" && -f "$package_root/include/gloin/time_runtime.h" && -f "$package_root/include/gloin/random_runtime.h" ]]
 [[ -f "$package_root/share/doc/gloinc/third_party/fast_float/LICENSE-MIT" && -f "$package_root/share/doc/gloinc/third_party/fast_float/README.md" ]]
 [[ -f "$package_root/share/doc/gloinc/docs/site/0.1.0/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
@@ -99,6 +120,13 @@ result_output=$("$package_root/bin/gloinc" --jit "$result_example") || result_st
 network_example="$package_root/share/gloinc/examples/network_http.gloin"
 [[ -f "$network_example" ]]
 [[ "$("$package_root/bin/gloinc" --jit "$network_example")" == 'nonblocking HTTP round trip succeeded' ]]
+directory_example="$package_root/share/gloinc/examples/directory_walk.gloin"
+[[ -f "$directory_example" ]]
+mkdir "$work_dir/scan entries"
+: > "$work_dir/scan entries/alpha.gloin"
+: > "$work_dir/scan entries/beta.gloin"
+directory_output=$("$package_root/bin/gloinc" --jit "$directory_example" -- "$work_dir/scan entries")
+[[ "$(printf '%s\n' "$directory_output" | LC_ALL=C sort)" == $'alpha.gloin\nbeta.gloin' ]]
 [[ "$("$package_root/bin/gloinc" --version)" == "gloinc 0.1.0 (LLVM/MLIR $llvm_version)" ]]
 [[ "$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/fixed_arrays.gloin")" == 'sum = 42' ]]
 "$package_root/bin/gloinc" -O2 -o "$work_dir/extracted prefix/pointer-offsets" \
@@ -136,4 +164,4 @@ if awk -v dir="$build_dir" '/^[[:space:]]/ && index($0, dir) { print; found = 1 
   exit 1
 fi
 cp "$archive" "$archive.sha256" "$report_dir/"
-echo "Installed and extracted packages passed CLI, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases."
+echo "Installed and extracted packages passed CLI, formatter, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases."

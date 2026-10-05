@@ -27,6 +27,125 @@ def pub struct MetadataResult {
     def pub size: u64,
 }
 
+// Copies of a Directory share this state; closing one invalidates all aliases.
+def struct DirectoryState {
+    def mut handle: *u8,
+}
+
+def pub struct DirectoryResult {
+    def pub status: i32,
+    def pub os_error: i32,
+    def pub value: Directory,
+}
+
+def pub struct DirectoryEntryResult {
+    def pub status: i32,
+    def pub os_error: i32,
+    def pub name: string,
+}
+
+// Explicit native directory cursor. Close before resetting or freeing owner.
+// The source arena owns only the shared metadata, not the native cursor.
+def pub struct Directory {
+    def state: *DirectoryState,
+
+    def pub static open(owner: &arena.GeneralArena, path: string) -> DirectoryResult {
+        if strings.is_empty(path) || !valid(path) {
+            return DirectoryResult {
+                status: status.INVALID,
+                os_error: 0,
+                value: Directory {
+                    state: null
+                }
+            };
+        }
+        def state: *DirectoryState = owner.try_alloc(DirectoryState {
+            handle: null
+        });
+        if state == null {
+            return DirectoryResult {
+                status: status.NO_MEMORY,
+                os_error: 0,
+                value: Directory {
+                    state: null
+                }
+            };
+        }
+        def mut handle: *u8 = null;
+        def mut failure: i32 = 0;
+        def code: i32 = __fs_dir_open(path, &handle, &failure);
+        if code != status.OK {
+            return DirectoryResult {
+                status: code,
+                os_error: failure,
+                value: Directory {
+                    state: null
+                }
+            };
+        }
+        state.handle = handle;
+        return DirectoryResult {
+            status: status.OK,
+            os_error: 0,
+            value: Directory {
+                state: state
+            }
+        };
+    }
+
+    def pub is_open(self: &const Directory) -> bool {
+        return self.state != null && self.state.handle != null;
+    }
+
+    // Names are copied into memory and survive the next iteration until its
+    // arena is reset. END and failures carry static empty text.
+    def pub next(self: &Directory, memory: &arena.GeneralArena) -> DirectoryEntryResult {
+        if !self.is_open() {
+            return DirectoryEntryResult {
+                status: status.CLOSED,
+                os_error: 0,
+                name: ""
+            };
+        }
+        def mut length: u64 = 0;
+        def mut code: i32 = 0;
+        def mut failure: i32 = 0;
+        def bytes: *u8 = __fs_dir_next(self.state.handle, &length, &code, &failure);
+        if code != status.OK {
+            return DirectoryEntryResult {
+                status: code,
+                os_error: failure,
+                name: ""
+            };
+        }
+        def copied: strings.StringResult = strings.copy(memory, __fs_string_view(bytes, length));
+        return DirectoryEntryResult {
+            status: copied.status,
+            os_error: 0,
+            name: copied.value
+        };
+    }
+
+    // A close consumes the native handle even when the OS reports an error.
+    def pub close(self: &Directory) -> FsResult {
+        if !self.is_open() {
+            return FsResult {
+                status: status.CLOSED,
+                os_error: 0
+            };
+        }
+        def handle: *u8 = self.state.handle;
+        self.state.handle = null;
+        def mut failure: i32 = 0;
+        def code: i32 = __fs_dir_close(handle, &failure);
+        return FsResult {
+            status: code,
+            os_error: failure
+        };
+    }
+
+}
+
 def valid(path: string) -> bool {
     return !strings.contains(path, "\0");
 }

@@ -1,0 +1,93 @@
+// Start a local HTTP listener on 8080, then run this program. For a TLS listener,
+// pass -- tls CA_FILE; the certificate must identify localhost.
+import "@arena";
+import "@http";
+import "@http_client";
+import "@io";
+import "@net";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+
+def const PORT: u16 = 8080;
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mut errors: io.Stream  = io.stderr();
+    def mut tls: bool          = false;
+    def mut trust_file: string = "";
+
+    if process.arg_count() == 3 {
+        def mode: process.TextResult = process.arg(&owner, 1);
+        def trust: process.TextResult = process.arg(&owner, 2);
+
+        if mode.status != status.OK || trust.status != status.OK
+            || !strings.equal(mode.value, "tls") { return 2; }
+
+        tls = true;
+        trust_file = trust.value;
+    } else if process.arg_count() != 1 { return 2; }
+
+    def port: result<string> = std.to_string_u16(&owner, PORT);
+    if port.erroneous { return 2; }
+
+    def host: strings.StringResult = strings.concat(&owner, "localhost:", port.value, 64);
+    if host.status != status.OK { return 2; }
+
+    def endpoint: http_client.Endpoint = http_client.Endpoint {
+        address: net.Address.loopback(PORT),
+        tls: tls,
+        hostname: "localhost",
+        trust_file: trust_file
+    };
+
+    def request: http_client.Request = http_client.Request {
+        method: "POST",
+        host: host.value,
+        target: "/echo",
+        body: "{\"message\":\"hello from Gloin\"}"
+    };
+
+    def headers: [http.Header; 2] = {
+        http.Header { name: "Content-Type", value: "application/json" },
+        http.Header { name: "Accept", value: "application/json" }
+    };
+
+    def mut head: [u8; 8192]  = zeroed;
+    def mut body: [u8; 65536] = zeroed;
+
+    def received: result<http.Response> = http_client.request(
+        endpoint, request, headers[..], head[..], body[..], 8192, 32768, 5000
+    );
+
+    if received.erroneous {
+        errors.write_line(received.error.message);
+        errors.flush();
+        return 1;
+    }
+
+    def response: http.Response = received.value;
+    def code: result<string> = std.to_string_i32(&owner, response.code);
+
+    if code.erroneous { return 1; }
+    std.println(code.value);
+
+    def fields: result<http.Headers> = http.headers(response.head, 8192);
+    if fields.erroneous { return 1; }
+
+    def mut iterator: http.Headers = fields.value;
+    def mut field: http.HeaderItem = iterator.next();
+
+    while field.available {
+        if http.header_name_equal(field.field.name, "Content-Type") {
+            std.println(field.field.value);
+        }
+        field = iterator.next();
+    }
+
+    std.println(response.body);
+    return 0;
+}

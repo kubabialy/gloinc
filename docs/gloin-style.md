@@ -19,6 +19,11 @@ intentionally invalid tokens; formatting changes only whitespace and layout.
   Keep related statements together.
 - Put one space after commas. Do not leave trailing whitespace. Keep adjacent
   assignments aligned only when the alignment makes a small group easier to scan.
+- For a call or function declaration that spans lines, put the opening `(` on
+  the first line. Indent continuation arguments or parameters one level beyond
+  that line, and align the closing `)` with it. Put one argument per line when
+  that makes a long list clearer; short, related arguments may stay together.
+  Avoid an empty line immediately after the opening `(`.
 - In fixed-array types, put one space after the semicolon: `[i32; 2]`. Keep a
   short initializer on one line: `{1, 2}`. Use braces for array values and
   brackets for indexing.
@@ -41,15 +46,25 @@ def node: *Column = owner.try_alloc(Column {
     index: 0,
     count: 0
 });
+
+def reply: result<void> = respond(
+    socket,
+    memory,
+    431,
+    "Request Header Fields Too Large", "request head too large\n"
+);
 ```
 
 These fragments illustrate layout; they are not a complete program.
 
 ## Applying the style
 
-Run `python3 scripts/format-gloin.py --write` from the repository root to format
-all tracked `.gloin` files, or pass paths to format selected files. Run
-`python3 scripts/format-gloin.py --check` before submitting changes. The tool
-checks that formatting preserves lexical tokens and retains the CRLF line endings
-of the dedicated acceptance fixture. Do not repair intentionally invalid fixture
-syntax while formatting it.
+Build `gloinfmt` with `cmake --build build --target gloin_formatter`. Run
+`build/gloinfmt --check .` from the repository root before submitting changes.
+Use `build/gloinfmt FILE` to print a formatted file to standard output. The
+[formatter guide](gloinfmt.md) describes its commands and limits.
+
+The formatter handles indentation, blank lines, and multiline continuations.
+It preserves token spelling, including comments and strings, but does not split
+statements or rewrap long calls. Review those choices against this guide. Keep
+intentionally invalid fixture tokens intact when formatting rejection cases.

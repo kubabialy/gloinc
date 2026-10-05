@@ -71,8 +71,13 @@ In the examples below, `memory` is a mutable `arena.GeneralArena`.
 | Call example | Output | Bytes requested from arena, including NUL |
 | --- | --- | --- |
 | `std.format_i32(&memory, -42)` | `"-42"` | 12 |
+| `std.format_i8(&memory, -128)` | `"-128"` | 5 |
+| `std.format_i16(&memory, -32768)` | `"-32768"` | 7 |
 | `std.format_i64(&memory, -9223372036854775808)` | `"-9223372036854775808"` | 21 |
+| `std.format_u8(&memory, 255)` | `"255"` | 4 |
+| `std.format_u32(&memory, 4294967295)` | `"4294967295"` | 11 |
 | `std.format_u64(&memory, 18446744073709551615)` | `"18446744073709551615"` | 21 |
+| `std.format_u16(&memory, 30000)` | `"30000"` | 6 |
 | `std.format_f32(&memory, 1.25)` | `"1.25"` | 32 |
 | `std.format_f64(&memory, 1.25)` | `"1.25"` | 32 |
 | `std.format_f32_fixed(&memory, 2.5, 0)` | `"2"` | 64 |
@@ -103,6 +108,13 @@ already traps on nonfinite results. Internal buffer overflow returns `OVERFLOW`,
 although the documented buffer sizes suffice for every supported value/precision.
 The older `to_string(&memory, i32)` still returns a plain string and traps on
 allocation failure. Choose `format_i32` when allocation failure must be recoverable.
+`std.to_string_i8`, `to_string_i16`, `to_string_i32`, `to_string_i64`,
+`to_string_u8`, `to_string_u16`, `to_string_u32`, and `to_string_u64` are checked
+convenience forms for each integer width. Each takes `(&memory, value)` and returns
+built-in `result<string>`, including an error on allocation failure. Each uses its
+corresponding canonical formatter. For example, `to_string_u16` preserves the full
+decimal values of `0`, `30000`, and `65535`. Gloin does not implicitly widen
+`u16` to `u64`, and legacy `to_string(&memory, i32)` cannot take a `u16` binding.
 
 ## Explicit conversion
 

@@ -441,7 +441,7 @@ def pub repeat(memory: &arena.GeneralArena, text: string, count: u64, max_bytes:
 // -> INVALID before other checks. Limit applies to final output, not input size.
 // O(1+n*m+output bytes), two passes, exactly output bytes allocated/zeroed.
 def pub replace_all(memory: &arena.GeneralArena, text: string, needle: string,
-replacement: string, max_bytes: u64) -> StringResult {
+    replacement: string, max_bytes: u64) -> StringResult {
     def n: u64 = byte_length(text);
     def m: u64 = byte_length(needle);
     def r: u64 = byte_length(replacement);

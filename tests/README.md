@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **965 tests**:
+The current source definitions and CTest discovery contain **982 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -50,17 +50,22 @@ The current source definitions and CTest discovery contain **965 tests**:
 | NumericRuntimeTest | 16 |
 | IoLibraryTest | 16 |
 | IoRuntimeTest | 14 |
-| NetworkLibraryTest | 3 |
-| NetRuntimeTest | 2 |
-| ContextLibraryTest | 14 |
-| ContextRuntimeTest | 9 |
+| NetworkLibraryTest | 8 |
+| NetRuntimeTest | 3 |
+| TlsClientSmoke | 1 |
+| HttpClientSmoke | 1 |
+| HttpStreamSmoke | 1 |
+| JsonSmoke | 1 |
+| GloinFormatterSmoke | 1 |
+| ContextLibraryTest | 15 |
+| ContextRuntimeTest | 10 |
 | MathLibraryTest | 12 |
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 15 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
-| ModuleTest | 25 |
+| ModuleTest | 29 |
 | OrdinaryStructTest | 14 |
 | EnumTest | 3 |
 | PointerTest | 20 |
@@ -81,7 +86,7 @@ passing on a non-null module.
 Maintained tests cover loops (SPEC-017), standard modules (SPEC-023), and local
 modules (SPEC-029). The CLI also exercises `core_counter.gloin`, `hello_world.gloin`,
 `arena_lab.gloin`, `module_lab.gloin`, `standard_library.gloin`, and
-`strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, `statistics_tool.gloin`, and `network_http.gloin`. All 32 source files under `examples/` pass `gloinc --check`.
+`strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, `statistics_tool.gloin`, `network_http.gloin`, `http_client.gloin`, `http_stream.gloin`, `json.gloin`, and `module_discovery.gloin`. All 41 `.gloin` files under `examples/` pass `gloinc --check` on macOS and Ubuntu ARM64.
 
 ## Running and inspecting tests
 
@@ -94,14 +99,39 @@ ctest --test-dir build -j 4 --output-on-failure
 ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failure
 ```
 
+`GloinFormatterSmoke.LayoutAndTraversal` runs the formatter in native and JIT
+modes, checks recursive traversal and symlink exclusions, verifies CRLF output,
+and compares token streams and repeat formatting across the source corpus. The
+repository style gate is `build/gloinfmt --check .`.
+
 Compiler CTest cases have a 30-second timeout on macOS and 120 seconds on
-Linux, where trap cases take longer under VM/CI load. No known failures are
-disabled or marked as expected successes. The latest 0.1.0 candidate parallel
-run passed **961 of 965 tests** on both macOS and Ubuntu ARM64.
-The four failures are the documented unsupported async/spawn cases. The required
-core gate passed **918 of 918 tests** on both, with no unexpected test-process crashes
-or skips. Installed and relocated candidate packages each passed 479/479
-acceptance checks.
+Linux, where trap cases take longer under VM/CI load. The HTTP compiler/API
+fixtures allow 60 seconds per compiler invocation and 150 seconds per CTest
+case on both platforms. JIT compilation of the complete module can exceed the
+ordinary ten-second harness budget under parallel load, including cold relocated
+packages. HTTP integration fixtures allow 360 seconds for the entire matrix on both
+systems. Each JIT invocation runs a complete scenario matrix to avoid repeated
+compilation; request-level deadlines (including deliberate 500 ms expiry cases)
+remain unchanged. No known failures are disabled or marked as expected
+successes. On 2026-10-05, both macOS and Ubuntu ARM64 passed **935/935** required
+core cases. Serial and four-job parallel complete suites each passed
+**978/982**, with exactly the four documented unsupported async/spawn failures
+and no skips. Installed and relocated packages on both systems each passed
+**489/489** acceptance cases, plus TLS, synchronous HTTP/HTTPS, streaming, and
+JSON fixtures. All 41 example sources type-check on both platforms. The
+complete client guide program also type-checks. The sibling streaming example's Gloin client and concurrent Gloin HTTP server
+pass together in JIT and `-O2` native modes on macOS and Ubuntu ARM64. Native
+checks also cover repeated batches and rejected requests; the entire sibling
+project passes `gloinfmt --check`.
+
+Earlier runs were interrupted by host sleep or the old Linux compiler budget.
+The latest validation also exposed macOS HTTP JIT timeouts under parallel load,
+including cold relocated packages. The fixture now uses the same bounded
+compiler allowance on both platforms. Final validation ran one platform at a
+time and passed all local gates; test discovery still contains exactly 982
+unique cases. Fresh hosted CI, including Linux x86_64 and macOS sanitizers,
+remains required before release. See the
+[validation record](../docs/next-release-draft.md#current-local-validation).
 
 ## Development features after 0.0.4
 
@@ -112,11 +142,37 @@ payloads, JIT and native output, and checked `@std`/`@strings` APIs. Raw memory
 and custom arena acceptance cases check allocation, alignment, typed placement,
 release, and rejected unsafe arguments. Direct byte-slice I/O and vector live
 views/collection methods run through compiler, runtime, and packaged examples.
-Three `NetworkLibraryTest` cases exercise local HTTP over JIT and native
-executables, strict head framing, result handling, address construction, and
-socket alias close state. Two `NetRuntimeTest` cases check nonblocking and
-close-on-exec flags, readiness, partial-I/O statuses, and invalid arguments.
-The [network guide](../docs/networking.md) states the first HTTP subset.
+Eight `NetworkLibraryTest` cases exercise local HTTP over JIT and native
+executables, exact request-head limits and injection rejection, every response
+split point, one-byte chunk decoding, malformed/truncated framing, metadata/body
+limits, built-in results, address construction, and socket alias close state.
+Streaming decoder cases vary every split with 1–3-byte reusable output buffers,
+stop at final-head/output boundaries, preserve following bytes, and enforce
+cumulative body limits.
+`HttpClientSmoke.LocalPeers` checks HTTP and verified HTTPS against local peers
+in JIT/native modes, including multi-buffer binary POSTs/responses, certificate
+rejection, deadlines despite progress, and connection cleanup. It also runs the
+packaged example with an ephemeral port. The zeroed-array acceptance case now
+checks a 64 KiB byte buffer in JIT and default native output. Three `NetRuntimeTest` cases check nonblocking and
+close-on-exec flags, readiness, partial-I/O statuses, TLS client behavior, and invalid arguments.
+`HttpStreamSmoke.LocalPeers` runs known-length uploads, early rejection,
+producer/consumer pauses, deadline expiry during both pauses, partial output
+consumption, alias cancellation, short/excess input, and truncation after body
+delivery. It also runs 32 simultaneous exchanges over HTTP and HTTPS in JIT and
+native modes; 31 bodies exceed reusable buffers and one peer remains stalled
+until cancelled. Package gates run the installed streaming example too.
+The [network guide](../docs/networking.md) and [client guide](../docs/http-client.md) state the supported HTTP subset.
+
+`JsonSmoke.CodecAndState` checks `@json` in JIT, native `-O0`, and native `-O2`
+modes. The deterministic corpus contains 142 accepted documents, 53 rejection
+cases, and 54 Unicode round trips checked against Python's independent JSON
+and UTF-8 codecs. The fixture additionally checks buffer/depth limits, grammar
+states, failure latching, duplicate-key order, reader copies, offsets, and
+numeric conversion boundaries. Package verification runs the same checks with
+installed and relocated compilers and their packaged JSON example. See the
+[JSON contract](../docs/json.md).
+The JSON matrix passed JIT/`-O0`/`-O2` with source-tree, installed, and relocated
+compilers on macOS and Ubuntu ARM64 as part of the complete local release gates.
 See the [development HTML guide](../docs/site/development/index.html) for the
 implemented language boundary and the linked API guides for exact rules.
 
@@ -178,17 +234,17 @@ participate in installed/relocated validation.
 
 ## Filesystem and process context (SPEC-030e)
 
-Fourteen `ContextLibraryTest` cases cover the lexical path matrix, exact/overflow
+Fifteen `ContextLibraryTest` cases cover the lexical path matrix, exact/overflow
 bounds, both join allocation failures, metadata/mutations, CLI forwarding and
 filename escaping, missing/empty/copied environment values, process allocation
 failures, host cwd, invocation argument restoration and rejected NUL, type/privacy
-checks, native collisions/ABIs, external execution, and the packaged tool/guide.
+checks, native collisions/ABIs, directory iteration, external execution, and the packaged tool/guide.
 The tool runs from another directory with spaced paths, missing/empty/nonempty
 labels, and malformed options that leave the filesystem untouched.
 
-Nine native `ContextRuntimeTest` cases cover regular files/directories/broken
+Ten native `ContextRuntimeTest` cases cover regular files/directories/broken
 symlinks/FIFOs, counted paths and invalid-input preservation, mkdir/unlink/rename
-semantics, permission errors, deep-copied C argument scopes, invalid/LIFO cleanup,
+semantics, directory cursors, permission errors, deep-copied C argument scopes, invalid/LIFO cleanup,
 thread isolation, raw environment bytes, exact cwd bounds, and deleted cwd.
 Both suites belong to required and sanitizer validation; compiler cases also run
 against installed and relocated packages.
@@ -289,13 +345,14 @@ also run against installed/relocated packages.
 
 ## Local modules (SPEC-029)
 
-Twenty-five `ModuleTest` cases cover source-relative and parent paths, optional
+Twenty-nine `ModuleTest` cases cover source-relative and parent paths, optional
 extensions, spaces, shared dependencies and nominal types, unique emitted symbols,
 exported constants, private declarations/fields/methods, isolated file scopes,
 imported entry names, unused invalid code, forbidden globals, constant errors,
 duplicate imports, shadowing, symlinks, cycles, depth limits, located diagnostics,
 fresh reads, standard dependencies, native primitive identity, in-memory roots,
-qualified deferred calls, invalid function values/addresses, and the module lab.
+qualified deferred calls, invalid function values/addresses, deterministic
+directory discovery, local `#name` packages, and the module lab.
 Successful cases execute through the CLI; selected cases inspect LLVM definitions
 and execute externally. Negative cases exercise every CLI compilation mode.
 The suite participates in required, sanitizer, and installed/relocated package checks.

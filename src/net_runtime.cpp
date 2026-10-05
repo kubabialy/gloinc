@@ -1,12 +1,17 @@
 #include "net_runtime.h"
 #include "stdlib_runtime.h"
 #include <arpa/inet.h>
+#include <array>
 #include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <fcntl.h>
 #include <limits>
+#include <memory>
+#include <netdb.h>
+#include <new>
 #include <poll.h>
+#include <cstring>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -65,6 +70,12 @@ int32_t gloin_net_bind(int32_t fd, uint32_t address, uint16_t port, int32_t *os_
     if (invalid(fd, os_error)) return GLOIN_STD_CLOSED;
     auto target = endpoint(address, port);
     return bind(fd, reinterpret_cast<sockaddr *>(&target), sizeof(target)) == 0
+               ? GLOIN_STD_OK : failure(os_error);
+}
+int32_t gloin_net_reuse_address(int32_t fd, int32_t enabled, int32_t *os_error) {
+    if (invalid(fd, os_error)) return GLOIN_STD_CLOSED;
+    if (enabled != 0 && enabled != 1) return GLOIN_STD_INVALID;
+    return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled)) == 0
                ? GLOIN_STD_OK : failure(os_error);
 }
 int32_t gloin_net_listen(int32_t fd, int32_t backlog, int32_t *os_error) {
@@ -133,6 +144,92 @@ int32_t gloin_net_wait(int32_t fd, int32_t events, int32_t timeout_ms, int32_t *
     if (watch.revents & POLLOUT) *ready |= 2;
     // POLLHUP/POLLERR also prompt a read/write or finish_connect; those report detail.
     if (watch.revents & (POLLHUP | POLLERR)) *ready |= events;
+    return GLOIN_STD_OK;
+}
+int32_t gloin_net_wait_many(const int32_t *fds, const int32_t *events, int32_t *ready,
+                            uint64_t count, int32_t timeout_ms, uint64_t *ready_count,
+                            int32_t *os_error) {
+    if (ready_count) *ready_count = 0;
+    if (os_error) *os_error = 0;
+    if (!fds || !events || !ready || !ready_count || !os_error || !count || timeout_ms < 0 ||
+        count > 4096 || count > static_cast<uint64_t>(std::numeric_limits<nfds_t>::max()) ||
+        count > SIZE_MAX / sizeof(pollfd))
+        return GLOIN_STD_INVALID;
+    for (uint64_t i = 0; i < count; ++i) {
+        ready[i] = 0;
+        if (fds[i] < 0) return GLOIN_STD_CLOSED;
+        if (events[i] < 1 || events[i] > 3) return GLOIN_STD_INVALID;
+        for (uint64_t earlier = 0; earlier < i; ++earlier)
+            if (fds[earlier] == fds[i]) return GLOIN_STD_INVALID;
+    }
+    std::array<pollfd, 64> inline_watches{};
+    std::unique_ptr<pollfd[]> heap_watches;
+    pollfd *watches = inline_watches.data();
+    if (count > inline_watches.size()) {
+        heap_watches.reset(new (std::nothrow) pollfd[count]);
+        if (!heap_watches) return GLOIN_STD_NO_MEMORY;
+        watches = heap_watches.get();
+    }
+    for (uint64_t i = 0; i < count; ++i)
+        watches[i] = pollfd{fds[i], static_cast<short>(((events[i] & 1) ? POLLIN : 0) |
+                                                      ((events[i] & 2) ? POLLOUT : 0)), 0};
+    int result = poll(watches, static_cast<nfds_t>(count), timeout_ms);
+    if (result < 0) return blocked(os_error);
+    if (!result) return timeout_ms ? GLOIN_STD_TIMED_OUT : GLOIN_STD_WOULD_BLOCK;
+    for (uint64_t i = 0; i < count; ++i) {
+        if (watches[i].revents & POLLNVAL) return failure(os_error, EBADF);
+        if (watches[i].revents & POLLIN) ready[i] |= 1;
+        if (watches[i].revents & POLLOUT) ready[i] |= 2;
+        if (watches[i].revents & (POLLHUP | POLLERR)) ready[i] |= events[i];
+        ready[i] &= events[i];
+        if (ready[i]) ++*ready_count;
+    }
+    return GLOIN_STD_OK;
+}
+int32_t gloin_net_shutdown_write(int32_t fd, int32_t *os_error) {
+    if (invalid(fd, os_error)) return GLOIN_STD_CLOSED;
+    return shutdown(fd, SHUT_WR) == 0 ? GLOIN_STD_OK : failure(os_error);
+}
+int32_t gloin_net_resolve_ipv4(const char *host, uint64_t host_length, uint32_t *addresses,
+                               uint64_t capacity, uint64_t *count, int32_t *os_error) {
+    if (count) *count = 0;
+    if (os_error) *os_error = 0;
+    if (!host || !addresses || !count || !os_error || host_length == 0 || host_length > 253 ||
+        capacity == 0 || std::memchr(host, 0, static_cast<size_t>(host_length)))
+        return GLOIN_STD_INVALID;
+    std::unique_ptr<char[]> name(new (std::nothrow) char[static_cast<size_t>(host_length) + 1]);
+    if (!name) return GLOIN_STD_NO_MEMORY;
+    std::memcpy(name.get(), host, static_cast<size_t>(host_length));
+    name[host_length] = '\0';
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    addrinfo *list = nullptr;
+    const int result = getaddrinfo(name.get(), nullptr, &hints, &list);
+    if (result != 0) {
+        *os_error = result == EAI_SYSTEM ? errno : result;
+        if (result == EAI_MEMORY) return GLOIN_STD_NO_MEMORY;
+        if (result == EAI_NONAME) return GLOIN_STD_NOT_FOUND;
+        return GLOIN_STD_IO_ERROR;
+    }
+    for (addrinfo *item = list; item; item = item->ai_next)
+        if (item->ai_family == AF_INET && item->ai_addr &&
+            item->ai_addrlen >= sizeof(sockaddr_in)) ++*count;
+    if (*count == 0) {
+        freeaddrinfo(list);
+        return GLOIN_STD_NOT_FOUND;
+    }
+    if (*count > capacity) {
+        freeaddrinfo(list);
+        return GLOIN_STD_TOO_LONG;
+    }
+    uint64_t index = 0;
+    for (addrinfo *item = list; item; item = item->ai_next)
+        if (item->ai_family == AF_INET && item->ai_addr &&
+            item->ai_addrlen >= sizeof(sockaddr_in))
+            addresses[index++] = ntohl(reinterpret_cast<sockaddr_in *>(item->ai_addr)->sin_addr.s_addr);
+    freeaddrinfo(list);
     return GLOIN_STD_OK;
 }
 int32_t gloin_net_recv(int32_t fd, uint8_t *bytes, uint64_t capacity, uint64_t *received,

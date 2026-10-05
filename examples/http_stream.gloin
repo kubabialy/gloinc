@@ -1,0 +1,170 @@
+// Thirty-two simultaneous downloads. /stall is cancelled once the other 31
+// finish. Start ../gloin_examples/http_stream/server.gloin first.
+import "@arena";
+import "@http";
+import "@http_client";
+import "@net";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@vector";
+
+def const PORT: u16 = 8080;
+def const COUNT: u64 = 32;
+def const BODY_BYTES: u64 = 131076;
+
+def cleanup(exchanges: &vector.Vector<http_client.Exchange>) -> void {
+    for def mut i: i64 = 0; i < exchanges.len(); i = i + 1 {
+        def cancelled: result<void> = (&*exchanges.get_mut(i)).cancel();
+        if cancelled.erroneous { std.println(cancelled.error.message); }
+    }
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mut exchanges: vector.Vector<http_client.Exchange> = vector.Vector<http_client.Exchange>.empty(&owner, 32);
+    defer cleanup(&exchanges);
+    def mut sockets: vector.Vector<net.Socket> = vector.Vector<net.Socket>.empty(&owner, 32);
+    def mut heads: [[u8; 2048]; 32] = zeroed;
+    def mut receives: [[u8; 2048]; 32] = zeroed;
+    def mut sends: [[u8; 1024]; 32] = zeroed;
+    def mut bodies: [[u8; 1024]; 32] = zeroed;
+    def mut totals: [u64; 32] = zeroed;
+    def mut done: [bool; 32] = zeroed;
+    def mut ready: [i32; 32] = zeroed;
+    def mut masks: [i32; 32] = zeroed;
+    def mut waited: [i32; 32] = zeroed;
+    def mut descriptors: [i32; 32] = zeroed;
+    def mut indices: [u64; 32] = zeroed;
+    def headers: [http.Header; 0] = {};
+
+    def mut tls: bool = false;
+    def mut trust_file: string = "";
+    if process.arg_count() == 3 {
+        def mode: process.TextResult = process.arg(&owner, 1);
+        def trust: process.TextResult = process.arg(&owner, 2);
+        if mode.status != status.OK || trust.status != status.OK
+            || !strings.equal(mode.value, "tls") { return 2; }
+        tls = true;
+        trust_file = trust.value;
+    } else if process.arg_count() != 1 { return 2; }
+
+    def port: result<string> = std.to_string_u16(&owner, PORT);
+    if port.erroneous { return 2; }
+    def host: strings.StringResult = strings.concat(&owner, "localhost:", port.value, 64);
+    if host.status != status.OK { return 2; }
+
+    def endpoint: http_client.Endpoint = http_client.Endpoint {
+        address: net.Address.loopback(PORT),
+        tls: tls,
+        hostname: "localhost",
+        trust_file: trust_file
+    };
+
+    for def mut i: u64 = 0; i < COUNT; i = i + 1 {
+        def mut target: string = "/fixed";
+        if i % 2 == 0 { target = "/chunked"; }
+        if i == 0 { target = "/stall"; }
+        def request: http_client.StreamingRequest = http_client.StreamingRequest {
+            method: "GET",
+            host: host.value,
+            target: target,
+            content_length: 0
+        };
+        def buffers: http_client.Buffers = http_client.Buffers {
+            head: heads[i][..],
+            receive: receives[i][..],
+            send: sends[i][..],
+            body: bodies[i][..]
+        };
+        def limits: http_client.Limits = http_client.Limits {
+            request_head: 2048,
+            response_metadata: 8192,
+            response_body: BODY_BYTES,
+            timeout_ms: 30000
+        };
+        def opened: result<http_client.Exchange> = http_client.Exchange.open(
+            &owner, endpoint, request, headers[..], buffers, limits
+        );
+        if opened.erroneous {
+            std.println(opened.error.message);
+            return 1;
+        }
+        def mut exchange: http_client.Exchange = opened.value;
+        if !exchanges.push(exchange) { return 1; }
+    }
+
+    def mut completed: u64 = 0;
+    while completed < COUNT - 1 {
+        if !sockets.truncate(0) { return 1; }
+
+        def mut watching: u64 = 0;
+        def mut timeout_ms: i32 = 30000;
+        def mut runnable: bool = false;
+        // One step per exchange per round. Never block if any exchange can run.
+        for def mut i: u64 = 0; i < COUNT; i = i + 1 {
+            if !done[i] {
+                def mut exchange: http_client.Exchange = exchanges.as_slice()[i];
+                def advanced: result<http_client.Progress> = exchange.step(ready[i]);
+                if advanced.erroneous {
+                    std.println(advanced.error.message);
+                    return 1;
+                }
+                def step: http_client.Progress = advanced.value;
+                ready[i] = 0;
+                if step.state == http_client.COMPLETE {
+                    def head: result<http.ResponseInfo> = exchange.head();
+                    if head.erroneous { return 1; }
+                    if i == 0 || head.value.code != 200 || totals[i] != BODY_BYTES { return 3; }
+                    done[i] = true;
+                    completed = completed + 1;
+                } else if step.state == http_client.HAVE_OUTPUT {
+                    def bytes: string = exchange.output();
+                    def count: u64 = strings.byte_length(bytes);
+                    // Incremental validation needs no full response allocation.
+                    for def mut j: u64 = 0; j < count; j = j + 1 {
+                        def expected: u8 = strings.byte_at("Gloin\0", (totals[i] + j) % 6).value;
+                        if strings.byte_at(bytes, j).value != expected { return 4; }
+                    }
+                    totals[i] = totals[i] + count;
+                    def consumed: result<void> = exchange.consume(count);
+                    if consumed.erroneous { return 1; }
+                    runnable = true;
+                } else if step.state == http_client.PROGRESS {
+                    runnable = true;
+                } else if step.state == http_client.WAIT {
+                    if !sockets.push(exchange.socket()) { return 1; }
+                    indices[watching] = i;
+                    masks[watching] = step.wait_for;
+                    watching = watching + 1;
+                    if step.timeout_ms < timeout_ms { timeout_ms = step.timeout_ms; }
+                } else { return 5; }
+            }
+        }
+        if watching > 0 {
+            if runnable || completed == COUNT - 1 { timeout_ms = 0; }
+            def polled: result<u64> = net.wait_many(sockets.as_const_slice(), masks[0..watching],
+                waited[0..watching], descriptors[0..watching], timeout_ms);
+            if polled.erroneous {
+                std.println(polled.error.message);
+                return 1;
+            }
+            for def mut i: u64 = 0; i < watching; i = i + 1 {
+                ready[indices[i]] = waited[i];
+            }
+        }
+    }
+
+    def mut stalled: http_client.Exchange = exchanges.as_slice()[0];
+    def cancelled: result<void> = stalled.cancel();
+    if cancelled.erroneous { return 1; }
+    def mut alias: http_client.Exchange = exchanges.as_slice()[0];
+    def retried: result<http_client.Progress> = alias.step(0);
+    if !retried.erroneous { return 6; }
+    if !strings.equal(retried.error.message, "HTTP exchange cancelled") { return 6; }
+    std.println("31 streamed downloads verified; stalled exchange cancelled");
+    return 0;
+}

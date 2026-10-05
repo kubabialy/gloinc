@@ -917,6 +917,29 @@ struct LowerStore : mlir::OpRewritePattern<gloin::StoreOp> {
     using OpRewritePattern::OpRewritePattern;
     mlir::LogicalResult matchAndRewrite(gloin::StoreOp op,
                                          mlir::PatternRewriter &rewriter) const override {
+        // Do not ask SelectionDAG to split large zero aggregates into thousands
+        // of scalar stores. Zeroed arrays have all-zero physical representations
+        // (including null pointers and empty counted strings) on our targets.
+        auto value = op.getValue();
+        if (mlir::isa<mlir::LLVM::LLVMArrayType>(value.getType()) &&
+            value.getDefiningOp() &&
+            mlir::isa<gloin::ZeroedArrayOp, mlir::LLVM::ZeroOp>(value.getDefiningOp())) {
+            auto target = native_target_layout();
+            if (!target) {
+                op.emitError(llvm::toString(target.takeError()));
+                return mlir::failure();
+            }
+            auto layout = measure_type_layout(value.getType(), llvm::DataLayout(target->data_layout));
+            if (!layout) {
+                op.emitError(llvm::toString(layout.takeError()));
+                return mlir::failure();
+            }
+            auto zero = rewriter.create<mlir::arith::ConstantIntOp>(op.getLoc(), 0, 8);
+            auto bytes = rewriter.create<mlir::arith::ConstantIntOp>(op.getLoc(), layout->size, 64);
+            rewriter.create<mlir::LLVM::MemsetOp>(op.getLoc(), op.getAddress(), zero, bytes, false);
+            rewriter.eraseOp(op);
+            return mlir::success();
+        }
         rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), op.getValue(), op.getAddress());
         rewriter.eraseOp(op);
         return mlir::success();

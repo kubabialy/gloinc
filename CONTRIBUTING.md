@@ -24,7 +24,8 @@ clear diagnostics. Run the relevant targeted tests and the `check-core` target
 before proposing a release change.
 
 Follow the [Gloin source style](docs/gloin-style.md) for `.gloin` files and run
-`python3 scripts/format-gloin.py --check` before submitting them.
+`build/gloinfmt --check .` before submitting them. See the
+[formatter guide](docs/gloinfmt.md) for single-file output and exit codes.
 
 ## Versioning before 1.0
 

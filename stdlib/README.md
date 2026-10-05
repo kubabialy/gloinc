@@ -14,6 +14,12 @@ HTTP/1.1 head operations in the 0.1.0 candidate. Their public APIs use built-in
 `result<T>` for failures and ordinary payloads for expected readiness/EOF
 states. See [networking](../docs/networking.md) and the
 [local example](../examples/network_http.gloin).
+`@http_client` adds bounded streaming HTTP/HTTPS exchanges with overall
+deadlines, backpressure, cancellation, early upload rejection, built-in results,
+application headers, and chunked/fixed/EOF response decoding. Its synchronous
+wrapper drives the same state machine; event loops use `Exchange` and
+`net.wait_many`. See [the client guide](../docs/http-client.md). All protocol logic is
+Gloin source and follows the normal GloinIR path.
 
 To add another standard module, place its lowercase `.gloin` file here and declare public functions
 with `def pub`. The loader maps `@name` directly to `name.gloin`; names use lowercase
@@ -135,11 +141,22 @@ without constructing strings; see [direct byte I/O](../docs/io.md#direct-byte-io
 
 SPEC-030e adds [fs.gloin](fs.gloin) and [process.gloin](process.gloin). Lexical
 paths borrow bytes or copy into caller arenas; filesystem mutations use explicit
-names and preserve OS errors. Arguments are scoped per invocation, environment
-values distinguish missing/empty, and cwd is explicitly bounded. Both modules
-import `@strings`, `@arena`, and `@status`; eight private native routines and a
-process-only descriptor primitive support their public source implementations.
+names and preserve OS errors. Directory cursors copy each entry name into a
+caller arena and require explicit close. Arguments are scoped per invocation;
+environment values distinguish missing/empty, and cwd is explicitly bounded.
+Both modules import `@strings`, `@arena`, and `@status`; private native routines and
+module-scoped descriptor primitives support their public source implementations.
 See [every API's usage, ownership, and costs](../docs/filesystem-process.md).
+
+## Bounded JSON (`@json`, 0.1.0 candidate)
+
+[json.gloin](json.gloin) provides a pull reader over complete input, validation,
+quoted-string encoding/decoding, and a structural writer over caller-owned
+buffers. Public failures use built-in `result<T>`. Unicode scalars and surrogate
+pairs are checked; number text remains exact until explicitly converted.
+The implementation uses ordinary Gloin and GloinIR with no JSON runtime ABI.
+See the [API, ownership and limits](../docs/json.md), including duplicate-key
+behavior and the distinction between JSON events and incremental network input.
 
 ## Numerical utilities (`@math`, SPEC-030f)
 

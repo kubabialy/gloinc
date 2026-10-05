@@ -1,5 +1,5 @@
-// Nonblocking IPv4 TCP. All calls are single-attempt except wait(), which has
-// an explicit millisecond timeout. See docs/networking.md for ownership and I/O.
+// Nonblocking IPv4 TCP and verified client TLS. Calls are single-attempt except
+// readiness waits, which have explicit timeouts. See docs/networking.md.
 import "@arena";
 import "@status";
 import "@strings";
@@ -28,7 +28,7 @@ def pub struct Address {
 
     // Converts four IPv4 octets into a host-order address without allocation.
     def pub static ipv4(a: u32, b: u32, c: u32, d: u32,
-    port: u16) -> result<Address> {
+        port: u16) -> result<Address> {
         if a > 255 || b > 255 || c > 255 || d > 255 {
             return error("IPv4 octet is out of range");
         }
@@ -57,9 +57,24 @@ def pub struct WriteOutcome {
     def pub count: u64,
 }
 
+// TLS operations return one readiness bit to wait for, or 0 on progress.
+def pub struct TlsReadOutcome {
+    def pub state: i32, // OK, END, or WOULD_BLOCK
+    def pub count: u64,
+    def pub wait_for: i32,
+}
+
+def pub struct TlsWriteOutcome {
+    def pub count: u64,
+    def pub wait_for: i32,
+}
+
 def struct SocketState {
     def mut descriptor: i32,
     def mut connecting: bool,
+    def mut connected: bool,
+    def mut write_shutdown: bool,
+    def mut tls_active: bool,
 }
 
 // Copies alias shared state. Close exactly once before the owner arena is reset
@@ -70,7 +85,10 @@ def pub struct Socket {
     def pub static open(owner: &arena.GeneralArena) -> result<Socket> {
         def state: *SocketState = owner.try_alloc(SocketState {
             descriptor: -1,
-            connecting: false
+            connecting: false,
+            connected: false,
+            write_shutdown: false,
+            tls_active: false
         });
         if state == null { return error("socket metadata allocation failed"); }
         def mut descriptor: i32 = -1;
@@ -97,6 +115,16 @@ def pub struct Socket {
         def mut failure: i32 = 0;
         def code: i32 = __net_bind(self.descriptor(), address.host, address.port, &failure);
         if code != status.OK { return error("TCP bind failed"); }
+        return;
+    }
+
+    // Set before bind when a server may restart on the same local address.
+    def pub set_reuse_address(self: &Socket, enabled: bool) -> result<void> {
+        def mut flag: i32 = 0;
+        if enabled { flag = 1; }
+        def mut failure: i32 = 0;
+        def code: i32 = __net_reuse_address(self.descriptor(), flag, &failure);
+        if code != status.OK { return error("TCP reuse-address option failed"); }
         return;
     }
 
@@ -140,7 +168,10 @@ def pub struct Socket {
         if code != status.OK { return error("TCP accept failed"); }
         def state: *SocketState = owner.try_alloc(SocketState {
             descriptor: -1,
-            connecting: false
+            connecting: false,
+            connected: true,
+            write_shutdown: false,
+            tls_active: false
         });
         if state == null {
             def mut close_error: i32 = 0;
@@ -164,6 +195,9 @@ def pub struct Socket {
     // this socket; POSIX does not define reuse after failed connect.
     def pub connect(self: &Socket, address: Address) -> result<bool> {
         if !self.is_open() { return error("connect on closed TCP socket"); }
+        if self.state.tls_active || self.state.connected {
+            return error("TCP socket is already connected");
+        }
         if self.state.connecting { return error("TCP connection is already pending"); }
         def mut failure: i32 = 0;
         def code: i32 = __net_connect(self.descriptor(), address.host, address.port, &failure);
@@ -172,6 +206,7 @@ def pub struct Socket {
             return false;
         }
         if code != status.OK { return error("TCP connect failed"); }
+        self.state.connected = true;
         return true;
     }
 
@@ -184,6 +219,7 @@ def pub struct Socket {
         if code == status.IN_PROGRESS { return false; }
         self.state.connecting = false;
         if code != status.OK { return error("TCP connection failed"); }
+        self.state.connected = true;
         return true;
     }
 
@@ -198,15 +234,30 @@ def pub struct Socket {
         return ready;
     }
 
+    // Sends TCP FIN after queued bytes and keeps the read half open.
+    def pub shutdown_write(self: &Socket) -> result<void> {
+        if !self.is_open() { return error("shutdown on closed TCP socket"); }
+        if self.state.tls_active { return error("TCP shutdown during TLS session"); }
+        if self.state.write_shutdown { return error("TCP write half already shut down"); }
+        def mut failure: i32 = 0;
+        def code: i32 = __net_shutdown_write(self.descriptor(), &failure);
+        if code != status.OK { return error("TCP write shutdown failed"); }
+        self.state.write_shutdown = true;
+        return;
+    }
+
     // One recv. END means peer closed cleanly; WOULD_BLOCK means retry later.
     // No allocation; the destination must stay live during this call.
     def pub read(self: &Socket, destination: [u8]) -> result<ReadOutcome> {
+        if !self.is_open() || self.state.tls_active {
+            return error("TCP read is unavailable during TLS session");
+        }
         def zero: u64 = 0;
         if destination.len == zero { return error("TCP read needs nonempty storage"); }
         def mut count: u64 = 0;
         def mut failure: i32 = 0;
         def code: i32 = __net_recv(self.descriptor(), &destination[0], destination.len,
-        &count, &failure);
+            &count, &failure);
         if code != status.OK && code != status.END && code != status.WOULD_BLOCK {
             return error("TCP read failed");
         }
@@ -219,6 +270,8 @@ def pub struct Socket {
     // One send; count can be short. The caller advances and retries.
     def pub write(self: &Socket, bytes: [const u8]) -> result<WriteOutcome> {
         if !self.is_open() { return error("write on closed TCP socket"); }
+        if self.state.tls_active { return error("TCP write during TLS session"); }
+        if self.state.write_shutdown { return error("write after TCP shutdown"); }
         def zero: u64 = 0;
         if bytes.len == zero {
             return WriteOutcome {
@@ -229,7 +282,7 @@ def pub struct Socket {
         def mut count: u64 = 0;
         def mut failure: i32 = 0;
         def code: i32 = __net_send(self.descriptor(), &bytes[0], bytes.len,
-        &count, &failure);
+            &count, &failure);
         if code == status.WOULD_BLOCK {
             return WriteOutcome {
                 would_block: true,
@@ -246,6 +299,8 @@ def pub struct Socket {
     // Send a borrowed text byte sequence, including embedded NUL. No copy.
     def pub write_text(self: &Socket, text: string) -> result<WriteOutcome> {
         if !self.is_open() { return error("write on closed TCP socket"); }
+        if self.state.tls_active { return error("TCP text write during TLS session"); }
+        if self.state.write_shutdown { return error("write after TCP shutdown"); }
         if strings.is_empty(text) {
             return WriteOutcome {
                 would_block: false,
@@ -268,9 +323,38 @@ def pub struct Socket {
         };
     }
 
+    // Start verified client TLS on a connected socket. Empty trust_file uses
+    // system trust; a path to a PEM CA file supports private test/deploy CAs.
+    // The host must match the certificate, including when it is an IP address.
+    def pub start_tls_client(self: &Socket, owner: &arena.GeneralArena,
+        hostname: string, trust_file: string) -> result<TlsClient> {
+        if !self.is_open() || !self.state.connected || self.state.connecting ||
+            self.state.write_shutdown ||
+            self.state.tls_active {
+            return error("TLS requires an idle connected TCP socket");
+        }
+        def state: *TlsClientState = owner.try_alloc(TlsClientState {
+            native: null,
+            socket: self.state,
+            ready: false
+        });
+        if state == null { return error("TLS metadata allocation failed"); }
+        def mut native: *u8 = null;
+        def mut detail: i32 = 0;
+        def code: i32 = __net_tls_create(self.descriptor(), hostname, trust_file,
+            &native, &detail);
+        if code != status.OK { return error("TLS client setup failed"); }
+        state.native = native;
+        self.state.tls_active = true;
+        return TlsClient {
+            state: state
+        };
+    }
+
     // Invalidates every alias before closing. A failed close still consumes it.
     def pub close(self: &Socket) -> result<void> {
         if !self.is_open() { return error("TCP socket already closed"); }
+        if self.state.tls_active { return error("close TLS session before TCP socket"); }
         def descriptor: i32 = self.state.descriptor;
         self.state.descriptor = -1;
         def mut failure: i32 = 0;
@@ -279,4 +363,131 @@ def pub struct Socket {
         return;
     }
 
+}
+
+def struct TlsClientState {
+    def mut native: *u8,
+    def socket: *SocketState,
+    def mut ready: bool,
+}
+
+// Copies alias one native TLS session. Close TLS before closing its Socket;
+// both must be closed before the owner arena is reset or freed.
+def pub struct TlsClient {
+    def state: *TlsClientState,
+
+    def pub handshake(self: &TlsClient) -> result<i32> {
+        if self.state == null || self.state.native == null {
+            return error("TLS session is closed");
+        }
+        def mut wait_for: i32 = 0;
+        def mut detail: i32 = 0;
+        def code: i32 = __net_tls_handshake(self.state.native, &wait_for, &detail);
+        if code == status.WOULD_BLOCK { return wait_for; }
+        if code != status.OK { return error("TLS handshake or verification failed"); }
+        self.state.ready = true;
+        return 0;
+    }
+
+    def pub read(self: &TlsClient, destination: [u8]) -> result<TlsReadOutcome> {
+        def zero: u64 = 0;
+        if self.state == null || self.state.native == null || !self.state.ready ||
+            destination.len == zero {
+            return error("TLS read requires an open session and nonempty storage");
+        }
+        def mut count: u64 = 0;
+        def mut wait_for: i32 = 0;
+        def mut detail: i32 = 0;
+        def code: i32 = __net_tls_read(self.state.native, &destination[0],
+            destination.len, &count, &wait_for, &detail);
+        if code != status.OK && code != status.END && code != status.WOULD_BLOCK {
+            return error("TLS read failed");
+        }
+        return TlsReadOutcome {
+            state: code,
+            count: count,
+            wait_for: wait_for
+        };
+    }
+
+    def pub write(self: &TlsClient, bytes: [const u8]) -> result<TlsWriteOutcome> {
+        def zero: u64 = 0;
+        if self.state == null || self.state.native == null || !self.state.ready {
+            return error("TLS write requires an open session");
+        }
+        if bytes.len == zero {
+            return TlsWriteOutcome {
+                count: 0,
+                wait_for: 0
+            };
+        }
+        def mut count: u64 = 0;
+        def mut wait_for: i32 = 0;
+        def mut detail: i32 = 0;
+        def code: i32 = __net_tls_write(self.state.native, &bytes[0], bytes.len,
+            &count, &wait_for, &detail);
+        if code != status.OK && code != status.WOULD_BLOCK {
+            return error("TLS write failed");
+        }
+        return TlsWriteOutcome {
+            count: count,
+            wait_for: wait_for
+        };
+    }
+
+    def pub close(self: &TlsClient) -> result<void> {
+        if self.state == null || self.state.native == null {
+            return error("TLS session already closed");
+        }
+        def native: *u8 = self.state.native;
+        self.state.native = null;
+        self.state.socket.tls_active = false;
+        def code: i32 = __net_tls_close(native);
+        if code != status.OK { return error("TLS cleanup failed"); }
+        return;
+    }
+
+}
+
+// Wait once for several sockets. All four slices have equal, nonzero length.
+// `descriptors` is caller-owned scratch, `ready` receives READABLE/WRITABLE bits.
+// A zero result is a timeout or an interrupted wait; retry with a deadline.
+def pub wait_many(sockets: [const Socket], requested: [const i32], ready: [i32],
+    descriptors: [i32], timeout_ms: i32) -> result<u64> {
+    def zero: u64 = 0;
+    if sockets.len == zero || sockets.len != requested.len || sockets.len != ready.len ||
+        sockets.len != descriptors.len || timeout_ms < 0 {
+        return error("invalid TCP wait set");
+    }
+    for def mut index: u64 = 0; index < sockets.len; index = index + 1 {
+        if !sockets[index].is_open() { return error("closed socket in TCP wait set"); }
+        if requested[index] < 1 || requested[index] > 3 {
+            return error("invalid TCP wait event mask");
+        }
+        descriptors[index] = sockets[index].descriptor();
+        ready[index] = 0;
+    }
+    def mut count: u64 = 0;
+    def mut failure: i32 = 0;
+    def code: i32 = __net_wait_many(&descriptors[0], &requested[0], &ready[0],
+        sockets.len, timeout_ms, &count, &failure);
+    if code == status.WOULD_BLOCK || code == status.TIMED_OUT { return 0; }
+    if code != status.OK { return error("TCP multi-socket wait failed"); }
+    return count;
+}
+
+// Blocking IPv4-only name lookup. The caller owns `hosts`; entries are in
+// resolver order and can be used as Address.host. No partial output on failure.
+def pub resolve_ipv4(host: string, hosts: [u32]) -> result<u64> {
+    def zero: u64 = 0;
+    if strings.is_empty(host) || hosts.len == zero {
+        return error("IPv4 lookup needs a host and output storage");
+    }
+    def mut count: u64 = 0;
+    def mut failure: i32 = 0;
+    def code: i32 = __net_resolve_ipv4(host, &hosts[0], hosts.len, &count, &failure);
+    if code == status.TOO_LONG { return error("IPv4 lookup output is too small"); }
+    if code == status.NOT_FOUND { return error("IPv4 host was not found"); }
+    if code != status.OK { return error("IPv4 hostname lookup failed"); }
+    return count;
 }

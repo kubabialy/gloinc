@@ -6,6 +6,7 @@
 #include "support/cli_fixture.h"
 #include "support/external_runner.h"
 #include <filesystem>
+#include <fstream>
 #include <tuple>
 #ifdef __APPLE__
 #include <dlfcn.h>
@@ -167,6 +168,29 @@ TEST_F(ContextLibraryTest, FilesystemQueriesAndMutationsPreserveDefinedEffects) 
     EXPECT_FALSE(std::filesystem::exists(src));
     EXPECT_FALSE(std::filesystem::exists(dst));
     EXPECT_TRUE(std::filesystem::is_directory(child));
+}
+TEST_F(ContextLibraryTest, DirectoryIterationCopiesNamesAndCloseInvalidatesAliases) {
+    const auto entries = directory + "/entries";
+    ASSERT_TRUE(std::filesystem::create_directory(entries));
+    { std::ofstream(entries + "/dir-alpha") << "a"; }
+    { std::ofstream(entries + "/dir-beta") << "b"; }
+    const auto body = "def opened: fs.DirectoryResult = fs.Directory.open(&memory," +
+                      literal(entries) + R"();
+        if opened.status != status.OK || opened.os_error != 0 { return 1; }
+        def mut cursor: fs.Directory = opened.value;
+        def mut alias: fs.Directory = cursor;
+        def one: fs.DirectoryEntryResult = cursor.next(&memory);
+        def two: fs.DirectoryEntryResult = alias.next(&memory);
+        if one.status != status.OK || two.status != status.OK || strings.equal(one.name,two.name) { return 2; }
+        def alpha: bool = strings.equal(one.name,"dir-alpha") || strings.equal(two.name,"dir-alpha");
+        def beta: bool = strings.equal(one.name,"dir-beta") || strings.equal(two.name,"dir-beta");
+        if !alpha || !beta || cursor.next(&memory).status != status.END { return 3; }
+        if alias.close().status != status.OK || cursor.is_open() { return 4; }
+        if cursor.next(&memory).status != status.CLOSED || cursor.close().status != status.CLOSED { return 5; }
+        if fs.Directory.open(&memory,"").status != status.INVALID ||
+           fs.Directory.open(&memory,"a\0b").status != status.INVALID { return 6; }
+        return 0;)";
+    expect_run(invoke({program(body)}), 0);
 }
 TEST_F(ContextLibraryTest, CliForwardsExactBytesOnlyAfterFileDelimiter) {
     const auto file = program(R"(

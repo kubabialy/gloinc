@@ -4,6 +4,13 @@ This is an unreleased candidate for Apple Silicon macOS and Ubuntu 24.04 Linux.
 The latest published release remains 0.0.4. The candidate uses LLVM/MLIR
 21.1.6 on macOS and 21.1.8 on Linux and includes the following work since 0.0.4:
 
+- `@json` adds a bounded pull reader, complete-document validation, string
+  conversion, and a writer, all in Gloin with built-in `result<T>`. It checks
+  UTF-8/Unicode escapes and retains exact number tokens without implicit float
+  conversion. Input/output are borrowed and nesting is limited to 64 levels.
+  Duplicate keys remain ordered events; incremental input and automatic struct
+  serialization are not implemented. See [JSON](json.md) and the
+  [runnable example](../examples/json.gloin).
 - `result<T>` and `error` are built-in lowercase types. A function returning
   `result<T>` wraps either a `T` value or an `error`; callers must inspect
   `.erroneous` before reading `.value` or `.error`. `result<void>` is supported.
@@ -27,6 +34,30 @@ The latest published release remains 0.0.4. The candidate uses LLVM/MLIR
   `result<T>` for failures. The
   [local round-trip example](../examples/network_http.gloin) runs without an
   external service. See [networking](networking.md) for exact limits.
+- `@http_client` now performs one bounded HTTP/HTTPS exchange with an overall
+  timeout, explicit address/TLS settings, application headers, and caller-owned
+  response buffers. `@http` adds incremental chunked/fixed/EOF decoding,
+  informational and bodyless response handling, and header iteration. See the
+  [client guide](http-client.md) for both streaming and synchronous APIs.
+  Streaming `Exchange` objects support bounded upload/download buffers,
+  backpressure, early final responses, per-exchange deadlines, and cancellation.
+  The synchronous API drives the same Gloin state machine. A local
+  [32-connection example](../examples/http_stream.gloin) demonstrates progress
+  while one peer stalls; unknown-length request bodies remain unsupported.
+  Large `zeroed` array stores lower through GloinIR to a bulk zero operation,
+  avoiding an LLVM crash on 64 KiB byte buffers in default native builds.
+- Listeners can explicitly enable `SO_REUSEADDR` before binding. `@std`
+  provides typed integer formatters and checked `to_string_<width>` conversions,
+  including `u16` ports across their full range. The
+  [networking milestones](networking-roadmap.md) cover outbound HTTPS,
+  concurrent servers, and both Slack bot delivery modes.
+- The networking follow-up adds multi-socket readiness waits, write-side TCP
+  shutdown, a synchronous IPv4 hostname resolver, and a nonblocking verified
+  TLS client built on OpenSSL 3. Local trusted, wrong-host, and untrusted-peer
+  fixtures pass in JIT and native modes. IPv6, a reusable event
+  queue, and the broader HTTPS/WebSocket use cases remain unfinished.
+  Building and running the compiler now requires OpenSSL 3; native executables
+  using TLS require the corresponding runtime libraries.
 - Checked calls, returns, and expression values retain source types through
   GloinIR until an explicit storage-layout boundary. Result and error
   construction and access have dedicated verified dialect operations. See the
@@ -34,6 +65,17 @@ The latest published release remains 0.0.4. The candidate uses LLVM/MLIR
 - Linux native output now emits position independent objects so executables
   link with Ubuntu's default PIE linker settings. Ubuntu 24.04 has a pinned
   LLVM/MLIR installer, a Linux package format, and a separate CI acceptance job.
+- `gloinfmt` is now built from Gloin source and packaged with the compiler. It
+  formats a file to standard output or checks source trees recursively. Its
+  conservative layout rules, exit codes, and limits are in the
+  [formatter guide](gloinfmt.md).
+- Extensionless local imports now discover immediate `.gloin` files in a named
+  directory, and `#name` imports discover `packages/name/` beside the root
+  source. Public declarations form one namespace without a `mod.gloin` entry.
+  Existing file imports can be selected explicitly with `.gloin`. See
+  [modules](modules.md) and the [example](../examples/module_discovery.gloin).
+
+## Compatibility and current limits
 
 `result` and `error` are now reserved words; 0.0.4 programs using them as
 identifiers must rename those identifiers. Growable
@@ -46,25 +88,31 @@ Errors currently contain static literal messages, without source location or
 debug metadata. Results cannot yet be fields or be stored behind pointers, in
 arrays, or in slices. The compiler's high-level IR still contains standard MLIR
 operations and some LLVM operations for string/ABI preparation and defer
-bookkeeping. Maps, enum payloads and matching, package imports, and async/spawn
-remain unsupported. Windows support is not planned, though contributors may
+bookkeeping. Maps, enum payloads and matching, package downloading and version
+resolution, and async/spawn remain unsupported. Windows support is not planned, though contributors may
 work on it.
-
-Hosted Ubuntu 24.04 x86_64 CI passed its 918-case core gate, installed and
-relocated package suites at 479/479 each, and serial and parallel full-suite
-classification. Ubuntu 24.04 ARM64 passed the 918-case core gate, installed and
-relocated package suites at 479/479 each, and direct JIT/native output checks.
-Its serial and parallel complete suites each passed 961/965; only the four
-documented async/spawn cases failed.
 
 The [0.1.0 candidate HTML guide](site/0.1.0/index.html) walks through complete
 programs and links to the exact API and ownership rules. The
 [candidate release guide](release-0.1.0.md) covers installation, package
 contents, and verification. Neither a tag nor a public release has been made.
 
-Candidate validation on Apple Silicon macOS passed all 918 required core tests.
-The full parallel suite passed 961 of 965 tests; its only four failures are the
-documented unsupported async/spawn cases. Installed and relocated package
-suites each passed 479 tests. All 32 example source files check, the standalone
-Gloin programs in the candidate HTML guide check, and the formatting, HTML
-link, and package checksum checks pass.
+## Validation
+
+The 2026-10-05 local Release-build checks passed on macOS ARM64 and Ubuntu
+24.04 ARM64: **935/935 required core cases**, **489/489 installed package
+cases**, and **489/489 relocated package cases** on each platform. Serial and
+four-job parallel complete suites each passed **978/982**, with exactly the
+four documented unsupported async/spawn failures and no skips.
+
+Installed and relocated packages also passed TLS certificate verification,
+synchronous and streaming HTTP/HTTPS matrices, and JSON codec/state/limit
+checks. JSON ran in JIT, `-O0`, and `-O2`. All 41 example source files passed
+`--check` on both platforms; formatting, HTML links, checksums, native output,
+and relocation checks passed. A networking test timeout was corrected without
+changing compiler/runtime code, socket deadlines, or assertions.
+
+Fresh hosted CI, including Linux x86_64 and the macOS sanitizer gate, must
+pass on this revision before publication. The
+[current validation record](next-release-draft.md#current-local-validation)
+contains the results, test-harness correction, and earlier milestone history.

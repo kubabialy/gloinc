@@ -27,6 +27,12 @@ else()
     set(GLOIN_REQUIRED_LLVM_VERSION 21.1.6)
 endif()
 find_package(MLIR ${GLOIN_REQUIRED_LLVM_VERSION} EXACT REQUIRED CONFIG)
+if(APPLE AND NOT DEFINED OPENSSL_ROOT_DIR AND EXISTS "/opt/homebrew/opt/openssl@3")
+    set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl@3")
+elseif(APPLE AND NOT DEFINED OPENSSL_ROOT_DIR AND EXISTS "/usr/local/opt/openssl@3")
+    set(OPENSSL_ROOT_DIR "/usr/local/opt/openssl@3")
+endif()
+find_package(OpenSSL 3 REQUIRED)
 
 foreach(toolchain_target IN ITEMS MLIR LLVM MLIRExecutionEngineShared)
     if(NOT TARGET ${toolchain_target})
@@ -83,10 +89,11 @@ add_public_tablegen_target(GloinOpsIncGen)
 
 # LLVM-independent runtime. The JIT links it statically; external runners load
 # the shared variant, which is also shipped for emitted LLVM programs.
-add_library(gloin_runtime STATIC src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
-add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
+add_library(gloin_runtime STATIC src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
+add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
 foreach(runtime_target gloin_runtime gloin_runtime_shared)
     target_include_directories(${runtime_target} SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fast_float/include")
+    target_link_libraries(${runtime_target} PUBLIC OpenSSL::SSL OpenSSL::Crypto)
 endforeach()
 set_target_properties(gloin_runtime_shared PROPERTIES OUTPUT_NAME gloin_runtime)
 target_include_directories(gloin_runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -132,7 +139,9 @@ add_library(gloin_backend STATIC
 )
 add_dependencies(gloin_backend GloinDialectIncGen GloinTypesIncGen GloinOpsIncGen)
 target_compile_definitions(gloin_backend PRIVATE
-    GLOIN_BUILD_STDLIB_DIR="${CMAKE_CURRENT_BINARY_DIR}/stdlib")
+    GLOIN_BUILD_STDLIB_DIR="${CMAKE_CURRENT_BINARY_DIR}/stdlib"
+    GLOIN_OPENSSL_SSL_LIBRARY="${OPENSSL_SSL_LIBRARY}"
+    GLOIN_OPENSSL_CRYPTO_LIBRARY="${OPENSSL_CRYPTO_LIBRARY}")
 file(GLOB GLOIN_STANDARD_MODULES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/*.gloin")
 foreach(module IN LISTS GLOIN_STANDARD_MODULES)
     get_filename_component(module_name "${module}" NAME)
@@ -173,6 +182,14 @@ target_compile_definitions(gloin_backend PRIVATE
 set_source_files_properties(src/native_output.cpp PROPERTIES
     COMPILE_DEFINITIONS "GLOIN_NATIVE_SANITIZED=$<BOOL:${GLOIN_ENABLE_SANITIZERS}>")
 set(GLOIN_TARGETS gloin_frontend gloin_backend gloinc gloin_runtime gloin_runtime_shared)
+
+# Build the formatter from Gloin source with the compiler under test.
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloinfmt"
+    COMMAND "$<TARGET_FILE:gloinc>" -O2 -o "${CMAKE_CURRENT_BINARY_DIR}/gloinfmt"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/gloinfmt/main.gloin"
+    DEPENDS gloinc tools/gloinfmt/main.gloin tools/gloinfmt/format.gloin ${GLOIN_STANDARD_MODULES}
+    VERBATIM)
+add_custom_target(gloin_formatter ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/gloinfmt")
 
 include(CTest)
 if(BUILD_TESTING)
@@ -303,7 +320,11 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     else()
         set(GLOIN_COMPILER_TEST_TIMEOUT 30)
     endif()
-    gtest_discover_tests(gloinc_test PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
+    gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*"
+        PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
+    # The round-trip case can compile twice (JIT and native), then run the binary.
+    gtest_discover_tests(gloinc_test TEST_FILTER "NetworkLibraryTest.*"
+        PROPERTIES TIMEOUT 150)
 
     add_executable(gloin_arena_test tests/runtime/arena_test.cpp)
     target_link_libraries(gloin_arena_test PRIVATE gloin_runtime GTest::gtest_main)
@@ -315,13 +336,36 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     list(APPEND GLOIN_TARGETS gloin_standard_test)
     gtest_discover_tests(gloin_standard_test PROPERTIES TIMEOUT 30)
 
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME TlsClientSmoke.LocalPeers
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/tls_client_smoke.py"
+                "$<TARGET_FILE:gloinc>")
+    set_tests_properties(TlsClientSmoke.LocalPeers PROPERTIES TIMEOUT 90)
+    add_test(NAME HttpClientSmoke.LocalPeers
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/http_client_smoke.py"
+                "$<TARGET_FILE:gloinc>")
+    set_tests_properties(HttpClientSmoke.LocalPeers PROPERTIES TIMEOUT 360)
+    add_test(NAME HttpStreamSmoke.LocalPeers
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/http_stream_smoke.py"
+                "$<TARGET_FILE:gloinc>")
+    set_tests_properties(HttpStreamSmoke.LocalPeers PROPERTIES TIMEOUT 360)
+    add_test(NAME JsonSmoke.CodecAndState
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/json_smoke.py"
+                "$<TARGET_FILE:gloinc>")
+    set_tests_properties(JsonSmoke.CodecAndState PROPERTIES TIMEOUT 360)
+    add_test(NAME GloinFormatterSmoke.LayoutAndTraversal
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/gloin_formatter_smoke.py"
+                "${CMAKE_CURRENT_BINARY_DIR}/gloinfmt" "$<TARGET_FILE:gloinc>"
+                "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(GloinFormatterSmoke.LayoutAndTraversal PROPERTIES TIMEOUT 90)
+
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure
             --output-junit "${CMAKE_CURRENT_BINARY_DIR}/core.xml"
-        DEPENDS gloinc_test gloin_arena_test gloin_standard_test USES_TERMINAL VERBATIM)
+        DEPENDS gloinc_test gloin_arena_test gloin_standard_test gloin_formatter USES_TERMINAL VERBATIM)
 endif()
 
 set_target_properties(${GLOIN_TARGETS} PROPERTIES
@@ -346,6 +390,7 @@ include(GNUInstallDirs)
 set_target_properties(gloinc PROPERTIES
     INSTALL_RPATH "$<TARGET_FILE_DIR:LLVM>;$<TARGET_FILE_DIR:MLIR>;$<TARGET_FILE_DIR:MLIRExecutionEngineShared>")
 install(TARGETS gloinc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/gloinfmt" DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS gloin_runtime gloin_runtime_shared
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -362,10 +407,12 @@ install(FILES examples/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples)
 install(FILES tests/fixtures/core/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/tests/fixtures/core)
 install(FILES third_party/fast_float/LICENSE-MIT third_party/fast_float/README.md third_party/fast_float/SHA256SUMS
     DESTINATION ${CMAKE_INSTALL_DOCDIR}/third_party/fast_float)
-install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/pointer_offsets.gloin examples/arena_lab.gloin examples/custom_arena.gloin examples/result_handling.gloin examples/network_http.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/strip_nuls.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin examples/generic_structs.gloin examples/generic_functions.gloin examples/generic_methods.gloin examples/enums.gloin examples/slices.gloin examples/vector.gloin examples/fixed_vector.gloin
+install(FILES examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/pointer_offsets.gloin examples/arena_lab.gloin examples/custom_arena.gloin examples/result_handling.gloin examples/network_http.gloin examples/http_client.gloin examples/http_stream.gloin examples/json.gloin examples/directory_walk.gloin examples/module_discovery.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/strip_nuls.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin examples/generic_structs.gloin examples/generic_functions.gloin examples/generic_methods.gloin examples/enums.gloin examples/slices.gloin examples/vector.gloin examples/fixed_vector.gloin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/data DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/modules DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples
+    FILES_MATCHING PATTERN "*.gloin")
+install(DIRECTORY examples/packages DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples
     FILES_MATCHING PATTERN "*.gloin")
 install(DIRECTORY tests/fixtures/core/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/core-fixtures)
 

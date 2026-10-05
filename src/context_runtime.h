@@ -24,6 +24,12 @@ int32_t gloin_fs_remove_file(const char *path, uint64_t size, int32_t *os_error)
 // POSIX rename: replaces compatible existing targets; cross-filesystem moves fail.
 int32_t gloin_fs_rename_replace(const char *from, uint64_t from_size, const char *to,
                                 uint64_t to_size, int32_t *os_error);
+// Directory cursor. Entries are relative names, excluding "." and "..".
+// next() borrows bytes only until the following next() or close(). Order is host-defined.
+int32_t gloin_fs_dir_open(const char *path, uint64_t size, void **handle, int32_t *os_error);
+const char *gloin_fs_dir_next(void *handle, uint64_t *length, int32_t *status,
+                              int32_t *os_error);
+int32_t gloin_fs_dir_close(void *handle, int32_t *os_error);
 #ifdef __cplusplus
 }
 #endif

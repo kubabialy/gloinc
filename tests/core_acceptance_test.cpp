@@ -443,6 +443,12 @@ TEST_F(CoreAcceptanceTest, RunZeroedNestedArray) {
     auto file = source(R"(
         def main() -> i32 {
             def mut grid: [[i32; 100]; 100] = zeroed;
+            def mut bytes: [u8; 65536] = zeroed;
+            def zero: u8 = 0;
+            for def mut i: u64 = 0; i < 65536; i = i + 1 {
+                if bytes[i] != zero { return 2; }
+            }
+            bytes[65535] = 7;
             if grid[0][0] != 0 || grid[99][99] != 0 { return 1; }
             grid[99][99] = 42;
             return grid[99][99];
@@ -827,8 +833,8 @@ TEST_F(CoreAcceptanceTest, RejectBareLocalImport) {
     rejects("reject/bare_local_import.gloin", "Unsupported module path");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredPackageImport) {
-    rejects("reject/deferred_package_import.gloin", "Unsupported module path");
+TEST_F(CoreAcceptanceTest, RejectMissingPackageImport) {
+    rejects("reject/missing_package_import.gloin", "Cannot load module '#package'");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredPackedStruct) {

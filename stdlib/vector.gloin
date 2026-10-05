@@ -180,27 +180,27 @@ const N: usize> {
     }
 
     def pub len(self: &const Vector<T;
-    N>) -> i64 {
+        N>) -> i64 {
         return self.length;
     }
 
     def pub cap(self: &const Vector<T;
-    N>) -> i64 {
+        N>) -> i64 {
         return N;
     }
 
     def pub as_slice(self: &Vector<T;
-    N>) -> [T] {
+        N>) -> [T] {
         return self.data[0..self.length];
     }
 
     def pub as_const_slice(self: &const Vector<T;
-    N>) -> [const T] {
+        N>) -> [const T] {
         return self.data[0..self.length];
     }
 
     def pub push(self: &Vector<T;
-    N>, value: T) -> bool {
+        N>, value: T) -> bool {
         if self.length >= N { return false; }
         self.data[self.length] = value;
         self.length = self.length + 1;
@@ -209,7 +209,7 @@ const N: usize> {
 
     // Check all required capacity first so a full fixed vector stays unchanged.
     def pub append_from(self: &Vector<T;
-    N>, source: [const T]) -> bool {
+        N>, source: [const T]) -> bool {
         def mut remaining: i64 = N - self.length;
         def mut index: u64 = 0;
         while index < source.len {
@@ -226,33 +226,33 @@ const N: usize> {
     }
 
     def pub get(self: &const Vector<T;
-    N>, index: i64) -> *const T {
+        N>, index: i64) -> *const T {
         if index < 0 || index >= self.length { return null; }
         return &self.data[index];
     }
 
     def pub get_mut(self: &Vector<T;
-    N>, index: i64) -> *T {
+        N>, index: i64) -> *T {
         if index < 0 || index >= self.length { return null; }
         return &self.data[index];
     }
 
     def pub pop(self: &Vector<T;
-    N>) -> *T {
+        N>) -> *T {
         if self.length == 0 { return null; }
         self.length = self.length - 1;
         return &self.data[self.length];
     }
 
     def pub truncate(self: &Vector<T;
-    N>, length: i64) -> bool {
+        N>, length: i64) -> bool {
         if length < 0 || length > self.length { return false; }
         self.length = length;
         return true;
     }
 
     def pub insert(self: &Vector<T;
-    N>, index: i64, value: T) -> bool {
+        N>, index: i64, value: T) -> bool {
         if index < 0 || index > self.length || self.length >= N { return false; }
         def mut cursor: i64 = self.length;
         while cursor > index {
@@ -265,7 +265,7 @@ const N: usize> {
     }
 
     def pub remove(self: &Vector<T;
-    N>, index: i64) -> bool {
+        N>, index: i64) -> bool {
         if index < 0 || index >= self.length { return false; }
         def mut cursor: i64 = index;
         while cursor + 1 < self.length {
@@ -277,7 +277,7 @@ const N: usize> {
     }
 
     def pub clear(self: &Vector<T;
-    N>) -> void {
+        N>) -> void {
         self.length = 0;
     }
 }

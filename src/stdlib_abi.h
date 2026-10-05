@@ -16,6 +16,11 @@ enum class StandardPrimitive {
     ParseBool,
     FormatI64,
     FormatU64,
+    FormatU16,
+    FormatI8,
+    FormatI16,
+    FormatU8,
+    FormatU32,
     FormatF32,
     FormatF64,
     FormatF32Fixed,
@@ -41,20 +46,32 @@ enum class StandardPrimitive {
     IoErrorMessage,
     NetOpen,
     NetBind,
+    NetReuseAddress,
     NetListen,
     NetAccept,
     NetConnect,
     NetFinishConnect,
     NetWait,
+    NetWaitMany,
+    NetShutdownWrite,
+    NetResolveIpv4,
     NetRecv,
     NetSend,
     NetSendText,
     NetLocal,
+    NetTlsCreate,
+    NetTlsHandshake,
+    NetTlsRead,
+    NetTlsWrite,
+    NetTlsClose,
     NetClose,
     FsMetadata,
     FsMkdir,
     FsRemoveFile,
     FsRenameReplace,
+    FsDirOpen,
+    FsDirNext,
+    FsDirClose,
     ProcessCount,
     ProcessArg,
     ProcessEnv,
@@ -66,6 +83,7 @@ enum class StandardPrimitive {
     TimeMonotonic,
     RandomSplitMix64,
     ProcessStringView,
+    FsStringView,
     IoStringView,
     StringView,
     StringLength,
@@ -75,7 +93,7 @@ enum class StandardPrimitive {
     StringStore,
     StringWrite
 };
-inline constexpr std::array<std::string_view, 69> standard_primitive_names{"__std_parse_i32",
+inline constexpr std::array<std::string_view, 87> standard_primitive_names{"__std_parse_i32",
                                                                            "__std_format_i32",
                                                                            "__std_input",
                                                                            "__strings_copy",
@@ -86,6 +104,11 @@ inline constexpr std::array<std::string_view, 69> standard_primitive_names{"__st
                                                                            "__std_parse_bool",
                                                                            "__std_format_i64",
                                                                            "__std_format_u64",
+                                                                           "__std_format_u16",
+                                                                           "__std_format_i8",
+                                                                           "__std_format_i16",
+                                                                           "__std_format_u8",
+                                                                           "__std_format_u32",
                                                                            "__std_format_f32",
                                                                            "__std_format_f64",
                                                                            "__std_format_f32_fixed",
@@ -111,20 +134,32 @@ inline constexpr std::array<std::string_view, 69> standard_primitive_names{"__st
                                                                            "__io_error_message",
                                                                            "__net_open",
                                                                            "__net_bind",
+                                                                           "__net_reuse_address",
                                                                            "__net_listen",
                                                                            "__net_accept",
                                                                            "__net_connect",
                                                                            "__net_finish_connect",
                                                                            "__net_wait",
+                                                                           "__net_wait_many",
+                                                                           "__net_shutdown_write",
+                                                                           "__net_resolve_ipv4",
                                                                            "__net_recv",
                                                                            "__net_send",
                                                                            "__net_send_text",
                                                                            "__net_local",
+                                                                           "__net_tls_create",
+                                                                           "__net_tls_handshake",
+                                                                           "__net_tls_read",
+                                                                           "__net_tls_write",
+                                                                           "__net_tls_close",
                                                                            "__net_close",
                                                                            "__fs_metadata",
                                                                            "__fs_mkdir",
                                                                            "__fs_remove_file",
                                                                            "__fs_rename_replace",
+                                                                           "__fs_dir_open",
+                                                                           "__fs_dir_next",
+                                                                           "__fs_dir_close",
                                                                            "__process_arg_count",
                                                                            "__process_arg",
                                                                            "__process_env",
@@ -136,6 +171,7 @@ inline constexpr std::array<std::string_view, 69> standard_primitive_names{"__st
                                                                            "__time_monotonic",
                                                                            "__random_splitmix64",
                                                                            "__process_string_view",
+                                                                           "__fs_string_view",
                                                                            "__io_string_view",
                                                                            "__std_string_view",
                                                                            "__strings_length",
@@ -144,7 +180,7 @@ inline constexpr std::array<std::string_view, 69> standard_primitive_names{"__st
                                                                            "__strings_buffer_view",
                                                                            "__strings_store",
                                                                            "__strings_write"};
-inline constexpr std::array<std::string_view, 60> standard_runtime_names{
+inline constexpr std::array<std::string_view, 77> standard_runtime_names{
     "gloin_std_parse_i32",
     "gloin_std_format_i32",
     "gloin_std_input",
@@ -156,6 +192,11 @@ inline constexpr std::array<std::string_view, 60> standard_runtime_names{
     "gloin_std_parse_bool",
     "gloin_std_format_i64",
     "gloin_std_format_u64",
+    "gloin_std_format_u16",
+    "gloin_std_format_i8",
+    "gloin_std_format_i16",
+    "gloin_std_format_u8",
+    "gloin_std_format_u32",
     "gloin_std_format_f32",
     "gloin_std_format_f64",
     "gloin_std_format_f32_fixed",
@@ -181,20 +222,32 @@ inline constexpr std::array<std::string_view, 60> standard_runtime_names{
     "gloin_io_error_message",
     "gloin_net_open",
     "gloin_net_bind",
+    "gloin_net_reuse_address",
     "gloin_net_listen",
     "gloin_net_accept",
     "gloin_net_connect",
     "gloin_net_finish_connect",
     "gloin_net_wait",
+    "gloin_net_wait_many",
+    "gloin_net_shutdown_write",
+    "gloin_net_resolve_ipv4",
     "gloin_net_recv",
     "gloin_net_send",
     "gloin_net_send_text",
     "gloin_net_local",
+    "gloin_net_tls_create",
+    "gloin_net_tls_handshake",
+    "gloin_net_tls_read",
+    "gloin_net_tls_write",
+    "gloin_net_tls_close",
     "gloin_net_close",
     "gloin_fs_metadata",
     "gloin_fs_mkdir",
     "gloin_fs_remove_file",
     "gloin_fs_rename_replace",
+    "gloin_fs_dir_open",
+    "gloin_fs_dir_next",
+    "gloin_fs_dir_close",
     "gloin_process_arg_count",
     "gloin_process_arg",
     "gloin_process_env",
@@ -212,7 +265,8 @@ inline bool standard_primitive_allowed(StandardPrimitive kind, std::string_view 
         return module == "random";
     if (kind >= StandardPrimitive::MathUnaryF32 && kind <= StandardPrimitive::MathBinaryF64)
         return module == "math";
-    if (kind >= StandardPrimitive::FsMetadata && kind <= StandardPrimitive::FsRenameReplace)
+    if ((kind >= StandardPrimitive::FsMetadata && kind <= StandardPrimitive::FsDirClose) ||
+        kind == StandardPrimitive::FsStringView)
         return module == "fs";
     if ((kind >= StandardPrimitive::ProcessCount && kind <= StandardPrimitive::ProcessCwd) ||
         kind == StandardPrimitive::ProcessStringView)
@@ -261,6 +315,16 @@ inline std::optional<NumericPrimitiveSignature> numeric_signature(StandardPrimit
         return NumericPrimitiveSignature{NumericPrimitiveGroup::Format, "i64", "u64", false};
     case StandardPrimitive::FormatU64:
         return NumericPrimitiveSignature{NumericPrimitiveGroup::Format, "u64", "u64", false};
+    case StandardPrimitive::FormatU16:
+        return NumericPrimitiveSignature{NumericPrimitiveGroup::Format, "u16", "u64", false};
+    case StandardPrimitive::FormatI8:
+        return NumericPrimitiveSignature{NumericPrimitiveGroup::Format, "i8", "u64", false};
+    case StandardPrimitive::FormatI16:
+        return NumericPrimitiveSignature{NumericPrimitiveGroup::Format, "i16", "u64", false};
+    case StandardPrimitive::FormatU8:
+        return NumericPrimitiveSignature{NumericPrimitiveGroup::Format, "u8", "u64", false};
+    case StandardPrimitive::FormatU32:
+        return NumericPrimitiveSignature{NumericPrimitiveGroup::Format, "u32", "u64", false};
     case StandardPrimitive::FormatF32:
         return NumericPrimitiveSignature{NumericPrimitiveGroup::Format, "f32", "u64", false};
     case StandardPrimitive::FormatF64:

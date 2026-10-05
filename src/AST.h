@@ -364,7 +364,7 @@ struct SourceModule {
 
 struct ImportStatement : public Statement {
     std::string path;
-    // The loader shares each canonical source file across the acyclic graph.
+    // The loader shares each canonical file or discovered directory across the graph.
     std::string module_name;
     std::shared_ptr<SourceModule> module;
 

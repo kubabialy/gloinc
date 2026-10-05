@@ -47,9 +47,29 @@ so programs can implement their own arenas; see the runnable
 The development tree also has built-in [`result<T>` and `error`](docs/results.md)
 with explicit success/error handling. The [SPEC-034 design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented)
 predates this implementation; the current guide documents the implemented rules.
-The candidate also adds [nonblocking IPv4 TCP and bounded HTTP/1.1 heads](docs/networking.md)
+The candidate also adds [nonblocking IPv4 TCP, verified client TLS, and bounded HTTP/1.1 heads](docs/networking.md)
 through `@net` and `@http`. Their public operations use built-in `result<T>`;
 the [local round-trip example](examples/network_http.gloin) runs in JIT and native modes.
+The Gloin-written [`@http_client`](docs/http-client.md) adds bounded HTTP/HTTPS
+requests, validated application headers, chunked/fixed/EOF response decoding,
+and an overall deadline. Its streaming exchanges use reusable buffers and
+`net.wait_many`, with backpressure, early upload rejection, and cancellation.
+The synchronous convenience wrapper uses the same state machine. See the
+[client example](examples/http_client.gloin) and
+[32-connection streaming example](examples/http_stream.gloin).
+`@net` now exposes an explicit listener reuse-address option, and `@std`
+provides checked decimal conversion for every integer width, including typed
+`u16` ports without manual digit tables. The
+[networking milestones](docs/networking-roadmap.md) track asynchronous DNS,
+concurrent HTTP servers, HTTPS services, and WebSocket work. Slack is
+one integration example for these general APIs.
+The networking follow-up adds bounded multi-socket readiness waits, explicit
+write-side shutdown, a synchronous IPv4 hostname resolver, and a verified
+nonblocking TLS client. The [networking guide](docs/networking.md) gives exact
+ownership, blocking, and error limits. The TLS implementation passed 920 core
+tests on each local platform; the final linker build passed TLS smoke tests
+and installed and extracted package gates on both. Hosted x86_64 CI must rerun
+before publication.
 The [0.1.0 candidate HTML guide](docs/site/0.1.0/index.html) presents the
 current language as a whole. The [0.0.4 guide](docs/site/0.0.4/index.html)
 remains the reference for the published release. Build metadata now reports
@@ -57,15 +77,16 @@ remains the reference for the published release. Build metadata now reports
 [release notes](docs/release-notes-0.1.0.md),
 [installation guide](docs/release-0.1.0.md), and
 [scope and validation draft](docs/next-release-draft.md).
-Linux support remains a required 0.1.0 release gate. Ubuntu 24.04 ARM64 has
-passed the local core and package suites; x86_64 hosted CI passed its core,
-package, and full-suite classification gates.
+Linux support remains a required 0.1.0 release gate. The current macOS and
+Ubuntu 24.04 ARM64 tree passed local core, package, and full-suite classification
+gates. Hosted x86_64 CI passed an earlier revision and must rerun on this tree
+before publication.
 
 | Area | Verified status |
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | The development tree discovers 965 tests: 961 pass and the four documented unsupported async/spawn tests fail on macOS, Ubuntu ARM64, and Ubuntu x86_64. The required `check-core` gate passes 918/918 on all three. |
+| Full test suite | The development tree discovers 982 tests. On macOS and Ubuntu ARM64, `check-core` passed 935/935; serial and parallel complete suites each passed 978/982, with exactly four documented unsupported async/spawn failures and no skips. Installed and relocated packages each passed 489/489 acceptance cases plus TLS, HTTP/HTTPS, streaming, and JSON fixtures. See the [validation record](docs/next-release-draft.md#current-local-validation). |
 | Core acceptance | CLI-driven source cases cover `zeroed` arrays, enums, borrowed slices, and both vector forms in addition to the 0.0.3 cases. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 53 development parser tests pass: core grammar, precedence, strict annotations/delimiters, generic call/literal lookahead, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
@@ -81,12 +102,12 @@ package, and full-suite classification gates.
 | Methods | 19 tests cover instance/static calls, one explicit receiver, mutability, visibility, evaluation order, recursion, diagnostics, and external execution. |
 | Defer | 24 tests cover registration-time captures, conditional/loop registration, LIFO function-exit cleanup, early returns, traps, native allocation bookkeeping, and external execution. |
 | Arenas | `@arena` exposes `GeneralArena`: 21 compiler/API tests and 11 native runtime tests cover initialized allocation, alignment, growth, reset/free, failure, and external linking. See [the arena guide](docs/arenas.md). |
-| Local modules | 25 tests cover relative paths, shared dependencies, exported functions/types/constants, privacy, cycles, and source diagnostics. See [modules](docs/modules.md). |
+| Local modules | 29 tests cover relative files, directory and `#name` imports, shared dependencies, exports, privacy, cycles, and source diagnostics. See [modules](docs/modules.md). |
 | Standard input/conversions | 24 compiler/API tests and 15 native tests cover bounded input, decimal i32 parsing/formatting, explicit arena storage, error statuses, and external execution. See [the library guide](docs/standard-library.md). |
 | Numerical utilities | 12 compiler/API and 12 native tests cover `@math`, finite errors, signed zero, rounding, subnormals, host-state isolation, geometry/statistics, and packaged execution. See [math](docs/math.md). |
 | Timing and seeded randomness | 15 compiler/API and 13 native tests cover monotonic clocks, checked durations, scoped clock injection, SplitMix64 vectors, sampling, and packaged simulations. See [time and randomness](docs/time-random.md). |
 | Byte strings | 18 compiler/API tests cover byte bounds/search/ordering, borrowed views, arena copies, checked result alternatives, and guide examples. Two native tests cover exact/empty copies. See [usage and costs](docs/strings.md). |
-| TCP and HTTP | Three compiler/API and two native tests cover nonblocking IPv4 sockets, local HTTP/1.1 round trips, framing limits, and `result<T>` handling. See [networking](docs/networking.md). |
+| TCP and HTTP | Eight compiler/API tests, three native runtime tests, and local TLS/HTTP client fixtures cover TCP, HTTPS, incremental framing, deadlines, certificate verification, and cleanup. See [networking](docs/networking.md) and [HTTP clients](docs/http-client.md). |
 | Results and raw memory | Eight result tests cover required handling, source-typed aggregate payloads, JIT/AoT execution, and checked standard-library calls. The [result](docs/results.md) and [raw-memory](docs/raw-memory.md) guides state the current contracts and limits. |
 | Text construction | 17 tests cover borrowed cursors, bounded transformations, shared builder state, allocation failures, snapshots, and executable documentation. See [usage and costs](docs/text-construction.md). |
 | Package imports, concurrency | Incomplete: SPEC-044, SPEC-040/041. |
@@ -110,13 +131,14 @@ ready for production use. Detailed failure names and task IDs are in
 
 ## Build on Apple Silicon macOS
 
-Requirements: Xcode Command Line Tools, Homebrew, CMake 3.28+, Ninja, and the
+Requirements: Xcode Command Line Tools, Homebrew, CMake 3.28+, Ninja, OpenSSL 3,
+and the
 **exact LLVM/MLIR 21.1.6** development installation, including shared libraries
 and MLIR tools.
 
 ```sh
 xcode-select --install  # Only if Command Line Tools are not already installed.
-brew install cmake ninja
+brew install cmake ninja openssl@3
 bash scripts/install-llvm.sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
@@ -138,7 +160,7 @@ tested package revision. On ARM64 or x86_64 Ubuntu 24.04:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y cmake ninja-build g++ python3
+sudo apt-get install -y cmake ninja-build g++ python3 openssl libssl-dev
 bash scripts/install-llvm-linux.sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR=/usr/lib/llvm-21/lib/cmake/llvm \
@@ -147,8 +169,8 @@ cmake --build build -j 2
 ```
 
 The Linux installer requires `sudo`; it prints `GLOIN_LLVM_PREFIX` when done.
-The installed compiler depends on that LLVM/MLIR installation, while executables
-it produces only need the usual host runtime libraries.
+The installed compiler depends on that LLVM/MLIR installation and OpenSSL 3.
+Native executables using TLS also need the matching OpenSSL runtime libraries.
 
 Tests are enabled by default and fetch checksum-pinned GoogleTest 1.16.0. Add
 `-DBUILD_TESTING=OFF` for a compiler-only build without test dependencies. See
@@ -242,10 +264,12 @@ writes from read-only byte slices. See the [binary filter](examples/strip_nuls.g
 See [ownership, examples, and costs](docs/io.md), the [binary file copier](examples/io_copy.gloin),
 and the [line filter](examples/io_filter.gloin).
 
-SPEC-030e adds `@fs` lexical paths, metadata, explicit mutations, and `@process`
+SPEC-030e adds `@fs` lexical paths, metadata, explicit mutations, directory
+iteration, and `@process`
 arguments/environment/cwd. Programs receive arguments after `FILE --`; copied
 values use caller arenas. See [API usage and costs](docs/filesystem-process.md)
-and the [command-line file tool](examples/file_tool.gloin).
+and the [command-line file tool](examples/file_tool.gloin). The
+[directory walker](examples/directory_walk.gloin) shows the new cursor API.
 
 ### Language essentials
 
@@ -291,9 +315,11 @@ static calls such as `Counter.make(40)`; see [the method fixture](tests/fixtures
 `defer call(...)` captures arguments immediately and runs registered calls in
 reverse order on normal function return; see [the defer fixture](tests/fixtures/core/run/defer.gloin).
 Local imports such as `import "./utils";` resolve relative to their source file;
-see [the module example](examples/module_lab.gloin).
-There are no implicit numeric conversions. Package imports, packed
-structs, and concurrency remain deferred. `examples/hello_world.gloin` is a
+when `utils/` exists, its `.gloin` files form one namespace. `import "#math";`
+collects `packages/math/*.gloin` beside the root source file. See the
+[directory and package example](examples/module_discovery.gloin) and the
+[module guide](docs/modules.md). There are no implicit numeric conversions. Packed
+structs and concurrency remain deferred. `examples/hello_world.gloin` is a
 runnable standard-output example.
 
 For a diagnostic example:
@@ -347,6 +373,10 @@ cmake --install build --prefix "$HOME/.local"
 ```
 
 Add `$HOME/.local/bin` to your `PATH` to use `gloinc` from any directory.
+The same installation provides `gloinfmt`, a Gloin-written formatter. Run
+`build/gloinfmt --check .` to check a checkout or `build/gloinfmt FILE` to
+print formatted source. See the [formatter guide](docs/gloinfmt.md) and
+[source style guide](docs/gloin-style.md).
 The installed compiler still requires the exact LLVM/MLIR installation used
 to build it. The macOS prefix is `/opt/homebrew/opt/llvm`; the Linux prefix is
 `/usr/lib/llvm-21`. LLVM is an external dependency and is not bundled. The
@@ -363,7 +393,7 @@ bash scripts/check-package.sh build build/package-check
 CPack writes a candidate `gloinc-0.1.0-macos-arm64.tar.gz`,
 `gloinc-0.1.0-linux-aarch64.tar.gz`, or `gloinc-0.1.0-linux-x86_64.tar.gz`
 under `build/`, with a `.sha256` checksum.
-The archive contains `bin/gloinc`, standard modules, native arena libraries and header,
+The archive contains `bin/gloinc`, `bin/gloinfmt`, standard modules, native arena libraries and header,
 documentation, runnable examples, and the core source fixtures. The verification script runs the CLI, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
 spaces. See [the candidate guide](docs/release-0.1.0.md) for extraction, dependencies,
@@ -384,6 +414,13 @@ The full suite exits nonzero for the documented
 failures; do not disable those cases. The release CI audits the exact four known
 failures and rejects any additional failure or skipped test. The CLI suite launches
 the built executable directly and verifies actual file-dependent results.
+
+## JSON payloads
+
+The 0.1.0 candidate adds `@json`: a bounded reader and writer implemented in
+Gloin, using built-in `result<T>`, checked Unicode, exact number text, and
+caller-owned buffers. Run `./build/gloinc --jit examples/json.gloin`; it needs
+no external service. See [JSON usage and limits](docs/json.md).
 
 ## Architecture and next milestones
 

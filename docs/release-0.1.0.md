@@ -2,11 +2,12 @@
 
 This page describes an **unreleased candidate**. The latest published version
 is 0.0.4. The candidate targets Apple Silicon macOS with LLVM/MLIR 21.1.6 and
-Ubuntu 24.04 Linux with LLVM/MLIR 21.1.8. Linux ARM64 passed local build,
-JIT/native execution, core, complete-suite classification, and package
-acceptance. Hosted x86_64 CI passed the core, package, and complete-suite
-classification gates. Windows support is not planned, though contributions
-are welcome.
+Ubuntu 24.04 Linux with LLVM/MLIR 21.1.8. The current tree passed local macOS
+and Linux ARM64 build, JIT/native, core, complete-suite classification, and
+package acceptance. Hosted x86_64 CI passed an earlier revision; rerun hosted
+CI before publishing this tree. The [release draft](next-release-draft.md)
+records the exact validation boundary. Windows support is not planned, though
+contributions are welcome.
 
 The [0.1.0 HTML guide](site/0.1.0/index.html) teaches the language accepted by
 this candidate. The [release notes](release-notes-0.1.0.md) list changes since
@@ -16,10 +17,11 @@ implemented boundary.
 
 ## Build and run
 
-Install Xcode Command Line Tools, CMake 3.28+, Ninja, and the pinned toolchain.
+Install Xcode Command Line Tools, CMake 3.28+, Ninja, OpenSSL 3, and the pinned toolchain.
 On Apple Silicon macOS, from a source checkout:
 
 ```sh
+brew install cmake ninja openssl@3
 bash scripts/install-llvm.sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
@@ -37,7 +39,7 @@ On Ubuntu 24.04 ARM64 or x86_64, use the pinned Linux packages:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y cmake ninja-build g++ python3
+sudo apt-get install -y cmake ninja-build g++ python3 openssl libssl-dev
 bash scripts/install-llvm-linux.sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR=/usr/lib/llvm-21/lib/cmake/llvm \
@@ -64,9 +66,10 @@ for output. Compiler/file/JIT errors exit 1, usage errors exit 2, and checked
 runtime traps terminate the process.
 
 The compiler itself, even for `--version`, requires the matching LLVM/MLIR
-shared libraries. It also needs the pinned LLVM tools to link a native executable.
-Generated executables link the Gloin runtime statically and do not need LLVM
-at runtime. The archive does not bundle LLVM or its Homebrew dependencies.
+shared libraries and OpenSSL 3. It also needs the pinned LLVM tools to link a
+native executable. Generated executables link the Gloin runtime statically and
+do not need LLVM at runtime; TLS-enabled executables need OpenSSL 3 libraries.
+The archive does not bundle LLVM, OpenSSL, or their dependencies.
 
 ## Installation and package
 
@@ -88,10 +91,11 @@ checksum. A candidate archive contains:
 | Path below archive root | Contents |
 | --- | --- |
 | `bin/gloinc` | Compiler and JIT client |
+| `bin/gloinfmt` | Gloin-written source formatter and recursive style checker; see [its guide](gloinfmt.md) |
 | `lib/libgloin_runtime.a`, `lib/libgloin_runtime.dylib` or `.so` | Native runtime for executables and external LLVM use |
 | `include/gloin/` | Native runtime ABI headers, including raw memory and direct byte I/O |
-| `share/gloinc/stdlib/` | Source standard modules, including `memory.gloin`, `slices.gloin`, `vector.gloin`, `net.gloin`, `http.gloin`, and checked result APIs |
-| `share/gloinc/examples/` | Runnable programs, including result handling, custom arena, binary NUL filtering, and a local HTTP round trip |
+| `share/gloinc/stdlib/` | Source standard modules, including `memory.gloin`, `slices.gloin`, `vector.gloin`, `net.gloin`, `http.gloin`, `http_client.gloin`, `json.gloin`, and checked result APIs |
+| `share/gloinc/examples/` | Runnable programs, including result handling, directory/package discovery, custom arena, binary NUL filtering, bounded JSON, a local HTTP round trip, and synchronous/streaming HTTP/HTTPS clients |
 | `share/gloinc/core-fixtures/` | Source acceptance cases |
 | `share/gloinc/scripts/install-llvm.sh`, `install-llvm-linux.sh` | Platform installers for the pinned external LLVM/MLIR toolchains |
 | `share/doc/gloinc/docs/site/0.1.0/` | Candidate HTML language guide |
@@ -131,17 +135,29 @@ this candidate.
 
 ## Verification boundary
 
-On Apple Silicon macOS, the 0.1.0 candidate passed the required `check-core` gate at 918/918. The full
-parallel suite passed 961/965; the only failures are the four retained tests
-for unsupported async/spawn features. Installed and relocated package checks
-each passed 479/479. Gloin formatting, HTML link checking, and the archive
-checksum also passed. Rerun affected checks if candidate code or package
-contents change before publication. The
-[test inventory](../tests/README.md) records the exact case list and latest
-local results. A public tag and release require a separate final decision.
-Linux acceptance results are recorded separately in the
-[release draft](next-release-draft.md). Ubuntu 24.04 ARM64 passed 918/918 core
-tests, 479/479 installed and relocated package checks, and 961/965 in both
-serial and parallel complete suites. Hosted x86_64 CI passed the same gates;
-the [CI report](https://github.com/kubabialy/gloinc/actions/runs/37146653312)
-records its results.
+The 2026-10-05 local validation covered the current compiler and standard
+library on Apple Silicon macOS and Ubuntu 24.04 ARM64:
+
+| Check | macOS ARM64 | Ubuntu ARM64 |
+| --- | --- | --- |
+| Required `check-core` | 935/935 passed | 935/935 passed |
+| Installed package acceptance | 489/489 passed | 489/489 passed |
+| Relocated package acceptance | 489/489 passed | 489/489 passed |
+| Complete suite, serial | 978/982 passed | 978/982 passed |
+| Complete suite, four parallel jobs | 978/982 passed | 978/982 passed |
+
+Both complete-suite audits contained exactly the four documented unsupported
+async/spawn failures, with no skipped tests. Installed and relocated compilers
+also passed TLS certificate checks, synchronous and streaming HTTP/HTTPS
+matrices, and JSON codec/state/limit checks. JSON ran in JIT, `-O0`, and `-O2`
+modes. All 41 example sources passed `--check` on both systems. Formatting,
+HTML links, archive checksums, native output, and relocation checks passed.
+
+The [validation record](next-release-draft.md#current-local-validation) explains
+the networking test timeout correction and preserves the earlier milestone
+history. The [test inventory](../tests/README.md) describes the checks.
+Hosted CI last passed [commit `688c04c`](https://github.com/kubabialy/gloinc/actions/runs/37147497367),
+which predates these changes. Fresh hosted Linux x86_64 and macOS CI, including
+its sanitizer gate, remain required before publication. Rerun affected checks
+if candidate code or package contents change. A public tag and release require
+a separate final decision.

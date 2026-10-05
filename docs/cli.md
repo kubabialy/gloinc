@@ -127,9 +127,13 @@ Run them with `ctest --test-dir build -R '^CliTest\.' --output-on-failure`.
 `import "./utils";` loads `utils.gloin` relative to the importing source file,
 independent of the CLI working directory. Dependencies use their own directories
 and imports. Only public declarations are accessible through the filename namespace.
+When a directory named `utils` exists, the extensionless form collects its
+immediate `.gloin` files instead; use `./utils.gloin` to select the file.
+`import "#math";` collects `packages/math/*.gloin` beside the root source file.
 All CLI modes load and check dependencies, including unused code.
 See [module paths, visibility, and cycles](modules.md), and run
-`gloinc --jit examples/module_lab.gloin` for a complete multi-file example.
+`gloinc --jit examples/module_lab.gloin` or
+`gloinc --jit examples/module_discovery.gloin` for complete multi-file examples.
 
 
 SPEC-030 reads stdin only when executed code calls `std.input(&memory, max_bytes)`.

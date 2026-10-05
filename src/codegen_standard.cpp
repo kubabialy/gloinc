@@ -61,7 +61,8 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
                                        mlir::ValueRange{address, arguments[2]});
     }
     if (kind == StandardPrimitive::StringView || kind == StandardPrimitive::StringBufferView ||
-        kind == StandardPrimitive::IoStringView || kind == StandardPrimitive::ProcessStringView) {
+        kind == StandardPrimitive::IoStringView || kind == StandardPrimitive::ProcessStringView ||
+        kind == StandardPrimitive::FsStringView) {
         auto null = builder.create<mlir::LLVM::ZeroOp>(location(), arguments[0].getType());
         auto nonnull = builder.create<mlir::LLVM::ICmpOp>(location(), mlir::LLVM::ICmpPredicate::ne,
                                                           arguments[0], null);
@@ -80,6 +81,7 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
     const auto numeric = numeric_signature(kind);
     if (kind == StandardPrimitive::FsMetadata || kind == StandardPrimitive::FsMkdir ||
         kind == StandardPrimitive::FsRemoveFile || kind == StandardPrimitive::FsRenameReplace ||
+        kind == StandardPrimitive::FsDirOpen ||
         kind == StandardPrimitive::ProcessEnv) {
         const size_t strings = kind == StandardPrimitive::FsRenameReplace ? 2 : 1;
         for (size_t i = 0; i < arguments.size(); ++i) {
@@ -91,6 +93,18 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
             } else
                 native_arguments.push_back(arguments[i]);
         }
+    } else if (kind == StandardPrimitive::NetResolveIpv4 ||
+               kind == StandardPrimitive::NetTlsCreate) {
+        const size_t first = kind == StandardPrimitive::NetTlsCreate ? 1 : 0;
+        if (first) native_arguments.push_back(arguments[0]);
+        const size_t end = kind == StandardPrimitive::NetTlsCreate ? 3 : 1;
+        for (size_t i = first; i < end; ++i) {
+            native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
+                location(), arguments[i], llvm::ArrayRef<int64_t>{0}));
+            native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
+                location(), arguments[i], llvm::ArrayRef<int64_t>{1}));
+        }
+        native_arguments.insert(native_arguments.end(), arguments.begin() + end, arguments.end());
     } else if (kind == StandardPrimitive::NetSendText) {
         native_arguments.push_back(arguments[0]);
         native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
@@ -116,6 +130,11 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
         native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
             location(), arguments[0], llvm::ArrayRef<int64_t>{1}));
         native_arguments.push_back(arguments[1]);
+    } else if (kind == StandardPrimitive::FormatI8 ||
+               kind == StandardPrimitive::FormatI16) {
+        native_arguments.push_back(builder.create<mlir::LLVM::SExtOp>(
+            location(), builder.getI32Type(), arguments[0]));
+        native_arguments.insert(native_arguments.end(), arguments.begin() + 1, arguments.end());
     } else {
         native_arguments.assign(arguments.begin(), arguments.end());
     }

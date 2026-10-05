@@ -24,22 +24,42 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false);
     case StandardPrimitive::NetFinishConnect:
     case StandardPrimitive::NetClose:
+    case StandardPrimitive::NetShutdownWrite:
         return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer}, false);
     case StandardPrimitive::NetBind:
     case StandardPrimitive::NetConnect:
         return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, mlir::IntegerType::get(&context, 16), pointer}, false);
+    case StandardPrimitive::NetReuseAddress:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, pointer}, false);
     case StandardPrimitive::NetListen:
         return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, pointer}, false);
     case StandardPrimitive::NetAccept:
         return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer, pointer, pointer, pointer}, false);
     case StandardPrimitive::NetWait:
         return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, i32, pointer, pointer}, false);
+    case StandardPrimitive::NetWaitMany:
+        return mlir::LLVM::LLVMFunctionType::get(
+            i32, {pointer, pointer, pointer, i64, i32, pointer, pointer}, false);
+    case StandardPrimitive::NetResolveIpv4:
+        return mlir::LLVM::LLVMFunctionType::get(
+            i32, {pointer, i64, pointer, i64, pointer, pointer}, false);
     case StandardPrimitive::NetRecv:
     case StandardPrimitive::NetSend:
     case StandardPrimitive::NetSendText:
         return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer, i64, pointer, pointer}, false);
     case StandardPrimitive::NetLocal:
         return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer, pointer, pointer}, false);
+    case StandardPrimitive::NetTlsCreate:
+        return mlir::LLVM::LLVMFunctionType::get(
+            i32, {i32, pointer, i64, pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::NetTlsHandshake:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer, pointer}, false);
+    case StandardPrimitive::NetTlsRead:
+    case StandardPrimitive::NetTlsWrite:
+        return mlir::LLVM::LLVMFunctionType::get(
+            i32, {pointer, pointer, i64, pointer, pointer, pointer}, false);
+    case StandardPrimitive::NetTlsClose:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer}, false);
     case StandardPrimitive::TimeMonotonic:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false);
     case StandardPrimitive::RandomSplitMix64:
@@ -52,6 +72,12 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer}, false);
     case StandardPrimitive::FsRenameReplace:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, i64, pointer}, false);
+    case StandardPrimitive::FsDirOpen:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::FsDirNext:
+        return mlir::LLVM::LLVMFunctionType::get(pointer, {pointer, pointer, pointer, pointer}, false);
+    case StandardPrimitive::FsDirClose:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false);
     case StandardPrimitive::ProcessCount:
         return mlir::LLVM::LLVMFunctionType::get(i64, {}, false);
     case StandardPrimitive::ProcessArg:
@@ -92,7 +118,14 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
             input = mlir::Float32Type::get(&context);
         else if (spec->input == std::string_view("f64"))
             input = mlir::Float64Type::get(&context);
-        else if (spec->input != std::string_view("i32"))
+        else if (spec->input == std::string_view("u8"))
+            input = mlir::IntegerType::get(&context, 8);
+        else if (spec->input == std::string_view("u16"))
+            input = mlir::IntegerType::get(&context, 16);
+        else if (spec->input != std::string_view("i8") &&
+                 spec->input != std::string_view("i16") &&
+                 spec->input != std::string_view("i32") &&
+                 spec->input != std::string_view("u32"))
             input = i64;
         llvm::SmallVector<mlir::Type> arguments{input};
         if (spec->mode || spec->group == NumericPrimitiveGroup::Fixed)
