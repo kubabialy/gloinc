@@ -101,11 +101,15 @@ ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failu
 
 `GloinFormatterSmoke.LayoutAndTraversal` runs the formatter in native and JIT
 modes, checks recursive traversal and symlink exclusions, verifies CRLF output,
-and compares token streams and repeat formatting across the source corpus. The
-repository style gate is `build/gloinfmt --check .`.
+and compares token streams and repeat formatting across `examples/`, `stdlib/`,
+`tests/`, and `tools/`. Installed/extracted copies in CI report directories do
+not expand this corpus. Its aggregate limit remains 90 seconds. The repository
+style gate is `build/gloinfmt --check .`.
 
-Compiler CTest cases have a 30-second timeout on macOS and 120 seconds on
-Linux, where trap cases take longer under VM/CI load. The HTTP compiler/API
+Compiler CTest cases have a 30-second timeout on ordinary macOS builds and
+120 seconds on Linux or sanitizer builds. Linux trap cases take longer under
+VM/CI load; instrumented Debug cases can perform ten compiler invocations
+within one test. Individual invocation deadlines still apply. The HTTP compiler/API
 fixtures allow 60 seconds per compiler invocation and 150 seconds per CTest
 case on both platforms. JIT compilation of the complete module can exceed the
 ordinary ten-second harness budget under parallel load, including cold relocated

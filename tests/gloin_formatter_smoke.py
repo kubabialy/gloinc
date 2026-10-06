@@ -63,7 +63,11 @@ spec = importlib.util.spec_from_file_location("legacy_formatter", root / "script
 legacy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(legacy)
 checked = 0
-for path in sorted(root.rglob("*.gloin")):
+# Packaging adds copies under CI report directories. Check the maintained
+# source corpus, whose size must not depend on earlier build/package steps.
+sources = (path for directory in ("examples", "stdlib", "tests", "tools")
+           for path in (root / directory).rglob("*.gloin"))
+for path in sorted(sources):
     if any(part == ".git" or part == "build" or part.startswith("build-") for part in path.parts):
         continue
     original = path.read_bytes()

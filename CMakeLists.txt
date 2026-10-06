@@ -313,9 +313,10 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     list(APPEND GLOIN_TARGETS gloinc_test)
 
     include(GoogleTest)
-    # Linux signal termination can take longer under a shared CI/VM host when
-    # multiple arithmetic-trap cases run together.
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Linux signal termination can take longer under a shared CI/VM host.
+    # Instrumented Debug cases can invoke the compiler ten times in one test;
+    # allow that aggregate work while retaining each invocation's deadline.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR GLOIN_ENABLE_SANITIZERS)
         set(GLOIN_COMPILER_TEST_TIMEOUT 120)
     else()
         set(GLOIN_COMPILER_TEST_TIMEOUT 30)
