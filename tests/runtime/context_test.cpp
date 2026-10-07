@@ -661,34 +661,41 @@ TEST_F(ContextRuntimeTest, ChildGroupRetainsExitedLeaderAndClosesDescendantPipes
     const auto parent_group = getpgrp();
     const std::string script = "/bin/sleep 30 & printf held; exit 37";
     const GloinProcessArgument args[] = {{"-c", 2}, {script.data(), script.size()}};
-    PipedChild pipes;
-    ASSERT_EQ(pipes.start_options("/bin/sh", args, 2, "", nullptr, 0, true, true), GLOIN_STD_OK);
     ChildReaper unrelated;
     const GloinProcessArgument delay[] = {{"30", 2}};
     int32_t error = 0, kind = 0, code = 0;
     ASSERT_EQ(gloin_process_start("/bin/sleep", 10, delay, 1, &unrelated.pid, &error), GLOIN_STD_OK);
-    ASSERT_EQ(gloin_process_observe(pipes.child.pid, 1, &kind, &code, &error), GLOIN_STD_OK);
-    EXPECT_EQ(kind, 1);
-    EXPECT_EQ(code, 37);
-    uint8_t bytes[16];
-    uint64_t count = 0;
-    ASSERT_EQ(gloin_process_pipe_read(pipes.output, bytes, sizeof(bytes), &count, &error), GLOIN_STD_OK);
-    EXPECT_EQ(std::string(reinterpret_cast<char *>(bytes), count), "held");
-    EXPECT_EQ(gloin_process_pipe_read(pipes.output, bytes, sizeof(bytes), &count, &error), GLOIN_STD_WOULD_BLOCK);
-    ASSERT_EQ(gloin_process_group_signal(pipes.child.pid, 1, &error), GLOIN_STD_OK);
-    bool eof = false;
-    for (int i = 0; i < 50 && !eof; ++i) {
-        int32_t ready = 0;
-        ASSERT_EQ(gloin_process_pipe_wait(-1, pipes.output, -1, 100, &ready, &error), GLOIN_STD_OK);
-        if (ready & 2) eof = gloin_process_pipe_read(pipes.output, bytes, sizeof(bytes), &count, &error) == GLOIN_STD_EOF;
+    // Repeat the EOF-to-cleanup transition: on Darwin the descendant can have
+    // closed its pipes and carry P_WEXIT while its visible state is still SRUN.
+    for (int iteration = 0; iteration < 32; ++iteration) {
+        SCOPED_TRACE(iteration);
+        PipedChild pipes;
+        ASSERT_EQ(pipes.start_options("/bin/sh", args, 2, "", nullptr, 0, true, true), GLOIN_STD_OK);
+        ASSERT_EQ(gloin_process_observe(pipes.child.pid, 1, &kind, &code, &error), GLOIN_STD_OK);
+        EXPECT_EQ(kind, 1);
+        EXPECT_EQ(code, 37);
+        uint8_t bytes[16];
+        uint64_t count = 0;
+        ASSERT_EQ(gloin_process_pipe_read(pipes.output, bytes, sizeof(bytes), &count, &error), GLOIN_STD_OK);
+        EXPECT_EQ(std::string(reinterpret_cast<char *>(bytes), count), "held");
+        EXPECT_EQ(gloin_process_pipe_read(pipes.output, bytes, sizeof(bytes), &count, &error), GLOIN_STD_WOULD_BLOCK);
+        ASSERT_EQ(gloin_process_group_signal(pipes.child.pid, iteration == 0 ? 1 : 0, &error), GLOIN_STD_OK);
+        bool eof = false;
+        for (int i = 0; i < 50 && !eof; ++i) {
+            int32_t ready = 0;
+            ASSERT_EQ(gloin_process_pipe_wait(-1, pipes.output, -1, 100, &ready, &error), GLOIN_STD_OK);
+            if (ready & 2) eof = gloin_process_pipe_read(pipes.output, bytes, sizeof(bytes), &count, &error) == GLOIN_STD_EOF;
+        }
+        EXPECT_TRUE(eof); // The descendant cannot retain the output pipe after cleanup.
+        EXPECT_EQ(gloin_process_group_signal(pipes.child.pid, 1, &error), GLOIN_STD_OK) << error;
+        EXPECT_EQ(gloin_process_group_signal(pipes.child.pid, 1, &error), GLOIN_STD_OK) << error;
+        ASSERT_EQ(gloin_process_observe(pipes.child.pid, 0, &kind, &code, &error), GLOIN_STD_OK);
+        EXPECT_EQ(kind, 1);
+        EXPECT_EQ(code, 37); // The original leader's exit remains available.
+        ASSERT_EQ(gloin_process_wait(pipes.child.pid, 1, &kind, &code, &error), GLOIN_STD_OK);
+        pipes.child.pid = 0;
+        EXPECT_EQ(code, 37);
     }
-    EXPECT_TRUE(eof); // The descendant cannot retain the output pipe after cleanup.
-    ASSERT_EQ(gloin_process_observe(pipes.child.pid, 0, &kind, &code, &error), GLOIN_STD_OK);
-    EXPECT_EQ(kind, 1);
-    EXPECT_EQ(code, 37); // The original leader's exit remains available.
-    ASSERT_EQ(gloin_process_wait(pipes.child.pid, 1, &kind, &code, &error), GLOIN_STD_OK);
-    pipes.child.pid = 0;
-    EXPECT_EQ(code, 37);
     ASSERT_EQ(gloin_process_wait(unrelated.pid, 0, &kind, &code, &error), GLOIN_STD_OK);
     EXPECT_EQ(kind, 0);
     EXPECT_EQ(getpgrp(), parent_group);

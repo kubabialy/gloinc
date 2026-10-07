@@ -53,6 +53,14 @@ def end_response(path: string) -> bool {
     return strings.equal(path, "/close") || strings.equal(path, "/bad-truncated") || strings.equal(path, "/truncated");
 }
 
+def finished_cleanup(state: &State) -> result<void> {
+    if early(state.path) && state.received >= state.length { return error("client uploaded all rejected bytes"); }
+
+    state.phase = 7;
+
+    return;
+}
+
 // Normalize only transport outcomes, without interpreting HTTP through @http.
 def read(socket: &net.Socket, sessions: &vector.Vector<net.TlsServer>, index: i64,
     tls: bool, bytes: [u8]) -> result<net.TlsReadOutcome> {
@@ -196,7 +204,14 @@ def step(state: &State, socket: &net.Socket, sessions: &vector.Vector<net.TlsSer
         def read: result<net.TlsReadOutcome> = read(socket, sessions, index, tls, bytes[..]);
 
         if read.erroneous {
-            if state.phase == 6 && strings.starts_with(state.path, "/bad") { state.phase = 7; return; }
+            // Abandoning an upload after the complete 413 may reset TCP/TLS.
+            // The client separately requires that response and an incomplete upload.
+            if state.phase == 6 && (strings.starts_with(state.path, "/bad") || early(state.path)) {
+                def finished: result<void> = finished_cleanup(state);
+                if finished.erroneous { return finished.error; }
+
+                return;
+            }
 
             return read.error;
         }
@@ -205,9 +220,9 @@ def step(state: &State, socket: &net.Socket, sessions: &vector.Vector<net.TlsSer
 
         if read.value.state == status.END {
             if state.phase == 2 { return error("client closed before request body"); }
-            if early(state.path) && state.received >= state.length { return error("client uploaded all rejected bytes"); }
 
-            state.phase = 7;
+            def finished: result<void> = finished_cleanup(state);
+            if finished.erroneous { return finished.error; }
 
             return;
         }

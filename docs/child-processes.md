@@ -423,11 +423,15 @@ Cached observations alone do not perform that check. External reaping can make
 remaining descendants unreachable through this handle; it violates ownership.
 
 The implementation uses POSIX spawn's new-group attribute and non-consuming
-exit observation. On macOS, a group containing only zombies can produce EPERM
+exit observation. On macOS, a group containing only exiting processes or zombies can produce EPERM
 from the group signal path. The runtime accepts this as completed cleanup only
-after a complete process-group snapshot finds no live members; snapshot errors
-and genuine permission errors remain failures. See Apple's
-[group-signal implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c)
+after a complete process-group snapshot finds every member either marked
+`P_WEXIT` (already exiting) or `SZOMB` (a zombie). Descriptor closure can precede
+the visible zombie state, so checking `SZOMB` alone can falsely fail cleanup
+after a successful termination. Snapshot errors and genuine permission errors
+remain failures. See Apple's
+[group-signal implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c),
+its [exported exit flag](https://github.com/apple-oss-distributions/xnu/blob/xnu-11215.1.10/bsd/kern/kern_sysctl.c#L1136),
 and the [POSIX spawn contract](https://pubs.opengroup.org/onlinepubs/007904975/functions/posix_spawn.html).
 
 ## API and outcomes
@@ -555,7 +559,7 @@ environment, standard descriptors, resource limits and child-reaping policy duri
 Poll, cached observations and signalling use constant-size metadata and no Gloin
 allocation. Supplied environment validation compares names pairwise, with
 quadratic comparisons in entry count. Native launch validation repeats those
-checks for C callers. On macOS, resolving the zombie-only group signalling case
+checks for C callers. On macOS, resolving the exiting/zombie group signalling case
 allocates a temporary process snapshot proportional to group membership;
 allocation failure is recoverable and retains ownership for cleanup retry.
 Starting, waiting and closing involve host operations; none promises

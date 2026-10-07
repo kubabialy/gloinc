@@ -95,7 +95,7 @@ def group_cleanup(owner: &arena.GeneralArena, cwd: string, capture: bool, stack:
         def mut errors: [u8; 128]            = zeroed;
         def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration { nanoseconds: 5000000000 });
 
-        if captured.erroneous { return 19; }
+        if captured.erroneous { std.println(captured.error.message); return 19; }
         if captured.value.status.code != 37 { return 20; }
         if !strings.equal(strings.view_bytes(captured.value.stdout), "held") { return 21; }
     }

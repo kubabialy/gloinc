@@ -40,7 +40,8 @@ bool pid_valid(int64_t pid) {
 }
 #ifdef __APPLE__
 // Darwin's killpg path skips zombies and returns EPERM when none were signalled.
-// Only normalize that error after a complete snapshot proves no live members.
+// Only normalize that error after a complete snapshot proves every member is
+// a zombie or already exiting. P_WEXIT precedes SZOMB during descriptor teardown.
 // Never infer an empty group merely from the leader's cached exit status.
 int empty_group(pid_t group) {
     int query[] = {CTL_KERN, KERN_PROC, KERN_PROC_PGRP, group};
@@ -55,8 +56,10 @@ int empty_group(pid_t group) {
                 return errno;
             }
             if (size % sizeof(kinfo_proc)) return EIO;
-            for (size_t i = 0; i < size / sizeof(kinfo_proc); ++i)
-                if (members[i].kp_proc.p_stat != SZOMB) return EPERM;
+            for (size_t i = 0; i < size / sizeof(kinfo_proc); ++i) {
+                const auto &member = members[i].kp_proc;
+                if (member.p_stat != SZOMB && !(member.p_flag & P_WEXIT)) return EPERM;
+            }
             return 0;
         }
         return EAGAIN;

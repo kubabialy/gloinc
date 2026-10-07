@@ -44,6 +44,13 @@ connection cleanup. Early rejection must stop before all declared upload bytes
 arrive. Clean EOF responses use TCP write shutdown or authenticated TLS
 `close_notify`; abrupt TLS EOF is not substituted for it.
 
+After the peer has sent the complete early 413 response, a client abandoning
+its unfinished upload may close cleanly or reset the transport. Both are valid
+cleanup outcomes in that fixture. The peer still checks every received upload
+byte and rejects a complete upload; the client independently requires status
+413, the complete three-byte response body, and fewer supplied bytes than its
+declared upload length. Read failures before that response remain failures.
+
 ## Scheduling, ownership, and bounds
 
 Each transport/fixture group runs one child peer concurrently with three client
