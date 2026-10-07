@@ -47,7 +47,7 @@ so programs can implement their own arenas; see the runnable
 The development tree also has built-in [`result<T>` and `error`](docs/results.md)
 with explicit success/error handling. The [SPEC-034 design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented)
 predates this implementation; the current guide documents the implemented rules.
-The candidate also adds [nonblocking IPv4 TCP, verified client TLS, and bounded HTTP/1.1 heads](docs/networking.md)
+The candidate also adds [nonblocking IPv4 TCP, client/server TLS, and bounded HTTP/1.1 heads](docs/networking.md)
 through `@net` and `@http`. Their public operations use built-in `result<T>`;
 the [local round-trip example](examples/network_http.gloin) runs in JIT and native modes.
 The Gloin-written [`@http_client`](docs/http-client.md) adds bounded HTTP/HTTPS
@@ -65,11 +65,14 @@ concurrent HTTP servers, HTTPS services, and WebSocket work. Slack is
 one integration example for these general APIs.
 The networking follow-up adds bounded multi-socket readiness waits, explicit
 write-side shutdown, a synchronous IPv4 hostname resolver, and a verified
-nonblocking TLS client. The [networking guide](docs/networking.md) gives exact
-ownership, blocking, and error limits. The TLS implementation passed 920 core
-tests on each local platform; the final linker build passed TLS smoke tests
-and installed and extracted package gates on both. Hosted x86_64 CI must rerun
-before publication.
+nonblocking TLS client. Reusable [server TLS configurations and graceful shutdown](docs/server-tls.md)
+now support accepted sessions too, with a [runnable loopback server](examples/tls_server.gloin).
+The networking guides specify ownership, blocking and error limits.
+The [tooling validation record](docs/tooling-roadmap.md) distinguishes the latest
+focused checks from the complete release gates that must rerun before publication.
+The repository's former Python tools and test drivers now run in Gloin; Python
+is no longer a project test dependency. The [HTTP acceptance driver](tests/http/README.md)
+preserves independent wire fixtures and concurrent HTTP/HTTPS checks.
 The [0.1.0 candidate HTML guide](docs/site/0.1.0/index.html) presents the
 current language as a whole. The [0.0.4 guide](docs/site/0.0.4/index.html)
 remains the reference for the published release. Build metadata now reports
@@ -86,7 +89,7 @@ before publication.
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | The development tree discovers 982 tests. On macOS and Ubuntu ARM64, `check-core` passed 935/935; serial and parallel complete suites each passed 978/982, with exactly four documented unsupported async/spawn failures and no skips. Installed and relocated packages each passed 489/489 acceptance cases plus TLS, HTTP/HTTPS, streaming, and JSON fixtures. See the [validation record](docs/next-release-draft.md#current-local-validation). |
+| Full test suite | The development tree discovers 1,034 tests; macOS `check-core` passed 987/987. Focused Linux, sanitizer and package checks cover the new tooling work. Complete macOS/Linux serial, parallel and package release gates predate these additions and must run again. See the [tooling validation](docs/tooling-roadmap.md) and [earlier candidate record](docs/next-release-draft.md#current-local-validation). |
 | Core acceptance | CLI-driven source cases cover `zeroed` arrays, enums, borrowed slices, and both vector forms in addition to the 0.0.3 cases. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 53 development parser tests pass: core grammar, precedence, strict annotations/delimiters, generic call/literal lookahead, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
@@ -107,7 +110,7 @@ before publication.
 | Numerical utilities | 12 compiler/API and 12 native tests cover `@math`, finite errors, signed zero, rounding, subnormals, host-state isolation, geometry/statistics, and packaged execution. See [math](docs/math.md). |
 | Timing and seeded randomness | 15 compiler/API and 13 native tests cover monotonic clocks, checked durations, scoped clock injection, SplitMix64 vectors, sampling, and packaged simulations. See [time and randomness](docs/time-random.md). |
 | Byte strings | 18 compiler/API tests cover byte bounds/search/ordering, borrowed views, arena copies, checked result alternatives, and guide examples. Two native tests cover exact/empty copies. See [usage and costs](docs/strings.md). |
-| TCP and HTTP | Eight compiler/API tests, three native runtime tests, and local TLS/HTTP client fixtures cover TCP, HTTPS, incremental framing, deadlines, certificate verification, and cleanup. See [networking](docs/networking.md) and [HTTP clients](docs/http-client.md). |
+| TCP and HTTP | Ten compiler/API tests, three native socket tests, seven native TLS tests, and local TLS/HTTP fixtures cover TCP, client/server TLS, incremental framing, deadlines, certificate verification, graceful shutdown and cleanup. See [networking](docs/networking.md), [server TLS](docs/server-tls.md) and [HTTP clients](docs/http-client.md). |
 | Results and raw memory | Eight result tests cover required handling, source-typed aggregate payloads, JIT/AoT execution, and checked standard-library calls. The [result](docs/results.md) and [raw-memory](docs/raw-memory.md) guides state the current contracts and limits. |
 | Text construction | 17 tests cover borrowed cursors, bounded transformations, shared builder state, allocation failures, snapshots, and executable documentation. See [usage and costs](docs/text-construction.md). |
 | Package imports, concurrency | Incomplete: SPEC-044, SPEC-040/041. |
@@ -160,7 +163,7 @@ tested package revision. On ARM64 or x86_64 Ubuntu 24.04:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y cmake ninja-build g++ python3 openssl libssl-dev
+sudo apt-get install -y cmake ninja-build g++ openssl libssl-dev
 bash scripts/install-llvm-linux.sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR=/usr/lib/llvm-21/lib/cmake/llvm \
@@ -270,6 +273,26 @@ arguments/environment/cwd. Programs receive arguments after `FILE --`; copied
 values use caller arenas. See [API usage and costs](docs/filesystem-process.md)
 and the [command-line file tool](examples/file_tool.gloin). The
 [directory walker](examples/directory_walk.gloin) shows the new cursor API.
+The unreleased tree also provides `fs.symlink` and bounded `fs.read_link` with
+built-in `result<T>`; see the [symlink rules](docs/filesystem-process.md#symbolic-links)
+and [runnable example](examples/symlinks.gloin). `fs.canonical_path`, `fs.temp_dir`
+and `fs.remove_dir` add bounded path resolution, exclusive temporary directories
+and empty-directory removal. The [workspace example](examples/temporary_workspace.gloin)
+shows explicit cleanup and arena ownership; the formatter test driver now uses
+these APIs and child-process capture entirely from Gloin.
+
+The unreleased 0.1.0 tree also adds child processes with built-in `result<T>`,
+pipes, bounded output capture, cwd/environment options and explicit group
+cleanup. **Group cleanup is opt-in** through `new_process_group = true`;
+`start_piped` alone still manages only the direct child. Descendants that change
+group/session can survive. Read the [current setup, rationale and guarantees](docs/child-processes.md#current-setup-and-design-rationale)
+before using it as a tool runner; the [options example](examples/child_options.gloin)
+shows the intended configuration.
+
+`Options.stack_limit_bytes` additionally sets a child soft stack limit before
+execution. Zero inherits; the parent and inherited hard limit stay unchanged.
+Nonzero limits require the host's main thread on macOS. See the
+[platform contract](docs/child-processes.md#child-stack-limits).
 
 ### Language essentials
 
@@ -375,7 +398,8 @@ cmake --install build --prefix "$HOME/.local"
 Add `$HOME/.local/bin` to your `PATH` to use `gloinc` from any directory.
 The same installation provides `gloinfmt`, a Gloin-written formatter. Run
 `build/gloinfmt --check .` to check a checkout or `build/gloinfmt FILE` to
-print formatted source. See the [formatter guide](docs/gloinfmt.md) and
+print formatted source. `build/gloinfmt --write --git` formats tracked and
+unignored Gloin sources in place. See the [formatter guide](docs/gloinfmt.md) and
 [source style guide](docs/gloin-style.md).
 The installed compiler still requires the exact LLVM/MLIR installation used
 to build it. The macOS prefix is `/opt/homebrew/opt/llvm`; the Linux prefix is

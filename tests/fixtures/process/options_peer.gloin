@@ -1,0 +1,39 @@
+import "@arena";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mode: process.TextResult = process.arg(&owner, 1);
+    if mode.status != status.OK { return 80; }
+
+    if strings.equal(mode.value, "descendant") {
+        def args: [string; 1]              = {"30"};
+        def started: result<process.Child> = process.start(&owner, "/bin/sleep", args[..]);
+
+        if started.erroneous { return 81; }
+
+        // Intentionally leave a descendant holding inherited output pipes.
+        // The parent fixture owns this entire process group and must clean it up.
+        std.print("held");
+
+        return 37;
+    }
+
+    def cwd: process.TextResult    = process.cwd(&owner, 4096);
+    def value: process.TextResult  = process.env(&owner, "GLOIN_VALUE");
+    def empty: process.TextResult  = process.env(&owner, "GLOIN_EMPTY");
+    def absent: process.TextResult = process.env(&owner, "GLOIN_PARENT_ONLY");
+
+    if cwd.status != status.OK || value.status != status.OK || empty.status != status.OK { return 82; }
+    if absent.status != status.NOT_FOUND { return 83; }
+    if !strings.equal(value.value, "hello = café") || !strings.is_empty(empty.value) { return 84; }
+
+    std.print(cwd.value);
+
+    return 37;
+}

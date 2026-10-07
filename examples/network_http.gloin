@@ -8,19 +8,23 @@ import "@strings";
 
 def cleanup(socket: &net.Socket) -> void {
     if !socket.is_open() { return; }
+
     def closed: result<void> = socket.close();
     if closed.erroneous { return; }
 }
 
 def send_all(socket: &net.Socket, text: string) -> result<void> {
-    def mut offset: u64 = 0;
+    def mut offset: u64   = 0;
     def mut attempts: i32 = 0;
-    def size: u64 = strings.byte_length(text);
+    def size: u64         = strings.byte_length(text);
+
     while offset < size && attempts < 10 {
         def part: strings.StringResult = strings.slice_bytes(text, offset, size - offset);
         if part.status != status.OK { return error("invalid text offset"); }
+
         def sent: result<net.WriteOutcome> = socket.write_text(part.value);
         if sent.erroneous { return sent.error; }
+
         if sent.value.would_block {
             def ready: result<i32> = socket.wait(net.WRITABLE, 1000);
             if ready.erroneous { return ready.error; }
@@ -28,29 +32,39 @@ def send_all(socket: &net.Socket, text: string) -> result<void> {
         } else {
             offset = offset + sent.value.count;
         }
+
         attempts = attempts + 1;
     }
+
     if offset != size { return error("short socket write"); }
+
     return;
 }
 
 def local_round_trip(owner: &arena.GeneralArena) -> result<void> {
     def opened: result<net.Socket> = net.Socket.open(owner);
     if opened.erroneous { return opened.error; }
+
     def mut listener: net.Socket = opened.value;
     defer cleanup(&listener);
 
     def bound: result<void> = listener.bind(net.Address.loopback(0));
     if bound.erroneous { return bound.error; }
+
     def listening: result<void> = listener.listen(4);
     if listening.erroneous { return listening.error; }
+
     def local: result<net.Address> = listener.local_address();
     if local.erroneous { return local.error; }
+
     def mut resolved_hosts: [u32; 4] = zeroed;
-    def resolved: result<u64> = net.resolve_ipv4("127.0.0.1", resolved_hosts[..]);
+    def resolved: result<u64>        = net.resolve_ipv4("127.0.0.1", resolved_hosts[..]);
+
     if resolved.erroneous { return resolved.error; }
+
     def none: u64 = 0;
     if resolved.value == none { return error("IPv4 lookup returned no address"); }
+
     def destination: net.Address = net.Address {
         host: resolved_hosts[0],
         port: local.value.port
@@ -58,14 +72,18 @@ def local_round_trip(owner: &arena.GeneralArena) -> result<void> {
 
     def client_open: result<net.Socket> = net.Socket.open(owner);
     if client_open.erroneous { return client_open.error; }
+
     def mut client: net.Socket = client_open.value;
     defer cleanup(&client);
+
     def connected: result<bool> = client.connect(destination);
     if connected.erroneous { return connected.error; }
+
     if !connected.value {
         def writable: result<i32> = client.wait(net.WRITABLE, 1000);
         if writable.erroneous { return writable.error; }
         if writable.value == 0 { return error("TCP connect timed out"); }
+
         def finished: result<bool> = client.finish_connect();
         if finished.erroneous { return finished.error; }
         if !finished.value { return error("TCP connect is still pending"); }
@@ -74,36 +92,46 @@ def local_round_trip(owner: &arena.GeneralArena) -> result<void> {
     def ready: result<i32> = listener.wait(net.READABLE, 1000);
     if ready.erroneous { return ready.error; }
     if ready.value == 0 { return error("TCP accept timed out"); }
+
     def accepted: result<net.AcceptOutcome> = listener.accept(owner);
     if accepted.erroneous { return accepted.error; }
     if !accepted.value.available { return error("TCP accept is still pending"); }
+
     def mut server: net.Socket = accepted.value.socket;
     defer cleanup(&server);
 
     def request_text: result<string> = http.format_get(owner, "localhost", "/hello", 512);
     if request_text.erroneous { return request_text.error; }
+
     def written: result<void> = send_all(&client, request_text.value);
     if written.erroneous { return written.error; }
 
     def mut request_bytes: [u8; 1024] = zeroed;
-    def mut request_used: u64 = 0;
-    def mut request_complete: bool = false;
-    def mut request_attempts: i32 = 0;
+    def mut request_used: u64         = 0;
+    def mut request_complete: bool    = false;
+    def mut request_attempts: i32     = 0;
+
     while !request_complete && request_attempts < 10 {
         def readable: result<i32> = server.wait(net.READABLE, 1000);
         if readable.erroneous { return readable.error; }
         if readable.value == 0 { return error("HTTP request timed out"); }
+
         def request_read: result<net.ReadOutcome> = server.read(request_bytes[request_used..]);
         if request_read.erroneous { return request_read.error; }
         if request_read.value.state == status.END { return error("HTTP request ended early"); }
+
         request_used = request_used + request_read.value.count;
+
         def partial: result<http.RequestHead> = http.parse_request(
             strings.view_bytes(request_bytes[0..request_used]), 1024);
         if partial.erroneous { return partial.error; }
+
         request_complete = partial.value.complete;
         request_attempts = request_attempts + 1;
     }
+
     if !request_complete { return error("HTTP request head did not complete"); }
+
     def request: result<http.RequestHead> = http.parse_request(
         strings.view_bytes(request_bytes[0..request_used]), 1024);
     if request.erroneous { return request.error; }
@@ -116,31 +144,40 @@ def local_round_trip(owner: &arena.GeneralArena) -> result<void> {
     def response_text: result<string> = http.format_response(
         owner, 200, "OK", "text/plain", 0, 512);
     if response_text.erroneous { return response_text.error; }
+
     def response_write: result<void> = send_all(&server, response_text.value);
     if response_write.erroneous { return response_write.error; }
 
     def mut response_bytes: [u8; 1024] = zeroed;
-    def mut response_used: u64 = 0;
-    def mut response_complete: bool = false;
-    def mut response_attempts: i32 = 0;
+    def mut response_used: u64         = 0;
+    def mut response_complete: bool    = false;
+    def mut response_attempts: i32     = 0;
+
     while !response_complete && response_attempts < 10 {
         def readable: result<i32> = client.wait(net.READABLE, 1000);
         if readable.erroneous { return readable.error; }
         if readable.value == 0 { return error("HTTP response timed out"); }
+
         def response_read: result<net.ReadOutcome> = client.read(response_bytes[response_used..]);
         if response_read.erroneous { return response_read.error; }
         if response_read.value.state == status.END { return error("HTTP response ended early"); }
+
         response_used = response_used + response_read.value.count;
+
         def partial: result<http.ResponseHead> = http.parse_response(
             strings.view_bytes(response_bytes[0..response_used]), 1024);
         if partial.erroneous { return partial.error; }
+
         response_complete = partial.value.complete;
         response_attempts = response_attempts + 1;
     }
+
     if !response_complete { return error("HTTP response head did not complete"); }
+
     def response: result<http.ResponseHead> = http.parse_response(
         strings.view_bytes(response_bytes[0..response_used]), 1024);
     if response.erroneous { return response.error; }
+
     def zero: u64 = 0;
     if !response.value.complete || response.value.code != 200 ||
         !response.value.has_content_length || response.value.content_length != zero {
@@ -148,64 +185,83 @@ def local_round_trip(owner: &arena.GeneralArena) -> result<void> {
     }
 
     // Binary TCP uses the same socket without string conversion.
-    def payload: [u8; 4] = {0, 1, 2, 255};
+    def payload: [u8; 4]                     = {0, 1, 2, 255};
     def sent_bytes: result<net.WriteOutcome> = client.write(payload[..]);
+
     if sent_bytes.erroneous { return sent_bytes.error; }
+
     def four: u64 = 4;
     if sent_bytes.value.would_block || sent_bytes.value.count != four {
         return error("binary TCP write was incomplete");
     }
-    def watched: [net.Socket; 2] = {server, client};
-    def requested: [i32; 2] = {net.READABLE, net.READABLE};
-    def mut ready_bits: [i32; 2] = zeroed;
+
+    def watched: [net.Socket; 2]  = {server, client};
+    def requested: [i32; 2]       = {net.READABLE, net.READABLE};
+    def mut ready_bits: [i32; 2]  = zeroed;
     def mut descriptors: [i32; 2] = zeroed;
     def binary_ready: result<u64> = net.wait_many(
         watched[..], requested[..], ready_bits[..], descriptors[..], 1000);
+
     if binary_ready.erroneous { return binary_ready.error; }
     if binary_ready.value == zero || ready_bits[0] != net.READABLE {
         return error("binary TCP read timed out");
     }
-    def mut received_bytes: [u8; 4] = zeroed;
+
+    def mut received_bytes: [u8; 4]          = zeroed;
     def binary_read: result<net.ReadOutcome> = server.read(received_bytes[..]);
+
     if binary_read.erroneous { return binary_read.error; }
-    def first: u8 = 0;
+
+    def first: u8  = 0;
     def second: u8 = 1;
-    def third: u8 = 2;
-    def last: u8 = 255;
+    def third: u8  = 2;
+    def last: u8   = 255;
+
     if binary_read.value.state != status.OK || binary_read.value.count != four ||
         received_bytes[0] != first || received_bytes[1] != second ||
         received_bytes[2] != third || received_bytes[3] != last {
         return error("binary TCP payload changed");
     }
+
     def half_closed: result<void> = client.shutdown_write();
     if half_closed.erroneous { return half_closed.error; }
+
     def second_shutdown: result<void> = client.shutdown_write();
     if !second_shutdown.erroneous { return error("duplicate TCP shutdown succeeded"); }
+
     def fin_ready: result<i32> = server.wait(net.READABLE, 1000);
     if fin_ready.erroneous { return fin_ready.error; }
     if fin_ready.value == 0 { return error("TCP FIN timed out"); }
+
     def after_fin: result<net.ReadOutcome> = server.read(received_bytes[..]);
     if after_fin.erroneous { return after_fin.error; }
     if after_fin.value.state != status.END { return error("TCP FIN was not received"); }
 
     def server_close: result<void> = server.close();
     if server_close.erroneous { return server_close.error; }
+
     def client_close: result<void> = client.close();
     if client_close.erroneous { return client_close.error; }
+
     def listener_close: result<void> = listener.close();
     if listener_close.erroneous { return listener_close.error; }
+
     return;
 }
 
 def main() -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
-    def completed: result<void> = local_round_trip(&owner);
+    def completed: result<void>       = local_round_trip(&owner);
+
     if completed.erroneous {
         std.println(completed.error.message);
         owner.free();
+
         return 1;
     }
+
     owner.free();
     std.println("nonblocking HTTP round trip succeeded");
+
     return 0;
 }

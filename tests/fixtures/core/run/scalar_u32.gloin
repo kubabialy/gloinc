@@ -7,13 +7,16 @@ def arithmetic(x: u32, y: u32) -> bool {
     if x / y != 2 || x % y != 1 { return false; }
     if !(x > y) || !(x >= y) || !(y < x) || !(y <= x) { return false; }
     if x == y || x != x || !(x >= x) || !(y <= y) { return false; }
+
     return true;
 }
 
 def main() -> i32 {
-    def low: u32 = identity(0);
+    def low: u32  = identity(0);
     def high: u32 = identity(4294967295);
+
     if low != 0 || high != 4294967295 || !(low < high) { return -1; }
     if !arithmetic(7, 3) { return -2; }
+
     return 42;
 }

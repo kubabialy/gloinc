@@ -14,6 +14,9 @@ HTTP/1.1 head operations in the 0.1.0 candidate. Their public APIs use built-in
 `result<T>` for failures and ordinary payloads for expected readiness/EOF
 states. See [networking](../docs/networking.md) and the
 [local example](../examples/network_http.gloin).
+`@net` also provides verified client TLS, reusable PEM server configurations,
+accepted TLS sessions and readiness-driven bidirectional shutdown. See
+[server TLS, ownership and cleanup](../docs/server-tls.md).
 `@http_client` adds bounded streaming HTTP/HTTPS exchanges with overall
 deadlines, backpressure, cancellation, early upload rejection, built-in results,
 application headers, and chunked/fixed/EOF response decoding. Its synchronous
@@ -140,13 +143,23 @@ Direct byte read/write primitives added after 0.0.4 work on caller-owned slices
 without constructing strings; see [direct byte I/O](../docs/io.md#direct-byte-io).
 
 SPEC-030e adds [fs.gloin](fs.gloin) and [process.gloin](process.gloin). Lexical
-paths borrow bytes or copy into caller arenas; filesystem mutations use explicit
-names and preserve OS errors. Directory cursors copy each entry name into a
+paths borrow bytes or copy into caller arenas; older filesystem mutations use explicit
+names and preserve OS errors. New symlink/workspace helpers and checked file
+replacement use built-in results with static errors. `fs.replace_file` supports
+checked staged writes with ordinary Unix permission preservation; its concurrency
+and metadata limits are documented in the filesystem guide.
+Directory cursors copy each entry name into a
 caller arena and require explicit close. Arguments are scoped per invocation;
 environment values distinguish missing/empty, and cwd is explicitly bounded.
 Both modules import `@strings`, `@arena`, and `@status`; private native routines and
 module-scoped descriptor primitives support their public source implementations.
 See [every API's usage, ownership, and costs](../docs/filesystem-process.md).
+
+The unreleased 0.1.0 `@process` also supports explicit child launch, pipes,
+bounded capture, deadlines, cwd/environment options and process-group cleanup.
+`Options.stack_limit_bytes` sets only the child's soft stack limit; zero
+inherits and nonzero requires the host's original main thread on macOS.
+See the [child-process API and platform contract](../docs/child-processes.md).
 
 ## Bounded JSON (`@json`, 0.1.0 candidate)
 

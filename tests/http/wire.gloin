@@ -1,0 +1,239 @@
+// Independent HTTP test oracle: no @http or @http_client parser/serializer.
+import "../../tools/checks/common";
+import "@arena";
+import "@status";
+import "@strings";
+
+def pub count(kind: string, tls: bool) -> u64 {
+    if strings.equal(kind, "client") { if tls { return 17; } return 15; }
+    if strings.equal(kind, "stream") { return 10; }
+    if strings.equal(kind, "client-example") { return 1; }
+
+    return 32;
+}
+
+def pub path(kind: string, index: u64, tls: bool) -> string {
+    def client: [string; 17] = {"/fixed", "/chunked", "/large", "/close", "/head",
+        "/no-content", "/not-modified", "/reset", "/error-status", "/bad-truncated",
+        "/bad-ambiguous", "/bad-large", "/bad-chunk", "/timeout", "/slow", "/wrong-host", "/untrusted"};
+    def stream: [string; 10] = {"/upload", "/early", "/input-wait", "/input-timeout", "/output-timeout",
+        "/backpressure", "/cancel", "/short", "/excess", "/truncated"};
+
+    if strings.equal(kind, "client") { return client[index % count(kind, tls)]; }
+    if strings.equal(kind, "stream") { return stream[index % 10]; }
+    if strings.equal(kind, "client-example") { return "/echo"; }
+
+    return ""; // Concurrent connections are verified by path counts, not accept order.
+}
+
+def pub decimal(text: string, limit: u64) -> result<u64> {
+    def size: u64 = strings.byte_length(text);
+    if size == 0 { return error("empty fixture decimal"); }
+
+    def mut value: u64 = 0;
+
+    for def mut i: u64 = 0; i < size; i = i + 1 {
+        def byte: u8 = common.byte(text, i);
+        if byte < 48 || byte > 57 { return error("invalid fixture decimal"); }
+
+        def digit: u64 = common.widen(byte - 48);
+        if digit > limit || value > (limit - digit) / 10 { return error("fixture decimal exceeds limit"); }
+
+        value = value * 10 + digit;
+    }
+
+    return value;
+}
+
+def pub struct Request {
+    def pub path: string,
+    def pub length: u64,
+}
+
+// Deliberately small strict reader for these requests, separate from production HTTP.
+def pub request(memory: &arena.GeneralArena, head: string, kind: string, expected: string) -> result<Request> {
+    def split: strings.SplitCursorResult = strings.SplitCursor.create(head, "\r\n");
+    if split.status != status.OK { return error("cannot split request head"); }
+
+    def mut lines: strings.SplitCursor = split.value;
+    def first: strings.StringResult    = lines.next();
+
+    if first.status != status.OK { return error("missing request line"); }
+
+    def space: strings.FindResult = strings.find(first.value, " ");
+    if !space.found { return error("missing request method"); }
+
+    def method: string          = common.part(first.value, 0, space.offset);
+    def tail: string            = common.part(first.value, space.offset + 1, strings.byte_length(first.value));
+    def end: strings.FindResult = strings.find(tail, " ");
+
+    if !end.found { return error("missing request version"); }
+
+    def target: string = common.part(tail, 0, end.offset);
+
+    if !strings.equal(common.part(tail, end.offset + 1, strings.byte_length(tail)), "HTTP/1.1") {
+        return error("unexpected request version");
+    }
+    if !strings.is_empty(expected) && !strings.equal(target, expected) { return error("unexpected request path/order"); }
+    if strings.equal(kind, "stream-example") && !strings.equal(target, "/fixed")
+        && !strings.equal(target, "/chunked") && !strings.equal(target, "/stall") { return error("unexpected concurrent request path"); }
+
+    def mut wanted: string = "POST";
+    if strings.equal(target, "/head") { wanted = "HEAD"; }
+    if strings.starts_with(kind, "stream") {
+        wanted = "GET";
+
+        if strings.equal(target, "/upload") || strings.equal(target, "/early")
+            || strings.equal(target, "/input-wait") || strings.equal(target, "/input-timeout")
+            || strings.equal(target, "/short") || strings.equal(target, "/excess") { wanted = "POST"; }
+    }
+
+    if !strings.equal(method, wanted) { return error("unexpected request method"); }
+
+    def mut names: [string; 64]        = zeroed;
+    def mut count: u64                 = 0;
+    def mut length: u64                = 0;
+    def mut have_length: bool          = false;
+    def mut close: bool                = false;
+    def mut auth: bool                 = false;
+    def mut line: strings.StringResult = lines.next();
+
+    while line.status == status.OK {
+        if count == 64 { return error("too many request headers"); }
+
+        def colon: strings.FindResult = strings.find(line.value, ":");
+        if !colon.found { return error("invalid request header"); }
+
+        def lower: strings.StringResult = strings.lower_ascii(memory, common.part(line.value, 0, colon.offset), 8192);
+        if lower.status != status.OK { return error("cannot read header name"); }
+
+        def name: string = lower.value;
+
+        for def mut i: u64 = 0; i < count; i = i + 1 {
+            if strings.equal(names[i], name) { return error("duplicate request header"); }
+        }
+
+        names[count] = name;
+        count = count + 1;
+
+        def value: string = strings.trim_ascii(common.part(line.value, colon.offset + 1, strings.byte_length(line.value)));
+
+        if strings.equal(name, "content-length") {
+            def parsed: result<u64> = decimal(value, 67108864);
+            if parsed.erroneous { return parsed.error; }
+
+            length      = parsed.value;
+            have_length = true;
+        }
+
+        if strings.equal(name, "connection") { close = strings.equal(value, "close"); }
+        if strings.equal(name, "authorization") { auth = strings.equal(value, "Bearer fixture"); }
+
+        line = lines.next();
+    }
+
+    if line.status != status.END || !have_length || !close { return error("missing request length/connection close"); }
+    if strings.equal(kind, "client") && !auth { return error("missing request authorization"); }
+
+    def mut expected_length: u64 = 3;
+    if strings.equal(target, "/head") { expected_length = 0; }
+    if strings.equal(target, "/large") { expected_length = 30000; }
+    if strings.equal(target, "/echo") { expected_length = 30; }
+    if strings.starts_with(kind, "stream") {
+        expected_length = 0;
+        if strings.equal(target, "/upload") { expected_length = 1048576; }
+        if strings.equal(target, "/early") { expected_length = 67108864; }
+        if strings.equal(target, "/input-wait") || strings.equal(target, "/input-timeout")
+            || strings.equal(target, "/short") || strings.equal(target, "/excess") { expected_length = 1; }
+    }
+
+    if length != expected_length { return error("unexpected declared request length"); }
+
+    return Request { path: target, length: length };
+}
+
+def pub body(kind: string, path: string, offset: u64, bytes: [const u8]) -> bool {
+    def mut pattern: string = "a\0b";
+    if strings.starts_with(kind, "stream") { pattern = "a"; }
+    if strings.equal(path, "/echo") { pattern = "{\"message\":\"hello from Gloin\"}"; }
+
+    def size: u64 = strings.byte_length(pattern);
+
+    for def mut i: u64 = 0; i < bytes.len; i = i + 1 {
+        if bytes[i] != common.byte(pattern, (offset + i) % size) { return false; }
+    }
+
+    return true;
+}
+
+def pub response(memory: &arena.GeneralArena, kind: string, path: string) -> result<string> {
+    if strings.starts_with(kind, "client") {
+        if strings.equal(path, "/fixed") || strings.equal(path, "/slow") { return "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\na\0b"; }
+        if strings.equal(path, "/chunked") { return "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;name=\"value\"\r\na\r\n2\r\n\0b\r\n0\r\nX-End: yes\r\n\r\n"; }
+        if strings.equal(path, "/close") { return "HTTP/1.1 200 OK\r\n\r\na\0b"; }
+        if strings.equal(path, "/head") { return "HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n"; }
+        if strings.equal(path, "/no-content") { return "HTTP/1.1 204 No Content\r\n\r\n"; }
+        if strings.equal(path, "/not-modified") { return "HTTP/1.1 304 Not Modified\r\nContent-Length: 999\r\n\r\n"; }
+        if strings.equal(path, "/reset") { return "HTTP/1.1 205 Reset\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"; }
+        if strings.equal(path, "/error-status") { return "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 3\r\n\r\na\0b"; }
+        if strings.equal(path, "/bad-truncated") { return "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\na\0b"; }
+        if strings.equal(path, "/bad-ambiguous") { return "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n"; }
+        if strings.equal(path, "/bad-large") { return "HTTP/1.1 200 OK\r\nContent-Length: 65537\r\n\r\n"; }
+        if strings.equal(path, "/bad-chunk") { return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\n"; }
+        if strings.equal(path, "/echo") { return "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\nb\r\n{\"ok\":true}\r\n0\r\n\r\n"; }
+    }
+
+    def built: strings.BuilderResult = strings.StringBuilder.create(memory, 1050000);
+    if built.status != status.OK { return error("cannot allocate bounded wire fixture"); }
+
+    def mut out: strings.StringBuilder = built.value;
+    def mut payload: string            = "a";
+    def mut copies: u64                = 3;
+    def mut head: string               = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n";
+    def mut tail: string               = "";
+
+    if strings.equal(path, "/early") || strings.equal(path, "/input-wait") { head = "HTTP/1.1 413 Too Large\r\nContent-Length: 3\r\n\r\n"; }
+    if strings.equal(path, "/upload") { copies = 1048576; head = "HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n\r\n"; }
+    if strings.equal(path, "/backpressure") { copies = 10003; head = "HTTP/1.1 200 OK\r\nContent-Length: 10003\r\n\r\n"; }
+    if strings.equal(path, "/fixed") || strings.equal(path, "/chunked") {
+        payload = "Gloin\0"; copies = 21846; head = "HTTP/1.1 200 OK\r\nContent-Length: 131076\r\n\r\n";
+    }
+
+    if strings.equal(path, "/large") {
+        payload = "a\0b"; copies = 10000;
+        head    = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n7530\r\n";
+        tail    = "\r\n0\r\n\r\n";
+    }
+
+    def repeated: strings.StringResult = strings.repeat(memory, payload, copies, 1048576);
+    if repeated.status != status.OK { return error("cannot construct response body"); }
+
+    def body: string = repeated.value;
+
+    if strings.equal(path, "/chunked") || strings.equal(path, "/truncated") {
+        head = "HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+
+        if out.append(head) != status.OK { return error("wire head exceeds storage"); }
+
+        def size: u64 = strings.byte_length(body);
+
+        for def mut offset: u64 = 0; offset < size; offset = offset + 4093 {
+            def mut end: u64       = offset + 4093;
+            def mut length: string = "ffd";
+
+            if end > size { end = size; length = "64"; }
+            if strings.equal(path, "/truncated") { length = "3"; }
+            if out.append(length) != status.OK || out.append(";x=ok\r\n") != status.OK
+                || out.append(common.part(body, offset, end)) != status.OK || out.append("\r\n") != status.OK {
+                return error("wire chunk exceeds storage");
+            }
+        }
+
+        if !strings.equal(path, "/truncated") && out.append("0\r\nX-End: yes\r\n\r\n") != status.OK { return error("wire trailer exceeds storage"); }
+    } else if out.append(head) != status.OK || out.append(body) != status.OK || out.append(tail) != status.OK { return error("wire response exceeds storage"); }
+
+    def copied: strings.StringResult = out.to_string(memory);
+    if copied.status != status.OK { return error("cannot retain wire response"); }
+
+    return copied.value;
+}

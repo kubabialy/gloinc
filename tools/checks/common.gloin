@@ -1,0 +1,128 @@
+// Private helpers for repository checkers; all retained text is arena owned.
+import "@arena";
+import "@fs";
+import "@io";
+import "@status";
+import "@strings";
+
+def pub byte(text: string, offset: u64) -> u8 { return strings.byte_at(text, offset).value; }
+
+def pub part(text: string, start: u64, end: u64) -> string { return strings.slice_bytes(text, start, end - start).value; }
+
+def pub space(value: u8) -> bool { return value == 32 || value == 9 || value == 10 || value == 13; }
+
+def pub report(message: string) -> void { def mut out: io.Stream = io.stderr(); out.write_line(message); }
+
+def pub close_file(file: &io.File) -> void { if file.is_open() { file.close(); } }
+
+def pub close_directory(directory: &fs.Directory) -> void { if directory.is_open() { directory.close(); } }
+
+def pub copy(memory: &arena.GeneralArena, text: string) -> result<string> {
+    def copied: strings.StringResult = strings.copy(memory, text);
+    if copied.status != status.OK { return error("cannot copy checker text"); }
+
+    return copied.value;
+}
+
+def pub read(memory: &arena.GeneralArena, path: string, bound: u64) -> result<string> {
+    def opened: io.FileResult = io.File.open_read(memory, path);
+    if opened.status != status.OK { return error("cannot open checker input"); }
+
+    def mut file: io.File = opened.value;
+    defer close_file(&file);
+
+    def read: io.ReadResult = file.read_all(memory, bound);
+    if read.status != status.OK { return error("cannot read checker input within its byte limit"); }
+    if file.close().status != status.OK { return error("cannot close checker input"); }
+
+    return read.value;
+}
+
+def pub join(memory: &arena.GeneralArena, left: string, right: string) -> result<string> {
+    def path: fs.PathResult = fs.join(memory, left, right, 65536);
+    if path.status != status.OK { return error("checker path exceeds 65536 bytes or cannot be allocated"); }
+
+    return path.value;
+}
+
+// No unchecked numeric casts. These private conversions are only used for bytes.
+def pub widen(value: u8) -> u64 {
+    def mut small: u8  = value;
+    def mut large: u64 = 0;
+
+    while small > 0 { small = small - 1; large = large + 1; }
+
+    return large;
+}
+
+def pub narrow(value: u64) -> u8 {
+    def mut left: u64 = value;
+    def mut out: u8   = 0;
+
+    while left > 0 { left = left - 1; out = out + 1; }
+
+    return out;
+}
+
+def pub hex(value: u8) -> result<u8> {
+    if value >= 48 && value <= 57 { return value - 48; }
+    if value >= 65 && value <= 70 { return value - 55; }
+    if value >= 97 && value <= 102 { return value - 87; }
+
+    return error("invalid hexadecimal digit");
+}
+
+// Validate UTF-8 and XML 1.0 characters (also the checkers' HTML input policy).
+def pub valid_text(text: string) -> bool {
+    def size: u64  = strings.byte_length(text);
+    def mut i: u64 = 0;
+
+    while i < size {
+        def first: u8 = byte(text, i);
+
+        if first < 128 {
+            if first < 32 && !space(first) { return false; }
+
+            i = i + 1;
+        } else {
+            def mut width: u64 = 0;
+            if first >= 194 && first <= 223 { width = 2; }
+            if first >= 224 && first <= 239 { width = 3; }
+            if first >= 240 && first <= 244 { width = 4; }
+            if width == 0 || width > size - i { return false; }
+
+            for def mut j: u64 = 1; j < width; j = j + 1 {
+                if byte(text, i + j) < 128 || byte(text, i + j) > 191 { return false; }
+            }
+
+            def second: u8 = byte(text, i + 1);
+            if (first == 224 && second < 160) || (first == 237 && second >= 160)
+                || (first == 240 && second < 144) || (first == 244 && second >= 144) { return false; }
+            if first == 239 && second == 191 && byte(text, i + 2) >= 190 { return false; }
+
+            i = i + width;
+        }
+    }
+
+    return true;
+}
+
+def pub scalar(out: &strings.StringBuilder, value: u64) -> bool {
+    if value > 1114111 || (value >= 55296 && value <= 57343) || value == 65534 || value == 65535
+        || (value < 32 && value != 9 && value != 10 && value != 13) { return false; }
+    if value < 128 { return out.append_byte(narrow(value)) == status.OK; }
+    if value < 2048 {
+        return out.append_byte(192 + narrow(value / 64)) == status.OK
+            && out.append_byte(128 + narrow(value % 64)) == status.OK;
+    }
+    if value < 65536 {
+        return out.append_byte(224 + narrow(value / 4096)) == status.OK
+            && out.append_byte(128 + narrow((value / 64) % 64)) == status.OK
+            && out.append_byte(128 + narrow(value % 64)) == status.OK;
+    }
+
+    return out.append_byte(240 + narrow(value / 262144)) == status.OK
+        && out.append_byte(128 + narrow((value / 4096) % 64)) == status.OK
+        && out.append_byte(128 + narrow((value / 64) % 64)) == status.OK
+        && out.append_byte(128 + narrow(value % 64)) == status.OK;
+}

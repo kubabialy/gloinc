@@ -1,0 +1,157 @@
+// One local POST /echo, a fixed JSON acknowledgement, then exit.
+// Start before http_client.gloin. This bounded example is not a general server.
+import "@arena";
+import "@http";
+import "@net";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def cleanup(socket: &net.Socket) -> void {
+    if socket.is_open() {
+        def closed: result<void> = socket.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+def within(start: time.Instant) -> bool {
+    def now: time.InstantResult = time.monotonic_now();
+    if now.status != status.OK { return false; }
+
+    def elapsed: time.DurationResult = time.elapsed(start, now.value);
+
+    return elapsed.status == status.OK && elapsed.value.nanoseconds < 30000000000;
+}
+
+def send_all(socket: &net.Socket, bytes: string, start: time.Instant) -> result<void> {
+    def mut sent: u64 = 0;
+    def size: u64     = strings.byte_length(bytes);
+
+    while sent < size && within(start) {
+        def written: result<net.WriteOutcome> = socket.write_text(strings.slice_bytes(bytes, sent, size - sent).value);
+        if written.erroneous { return written.error; }
+
+        sent = sent + written.value.count;
+
+        if written.value.would_block {
+            def waited: result<i32> = socket.wait(net.WRITABLE, 10);
+            if waited.erroneous { return waited.error; }
+        }
+    }
+
+    if sent != size { return error("HTTP response deadline exceeded"); }
+
+    return;
+}
+
+def exchange(owner: &arena.GeneralArena, socket: &net.Socket, start: time.Instant) -> result<void> {
+    def mut storage: [u8; 8192] = zeroed;
+    def mut used: u64           = 0;
+    def mut head_bytes: u64     = 0;
+    def mut body_bytes: u64     = 0;
+    def mut complete: bool      = false;
+
+    while !complete && within(start) {
+        if used == 8192 { return error("HTTP request exceeds example storage"); }
+
+        def read: result<net.ReadOutcome> = socket.read(storage[used..]);
+        if read.erroneous { return read.error; }
+        if read.value.state == status.END { return error("HTTP request ended early"); }
+
+        used = used + read.value.count;
+
+        if head_bytes == 0 {
+            def parsed: result<http.RequestHead> = http.parse_request(strings.view_bytes(storage[..used]), 4096);
+            if parsed.erroneous { return parsed.error; }
+
+            if parsed.value.complete {
+                def head: http.RequestHead = parsed.value;
+                if !strings.equal(head.method, "POST") || !strings.equal(head.target, "/echo") { return error("expected POST /echo"); }
+
+                head_bytes = head.header_bytes;
+                body_bytes = head.content_length;
+
+                if body_bytes > 4096 { return error("request body exceeds 4096 bytes"); }
+            }
+        }
+
+        if head_bytes > 0 { complete = used >= head_bytes + body_bytes; }
+        if read.value.state == status.WOULD_BLOCK {
+            def waited: result<i32> = socket.wait(net.READABLE, 10);
+            if waited.erroneous { return waited.error; }
+        }
+    }
+
+    if !complete { return error("HTTP request deadline exceeded"); }
+
+    def body: string              = "{\"ok\":true}";
+    def formatted: result<string> = http.format_response(owner, 200, "OK", "application/json", strings.byte_length(body), 1024);
+
+    if formatted.erroneous { return formatted.error; }
+
+    def sent_head: result<void> = send_all(socket, formatted.value, start);
+    if sent_head.erroneous { return sent_head.error; }
+
+    def sent_body: result<void> = send_all(socket, body, start);
+    if sent_body.erroneous { return sent_body.error; }
+
+    return;
+}
+
+def serve(owner: &arena.GeneralArena) -> result<void> {
+    def opened: result<net.Socket> = net.Socket.open(owner);
+    if opened.erroneous { return opened.error; }
+
+    def mut listener: net.Socket = opened.value;
+    defer cleanup(&listener);
+
+    def reusable: result<void> = listener.set_reuse_address(true);
+    if reusable.erroneous { return reusable.error; }
+
+    def bound: result<void> = listener.bind(net.Address.loopback(8080));
+    if bound.erroneous { return bound.error; }
+
+    def listening: result<void> = listener.listen(1);
+    if listening.erroneous { return listening.error; }
+
+    def clock: time.InstantResult = time.monotonic_now();
+    if clock.status != status.OK { return error("cannot read server clock"); }
+
+    def start: time.Instant = clock.value;
+
+    std.println("Listening on 127.0.0.1:8080 for one POST /echo (30 seconds)");
+
+    while within(start) {
+        def accepted: result<net.AcceptOutcome> = listener.accept(owner);
+        if accepted.erroneous { return accepted.error; }
+
+        if accepted.value.available {
+            def mut socket: net.Socket = accepted.value.socket;
+            defer cleanup(&socket);
+
+            def served: result<void> = exchange(owner, &socket, start);
+            if served.erroneous { return served.error; }
+
+            def closed: result<void> = socket.close();
+            if closed.erroneous { return closed.error; }
+
+            return;
+        }
+
+        def waited: result<i32> = listener.wait(net.READABLE, 10);
+        if waited.erroneous { return waited.error; }
+    }
+
+    return error("HTTP accept deadline exceeded");
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def served: result<void> = serve(&owner);
+    if served.erroneous { std.println(served.error.message); return 1; }
+
+    return 0;
+}

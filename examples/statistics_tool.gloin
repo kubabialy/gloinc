@@ -28,7 +28,7 @@ def struct Column {
         self.count   = self.count + 1;
 
         def n: std.F64Result = std.f64_from_u64_exact(self.count);
-        self.mean            = self.mean + (value - self.mean) / n.value;
+        self.mean = self.mean + (value - self.mean) / n.value;
     }
 
 }
@@ -77,10 +77,11 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
     def mut head: *Column                = null;
     def mut tail: *Column                = null;
     def mut selected: u64                = 0;
-    def mut selecting: bool = true;
+    def mut selecting: bool              = true;
 
     while selecting {
         def part: strings.StringResult = choices.next();
+
         if part.status == status.END {
             selecting = false;
         } else {
@@ -99,6 +100,7 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
                 if prior.index == number.value {
                     return report_error("statistics: duplicate column", 2);
                 }
+
                 prior = prior.next;
             }
 
@@ -112,6 +114,7 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
             });
 
             if node == null { return report_error("statistics: allocation failed", 3); }
+
             if tail == null {
                 head = node;
             } else {
@@ -138,6 +141,7 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
     while reading {
         scratch.reset();
         def line: io.ReadResult = input.read_line(&scratch, 4096);
+
         if line.status == status.END {
             reading = false;
         } else {
@@ -157,11 +161,12 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
             if split.status != status.OK { return report_error("statistics: invalid row", 2); }
 
             def mut fields: strings.SplitCursor = split.value;
-            def mut index: u64 = 0;
-            def mut scanning: bool = true;
+            def mut index: u64                  = 0;
+            def mut scanning: bool              = true;
 
             while scanning {
                 def field: strings.StringResult = fields.next();
+
                 if field.status == status.END {
                     scanning = false;
                 } else {
@@ -170,6 +175,7 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
                     }
 
                     def mut node: *Column = head;
+
                     while node != null {
                         if node.index == index {
                             def value: std.F64Result = std.parse_f64(strings.trim_ascii(field.value));
@@ -178,13 +184,17 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
                                 || value.value > 1000000000000.0 {
                                 return report_error("statistics: invalid number", 2);
                             }
+
                             (&*node).add(value.value);
                         }
+
                         node = node.next;
                     }
+
                     index = index + 1;
                 }
             }
+
             if rows == 0 { width = index; }
             if index != width { return report_error("statistics: inconsistent row width", 2); }
 
@@ -194,8 +204,10 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
                 if node.index >= width {
                     return report_error("statistics: missing column", 2);
                 }
+
                 node = node.next;
             }
+
             rows = rows + 1;
         }
     }
@@ -216,13 +228,16 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
 
     def mut output: io.File = made.value;
     defer output.close();
+
     if output.write_line("column,count,min,max,mean").status != status.OK {
         return report_error("statistics: report write failed", 3);
     }
 
     def mut node: *Column = head;
+
     while node != null {
         scratch.reset();
+
         if !integer(&output, &scratch, node.index) || output.write_all(",").status != status.OK
             || !integer(&output, &scratch, node.count) || output.write_all(",").status != status.OK
             || !decimal(&output, &scratch, node.minimum) || output.write_all(",").status != status.OK
@@ -230,14 +245,17 @@ def pub execute(input_path: string, output_path: string, columns: string) -> i32
             || !decimal(&output, &scratch, node.mean) || output.write_line("").status != status.OK {
             return report_error("statistics: report write failed", 3);
         }
+
         node = node.next;
     }
+
     if output.flush().status != status.OK {
         return report_error("statistics: report flush failed", 3);
     }
     if output.close().status != status.OK {
         return report_error("statistics: report close failed", 3);
     }
+
     return 0;
 }
 

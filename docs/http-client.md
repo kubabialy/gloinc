@@ -357,57 +357,52 @@ success and failure paths close TLS and TCP before freeing that arena.
 Start this small fixture in one terminal:
 
 ```sh
-python3 - <<'PY'
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-
-    def do_POST(self):
-        self.rfile.read(int(self.headers["Content-Length"]))
-        body = b'{"ok":true}'
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(body)
-
-HTTPServer(("127.0.0.1", 8080), Handler).serve_forever()
-PY
+build/gloinc --jit examples/http_echo_server.gloin
 ```
+
+The [Gloin server](../examples/http_echo_server.gloin) accepts one local
+`POST /echo`, consumes up to 4 KiB of body after a head bounded to 4 KiB, sends
+`{"ok":true}`, and exits. It has a 30-second overall deadline and binds only
+loopback. Restart it for each client run. This is a small HTTP fixture, not a
+general server or a JSON echo service.
 
 In another terminal:
 
 ```sh
 build/gloinc --jit examples/http_client.gloin
+```
+
+For native execution, compile the client, restart the server, then run it:
+
+```sh
 build/gloinc -o /tmp/http-client examples/http_client.gloin
 /tmp/http-client
 ```
 
 For a TLS listener on the same port with a certificate for `localhost`, pass
 `-- tls /path/to/ca.pem` after the source in JIT mode, or `tls /path/to/ca.pem`
-to the executable. The automated [local client fixtures](../tests/http_client_smoke.py)
+to the executable. The automated [local client fixtures](../tests/http/README.md)
 exercise both transports using an ephemeral port and a temporary certificate:
 
 ```sh
-python3 tests/http_client_smoke.py build/gloinc
+cmake --build build --target gloin_http_tests
+ctest --test-dir build -R '^HttpClientSmoke\.' --output-on-failure
 ```
 
 Those tests verify actual request bytes, binary bodies, chunked/fixed/EOF
 responses, informational and bodyless responses, error status codes, malformed
 framing, body limits, overall deadlines, certificate rejection, and connection
-cleanup in JIT and native modes. Decoder tests also cover every split point
+cleanup in JIT, `-O0`, and `-O2` modes. Decoder tests also cover every split point
 and one-byte input. HTTP code uses normal source-typed GloinIR lowering; native
 transport calls retain the existing verified `gloin.abi_call` boundary.
 
-The [streaming acceptance fixture](../tests/http_stream_smoke.py) checks bounded
+The [streaming acceptance fixture](../tests/http/README.md) checks bounded
 uploads, early final responses, paused producers/consumers, partial consumption,
 cancellation through aliases, truncation after delivered output, and the
-32-exchange example, over both HTTP and HTTPS in JIT/native modes:
+32-exchange example, over both HTTP and HTTPS in JIT/`-O0`/`-O2` modes:
 
 ```sh
-python3 tests/http_stream_smoke.py build/gloinc
+ctest --test-dir build -R '^HttpStreamSmoke\.' --output-on-failure
 ```
 
 Decoder tests additionally vary every wire split and output capacities 1–3,

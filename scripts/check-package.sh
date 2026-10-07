@@ -6,6 +6,14 @@ if [[ $# != 2 ]]; then
   exit 2
 fi
 build_dir=$(cd "$1" && pwd)
+source_root=$(cd "$(dirname "$0")/.." && pwd)
+if [[ -x /opt/homebrew/opt/openssl@3/bin/openssl ]]; then
+  openssl_command=/opt/homebrew/opt/openssl@3/bin/openssl
+elif [[ -x /usr/local/opt/openssl@3/bin/openssl ]]; then
+  openssl_command=/usr/local/opt/openssl@3/bin/openssl
+else
+  openssl_command=$(command -v openssl)
+fi
 case "$(uname -s)" in
   Darwin)
     runtime_suffix=dylib
@@ -38,13 +46,21 @@ cmake -E env "GLOIN_TEST_CLI=$work_dir/install prefix/bin/gloinc" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
   -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/installed.xml"
-python3 "$(dirname "$0")/../tests/tls_client_smoke.py" "$work_dir/install prefix/bin/gloinc"
-python3 "$(dirname "$0")/../tests/http_client_smoke.py" "$work_dir/install prefix/bin/gloinc" \
-  --example "$work_dir/install prefix/share/gloinc/examples/http_client.gloin"
-python3 "$(dirname "$0")/../tests/http_stream_smoke.py" "$work_dir/install prefix/bin/gloinc" \
-  --example "$work_dir/install prefix/share/gloinc/examples/http_stream.gloin"
-python3 "$(dirname "$0")/../tests/json_smoke.py" "$work_dir/install prefix/bin/gloinc" \
-  --example "$work_dir/install prefix/share/gloinc/examples/json.gloin"
+"$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-tls-test" "$source_root/tests/tls/main.gloin"
+"$work_dir/installed-tls-test" "$work_dir/install prefix/bin/gloinc" "$source_root" "$work_dir" "$openssl_command"
+"$work_dir/install prefix/bin/gloinc" --check "$work_dir/install prefix/share/gloinc/examples/tls_server.gloin"
+"$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-http-test" "$source_root/tests/http/main.gloin"
+for kind in client stream; do
+  "$work_dir/installed-http-test" "$kind" "$work_dir/install prefix/bin/gloinc" "$source_root" "$work_dir" "$openssl_command" \
+    "$work_dir/install prefix/share/gloinc/examples/http_$kind.gloin"
+done
+"$work_dir/install prefix/bin/gloinc" --check "$work_dir/install prefix/share/gloinc/examples/http_echo_server.gloin"
+"$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-json-test" "$source_root/tests/json/main.gloin"
+"$work_dir/installed-json-test" "$work_dir/install prefix/bin/gloinc" "$source_root" "$work_dir" \
+  "$work_dir/install prefix/share/gloinc/examples/json.gloin"
+"$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-stress-test" "$source_root/tests/integrated/main.gloin"
+"$work_dir/installed-stress-test" "$work_dir/install prefix/bin/gloinc" \
+  "$work_dir/install prefix/share/gloinc/examples" "$work_dir"
 
 cpack --config "$build_dir/CPackConfig.cmake" -B "$work_dir/packages"
 archives=("$work_dir/packages/"*.tar.gz)
@@ -69,13 +85,21 @@ cmake -E env "GLOIN_TEST_CLI=$package_root/bin/gloinc" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
   -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/extracted.xml"
-python3 "$(dirname "$0")/../tests/tls_client_smoke.py" "$package_root/bin/gloinc"
-python3 "$(dirname "$0")/../tests/http_client_smoke.py" "$package_root/bin/gloinc" \
-  --example "$package_root/share/gloinc/examples/http_client.gloin"
-python3 "$(dirname "$0")/../tests/http_stream_smoke.py" "$package_root/bin/gloinc" \
-  --example "$package_root/share/gloinc/examples/http_stream.gloin"
-python3 "$(dirname "$0")/../tests/json_smoke.py" "$package_root/bin/gloinc" \
-  --example "$package_root/share/gloinc/examples/json.gloin"
+"$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-tls-test" "$source_root/tests/tls/main.gloin"
+"$work_dir/relocated-tls-test" "$package_root/bin/gloinc" "$source_root" "$work_dir" "$openssl_command"
+"$package_root/bin/gloinc" --check "$package_root/share/gloinc/examples/tls_server.gloin"
+"$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-http-test" "$source_root/tests/http/main.gloin"
+for kind in client stream; do
+  "$work_dir/relocated-http-test" "$kind" "$package_root/bin/gloinc" "$source_root" "$work_dir" "$openssl_command" \
+    "$package_root/share/gloinc/examples/http_$kind.gloin"
+done
+"$package_root/bin/gloinc" --check "$package_root/share/gloinc/examples/http_echo_server.gloin"
+"$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-json-test" "$source_root/tests/json/main.gloin"
+"$work_dir/relocated-json-test" "$package_root/bin/gloinc" "$source_root" "$work_dir" \
+  "$package_root/share/gloinc/examples/json.gloin"
+"$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-stress-test" "$source_root/tests/integrated/main.gloin"
+"$work_dir/relocated-stress-test" "$package_root/bin/gloinc" \
+  "$package_root/share/gloinc/examples" "$work_dir"
 program_status=0
 result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/core_counter.gloin") || program_status=$?
 [[ "$program_status" == 42 && -z "$result" ]]

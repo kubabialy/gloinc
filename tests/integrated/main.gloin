@@ -1,0 +1,241 @@
+// Million-record acceptance checks with child stack limits and fixed independent oracles.
+import "../../tools/checks/common";
+import "../support/tool_runner";
+import "@arena";
+import "@fs";
+import "@io";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def write_repeated(path: string, header: string, row: string, count: u64) -> result<void> {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def opened: io.FileResult = io.File.create_new(&memory, path);
+    if opened.status != status.OK { return error("cannot create stress fixture"); }
+
+    def mut file: io.File = opened.value;
+    defer common.close_file(&file);
+
+    if file.write_all(header).status != status.OK { return error("cannot write stress header"); }
+
+    // One reusable 1024-row block, bounded independently of the number of records.
+    def block: strings.StringResult = strings.repeat(&memory, row, 1024, 32768);
+    if block.status != status.OK { return error("cannot allocate stress write block"); }
+
+    def text: string       = block.value;
+    def mut remaining: u64 = count;
+
+    while remaining >= 1024 {
+        if file.write_all(text).status != status.OK { return error("cannot write stress block"); }
+
+        remaining = remaining - 1024;
+    }
+
+    def tail: string = strings.slice_bytes(text, 0, remaining * strings.byte_length(row)).value;
+    if file.write_all(tail).status != status.OK { return error("cannot write stress tail"); }
+    if file.close().status != status.OK { return error("cannot close stress fixture"); }
+
+    return;
+}
+
+def append(path: string, text: string) -> result<void> {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def opened: io.FileResult = io.File.open_append(&memory, path);
+    if opened.status != status.OK { return error("cannot open stress fixture for append"); }
+
+    def mut file: io.File = opened.value;
+    defer common.close_file(&file);
+
+    if file.write_all(text).status != status.OK { return error("cannot append stress record"); }
+    if file.close().status != status.OK { return error("cannot close stress fixture append"); }
+
+    return;
+}
+
+def captured(memory: &arena.GeneralArena, work: string, label: string, compiler: string, args: [const string], expected_status: i32) -> result<string> {
+    def done: result<void> = tool_runner.capture_limited(work, label, compiler, args, "", expected_status, "",
+        time.Duration { nanoseconds: 60000000000 }, 2097152);
+    if done.erroneous { return done.error; }
+
+    def out_name: strings.StringResult = strings.concat(memory, label, ".out", 256);
+    def err_name: strings.StringResult = strings.concat(memory, label, ".err", 256);
+
+    if out_name.status != status.OK || err_name.status != status.OK { return error("cannot form stress capture name"); }
+
+    def out_path: result<string> = common.join(memory, work, out_name.value);
+    if out_path.erroneous { return out_path.error; }
+
+    def err_path: result<string> = common.join(memory, work, err_name.value);
+    if err_path.erroneous { return err_path.error; }
+
+    def output: result<string> = common.read(memory, out_path.value, 262144);
+    if output.erroneous { return output.error; }
+
+    def errors: result<string> = common.read(memory, err_path.value, 262144);
+    if errors.erroneous { return errors.error; }
+
+    if expected_status == 0 {
+        if !strings.is_empty(errors.value) { return error("successful stress child wrote to stderr"); }
+    } else if !strings.is_empty(output.value) || strings.is_empty(errors.value) {
+        return error("rejected stress input must write only to stderr");
+    }
+
+    return output.value;
+}
+
+def config(memory: &arena.GeneralArena, compiler: string, examples: string, work: string) -> result<void> {
+    def source: result<string> = common.join(memory, examples, "config_reader.gloin");
+    if source.erroneous { return source.error; }
+
+    def path: result<string> = common.join(memory, work, "large.conf");
+    if path.erroneous { return path.error; }
+
+    def header: string        = "label=retained\nseed=42\nsamples=1000000\n";
+    def written: result<void> = write_repeated(path.value, header, "# reuse scratch\n", 999997);
+
+    if written.erroneous { return written.error; }
+
+    def args: [string; 4]      = {"--jit", source.value, "--", path.value};
+    def output: result<string> = captured(memory, work, "config-limit", compiler, args[..], 0);
+
+    if output.erroneous { return output.error; }
+    if !strings.equal(output.value, header) { return error("million-line config changed retained values"); }
+
+    def appended: result<void> = append(path.value, "# one line over the limit\n");
+    if appended.erroneous { return appended.error; }
+
+    def rejected: result<string> = captured(memory, work, "config-overflow", compiler, args[..], 2);
+    if rejected.erroneous { return rejected.error; }
+
+    std.println("PASS: config at 1,000,000 lines; 1,000,001 rejected; label retained");
+
+    return;
+}
+
+def statistics(memory: &arena.GeneralArena, compiler: string, examples: string, work: string) -> result<void> {
+    def source: result<string> = common.join(memory, examples, "statistics_tool.gloin");
+    if source.erroneous { return source.error; }
+
+    def data: result<string> = common.join(memory, work, "data.txt");
+    if data.erroneous { return data.error; }
+
+    def report: result<string> = common.join(memory, work, "report.txt");
+    if report.erroneous { return report.error; }
+
+    def absent: result<string> = common.join(memory, work, "must-not-exist.txt");
+    if absent.erroneous { return absent.error; }
+
+    def written: result<void> = write_repeated(data.value, "", "row,-2,4\n", 1000000);
+    if written.erroneous { return written.error; }
+
+    def args: [string; 6]      = {"--jit", source.value, "--", data.value, report.value, "1,2"};
+    def output: result<string> = captured(memory, work, "statistics-limit", compiler, args[..], 0);
+
+    if output.erroneous { return output.error; }
+    if !strings.is_empty(output.value) { return error("statistics success unexpectedly wrote to stdout"); }
+
+    def read: result<string> = common.read(memory, report.value, 4096);
+    if read.erroneous { return read.error; }
+
+    def expected: string = "column,count,min,max,mean\n1,1000000,-2.000000,-2.000000,-2.000000\n2,1000000,4.000000,4.000000,4.000000\n";
+    if !strings.equal(read.value, expected) { return error("million-record statistics differ from the exact reference"); }
+
+    def appended: result<void> = append(data.value, "row,-2,4\n");
+    if appended.erroneous { return appended.error; }
+
+    def excess_args: [string; 6] = {"--jit", source.value, "--", data.value, absent.value, "1,2"};
+    def rejected: result<string> = captured(memory, work, "statistics-overflow", compiler, excess_args[..], 2);
+
+    if rejected.erroneous { return rejected.error; }
+    if fs.metadata(absent.value).status != status.NOT_FOUND { return error("over-limit statistics created output or its absence could not be verified"); }
+
+    std.println("PASS: statistics at 1,000,000 records; 1,000,001 rejected before output creation");
+
+    return;
+}
+
+def simulation(memory: &arena.GeneralArena, compiler: string, examples: string, work: string) -> result<void> {
+    def source: result<string> = common.join(memory, examples, "simulation_lab.gloin");
+    if source.erroneous { return source.error; }
+
+    def args: [string; 5]      = {"--jit", source.value, "--", "42", "1000000"};
+    def output: result<string> = captured(memory, work, "simulation", compiler, args[..], 0);
+
+    if output.erroneous { return output.error; }
+
+    // Independently calculated by the retired exact-integer oracle; see README.md.
+    def prefix: string = "seed=42\nsamples=1000000\ninside=785115\ndice_sum=3503215\npi=3.140460\nabs_error=0.001133\nelapsed_ns=";
+    def text: string   = output.value;
+    def start: u64     = strings.byte_length(prefix);
+    def size: u64      = strings.byte_length(text);
+
+    if !strings.starts_with(text, prefix) || !strings.ends_with(text, "\n") || size <= start + 1 {
+        return error("million-sample simulation differs from independent reference values");
+    }
+
+    for def mut i: u64 = start; i < size - 1; i = i + 1 {
+        def byte: u8 = strings.byte_at(text, i).value;
+        if byte < 48 || byte > 57 { return error("simulation elapsed time must be nonempty decimal digits"); }
+    }
+
+    std.println("PASS: 1,000,000 simulation samples match independent integer reference values");
+
+    return;
+}
+
+def jobs(memory: &arena.GeneralArena, compiler: string, examples: string, work: string) -> result<void> {
+    def configured: result<void> = config(memory, compiler, examples, work);
+    if configured.erroneous { return configured.error; }
+
+    def analyzed: result<void> = statistics(memory, compiler, examples, work);
+    if analyzed.erroneous { return analyzed.error; }
+
+    def simulated: result<void> = simulation(memory, compiler, examples, work);
+    if simulated.erroneous { return simulated.error; }
+
+    return;
+}
+
+def main() -> i32 {
+    if process.arg_count() != 4 { common.report("usage: gloin-stress-test COMPILER EXAMPLES_DIRECTORY TEMP_PARENT"); return 2; }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def mut args: [string; 3] = zeroed;
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def argument: process.TextResult = process.arg(&memory, i + 1);
+        if argument.status != status.OK { return 2; }
+
+        def canonical: result<string> = fs.canonical_path(&memory, argument.value, 65536);
+        if canonical.erroneous { common.report(canonical.error.message); return 2; }
+
+        args[i] = canonical.value;
+    }
+
+    if fs.metadata(args[1]).kind != fs.DIRECTORY || fs.metadata(args[2]).kind != fs.DIRECTORY {
+        common.report("examples and temporary parent must be directories"); return 2;
+    }
+
+    def made: result<string> = fs.temp_dir(&memory, args[2], "integrated stress", 65536);
+    if made.erroneous { common.report(made.error.message); return 1; }
+
+    def work: string         = made.value;
+    def tested: result<void> = jobs(&memory, args[0], args[1], work);
+
+    if tested.erroneous { common.report(tested.error.message); common.report("Evidence retained in:"); common.report(work); return 1; }
+
+    def removed: result<void> = tool_runner.remove_fixture_tree(work, 64);
+    if removed.erroneous { common.report(removed.error.message); common.report(work); return 1; }
+
+    std.println("All programs compile and run with a 2 MiB soft stack limit; fixtures removed.");
+
+    return 0;
+}

@@ -6,8 +6,11 @@ with streaming fixed-length, chunked, and clean-EOF response decoding,
 backpressure, cancellation, and per-exchange deadlines. The
 `gloin_examples/http_server` example remains sequential; the sibling
 `http_stream/server.gloin` demonstrates concurrent, bounded HTTP fixture
-connections. A reusable HTTP server library, server-side TLS, and a full
-real-time client remain future work. Slack is one demanding
+connections. A reusable HTTP server library and a full real-time client remain
+unimplemented. [Server-side TLS and explicit graceful shutdown](server-tls.md)
+are now available, and the TLS driver runs in Gloin. Migrating the two HTTP/HTTPS
+test drivers remains part of the [0.1.0 tooling gate](tooling-roadmap.md).
+Slack is one demanding
 integration example for the general APIs below. The steps are capability gates,
 not claims that these features already work.
 
@@ -39,7 +42,8 @@ is one example of HTTPS with bearer tokens and TLS 1.2 or later with SNI. A usef
 Gloin TLS client now verifies the certificate chain and hostname against a
 trusted root store, requires TLS 1.2 or newer, sets SNI for DNS names, and maps
 OpenSSL read/write retry states to Gloin readiness bits. Callers still need to
-set explicit deadlines, and the client only provides best-effort shutdown.
+set explicit deadlines. `shutdown` now provides bidirectional completion;
+`close` remains best-effort cleanup.
 The [OpenSSL hostname verification API](https://docs.openssl.org/3.0/man3/SSL_set1_host/)
 and [nonblocking client guide](https://docs.openssl.org/master/man7/ossl-guide-tls-client-non-block/)
 define those checks and retry states.

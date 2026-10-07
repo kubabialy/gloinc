@@ -11,6 +11,7 @@ def pub struct Vector<T> {
     // Only the live prefix is initialized. A zero capacity is valid.
     def pub static empty(memory: &arena.GeneralArena, capacity: i64) -> Vector<T> {
         def storage: *T = memory.reserve_typed<T>(capacity);
+
         return Vector<T> {
             data: storage,
             length: 0,
@@ -23,6 +24,7 @@ def pub struct Vector<T> {
     // elements are initialized; spare capacity must never be read.
     def pub static create(memory: &arena.GeneralArena, capacity: i64, fill: T) -> Vector<T> {
         def storage: *T = memory.alloc_reserved_many(fill, capacity);
+
         return Vector<T> {
             data: storage,
             length: 0,
@@ -45,6 +47,7 @@ def pub struct Vector<T> {
 
     def pub as_const_slice(self: &const Vector<T>) -> [const T] {
         def data: *const T = self.data;
+
         return data[0..self.length];
     }
 
@@ -53,32 +56,41 @@ def pub struct Vector<T> {
     def pub reserve(self: &Vector<T>, requested: i64) -> bool {
         if requested < 0 { return false; }
         if requested <= self.capacity { return true; }
-        def storage: *T = self.memory.reserve_typed<T>(requested);
+
+        def storage: *T    = self.memory.reserve_typed<T>(requested);
         def mut index: i64 = 0;
+
         while index < self.length {
             *(storage + index) = *(self.data + index);
             index = index + 1;
         }
-        self.data = storage;
+
+        self.data     = storage;
         self.capacity = requested;
+
         return true;
     }
 
     def pub push(self: &Vector<T>, value: T) -> bool {
         if self.length >= self.capacity {
             def mut next: i64 = 1;
+
             if self.capacity > 0 {
                 if self.capacity == 9223372036854775807 { return false; }
+
                 if self.capacity > 4611686018427387903 {
                     next = self.capacity + 1;
                 } else {
                     next = self.capacity * 2;
                 }
             }
+
             if !self.reserve(next) { return false; }
         }
+
         *(self.data + self.length) = value;
         self.length = self.length + 1;
+
         return true;
     }
 
@@ -86,75 +98,99 @@ def pub struct Vector<T> {
     // A capacity overflow returns false before any elements are appended.
     def pub append_from(self: &Vector<T>, source: [const T]) -> bool {
         def mut remaining: i64 = 9223372036854775807 - self.length;
-        def mut index: u64 = 0;
+        def mut index: u64     = 0;
+
         while index < source.len {
             if remaining == 0 { return false; }
+
             remaining = remaining - 1;
-            index = index + 1;
+            index     = index + 1;
         }
+
         index = 0;
+
         while index < source.len {
             if !self.push(source[index]) { return false; }
+
             index = index + 1;
         }
+
         return true;
     }
 
     def pub get(self: &const Vector<T>, index: i64) -> *const T {
         if index < 0 || index >= self.length { return null; }
+
         return self.data + index;
     }
 
     def pub get_mut(self: &Vector<T>, index: i64) -> *T {
         if index < 0 || index >= self.length { return null; }
+
         return self.data + index;
     }
 
     // The returned pointer borrows the removed slot until the next mutation.
     def pub pop(self: &Vector<T>) -> *T {
         if self.length == 0 { return null; }
+
         self.length = self.length - 1;
+
         return self.data + self.length;
     }
 
     def pub truncate(self: &Vector<T>, length: i64) -> bool {
         if length < 0 || length > self.length { return false; }
+
         self.length = length;
+
         return true;
     }
 
     def pub insert(self: &Vector<T>, index: i64, value: T) -> bool {
         if index < 0 || index > self.length { return false; }
+
         if self.length >= self.capacity {
             def mut next: i64 = 1;
+
             if self.capacity > 0 {
                 if self.capacity == 9223372036854775807 { return false; }
+
                 if self.capacity > 4611686018427387903 {
                     next = self.capacity + 1;
                 } else {
                     next = self.capacity * 2;
                 }
             }
+
             if !self.reserve(next) { return false; }
         }
+
         def mut cursor: i64 = self.length;
+
         while cursor > index {
             *(self.data + cursor) = *(self.data + (cursor - 1));
             cursor = cursor - 1;
         }
+
         *(self.data + index) = value;
         self.length = self.length + 1;
+
         return true;
     }
 
     def pub remove(self: &Vector<T>, index: i64) -> bool {
         if index < 0 || index >= self.length { return false; }
+
         def mut cursor: i64 = index;
+
         while cursor + 1 < self.length {
             *(self.data + cursor) = *(self.data + (cursor + 1));
             cursor = cursor + 1;
         }
+
         self.length = self.length - 1;
+
         return true;
     }
 
@@ -202,8 +238,10 @@ const N: usize> {
     def pub push(self: &Vector<T;
         N>, value: T) -> bool {
         if self.length >= N { return false; }
+
         self.data[self.length] = value;
-        self.length = self.length + 1;
+        self.length            = self.length + 1;
+
         return true;
     }
 
@@ -211,68 +249,88 @@ const N: usize> {
     def pub append_from(self: &Vector<T;
         N>, source: [const T]) -> bool {
         def mut remaining: i64 = N - self.length;
-        def mut index: u64 = 0;
+        def mut index: u64     = 0;
+
         while index < source.len {
             if remaining == 0 { return false; }
+
             remaining = remaining - 1;
-            index = index + 1;
+            index     = index + 1;
         }
+
         index = 0;
+
         while index < source.len {
             if !self.push(source[index]) { return false; }
+
             index = index + 1;
         }
+
         return true;
     }
 
     def pub get(self: &const Vector<T;
         N>, index: i64) -> *const T {
         if index < 0 || index >= self.length { return null; }
+
         return &self.data[index];
     }
 
     def pub get_mut(self: &Vector<T;
         N>, index: i64) -> *T {
         if index < 0 || index >= self.length { return null; }
+
         return &self.data[index];
     }
 
     def pub pop(self: &Vector<T;
         N>) -> *T {
         if self.length == 0 { return null; }
+
         self.length = self.length - 1;
+
         return &self.data[self.length];
     }
 
     def pub truncate(self: &Vector<T;
         N>, length: i64) -> bool {
         if length < 0 || length > self.length { return false; }
+
         self.length = length;
+
         return true;
     }
 
     def pub insert(self: &Vector<T;
         N>, index: i64, value: T) -> bool {
         if index < 0 || index > self.length || self.length >= N { return false; }
+
         def mut cursor: i64 = self.length;
+
         while cursor > index {
             self.data[cursor] = self.data[cursor - 1];
             cursor = cursor - 1;
         }
+
         self.data[index] = value;
-        self.length = self.length + 1;
+        self.length      = self.length + 1;
+
         return true;
     }
 
     def pub remove(self: &Vector<T;
         N>, index: i64) -> bool {
         if index < 0 || index >= self.length { return false; }
+
         def mut cursor: i64 = index;
+
         while cursor + 1 < self.length {
             self.data[cursor] = self.data[cursor + 1];
             cursor = cursor + 1;
         }
+
         self.length = self.length - 1;
+
         return true;
     }
 

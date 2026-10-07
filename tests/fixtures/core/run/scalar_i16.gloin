@@ -8,13 +8,16 @@ def arithmetic(x: i16, y: i16) -> bool {
     if !(x > y) || !(x >= y) || !(y < x) || !(y <= x) { return false; }
     if x == y || x != x || !(x >= x) || !(y <= y) { return false; }
     if -x != -7 || -x / y != -2 || -x % y != -1 { return false; }
+
     return true;
 }
 
 def main() -> i32 {
-    def low: i16 = identity(-32768);
+    def low: i16  = identity(-32768);
     def high: i16 = identity(32767);
+
     if low != -32768 || high != 32767 || !(low < high) { return -1; }
     if !arithmetic(7, 3) { return -2; }
+
     return 42;
 }

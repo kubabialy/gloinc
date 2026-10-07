@@ -1,0 +1,122 @@
+import "@arena";
+import "@process";
+import "@std";
+
+def cleanup(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def check_arguments(owner: &arena.GeneralArena) -> i32 {
+    def args: [string; 4]              = {"", "a b", "$(literal);*", "café"};
+    def started: result<process.Child> = process.start(owner, "/bin/echo", args[..]);
+
+    if started.erroneous { return 1; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def finished: result<process.ExitStatus> = child.wait();
+    if finished.erroneous { return 2; }
+    if !finished.value.exited || finished.value.code != 0 || finished.value.signal != 0 { return 3; }
+
+    return 0;
+}
+
+def check_cached_status(owner: &arena.GeneralArena) -> i32 {
+    def args: [string; 2]              = {"-c", "exit 37"};
+    def started: result<process.Child> = process.start(owner, "/bin/sh", args[..]);
+
+    if started.erroneous { return 4; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def mut alias: process.Child             = child;
+    def finished: result<process.ExitStatus> = child.wait();
+
+    if finished.erroneous { return 5; }
+    if !finished.value.exited || finished.value.code != 37 || finished.value.signal != 0 { return 6; }
+
+    def observed: result<process.PollOutcome> = alias.poll();
+    if observed.erroneous { return 7; }
+    if !observed.value.ready || observed.value.status.code != 37 { return 8; }
+
+    def again: result<process.ExitStatus> = alias.wait();
+    if again.erroneous { return 9; }
+    if again.value.code != 37 { return 10; }
+
+    def closed: result<void> = alias.close();
+    if closed.erroneous { return 11; }
+    if child.is_open() { return 12; }
+
+    def invalid: result<process.ExitStatus> = child.wait();
+    if !invalid.erroneous { return 13; }
+
+    return 0;
+}
+
+def check_cleanup(owner: &arena.GeneralArena, mode: i32) -> i32 {
+    def args: [string; 1]              = {"30"};
+    def started: result<process.Child> = process.start(owner, "/bin/sleep", args[..]);
+
+    if started.erroneous { return 14; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def polled: result<process.PollOutcome> = child.poll();
+    if polled.erroneous { return 15; }
+    if polled.value.ready { return 16; }
+
+    if mode == 0 {
+        def terminated: result<void> = child.terminate();
+        if terminated.erroneous { return 17; }
+    } else if mode == 1 {
+        def killed: result<void> = child.kill();
+        if killed.erroneous { return 18; }
+    } else {
+        def closed: result<void> = child.close();
+        if closed.erroneous { return 19; }
+        if child.is_open() { return 20; }
+
+        return 0;
+    }
+
+    def finished: result<process.ExitStatus> = child.wait();
+    if finished.erroneous { return 21; }
+    if finished.value.exited || finished.value.code != 0 || finished.value.signal <= 0 { return 22; }
+
+    return 0;
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def empty: [string; 0]         = {};
+    def bad: result<process.Child> = process.start(&owner, "", empty[..]);
+
+    if !bad.erroneous { return 23; }
+
+    def bad_args: [string; 1]           = {"a\0b"};
+    def rejected: result<process.Child> = process.start(&owner, "/bin/echo", bad_args[..]);
+
+    if !rejected.erroneous { return 24; }
+
+    def missing: result<process.Child> = process.start(&owner, "/gloin-missing-executable", empty[..]);
+    if !missing.erroneous { return 25; }
+
+    def a: i32 = check_arguments(&owner);
+    if a != 0 { return a; }
+
+    def b: i32 = check_cached_status(&owner);
+    if b != 0 { return b; }
+
+    for def mut mode: i32 = 0; mode < 3; mode = mode + 1 {
+        def code: i32 = check_cleanup(&owner, mode);
+        if code != 0 { return code; }
+    }
+
+    return 0;
+}

@@ -5,7 +5,9 @@ def pub struct GeneralArena {
 
     def pub static create() -> GeneralArena {
         def state: *u8 = __arena_general_create();
+
         __arena_require(state);
+
         return GeneralArena {
             state: state
         };
@@ -18,13 +20,17 @@ def pub struct GeneralArena {
     // public raw-allocation signatures. Keep storage and failure policy here.
     def pub alloc(self: &GeneralArena, size: u64, alignment: u64) -> *u8 {
         __arena_require(self.state);
+
         def storage: *u8 = __arena_general_alloc(self.state, size, alignment);
+
         __arena_require(storage);
+
         return storage;
     }
 
     def pub try_alloc(self: &GeneralArena, size: u64, alignment: u64) -> *u8 {
         __arena_require(self.state);
+
         return __arena_general_alloc(self.state, size, alignment);
     }
 
@@ -33,8 +39,11 @@ def pub struct GeneralArena {
     // every slot before returning a writable pointer to the first slot.
     def pub alloc_many(self: &GeneralArena, size: u64, alignment: u64) -> *u8 {
         __arena_require(self.state);
+
         def storage: *u8 = __arena_general_alloc(self.state, size, alignment);
+
         __arena_require(storage);
+
         return storage;
     }
 
@@ -42,8 +51,11 @@ def pub struct GeneralArena {
     // type witness; capacity storage is reserved without initializing slots.
     def pub alloc_reserved_many(self: &GeneralArena, size: u64, alignment: u64) -> *u8 {
         __arena_require(self.state);
+
         def storage: *u8 = __arena_general_alloc(self.state, size, alignment);
+
         __arena_require(storage);
+
         return storage;
     }
 
@@ -51,8 +63,11 @@ def pub struct GeneralArena {
     // checks capacity; user code cannot expose its uninitialized slots.
     def pub reserve_typed<T>(self: &GeneralArena, size: u64, alignment: u64) -> *u8 {
         __arena_require(self.state);
+
         def storage: *u8 = __arena_general_alloc(self.state, size, alignment);
+
         __arena_require(storage);
+
         return storage;
     }
 
@@ -60,14 +75,18 @@ def pub struct GeneralArena {
     // A zero-sized request still returns a distinct non-null address on success.
     def pub try_alloc_bytes(self: &GeneralArena, size: u64) -> *u8 {
         __arena_require(self.state);
+
         def bytes: *u8 = __arena_general_alloc(self.state, size, 1);
         if bytes != null { __arena_zero_bytes(bytes, size); }
+
         return bytes;
     }
 
     def pub alloc_bytes(self: &GeneralArena, size: u64) -> *u8 {
         def bytes: *u8 = self.try_alloc_bytes(size);
+
         __arena_require(bytes);
+
         return bytes;
     }
 

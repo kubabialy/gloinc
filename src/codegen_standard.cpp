@@ -81,9 +81,15 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
     const auto numeric = numeric_signature(kind);
     if (kind == StandardPrimitive::FsMetadata || kind == StandardPrimitive::FsMkdir ||
         kind == StandardPrimitive::FsRemoveFile || kind == StandardPrimitive::FsRenameReplace ||
-        kind == StandardPrimitive::FsDirOpen ||
-        kind == StandardPrimitive::ProcessEnv) {
-        const size_t strings = kind == StandardPrimitive::FsRenameReplace ? 2 : 1;
+        kind == StandardPrimitive::FsDirOpen || kind == StandardPrimitive::FsReadLink ||
+        kind == StandardPrimitive::FsSymlink || kind == StandardPrimitive::FsCanonicalPath ||
+        kind == StandardPrimitive::FsTempDir || kind == StandardPrimitive::FsRemoveDir ||
+        kind == StandardPrimitive::FsReplaceFile ||
+        kind == StandardPrimitive::ProcessEnv || kind == StandardPrimitive::ProcessStart ||
+        kind == StandardPrimitive::ProcessStartPiped || kind == StandardPrimitive::ProcessStartOptions) {
+        const size_t strings = kind == StandardPrimitive::FsReplaceFile ? 3 : (kind == StandardPrimitive::FsRenameReplace ||
+                                kind == StandardPrimitive::FsSymlink ||
+                                kind == StandardPrimitive::ProcessStartOptions) ? 2 : 1;
         for (size_t i = 0; i < arguments.size(); ++i) {
             if (i < strings) {
                 native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
@@ -94,10 +100,12 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
                 native_arguments.push_back(arguments[i]);
         }
     } else if (kind == StandardPrimitive::NetResolveIpv4 ||
-               kind == StandardPrimitive::NetTlsCreate) {
+               kind == StandardPrimitive::NetTlsCreate ||
+               kind == StandardPrimitive::NetTlsServerConfig) {
         const size_t first = kind == StandardPrimitive::NetTlsCreate ? 1 : 0;
         if (first) native_arguments.push_back(arguments[0]);
-        const size_t end = kind == StandardPrimitive::NetTlsCreate ? 3 : 1;
+        const size_t end = kind == StandardPrimitive::NetTlsCreate ? 3 :
+                           kind == StandardPrimitive::NetTlsServerConfig ? 2 : 1;
         for (size_t i = first; i < end; ++i) {
             native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
                 location(), arguments[i], llvm::ArrayRef<int64_t>{0}));

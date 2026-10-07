@@ -9,6 +9,11 @@ CI before publishing this tree. The [release draft](next-release-draft.md)
 records the exact validation boundary. Windows support is not planned, though
 contributions are welcome.
 
+The [Gloin tooling release gate](tooling-roadmap.md) is undergoing final
+validation. Child-process, filesystem and server-TLS APIs are implemented, and
+repository-owned Python-driver migrations are complete. Full validation of the
+completed tooling tree must finish before publication.
+
 The [0.1.0 HTML guide](site/0.1.0/index.html) teaches the language accepted by
 this candidate. The [release notes](release-notes-0.1.0.md) list changes since
 0.0.4 and compatibility limits. The [language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec)
@@ -39,7 +44,7 @@ On Ubuntu 24.04 ARM64 or x86_64, use the pinned Linux packages:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y cmake ninja-build g++ python3 openssl libssl-dev
+sudo apt-get install -y cmake ninja-build g++ openssl libssl-dev
 bash scripts/install-llvm-linux.sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR=/usr/lib/llvm-21/lib/cmake/llvm \

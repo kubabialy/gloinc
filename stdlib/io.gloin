@@ -59,6 +59,7 @@ def pub struct Stream {
     def handle(self: &const Stream) -> *u8 {
         if self.standard != 0 { return __io_standard(self.standard); }
         if self.state == null { return null; }
+
         return self.state.handle;
     }
 
@@ -98,6 +99,7 @@ def pub struct Stream {
                 value: ""
             };
         }
+
         def bytes: *u8 = memory.try_alloc_bytes(max_bytes + 1);
         if bytes == null {
             return ReadResult {
@@ -106,9 +108,11 @@ def pub struct Stream {
                 value: ""
             };
         }
-        def mut length: u64 = 0;
+
+        def mut length: u64       = 0;
         def mut failure_code: i32 = 0;
-        def code: i32 = __io_read(handle, &*bytes, max_bytes, mode, &length, &failure_code);
+        def code: i32             = __io_read(handle, &*bytes, max_bytes, mode, &length, &failure_code);
+
         return ReadResult {
             status: code,
             os_error: failure_code,
@@ -143,6 +147,7 @@ def pub struct Stream {
                 read: 0
             };
         }
+
         def zero: u64 = 0;
         if !self.readable || destination.len == zero {
             return ByteReadResult {
@@ -151,10 +156,12 @@ def pub struct Stream {
                 read: 0
             };
         }
-        def mut received: u64 = 0;
+
+        def mut received: u64     = 0;
         def mut failure_code: i32 = 0;
         def code: i32 = __io_read_bytes(handle, &destination[0], destination.len,
             &received, &failure_code);
+
         return ByteReadResult {
             status: code,
             os_error: failure_code,
@@ -186,9 +193,11 @@ def pub struct Stream {
                 written: 0
             };
         }
-        def mut written: u64 = 0;
+
+        def mut written: u64      = 0;
         def mut failure_code: i32 = 0;
-        def code: i32 = __io_write(handle, text, all, &written, &failure_code);
+        def code: i32             = __io_write(handle, text, all, &written, &failure_code);
+
         return WriteResult {
             status: code,
             os_error: failure_code,
@@ -226,6 +235,7 @@ def pub struct Stream {
                 written: 0
             };
         }
+
         def zero: u64 = 0;
         if bytes.len == zero {
             return WriteResult {
@@ -234,10 +244,12 @@ def pub struct Stream {
                 written: 0
             };
         }
-        def mut written: u64 = 0;
+
+        def mut written: u64      = 0;
         def mut failure_code: i32 = 0;
         def code: i32 = __io_write_bytes(handle, &bytes[0], bytes.len, all,
             &written, &failure_code);
+
         return WriteResult {
             status: code,
             os_error: failure_code,
@@ -261,7 +273,9 @@ def pub struct Stream {
     def pub write_line(self: &Stream, text: string) -> WriteResult {
         def first: WriteResult = self.write_all(text);
         if first.status != status.OK { return first; }
+
         def last: WriteResult = self.write_all("\n");
+
         return WriteResult {
             status: last.status,
             os_error: last.os_error,
@@ -286,8 +300,10 @@ def pub struct Stream {
                 os_error: 0
             };
         }
+
         def mut failure_code: i32 = 0;
-        def code: i32 = __io_flush(handle, &failure_code);
+        def code: i32             = __io_flush(handle, &failure_code);
+
         return IoResult {
             status: code,
             os_error: failure_code
@@ -352,6 +368,7 @@ def pub struct File {
     // Example: file.is_open(). O(1), no allocation; false after any alias closes, even on close error.
     def pub is_open(self: &const File) -> bool {
         if self.state == null { return false; }
+
         return self.state.handle != null;
     }
 
@@ -366,6 +383,7 @@ def pub struct File {
                 os_error: 0
             };
         }
+
         def handle: *u8 = self.state.handle;
         if handle == null {
             return IoResult {
@@ -373,9 +391,12 @@ def pub struct File {
                 os_error: 0
             };
         }
+
         self.state.handle = null;
+
         def mut failure_code: i32 = 0;
-        def code: i32 = __io_close(handle, &failure_code);
+        def code: i32             = __io_close(handle, &failure_code);
+
         return IoResult {
             status: code,
             os_error: failure_code
@@ -387,6 +408,7 @@ def pub struct File {
     // Bytes borrow scratch until reset/free; scratch must not invalidate the file metadata.
     def pub read_line(self: &File, memory: &arena.GeneralArena, max_bytes: u64) -> ReadResult {
         def mut stream: Stream = self.stream();
+
         return stream.read_line(memory, max_bytes);
     }
 
@@ -395,11 +417,13 @@ def pub struct File {
     // Bytes borrow scratch until reset/free; scratch must not invalidate the file metadata.
     def pub read_chunk(self: &File, memory: &arena.GeneralArena, max_bytes: u64) -> ReadResult {
         def mut stream: Stream = self.stream();
+
         return stream.read_chunk(memory, max_bytes);
     }
 
     def pub read_into(self: &File, destination: [u8]) -> ByteReadResult {
         def mut stream: Stream = self.stream();
+
         return stream.read_into(destination);
     }
 
@@ -408,6 +432,7 @@ def pub struct File {
     // Bytes borrow scratch until reset/free; scratch must not invalidate the file metadata.
     def pub read_all(self: &File, memory: &arena.GeneralArena, max_bytes: u64) -> ReadResult {
         def mut stream: Stream = self.stream();
+
         return stream.read_all(memory, max_bytes);
     }
 
@@ -416,6 +441,7 @@ def pub struct File {
     // No input view is retained; errors are recoverable and never close the file.
     def pub write(self: &File, text: string) -> WriteResult {
         def mut stream: Stream = self.stream();
+
         return stream.write(text);
     }
 
@@ -424,16 +450,19 @@ def pub struct File {
     // No input view is retained; errors are recoverable and never close the file.
     def pub write_all(self: &File, text: string) -> WriteResult {
         def mut stream: Stream = self.stream();
+
         return stream.write_all(text);
     }
 
     def pub write_bytes(self: &File, bytes: [const u8]) -> WriteResult {
         def mut stream: Stream = self.stream();
+
         return stream.write_bytes(bytes);
     }
 
     def pub write_all_bytes(self: &File, bytes: [const u8]) -> WriteResult {
         def mut stream: Stream = self.stream();
+
         return stream.write_all_bytes(bytes);
     }
 
@@ -442,6 +471,7 @@ def pub struct File {
     // No input view is retained; errors are recoverable and never close the file.
     def pub write_line(self: &File, text: string) -> WriteResult {
         def mut stream: Stream = self.stream();
+
         return stream.write_line(text);
     }
 
@@ -450,6 +480,7 @@ def pub struct File {
     // No input view is retained; errors are recoverable and never close the file.
     def pub flush(self: &File) -> IoResult {
         def mut stream: Stream = self.stream();
+
         return stream.flush();
     }
 
@@ -466,6 +497,7 @@ def open_file(owner: &arena.GeneralArena, path: string, mode: i32) -> FileResult
             }
         };
     }
+
     // Allocate metadata before performing potentially destructive filesystem operations.
     def state: *FileState = owner.try_alloc(FileState {
         handle: null
@@ -480,9 +512,11 @@ def open_file(owner: &arena.GeneralArena, path: string, mode: i32) -> FileResult
             }
         };
     }
-    def mut code: i32 = 0;
+
+    def mut code: i32         = 0;
     def mut failure_code: i32 = 0;
-    def handle: *u8 = __io_open(path, mode, &code, &failure_code);
+    def handle: *u8           = __io_open(path, mode, &code, &failure_code);
+
     if handle == null {
         return FileResult {
             status: code,
@@ -493,7 +527,9 @@ def open_file(owner: &arena.GeneralArena, path: string, mode: i32) -> FileResult
             }
         };
     }
+
     state.handle = handle;
+
     return FileResult {
         status: status.OK,
         os_error: 0,
@@ -551,6 +587,7 @@ def pub error_message(memory: &arena.GeneralArena, os_error: i32) -> MessageResu
             value: ""
         };
     }
+
     def bytes: *u8 = memory.try_alloc_bytes(256);
     if bytes == null {
         return MessageResult {
@@ -558,14 +595,17 @@ def pub error_message(memory: &arena.GeneralArena, os_error: i32) -> MessageResu
             value: ""
         };
     }
+
     def mut length: u64 = 0;
-    def code: i32 = __io_error_message(os_error, &*bytes, &length);
+    def code: i32       = __io_error_message(os_error, &*bytes, &length);
+
     if code != status.OK {
         return MessageResult {
             status: code,
             value: ""
         };
     }
+
     return MessageResult {
         status: status.OK,
         value: __io_string_view(bytes, length)

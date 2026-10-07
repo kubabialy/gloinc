@@ -1,5 +1,6 @@
 def main() -> i32 {
     def values: [i32; 2] = {1, 2};
-    def index: i32 = -1;
+    def index: i32       = -1;
+
     return values[index];
 }

@@ -3,10 +3,11 @@ import "@strings";
 import "@arena";
 import "@status";
 
-def pub const FILE: i32 = 1;
+def pub const FILE: i32      = 1;
 def pub const DIRECTORY: i32 = 2;
-def pub const SYMLINK: i32 = 3;
-def pub const OTHER: i32 = 4;
+def pub const SYMLINK: i32   = 3;
+def pub const OTHER: i32     = 4;
+
 // Failed text is static empty; successful lexical views borrow input, join owns arena bytes.
 def pub struct PathResult {
     def pub status: i32,
@@ -59,6 +60,7 @@ def pub struct Directory {
                 }
             };
         }
+
         def state: *DirectoryState = owner.try_alloc(DirectoryState {
             handle: null
         });
@@ -71,9 +73,11 @@ def pub struct Directory {
                 }
             };
         }
-        def mut handle: *u8 = null;
+
+        def mut handle: *u8  = null;
         def mut failure: i32 = 0;
-        def code: i32 = __fs_dir_open(path, &handle, &failure);
+        def code: i32        = __fs_dir_open(path, &handle, &failure);
+
         if code != status.OK {
             return DirectoryResult {
                 status: code,
@@ -83,7 +87,9 @@ def pub struct Directory {
                 }
             };
         }
+
         state.handle = handle;
+
         return DirectoryResult {
             status: status.OK,
             os_error: 0,
@@ -107,10 +113,12 @@ def pub struct Directory {
                 name: ""
             };
         }
-        def mut length: u64 = 0;
-        def mut code: i32 = 0;
+
+        def mut length: u64  = 0;
+        def mut code: i32    = 0;
         def mut failure: i32 = 0;
-        def bytes: *u8 = __fs_dir_next(self.state.handle, &length, &code, &failure);
+        def bytes: *u8       = __fs_dir_next(self.state.handle, &length, &code, &failure);
+
         if code != status.OK {
             return DirectoryEntryResult {
                 status: code,
@@ -118,7 +126,9 @@ def pub struct Directory {
                 name: ""
             };
         }
+
         def copied: strings.StringResult = strings.copy(memory, __fs_string_view(bytes, length));
+
         return DirectoryEntryResult {
             status: copied.status,
             os_error: 0,
@@ -134,10 +144,13 @@ def pub struct Directory {
                 os_error: 0
             };
         }
+
         def handle: *u8 = self.state.handle;
         self.state.handle = null;
+
         def mut failure: i32 = 0;
-        def code: i32 = __fs_dir_close(handle, &failure);
+        def code: i32        = __fs_dir_close(handle, &failure);
+
         return FsResult {
             status: code,
             os_error: failure
@@ -152,9 +165,11 @@ def valid(path: string) -> bool {
 
 def trimmed_end(path: string) -> u64 {
     def mut end: u64 = strings.byte_length(path);
+
     while end > 1 && strings.byte_at(path, end - 1).value == 47 {
         end = end - 1;
     }
+
     return end;
 }
 
@@ -168,6 +183,7 @@ def pub basename(path: string) -> PathResult {
             value: ""
         };
     }
+
     def end: u64 = trimmed_end(path);
     if end == 0 {
         return PathResult {
@@ -181,10 +197,13 @@ def pub basename(path: string) -> PathResult {
             value: "/"
         };
     }
+
     def mut start: u64 = end;
+
     while start > 0 && strings.byte_at(path, start - 1).value != 47 {
         start = start - 1;
     }
+
     return PathResult {
         status: status.OK,
         value: strings.slice_bytes(path, start, end - start).value
@@ -201,19 +220,24 @@ def pub dirname(path: string) -> PathResult {
             value: ""
         };
     }
+
     def mut end: u64 = trimmed_end(path);
+
     while end > 0 && strings.byte_at(path, end - 1).value != 47 {
         end = end - 1;
     }
+
     if end == 0 {
         return PathResult {
             status: status.OK,
             value: "."
         };
     }
+
     while end > 1 && strings.byte_at(path, end - 1).value == 47 {
         end = end - 1;
     }
+
     return PathResult {
         status: status.OK,
         value: strings.slice_bytes(path, 0, end).value
@@ -227,7 +251,9 @@ def copied(memory: &arena.GeneralArena, text: string, max_bytes: u64) -> PathRes
             value: ""
         };
     }
+
     def outcome: strings.StringResult = strings.copy(memory, text);
+
     return PathResult {
         status: outcome.status,
         value: outcome.value
@@ -250,9 +276,11 @@ def pub join(memory: &arena.GeneralArena, base: string, child: string, max_bytes
     if strings.is_empty(base) { return copied(memory, child, max_bytes); }
     if strings.is_empty(child) { return copied(memory, base, max_bytes); }
     if strings.byte_at(child, 0).value == 47 { return copied(memory, child, max_bytes); }
-    def end: u64 = trimmed_end(base);
-    def left: string = strings.slice_bytes(base, 0, end).value;
+
+    def end: u64        = trimmed_end(base);
+    def left: string    = strings.slice_bytes(base, 0, end).value;
     def right_size: u64 = strings.byte_length(child);
+
     if end > max_bytes {
         return PathResult {
             status: status.TOO_LONG,
@@ -267,6 +295,7 @@ def pub join(memory: &arena.GeneralArena, base: string, child: string, max_bytes
     }
     if strings.byte_at(left, end - 1).value == 47 {
         def made: strings.StringResult = strings.concat(memory, left, child, max_bytes);
+
         return PathResult {
             status: made.status,
             value: made.value
@@ -278,6 +307,7 @@ def pub join(memory: &arena.GeneralArena, base: string, child: string, max_bytes
             value: ""
         };
     }
+
     def prefix: strings.StringResult = strings.concat(memory, left, "/", max_bytes);
     if prefix.status != status.OK {
         return PathResult {
@@ -285,7 +315,9 @@ def pub join(memory: &arena.GeneralArena, base: string, child: string, max_bytes
             value: ""
         };
     }
+
     def outcome: strings.StringResult = strings.concat(memory, prefix.value, child, max_bytes);
+
     return PathResult {
         status: outcome.status,
         value: outcome.value
@@ -296,10 +328,11 @@ def pub join(memory: &arena.GeneralArena, base: string, child: string, max_bytes
 // O(path bytes) plus native lstat; temporary native path length+1 allocation, freed before return.
 // Empty/NUL -> INVALID; no retained path/storage. Final symlinks are reported, not followed.
 def pub metadata(path: string) -> MetadataResult {
-    def mut kind: i32 = 0;
-    def mut size: u64 = 0;
+    def mut kind: i32         = 0;
+    def mut size: u64         = 0;
     def mut failure_code: i32 = 0;
-    def code: i32 = __fs_metadata(path, &kind, &size, &failure_code);
+    def code: i32             = __fs_metadata(path, &kind, &size, &failure_code);
+
     return MetadataResult {
         status: code,
         os_error: failure_code,
@@ -313,7 +346,8 @@ def pub metadata(path: string) -> MetadataResult {
 // Existing entry -> ALREADY_EXISTS (not proof of a directory); empty/NUL -> INVALID; errno retained.
 def pub mkdir(path: string) -> FsResult {
     def mut failure_code: i32 = 0;
-    def code: i32 = __fs_mkdir(path, &failure_code);
+    def code: i32             = __fs_mkdir(path, &failure_code);
+
     return FsResult {
         status: code,
         os_error: failure_code
@@ -325,7 +359,8 @@ def pub mkdir(path: string) -> FsResult {
 // Missing -> NOT_FOUND; empty/NUL -> INVALID; other failures preserve errno. No retained input reference.
 def pub remove_file(path: string) -> FsResult {
     def mut failure_code: i32 = 0;
-    def code: i32 = __fs_remove_file(path, &failure_code);
+    def code: i32             = __fs_remove_file(path, &failure_code);
+
     return FsResult {
         status: code,
         os_error: failure_code
@@ -338,9 +373,154 @@ def pub remove_file(path: string) -> FsResult {
 // Existing regular file or empty compatible directory can be replaced; symlinks themselves are renamed.
 def pub rename_replace(from: string, to: string) -> FsResult {
     def mut failure_code: i32 = 0;
-    def code: i32 = __fs_rename_replace(from, to, &failure_code);
+    def code: i32             = __fs_rename_replace(from, to, &failure_code);
+
     return FsResult {
         status: code,
         os_error: failure_code
     };
+}
+
+// Store target text verbatim at link_path. Relative targets resolve from the link's parent.
+// Target need not exist; existing destinations are never replaced. Empty/NUL inputs fail.
+// O(target+path bytes) preparation, two temporary native copies, no retained allocation.
+def pub symlink(target: string, link_path: string) -> result<void> {
+    def mut failure: i32 = 0;
+    def code: i32        = __fs_symlink(target, link_path, &failure);
+
+    if code == status.OK { return; }
+    if code == status.INVALID { return error("symlink target and path must be nonempty and contain no NUL"); }
+    if code == status.ALREADY_EXISTS { return error("symlink destination already exists"); }
+    if code == status.NOT_FOUND { return error("symlink parent path was not found"); }
+    if code == status.PERMISSION_DENIED { return error("symlink creation permission denied"); }
+    if code == status.NO_MEMORY { return error("symlink creation allocation failed"); }
+
+    return error("symlink creation failed");
+}
+
+// Read the final link's stored text, including broken/cyclic links; no recursive resolution.
+// One max_bytes+1 zeroed arena request (extra byte detects overflow), retained even on host error.
+// Exact max_bytes succeeds; larger text fails, never truncates. No trailing NUL is promised.
+// O(max_bytes+path+target bytes) plus host readlink. Bytes expire on arena reset/free.
+def pub read_link(memory: &arena.GeneralArena, path: string, max_bytes: u64) -> result<string> {
+    if strings.is_empty(path) || !valid(path) {
+        return error("symlink path must be nonempty and contain no NUL");
+    }
+    if max_bytes > 9223372036854775806 { return error("symlink target limit is too large"); }
+
+    def bytes: *u8 = memory.try_alloc_bytes(max_bytes + 1);
+    if bytes == null { return error("symlink target allocation failed"); }
+
+    def mut length: u64  = 0;
+    def mut failure: i32 = 0;
+    def code: i32        = __fs_read_link(path, &*bytes, max_bytes + 1, &length, &failure);
+
+    if code == status.OK { return __fs_string_view(bytes, length); }
+    if code == status.TOO_LONG { return error("symlink target exceeds byte limit"); }
+    if code == status.INVALID { return error("path is not a symbolic link"); }
+    if code == status.NOT_FOUND { return error("symlink path was not found"); }
+    if code == status.PERMISSION_DENIED { return error("symlink read permission denied"); }
+    if code == status.NO_MEMORY { return error("symlink read allocation failed"); }
+
+    return error("symlink read failed");
+}
+
+// Resolve an EXISTING path to absolute text; follow links and resolve dot components.
+// One max_bytes+1 zeroed arena request retained even on host error; native path/result copies freed.
+// Exact max_bytes succeeds; no truncation. Result expires on arena reset/free.
+// This is a filesystem snapshot, not a containment check or a reserved path.
+def pub canonical_path(memory: &arena.GeneralArena, path: string, max_bytes: u64) -> result<string> {
+    if strings.is_empty(path) || !valid(path) { return error("canonical path must be nonempty and contain no NUL"); }
+    if max_bytes > 9223372036854775806 { return error("canonical path limit is too large"); }
+
+    def bytes: *u8 = memory.try_alloc_bytes(max_bytes + 1);
+    if bytes == null { return error("canonical path allocation failed"); }
+
+    def mut length: u64  = 0;
+    def mut failure: i32 = 0;
+    def code: i32        = __fs_canonical_path(path, &*bytes, max_bytes + 1, &length, &failure);
+
+    if code == status.OK { return __fs_string_view(bytes, length); }
+    if code == status.TOO_LONG { return error("canonical path exceeds byte limit"); }
+    if code == status.NOT_FOUND { return error("canonical path was not found"); }
+    if code == status.PERMISSION_DENIED { return error("canonical path permission denied"); }
+    if code == status.NO_MEMORY { return error("canonical path allocation failed"); }
+
+    return error("canonical path resolution failed");
+}
+
+// Exclusively create parent/prefix-XXXXXX, mode 0700 restricted by umask.
+// Parent is canonicalized first; return an absolute path owned by memory.
+// Prefix must be nonempty and contain neither '/' nor NUL. Parent must exist.
+// All bounds/copies/arena requests precede mkdir; no fallible work after creation.
+// Intermediate arena strings remain on failure. Freeing memory DOES NOT remove the directory.
+def pub temp_dir(memory: &arena.GeneralArena, parent: string, prefix: string, max_bytes: u64) -> result<string> {
+    if strings.is_empty(parent) || !valid(parent) { return error("temporary directory parent must be nonempty and contain no NUL"); }
+    if strings.is_empty(prefix) || !valid(prefix) || strings.contains(prefix, "/") {
+        return error("temporary directory prefix must be nonempty and contain neither slash nor NUL");
+    }
+    if max_bytes > 9223372036854775806 { return error("temporary directory path limit is too large"); }
+
+    def name: strings.StringResult = strings.concat(memory, prefix, "-XXXXXX", max_bytes);
+    if name.status == status.TOO_LONG { return error("temporary directory path exceeds byte limit"); }
+    if name.status != status.OK { return error("temporary directory path allocation failed"); }
+
+    def resolved: result<string> = canonical_path(memory, parent, max_bytes);
+    if resolved.erroneous { return resolved.error; }
+
+    def pattern: PathResult = join(memory, resolved.value, name.value, max_bytes);
+    if pattern.status == status.TOO_LONG { return error("temporary directory path exceeds byte limit"); }
+    if pattern.status != status.OK { return error("temporary directory path allocation failed"); }
+
+    def capacity: u64 = strings.byte_length(pattern.value) + 1;
+    def bytes: *u8    = memory.try_alloc_bytes(capacity);
+
+    if bytes == null { return error("temporary directory path allocation failed"); }
+
+    def mut length: u64  = 0;
+    def mut failure: i32 = 0;
+    def code: i32        = __fs_temp_dir(pattern.value, &*bytes, capacity, &length, &failure);
+
+    if code == status.OK { return __fs_string_view(bytes, length); }
+    if code == status.NOT_FOUND { return error("temporary directory parent was not found or is not a directory"); }
+    if code == status.PERMISSION_DENIED { return error("temporary directory creation permission denied"); }
+    if code == status.NO_MEMORY { return error("temporary directory creation allocation failed"); }
+
+    return error("temporary directory creation failed");
+}
+
+// Remove ONE empty directory. No recursion; a final symlink is rejected.
+// Trailing slashes are stripped. Root and final . or .. are rejected.
+// O(path bytes) plus rmdir; one temporary native path copy, no retained allocation.
+def pub remove_dir(path: string) -> result<void> {
+    def mut failure: i32 = 0;
+    def code: i32        = __fs_remove_dir(path, &failure);
+
+    if code == status.OK { return; }
+    if code == status.INVALID { return error("invalid directory removal path"); }
+    if code == status.ALREADY_EXISTS { return error("directory is not empty"); }
+    if code == status.NOT_FOUND { return error("directory was not found or path is not a directory"); }
+    if code == status.PERMISSION_DENIED { return error("directory removal permission denied"); }
+    if code == status.NO_MEMORY { return error("directory removal allocation failed"); }
+
+    return error("directory removal failed");
+}
+
+// Checked replacement of an existing regular file; expected is the previously read content.
+// No source arena allocation. Host staging/copying is O(path+expected+replacement bytes).
+// Rejects final symlinks, hard links, non-owner files and special mode bits.
+// Preserves uid/gid and ordinary permissions; ACLs/xattrs/timestamps are not copied.
+// Caller requires exclusive editing: the last check and rename are not atomic together.
+// Before rename, errors preserve the original; temporary cleanup is best effort on host errors.
+def pub replace_file(path: string, expected: string, replacement: string) -> result<void> {
+    def mut failure: i32 = 0;
+    def code: i32        = __fs_replace_file(path, expected, replacement, &failure);
+
+    if code == status.OK { return; }
+    if code == status.INVALID { return error("file replacement rejected or source changed"); }
+    if code == status.NOT_FOUND { return error("file replacement path was not found"); }
+    if code == status.PERMISSION_DENIED { return error("file replacement permission denied"); }
+    if code == status.NO_MEMORY { return error("file replacement allocation failed"); }
+
+    return error("file replacement failed");
 }

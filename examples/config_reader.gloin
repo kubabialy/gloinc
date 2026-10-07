@@ -39,49 +39,64 @@ def failed(code: i32, line: u64) -> ConfigResult {
 def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
     def opened: io.FileResult = io.File.open_read(owner, path);
     if opened.status != status.OK { return failed(opened.status, 0); }
+
     def mut file: io.File = opened.value;
     defer file.close();
+
     def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
     defer scratch.free();
-    def mut label: string = "";
-    def mut seed: u64 = 0;
-    def mut samples: u64 = 0;
-    def mut have_label: bool = false;
-    def mut have_seed: bool = false;
+
+    def mut label: string      = "";
+    def mut seed: u64          = 0;
+    def mut samples: u64       = 0;
+    def mut have_label: bool   = false;
+    def mut have_seed: bool    = false;
     def mut have_samples: bool = false;
-    def mut line_number: u64 = 0;
-    def mut reading: bool = true;
+    def mut line_number: u64   = 0;
+    def mut reading: bool      = true;
+
     while reading {
         scratch.reset();
         def line: io.ReadResult = file.read_line(&scratch, 1024);
+
         if line.status == status.END {
             reading = false;
         } else {
             if line_number == 1000000 { return failed(status.TOO_LONG, line_number + 1); }
+
             line_number = line_number + 1;
+
             if line.status != status.OK { return failed(line.status, line_number); }
+
             def text: string = strings.trim_ascii(line.value);
             if strings.contains(text, "\0") { return failed(status.INVALID, line_number); }
+
             if !strings.is_empty(text) && !strings.starts_with(text, "#") {
                 def split: strings.SplitCursorResult = strings.SplitCursor.create(text, "=");
                 if split.status != status.OK { return failed(split.status, line_number); }
-                def mut fields: strings.SplitCursor = split.value;
-                def key_part: strings.StringResult = fields.next();
+
+                def mut fields: strings.SplitCursor  = split.value;
+                def key_part: strings.StringResult   = fields.next();
                 def value_part: strings.StringResult = fields.next();
+
                 if key_part.status != status.OK
                     || value_part.status != status.OK
                     || fields.next().status != status.END {
                     return failed(status.INVALID, line_number);
                 }
-                def key: string = strings.trim_ascii(key_part.value);
+
+                def key: string   = strings.trim_ascii(key_part.value);
                 def value: string = strings.trim_ascii(value_part.value);
+
                 if strings.equal(key, "label") {
                     if have_label || strings.is_empty(value) || strings.byte_length(value) > 128 {
                         return failed(status.INVALID, line_number);
                     }
+
                     def saved: strings.StringResult = strings.copy(owner, value);
                     if saved.status != status.OK { return failed(saved.status, line_number); }
-                    label = saved.value;
+
+                    label      = saved.value;
                     have_label = true;
                 } else {
                     if strings.equal(key, "seed") {
@@ -89,7 +104,8 @@ def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
                         if have_seed || number.status != status.OK {
                             return failed(status.INVALID, line_number);
                         }
-                        seed = number.value;
+
+                        seed      = number.value;
                         have_seed = true;
                     } else {
                         if strings.equal(key, "samples") {
@@ -100,7 +116,8 @@ def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
                                 || number.value > 1000000 {
                                 return failed(status.INVALID, line_number);
                             }
-                            samples = number.value;
+
+                            samples      = number.value;
                             have_samples = true;
                         } else {
                             return failed(status.INVALID, line_number);
@@ -110,10 +127,12 @@ def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
             }
         }
     }
+
     if !have_label || !have_seed || !have_samples {
         return failed(status.INVALID, line_number + 1);
     }
     if file.close().status != status.OK { return failed(status.IO_ERROR, 0); }
+
     return ConfigResult {
         status: status.OK,
         line: 0,
@@ -129,16 +148,21 @@ def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
 def diagnostic(line: u64) -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
-    def mut errors: io.Stream = io.stderr();
+
+    def mut errors: io.Stream    = io.stderr();
     def number: std.FormatResult = std.format_u64(&memory, line);
+
     errors.write_all("config: invalid input or I/O failure at line ");
+
     if number.status == status.OK {
         errors.write_all(number.value);
     } else {
         errors.write_all("?");
     }
+
     errors.write_line("");
     errors.flush();
+
     return 2;
 }
 
@@ -147,12 +171,15 @@ def diagnostic(line: u64) -> i32 {
 def pub execute(path: string) -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
+
     def parsed: ConfigResult = load(&owner, path);
     if parsed.status != status.OK { return diagnostic(parsed.line); }
-    def copy: Config = parsed.value; // Intentional value copy: label aliases the still-live owner.
-    def seed: std.FormatResult = std.format_u64(&owner, copy.seed);
+
+    def copy: Config              = parsed.value; // Intentional value copy: label aliases the still-live owner.
+    def seed: std.FormatResult    = std.format_u64(&owner, copy.seed);
     def samples: std.FormatResult = std.format_u64(&owner, copy.samples);
-    def mut out: io.Stream = io.stdout();
+    def mut out: io.Stream        = io.stdout();
+
     if seed.status != status.OK || samples.status != status.OK { return 3; }
     if out.write_all("label=").status != status.OK || out.write_line(copy.label).status != status.OK
         || out.write_all("seed=").status != status.OK || out.write_line(seed.value).status != status.OK
@@ -160,19 +187,25 @@ def pub execute(path: string) -> i32 {
         return 3;
     }
     if out.flush().status != status.OK { return 3; }
+
     return 0;
 }
 
 def main() -> i32 {
     if process.arg_count() != 2 {
         def mut errors: io.Stream = io.stderr();
+
         errors.write_line("usage: config_reader FILE");
         errors.flush();
+
         return 2;
     }
+
     def mut arguments: arena.GeneralArena = arena.GeneralArena.create();
     defer arguments.free();
+
     def path: process.TextResult = process.arg(&arguments, 1);
     if path.status != status.OK { return diagnostic(0); }
+
     return execute(path.value);
 }

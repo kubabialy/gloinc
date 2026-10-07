@@ -6,9 +6,9 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
-`tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
+`tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **982 tests**:
+The current source definitions and CTest discovery contain **1034 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -50,15 +50,18 @@ The current source definitions and CTest discovery contain **982 tests**:
 | NumericRuntimeTest | 16 |
 | IoLibraryTest | 16 |
 | IoRuntimeTest | 14 |
-| NetworkLibraryTest | 8 |
+| NetworkLibraryTest | 10 |
 | NetRuntimeTest | 3 |
+| TlsRuntimeTest | 7 |
 | TlsClientSmoke | 1 |
 | HttpClientSmoke | 1 |
 | HttpStreamSmoke | 1 |
 | JsonSmoke | 1 |
 | GloinFormatterSmoke | 1 |
-| ContextLibraryTest | 15 |
-| ContextRuntimeTest | 10 |
+| GloinToolingSmoke | 2 |
+| GloinIntegratedStress | 1 |
+| ContextLibraryTest | 25 |
+| ContextRuntimeTest | 40 |
 | MathLibraryTest | 12 |
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 15 |
@@ -86,9 +89,31 @@ passing on a non-null module.
 Maintained tests cover loops (SPEC-017), standard modules (SPEC-023), and local
 modules (SPEC-029). The CLI also exercises `core_counter.gloin`, `hello_world.gloin`,
 `arena_lab.gloin`, `module_lab.gloin`, `standard_library.gloin`, and
-`strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, `statistics_tool.gloin`, `network_http.gloin`, `http_client.gloin`, `http_stream.gloin`, `json.gloin`, and `module_discovery.gloin`. All 41 `.gloin` files under `examples/` pass `gloinc --check` on macOS and Ubuntu ARM64.
+`strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, `statistics_tool.gloin`, `network_http.gloin`, `http_client.gloin`, `http_stream.gloin`, `json.gloin`, and `module_discovery.gloin`. The `.gloin` files under `examples/` pass `gloinc --check` on macOS and Ubuntu ARM64.
 
 ## Running and inspecting tests
+
+Child-process checks cover literal/empty arguments, normal and signaled exits,
+poll/wait caching, alias invalidation, cleanup, inherited cwd/environment/streams,
+nonstandard descriptor closure and signal-policy handling. The Gloin lifecycle
+fixture runs in JIT, native `-O0` and native `-O2`; IR assertions require the
+`gloin.abi_call` boundary. Native runtime checks also cover failed launches and
+invalid process IDs. The pipe fixture runs a Gloin peer that writes 256 KiB to
+each output before reading stdin; capture verifies binary bytes, exact and
+overflow limits, early stdin closure, deadlines, closed-output/live-child waits,
+and alias invalidation. Native tests cover descriptor leaks, closed host
+standard streams, readiness/EOF, and SIGPIPE policy in a multithreaded host.
+Launch-option tests cover relative executables inside a child cwd, inherited,
+empty and supplied environments, invalid/duplicate entries, unchanged parent
+state, grouped and ungrouped signals, retained exit status, descendant-held
+pipes, unrelated-child survival, external reaping and failed-cwd descriptor
+cleanup. The options fixture runs in JIT, `-O0` and `-O2` with GloinIR assertions.
+It repeats both the default launch path and the 2 MiB child soft stack path.
+An independent native probe verifies the actual soft/hard limits in all three
+Gloin modes. Native cases check unchanged parent limits/signals, hard ceilings,
+descriptors above a lowered limit, closed standard descriptors, failed setup
+without leaked children/pipes, normal exit 127 and platform thread restrictions.
+See [child processes](../docs/child-processes.md).
 
 After a tests-enabled build (see [toolchain.md](../docs/toolchain.md)):
 
@@ -99,12 +124,34 @@ ctest --test-dir build -j 4 --output-on-failure
 ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failure
 ```
 
-`GloinFormatterSmoke.LayoutAndTraversal` runs the formatter in native and JIT
-modes, checks recursive traversal and symlink exclusions, verifies CRLF output,
-and compares token streams and repeat formatting across `examples/`, `stdlib/`,
-`tests/`, and `tools/`. Installed/extracted copies in CI report directories do
-not expand this corpus. Its aggregate limit remains 90 seconds. The repository
-style gate is `build/gloinfmt --check .`.
+`GloinFormatterSmoke.LayoutAndTraversal` uses the Gloin test program in
+[`formatter/main.gloin`](formatter/main.gloin), compiled to a native executable
+and also run through JIT. It checks exact layout against `.input`/`.expected`
+pairs in `fixtures/formatter/`, recursive traversal, symlink exclusions, CRLF,
+CLI output and exit codes, and repeat formatting. Its independent Gloin token
+scanner checks source preservation across `examples/`, `stdlib/`, `tests/`, and
+`tools/`, including rejection fixtures. Installed/extracted copies in CI report
+directories do not expand this corpus.
+
+The [Gloin runner](formatter/runner.gloin) also creates its exclusive work
+directory, launches/captures children, checks exit codes, and removes successful
+fixtures. CTest only invokes the native harness; the temporary CMake script is
+gone. Pipes and new process groups are enabled together. Each child has a
+30-second communication deadline and 256 KiB input/output/error limits. Failures
+retain the evidence directory and print its path. Cleanup is bounded to 64
+levels and 64 KiB paths, assumes a stable owned tree, and tests broken/cyclic
+links plus a link to a separate sentinel directory. Native and JIT assertion
+passes, independent expected fixture bytes and token scanning are preserved.
+This test does not require Python.
+Build and run it with:
+
+```sh
+cmake --build build --target gloin_formatter gloin_formatter_tests
+ctest --test-dir build -R '^GloinFormatterSmoke\.' --output-on-failure
+```
+
+Its aggregate limit remains 90 seconds. The repository style gate is
+`build/gloinfmt --check .`.
 
 Compiler CTest cases have a 30-second timeout on ordinary macOS builds and
 120 seconds on Linux or sanitizer builds. Linux trap cases take longer under
@@ -132,8 +179,8 @@ Earlier runs were interrupted by host sleep or the old Linux compiler budget.
 The latest validation also exposed macOS HTTP JIT timeouts under parallel load,
 including cold relocated packages. The fixture now uses the same bounded
 compiler allowance on both platforms. Final validation ran one platform at a
-time and passed all local gates; test discovery still contains exactly 982
-unique cases. Fresh hosted CI, including Linux x86_64 and macOS sanitizers,
+time and passed those local gates; that revision contained 982 unique cases.
+The current inventory above also includes the subsequent child-process work. Fresh hosted CI, including Linux x86_64 and macOS sanitizers,
 remains required before release. See the
 [validation record](../docs/next-release-draft.md#current-local-validation).
 
@@ -158,7 +205,14 @@ in JIT/native modes, including multi-buffer binary POSTs/responses, certificate
 rejection, deadlines despite progress, and connection cleanup. It also runs the
 packaged example with an ephemeral port. The zeroed-array acceptance case now
 checks a 64 KiB byte buffer in JIT and default native output. Three `NetRuntimeTest` cases check nonblocking and
-close-on-exec flags, readiness, partial-I/O statuses, TLS client behavior, and invalid arguments.
+close-on-exec flags, readiness, partial-I/O statuses, TLS client validation, and invalid arguments.
+Seven `TlsRuntimeTest` cases add independent direct-OpenSSL interoperability,
+TLS 1.2/1.3 and old-protocol rejection, reusable configuration lifetime,
+encrypted/mismatched key rejection, binary backpressure, graceful shutdown,
+truncation and SIGPIPE policy. Two compiler cases check the new source-typed
+GloinIR ABI calls, public setup failures and private primitive access.
+`TlsClientSmoke.LocalPeers` now uses the [Gloin TLS driver](tls/README.md);
+trusted, wrong-host, untrusted, aliases and shutdown run in JIT/`-O0`/`-O2`.
 `HttpStreamSmoke.LocalPeers` runs known-length uploads, early rejection,
 producer/consumer pauses, deadline expiry during both pauses, partial output
 consumption, alias cancellation, short/excess input, and truncation after body
@@ -169,12 +223,17 @@ The [network guide](../docs/networking.md) and [client guide](../docs/http-clien
 
 `JsonSmoke.CodecAndState` checks `@json` in JIT, native `-O0`, and native `-O2`
 modes. The deterministic corpus contains 142 accepted documents, 53 rejection
-cases, and 54 Unicode round trips checked against Python's independent JSON
-and UTF-8 codecs. The fixture additionally checks buffer/depth limits, grammar
+cases, and 54 Unicode cases checked against fixed independently verified input,
+decoded-byte and encoded-output data. The corpus was frozen from the earlier
+independent codecs; [provenance and update rules](fixtures/json/README.md) keep
+the oracle separate from the production codec. The Gloin driver handles child
+execution, capture, deadlines and fixture cleanup. The fixture additionally checks buffer/depth limits, grammar
 states, failure latching, duplicate-key order, reader copies, offsets, and
 numeric conversion boundaries. Package verification runs the same checks with
 installed and relocated compilers and their packaged JSON example. See the
 [JSON contract](../docs/json.md).
+The [repository-tool guide](../docs/repository-tools.md) covers the Gloin
+documentation/report checkers and their native/JIT rejection tests.
 The JSON matrix passed JIT/`-O0`/`-O2` with source-tree, installed, and relocated
 compilers on macOS and Ubuntu ARM64 as part of the complete local release gates.
 See the [development HTML guide](../docs/site/development/index.html) for the
@@ -195,9 +254,10 @@ failures preserve descriptor counts. Source-library substitutions inject write,
 flush, and close failures; controlled clocks test simulation failures. Two additional
 `ArenaRuntimeTest` cases verify nested allocator scopes, retained allocator contexts,
 failure restoration, and thread isolation. These checks participate in required
-and sanitizer gates. The larger [stress script](../scripts/check-integrated-examples.py)
-checks all three programs at one million records/samples with a 2 MiB stack,
-including rejection of one-over-limit inputs. See [the guide](../docs/integrated-examples.md).
+and sanitizer gates. The larger [Gloin stress driver](integrated/README.md)
+checks all three programs at one million records/samples with a 2 MiB soft stack
+limit, including rejection of one-over-limit inputs. It is required by `check-core`
+and installed/relocated package checks. See [the guide](../docs/integrated-examples.md).
 
 ## Timing and seeded randomness (SPEC-030g)
 
@@ -238,7 +298,7 @@ participate in installed/relocated validation.
 
 ## Filesystem and process context (SPEC-030e)
 
-Fifteen `ContextLibraryTest` cases cover the lexical path matrix, exact/overflow
+Nineteen filesystem/context `ContextLibraryTest` cases cover the lexical path matrix, exact/overflow
 bounds, both join allocation failures, metadata/mutations, CLI forwarding and
 filename escaping, missing/empty/copied environment values, process allocation
 failures, host cwd, invocation argument restoration and rejected NUL, type/privacy
@@ -246,10 +306,19 @@ checks, native collisions/ABIs, directory iteration, external execution, and the
 The tool runs from another directory with spaced paths, missing/empty/nonempty
 labels, and malformed options that leave the filesystem untouched.
 
-Ten native `ContextRuntimeTest` cases cover regular files/directories/broken
+Seventeen native filesystem/context `ContextRuntimeTest` cases cover regular files/directories/broken
 symlinks/FIFOs, counted paths and invalid-input preservation, mkdir/unlink/rename
 semantics, directory cursors, permission errors, deep-copied C argument scopes, invalid/LIFO cleanup,
 thread isolation, raw environment bytes, exact cwd bounds, and deleted cwd.
+Symlink tests cover creation without replacement, immediate target reads for
+normal/broken/cyclic links, exact/overflow/zero bounds, allocation failure,
+counted non-UTF-8 bytes, intermediate-component cycles and unlink ownership.
+The Gloin symlink and workspace fixtures run through JIT and native `-O0`/`-O2`, with GloinIR ABI
+assertions and public-signature/result-handling checks. Workspace tests cover
+canonical exact/overflow/zero limits, broken/cyclic paths, exclusive private
+temporary directories, rejection of nonempty directories/final symlinks/special
+leaves, and every arena allocation failure before creation. Sixteen further native
+cases cover child processes as described above.
 Both suites belong to required and sanitizer validation; compiler cases also run
 against installed and relocated packages.
 
@@ -558,6 +627,20 @@ either tool, missing executables, malformed results, timeouts in both stages,
 and concurrent calls returning different values. Its executable path contains a
 space to exercise argument handling. Fixture timeouts are one second; the
 parent test remains subject to CTest's 30-second limit.
+
+## HTTP acceptance in Gloin
+
+The HTTP and streaming suites now use a Gloin driver and bounded concurrent
+Gloin HTTP/HTTPS peers. They preserve independent wire fixtures and verify
+JIT, `-O0` and `-O2` clients, including 32 simultaneous exchanges:
+
+```sh
+cmake --build build --target gloin_http_tests
+ctest --test-dir build -R '^Http(Client|Stream)Smoke\.' --output-on-failure
+```
+
+See [HTTP acceptance](http/README.md) for exact coverage and resource limits.
+All repository-owned test drivers now run without Python.
 
 ## Remaining failures
 

@@ -1,0 +1,43 @@
+// Create, inspect and remove one new symlink; leave the target untouched.
+// Usage: gloinc --jit examples/symlinks.gloin -- TARGET NEW_LINK_PATH
+import "@arena";
+import "@fs";
+import "@process";
+import "@status";
+import "@std";
+
+def cleanup(path: string) -> void {
+    if fs.remove_file(path).status != status.OK { std.println("Could not remove the symlink"); }
+}
+
+def main() -> i32 {
+    if process.arg_count() != 3 {
+        std.println("Usage: symlinks TARGET NEW_LINK_PATH");
+        return 2;
+    }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def target: process.TextResult = process.arg(&memory, 1);
+    def path: process.TextResult   = process.arg(&memory, 2);
+
+    if target.status != status.OK || path.status != status.OK { return 1; }
+
+    // Relative target text is resolved from the link's parent directory.
+    // It may name an absent file: creating a broken link is valid.
+    def created: result<void> = fs.symlink(target.value, path.value);
+    if created.erroneous { std.println(created.error.message); return 1; }
+    defer cleanup(path.value);
+
+    def stored: result<string> = fs.read_link(&memory, path.value, 4096);
+    if stored.erroneous { std.println(stored.error.message); return 1; }
+
+    std.print("Stored target: ");
+    std.println(stored.value);
+
+    def info: fs.MetadataResult = fs.metadata(path.value);
+    if info.status != status.OK || info.kind != fs.SYMLINK { return 1; }
+
+    return 0;
+}

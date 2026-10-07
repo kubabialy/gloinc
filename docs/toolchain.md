@@ -42,7 +42,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j 2
 ```
 
-Install CMake 3.28+, Ninja, a C++23 compiler, Python 3, `openssl`, and
+Install CMake 3.28+, Ninja, a C++23 compiler, `openssl`, and
 `libssl-dev` first. An official
 LLVM 21.1.6 Linux binary archive is insufficient for this compiler's shared
 `MLIR`, `LLVM`, and `MLIRExecutionEngineShared` target requirements. The Linux

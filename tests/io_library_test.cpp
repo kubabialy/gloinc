@@ -236,7 +236,7 @@ TEST_F(IoLibraryTest, FailedCloseInvalidatesAliasesAndWriteLineReportsSuffixFail
     copy_modules();
     auto io = read((library() / "io.gloin").string());
     // Still consume the actual resource, then inject an observable close failure.
-    replace(io, "def code: i32 = __io_close(handle, &failure_code);",
+    replace(io, "def code: i32             = __io_close(handle, &failure_code);",
             "__io_close(handle, &failure_code); failure_code = 123; def code: i32 = status.IO_ERROR;");
     replace(io, "def write_mode(self: &Stream, text: string, all: i32) -> WriteResult {",
             "def write_mode(self: &Stream, text: string, all: i32) -> WriteResult { if "

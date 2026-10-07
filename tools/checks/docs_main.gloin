@@ -1,0 +1,32 @@
+import "./common";
+import "./docs";
+import "@arena";
+import "@process";
+import "@status";
+import "@std";
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    if process.arg_count() > 2 { common.report("usage: gloin-check-docs [SITE_DIRECTORY]"); return 2; }
+
+    def mut root: string = "docs/site";
+
+    if process.arg_count() == 2 {
+        def argument: process.TextResult = process.arg(&memory, 1);
+        if argument.status != status.OK { return 2; }
+
+        root = argument.value;
+    }
+
+    def checked: result<i64> = docs.check(root);
+    if checked.erroneous { common.report(checked.error.message); return 1; }
+
+    def count: result<string> = std.to_string_i64(&memory, checked.value);
+    if count.erroneous { common.report(count.error.message); return 1; }
+
+    std.print("Checked "); std.print(count.value); std.println(" HTML pages and their local links");
+
+    return 0;
+}

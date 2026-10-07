@@ -20,6 +20,7 @@ def pub align_of<T>() -> i64 {
 // Bytes to skip so storage points at an address aligned for T. Null returns -1.
 def pub padding<T>(storage: *u8) -> i64 {
     if storage == null { return -1; }
+
     return __memory_padding<T>(storage);
 }
 

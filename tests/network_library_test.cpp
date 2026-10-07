@@ -13,6 +13,50 @@ class NetworkLibraryTest : public gloin_test::CliFixture {
 };
 }
 
+TEST_F(NetworkLibraryTest, ServerTlsCallsRetainTheGloinIRAbiBoundary) {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures/network/tls_sessions.gloin";
+    const auto ir = invoke({"--emit-ir", fixture.string()});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const std::string name : {"gloin_net_tls_server_config", "gloin_net_tls_server_config_close",
+                                  "gloin_net_tls_server_create", "gloin_net_tls_shutdown"}) {
+        const auto position = ir.out.find("callee = @" + name + "}");
+        ASSERT_NE(position, std::string::npos) << name;
+        const auto line = ir.out.rfind('\n', position);
+        EXPECT_NE(ir.out.substr(line + 1, position - line).find("gloin.abi_call"), std::string::npos) << name;
+        EXPECT_EQ(ir.out.find("llvm.call @" + name), std::string::npos) << name;
+    }
+}
+
+TEST_F(NetworkLibraryTest, ServerTlsSetupFailuresAndPrimitivePrivacyAreChecked) {
+    const auto program = source(R"(import "@net"; import "@arena";
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def missing: result<net.TlsServerConfig> = net.TlsServerConfig.load(&owner, "", "");
+    if !missing.erroneous { return 1; }
+    def opened: result<net.Socket> = net.Socket.open(&owner);
+    if opened.erroneous { return 2; }
+    def mut socket: net.Socket = opened.value;
+    def tls: result<net.TlsClient> = socket.start_tls_client(&owner, "localhost", "");
+    if !tls.erroneous { return 3; }
+    def closed: result<void> = socket.close();
+    if closed.erroneous { return 4; }
+    return 0;
+})");
+    expect_success(invoke({program}), "");
+    for (const std::string body : {
+             "__net_tls_server_config_close(null);",
+             "def loaded: result<net.TlsServerConfig> = net.TlsServerConfig.load(&owner, 1, 2); if loaded.erroneous { return 1; }",
+             "def opened: result<net.Socket> = net.Socket.open(&owner); if opened.erroneous { return 1; } def mut socket: net.Socket = opened.value; socket.start_tls_server(&owner, 1);"}) {
+        const auto invalid = source("import \"@net\"; import \"@arena\"; def main() -> i32 { "
+            "def mut owner: arena.GeneralArena = arena.GeneralArena.create(); " + body + " return 0; }");
+        const auto result = invoke({"--check", invalid});
+        EXPECT_EQ(result.status, 1);
+        EXPECT_FALSE(result.err.empty());
+    }
+}
+
 TEST_F(NetworkLibraryTest, LocalHttpRoundTripWorksInJitAndNativeExecutable) {
     const auto example = std::filesystem::path(__FILE__).parent_path().parent_path() /
                          "examples/network_http.gloin";

@@ -1,0 +1,461 @@
+// Bounded concurrent wire peer; socket/TLS calls retain the normal GloinIR ABI.
+import "./wire";
+import "../../tools/checks/common";
+import "@arena";
+import "@net";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+import "@vector";
+
+def struct State {
+    def mut phase: i32, // handshake, head, body, delay, write, shutdown, EOF, done
+    def mut mask: i32,
+    def mut ready: i32,
+    def mut head_length: u64,
+    def mut length: u64,
+    def mut received: u64,
+    def mut sent: u64,
+    def mut start: u64,
+    def mut due: u64,
+    def mut path: string,
+    def mut response: string,
+}
+
+def close_socket(socket: &net.Socket) -> void {
+    if socket.is_open() { def closed: result<void> = socket.close(); if closed.erroneous { common.report(closed.error.message); } }
+}
+
+def close_config(config: &net.TlsServerConfig) -> void {
+    if config.is_open() { def closed: result<void> = config.close(); if closed.erroneous { common.report(closed.error.message); } }
+}
+
+def cleanup(sockets: &vector.Vector<net.Socket>, sessions: &vector.Vector<net.TlsServer>) -> void {
+    for def mut i: i64 = 0; i < sessions.len(); i = i + 1 {
+        def session: &net.TlsServer = &*sessions.get_mut(i);
+        if session.is_open() { def closed: result<void> = session.close(); if closed.erroneous { common.report(closed.error.message); } }
+    }
+
+    for def mut i: i64 = 0; i < sockets.len(); i = i + 1 { close_socket(&*sockets.get_mut(i)); }
+}
+
+def early(path: string) -> bool { return strings.equal(path, "/early") || strings.equal(path, "/input-wait"); }
+
+def reject_tls(path: string) -> bool { return strings.equal(path, "/wrong-host") || strings.equal(path, "/untrusted"); }
+
+def idle(path: string) -> bool {
+    return strings.equal(path, "/timeout") || strings.equal(path, "/stall") || strings.equal(path, "/input-timeout")
+        || strings.equal(path, "/short") || strings.equal(path, "/excess");
+}
+
+def end_response(path: string) -> bool {
+    return strings.equal(path, "/close") || strings.equal(path, "/bad-truncated") || strings.equal(path, "/truncated");
+}
+
+// Normalize only transport outcomes, without interpreting HTTP through @http.
+def read(socket: &net.Socket, sessions: &vector.Vector<net.TlsServer>, index: i64,
+    tls: bool, bytes: [u8]) -> result<net.TlsReadOutcome> {
+    if tls {
+        def read: result<net.TlsReadOutcome> = (&*sessions.get_mut(index)).read(bytes);
+        if read.erroneous { return read.error; }
+
+        return read.value;
+    }
+
+    def read: result<net.ReadOutcome> = socket.read(bytes);
+    if read.erroneous { return read.error; }
+
+    def mut mask: i32 = 0;
+    if read.value.state == status.WOULD_BLOCK { mask = net.READABLE; }
+
+    return net.TlsReadOutcome { state: read.value.state, count: read.value.count, wait_for: mask };
+}
+
+def write(socket: &net.Socket, sessions: &vector.Vector<net.TlsServer>, index: i64,
+    tls: bool, bytes: [const u8]) -> result<net.TlsWriteOutcome> {
+    if tls {
+        def written: result<net.TlsWriteOutcome> = (&*sessions.get_mut(index)).write(bytes);
+        if written.erroneous { return written.error; }
+
+        return written.value;
+    }
+
+    def written: result<net.WriteOutcome> = socket.write(bytes);
+    if written.erroneous { return written.error; }
+
+    def mut mask: i32 = 0;
+    if written.value.would_block { mask = net.WRITABLE; }
+
+    return net.TlsWriteOutcome { count: written.value.count, wait_for: mask };
+}
+
+def received(state: &State, kind: string, bytes: [const u8]) -> result<void> {
+    if bytes.len > state.length - state.received || !wire.body(kind, state.path, state.received, bytes) {
+        return error("request body differs from independent fixture");
+    }
+
+    state.received = state.received + bytes.len;
+
+    return;
+}
+
+def next(state: &State, memory: &arena.GeneralArena, kind: string, now: u64) -> result<void> {
+    if idle(state.path) {
+        if strings.equal(state.path, "/timeout") && state.received < state.length { state.phase = 2; }
+        else { state.phase = 6; }
+
+        return;
+    }
+
+    if early(state.path) || state.received == state.length {
+        def response: result<string> = wire.response(memory, kind, state.path);
+        if response.erroneous { return response.error; }
+
+        state.response = response.value;
+        state.phase    = 4;
+        if strings.equal(state.path, "/input-wait") { state.phase = 3; state.due = now + 40000000; }
+    } else { state.phase = 2; }
+
+    return;
+}
+
+def step(state: &State, socket: &net.Socket, sessions: &vector.Vector<net.TlsServer>, index: i64,
+    tls: bool, memory: &arena.GeneralArena, kind: string, now: u64, head: [u8]) -> result<void> {
+    if state.phase == 7 { return; }
+    if now < state.start || now - state.start > 45000000000 { return error("HTTP peer connection deadline exceeded"); }
+    if state.mask != 0 && state.ready == 0 { return; }
+
+    state.mask  = 0;
+    state.ready = 0;
+
+    if state.phase == 0 {
+        def handshook: result<i32> = (&*sessions.get_mut(index)).handshake();
+
+        if handshook.erroneous {
+            if reject_tls(state.path) { state.phase = 7; return; }
+
+            return handshook.error;
+        }
+
+        state.mask = handshook.value;
+        if state.mask == 0 { state.phase = 1; }
+
+        return;
+    }
+
+    if state.phase == 3 {
+        if now >= state.due { state.phase = 4; }
+
+        return;
+    }
+
+    if state.phase == 1 {
+        if state.head_length == head.len { return error("request head exceeds 8192 bytes"); }
+
+        def read: result<net.TlsReadOutcome> = read(socket, sessions, index, tls, head[state.head_length..]);
+
+        if read.erroneous {
+            if reject_tls(state.path) { state.phase = 7; return; }
+
+            return read.error;
+        }
+
+        if read.value.state == status.END {
+            if reject_tls(state.path) { state.phase = 7; return; }
+
+            return error("client closed before request head");
+        }
+
+        state.mask        = read.value.wait_for;
+        state.head_length = state.head_length + read.value.count;
+
+        def text: string            = strings.view_bytes(head[..state.head_length]);
+        def end: strings.FindResult = strings.find(text, "\r\n\r\n");
+
+        if !end.found { return; }
+        if reject_tls(state.path) { return error("unverified TLS client sent an HTTP request"); }
+
+        def parsed: result<wire.Request> = wire.request(memory, common.part(text, 0, end.offset), kind, state.path);
+        if parsed.erroneous { return parsed.error; }
+
+        state.path   = parsed.value.path;
+        state.length = parsed.value.length;
+
+        def checked: result<void> = received(state, kind, head[end.offset + 4..state.head_length]);
+        if checked.erroneous { return checked.error; }
+
+        def moved: result<void> = next(state, memory, kind, now);
+        if moved.erroneous { return moved.error; }
+
+        return;
+    }
+
+    if state.phase == 2 || state.phase == 6 {
+        def mut bytes: [u8; 8192]            = zeroed;
+        def read: result<net.TlsReadOutcome> = read(socket, sessions, index, tls, bytes[..]);
+
+        if read.erroneous {
+            if state.phase == 6 && strings.starts_with(state.path, "/bad") { state.phase = 7; return; }
+
+            return read.error;
+        }
+
+        state.mask = read.value.wait_for;
+
+        if read.value.state == status.END {
+            if state.phase == 2 { return error("client closed before request body"); }
+            if early(state.path) && state.received >= state.length { return error("client uploaded all rejected bytes"); }
+
+            state.phase = 7;
+
+            return;
+        }
+
+        def size: u64 = read.value.count;
+        if size == 0 { return; }
+        if state.phase == 6 && !early(state.path) { return error("unexpected bytes while awaiting client cleanup"); }
+
+        def checked: result<void> = received(state, kind, bytes[..size]);
+        if checked.erroneous { return checked.error; }
+
+        if state.phase == 2 {
+            def moved: result<void> = next(state, memory, kind, now);
+            if moved.erroneous { return moved.error; }
+        }
+
+        return;
+    }
+
+    if state.phase == 4 {
+        def size: u64 = strings.byte_length(state.response);
+
+        if state.sent == size {
+            if strings.equal(state.path, "/slow") { return error("slow response exceeded the client's overall deadline"); }
+
+            state.phase = 6;
+            if end_response(state.path) { state.phase = 5; }
+
+            return;
+        }
+
+        def mut stride: u64 = 4093;
+        if strings.starts_with(kind, "client") && !strings.equal(state.path, "/large") { stride = 7; }
+        if strings.equal(state.path, "/slow") { stride = 1; }
+
+        def mut end: u64 = state.sent + stride;
+        if end > size { end = size; }
+
+        def mut bytes: [u8; 4093] = zeroed;
+
+        for def mut i: u64 = state.sent; i < end; i = i + 1 { bytes[i - state.sent] = common.byte(state.response, i); }
+
+        // On WOULD_BLOCK, sent and the offered length remain unchanged across retries.
+        def written: result<net.TlsWriteOutcome> = write(socket, sessions, index, tls, bytes[..end - state.sent]);
+
+        if written.erroneous {
+            if strings.starts_with(state.path, "/bad") || strings.equal(state.path, "/slow") { state.phase = 7; return; }
+
+            return written.error;
+        }
+
+        state.mask = written.value.wait_for;
+        state.sent = state.sent + written.value.count;
+
+        def count: u64 = written.value.count;
+        if strings.equal(state.path, "/slow") && count > 0 { state.phase = 3; state.due = now + 40000000; }
+
+        return;
+    }
+
+    if state.phase == 5 {
+        if tls {
+            def shut: result<i32> = (&*sessions.get_mut(index)).shutdown();
+            if shut.erroneous { return shut.error; }
+
+            state.mask = shut.value;
+            if state.mask == 0 { state.phase = 7; }
+        } else {
+            def shut: result<void> = socket.shutdown_write();
+            if shut.erroneous { return shut.error; }
+
+            state.phase = 6;
+        }
+
+        return;
+    }
+
+    return error("invalid HTTP peer state");
+}
+
+def pub serve(memory: &arena.GeneralArena, kind: string, tls: bool, certificate: string, key: string) -> result<void> {
+    def loaded: result<net.TlsServerConfig> = net.TlsServerConfig.load(memory, certificate, key);
+    if loaded.erroneous { return loaded.error; }
+
+    def mut config: net.TlsServerConfig = loaded.value;
+    defer close_config(&config);
+
+    def opened: result<net.Socket> = net.Socket.open(memory);
+    if opened.erroneous { return opened.error; }
+
+    def mut listener: net.Socket = opened.value;
+    defer close_socket(&listener);
+
+    def bound: result<void> = listener.bind(net.Address.loopback(0));
+    if bound.erroneous { return bound.error; }
+
+    def listening: result<void> = listener.listen(64);
+    if listening.erroneous { return listening.error; }
+
+    def address: result<net.Address> = listener.local_address();
+    if address.erroneous { return address.error; }
+
+    def port: result<string> = std.to_string_u16(memory, address.value.port);
+    if port.erroneous { return port.error; }
+
+    std.println(port.value);
+
+    def mut sockets: vector.Vector<net.Socket>     = vector.Vector<net.Socket>.empty(memory, 96);
+    def mut sessions: vector.Vector<net.TlsServer> = vector.Vector<net.TlsServer>.empty(memory, 96);
+    defer cleanup(&sockets, &sessions);
+
+    def mut states: vector.Vector<State>       = vector.Vector<State>.empty(memory, 96);
+    def mut heads: [[u8; 8192]; 96]            = zeroed;
+    def mut watches: vector.Vector<net.Socket> = vector.Vector<net.Socket>.empty(memory, 97);
+    def mut masks: [i32; 97]                   = zeroed;
+    def mut ready: [i32; 97]                   = zeroed;
+    def mut descriptors: [i32; 97]             = zeroed;
+    def mut indices: [i64; 97]                 = zeroed;
+    def total: u64                             = wire.count(kind, tls) * 3;
+    def mut accepted_count: u64                = 0;
+    def mut finished: u64                      = 0;
+    def mut fixed: u64                         = 0;
+    def mut chunked: u64                       = 0;
+    def mut stalled: u64                       = 0;
+    def clock: time.InstantResult              = time.monotonic_now();
+
+    if clock.status != status.OK { return error("cannot read peer clock"); }
+
+    def start: u64 = clock.value.ticks_ns;
+
+    while finished < total {
+        def clock: time.InstantResult = time.monotonic_now();
+        if clock.status != status.OK { return error("cannot read peer clock"); }
+
+        def now: u64 = clock.value.ticks_ns;
+        if now < start || now - start > 300000000000 { return error("HTTP peer overall deadline exceeded"); }
+
+        if accepted_count < total {
+            def accepted: result<net.AcceptOutcome> = listener.accept(memory);
+            if accepted.erroneous { return accepted.error; }
+
+            if accepted.value.available {
+                def mut socket: net.Socket = accepted.value.socket;
+                if !sockets.push(socket) { close_socket(&socket); return error("peer socket capacity exceeded"); }
+
+                def mut phase: i32 = 1;
+
+                if tls {
+                    def created: result<net.TlsServer> = socket.start_tls_server(memory, &config);
+                    if created.erroneous { return created.error; }
+
+                    def mut session: net.TlsServer = created.value;
+
+                    if !sessions.push(session) {
+                        def closed: result<void> = session.close();
+                        if closed.erroneous { return closed.error; }
+
+                        return error("peer TLS capacity exceeded");
+                    }
+
+                    phase = 0;
+                }
+
+                if !states.push(State { phase: phase, mask: 0, ready: 0, head_length: 0,
+                    length: 0, received: 0, sent: 0, start: now, due: 0,
+                    path: wire.path(kind, accepted_count, tls), response: "" }) { return error("peer state capacity exceeded"); }
+
+                accepted_count = accepted_count + 1;
+            }
+        }
+
+        if !watches.truncate(0) { return error("cannot reset peer wait set"); }
+        // Keep the listener in the wait set even when only a timer remains.
+        if !watches.push(listener) { return error("cannot watch listener"); }
+
+        masks[0] = net.READABLE;
+        indices[0] = -1;
+
+        def mut watching: u64 = 1;
+        def mut timeout: i32  = 100;
+
+        for def mut i: i64 = 0; i < states.len(); i = i + 1 {
+            def state: &State = &*states.get_mut(i);
+
+            if state.phase != 7 {
+                def socket: &net.Socket    = &*sockets.get_mut(i);
+                def advanced: result<void> = step(state, socket, &sessions, i, tls, memory, kind, now, heads[i][..]);
+
+                if advanced.erroneous { common.report(kind); common.report(state.path); return advanced.error; }
+
+                if state.phase == 7 {
+                    if tls {
+                        def closed: result<void> = (&*sessions.get_mut(i)).close();
+                        if closed.erroneous { return closed.error; }
+                    }
+
+                    def closed: result<void> = socket.close();
+                    if closed.erroneous { return closed.error; }
+
+                    finished = finished + 1;
+                    if strings.equal(state.path, "/fixed") { fixed = fixed + 1; }
+                    if strings.equal(state.path, "/chunked") { chunked = chunked + 1; }
+                    if strings.equal(state.path, "/stall") { stalled = stalled + 1; }
+                } else if state.phase == 3 {
+                    // Nearest timer bounds poll; no polling a writable socket during a delay.
+                    def mut delay: i32 = 0;
+                    def mut left: u64  = 0;
+
+                    if state.due > now { left = (state.due - now + 999999) / 1000000; }
+
+                    while left > 0 && delay < 100 { delay = delay + 1; left = left - 1; }
+                    if delay < timeout { timeout = delay; }
+                } else if state.mask == 0 { timeout = 0; }
+                else {
+                    if !watches.push(*socket) { return error("peer wait capacity exceeded"); }
+
+                    masks[watching] = state.mask;
+                    indices[watching] = i;
+                    watching = watching + 1;
+                }
+            }
+        }
+
+        if finished < total {
+            def waited: result<u64> = net.wait_many(watches.as_const_slice(), masks[..watching],
+                ready[..watching], descriptors[..watching], timeout);
+            if waited.erroneous { return waited.error; }
+
+            for def mut i: u64 = 1; i < watching; i = i + 1 { (&*states.get_mut(indices[i])).ready = ready[i]; }
+        }
+    }
+
+    if strings.equal(kind, "stream-example") && (fixed != 48 || chunked != 45 || stalled != 3) {
+        return error("concurrent fixture path counts differ");
+    }
+
+    // An extra accepted connection is also a fixture failure.
+    def extra: result<net.AcceptOutcome> = listener.accept(memory);
+    if extra.erroneous { return extra.error; }
+    if extra.value.available {
+        def mut socket: net.Socket = extra.value.socket;
+
+        close_socket(&socket);
+
+        return error("unexpected extra HTTP connection");
+    }
+
+    std.println("HTTP peer verified all connections and cleanup");
+
+    return;
+}

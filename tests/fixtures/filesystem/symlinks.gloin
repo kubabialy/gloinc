@@ -1,0 +1,85 @@
+import "@arena";
+import "@fs";
+import "@process";
+import "@status";
+import "@strings";
+
+def check_link(memory: &arena.GeneralArena, root: string, name: string, target: string) -> i32 {
+    def joined: fs.PathResult = fs.join(memory, root, name, 65536);
+    if joined.status != status.OK { return 1; }
+
+    def path: string          = joined.value;
+    def created: result<void> = fs.symlink(target, path);
+
+    if created.erroneous { return 2; }
+
+    def info: fs.MetadataResult = fs.metadata(path);
+    if info.status != status.OK || info.kind != fs.SYMLINK { return 3; }
+
+    def size: u64            = strings.byte_length(target);
+    def read: result<string> = fs.read_link(memory, path, size);
+
+    if read.erroneous { return 4; }
+    if !strings.equal(read.value, target) { return 5; }
+
+    def small: result<string> = fs.read_link(memory, path, size - 1);
+    if !small.erroneous { return 6; }
+
+    def empty: result<string> = fs.read_link(memory, path, 0);
+    if !empty.erroneous { return 7; }
+
+    def duplicate: result<void> = fs.symlink("replacement", path);
+    if !duplicate.erroneous { return 8; }
+
+    def unchanged: result<string> = fs.read_link(memory, path, 100);
+    if unchanged.erroneous { return 9; }
+    if !strings.equal(unchanged.value, target) || !strings.equal(read.value, target) { return 10; }
+    if fs.remove_file(path).status != status.OK { return 11; }
+    // read_link owns a copy; unlinking the link does not invalidate that string.
+    if !strings.equal(read.value, target) { return 12; }
+
+    return 0;
+}
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def argument: process.TextResult = process.arg(&memory, 1);
+    if argument.status != status.OK { return 1; }
+
+    def root: string         = argument.value;
+    def names: [string; 4]   = {"ordinary", "broken", "cyclic", "directory"};
+    def targets: [string; 4] = {"./target", "absent", "cyclic", "."};
+
+    for def mut i: u64 = 0; i < 4; i = i + 1 {
+        def code: i32 = check_link(&memory, root, names[i], targets[i]);
+        if code != 0 { return code + 10; }
+    }
+
+    def target: fs.PathResult = fs.join(&memory, root, "target", 65536);
+    if target.status != status.OK { return 30; }
+
+    def info: fs.MetadataResult = fs.metadata(target.value);
+    if info.status != status.OK || info.kind != fs.FILE || info.size != 3 { return 31; }
+
+    def ordinary: result<string> = fs.read_link(&memory, target.value, 100);
+    if !ordinary.erroneous { return 32; }
+
+    def existing: result<void> = fs.symlink("replacement", target.value);
+    if !existing.erroneous { return 33; }
+
+    def nul: result<string> = fs.read_link(&memory, "bad\0path", 10);
+    if !nul.erroneous { return 34; }
+
+    def missing: result<string> = fs.read_link(&memory, "", 10);
+    if !missing.erroneous { return 35; }
+
+    def invalid: result<void> = fs.symlink("bad\0target", target.value);
+    if !invalid.erroneous { return 36; }
+
+    def huge: result<string> = fs.read_link(&memory, target.value, 18446744073709551615);
+    if !huge.erroneous { return 37; }
+
+    return 0;
+}

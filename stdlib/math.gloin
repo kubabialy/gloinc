@@ -28,10 +28,10 @@ def pub struct F64Result {
 }
 
 // Nearest f32 constants; scalar loads, no allocation; angles are radians.
-def pub const PI_F32: f32 = 3.14159265358979323846264338327950288;
+def pub const PI_F32: f32  = 3.14159265358979323846264338327950288;
 def pub const TAU_F32: f32 = 6.28318530717958647692528676655900576;
 // Nearest f64 constants; scalar loads, no allocation; angles are radians.
-def pub const PI_F64: f64 = 3.14159265358979323846264338327950288;
+def pub const PI_F64: f64  = 3.14159265358979323846264338327950288;
 def pub const TAU_F64: f64 = 6.28318530717958647692528676655900576;
 
 // Example: math.min_i32(2, 3) selects the minimum.
@@ -67,6 +67,7 @@ def pub clamp_i32(value: i32, low: i32, high: i32) -> I32Result {
             value: high
         };
     }
+
     return I32Result {
         status: status.OK,
         value: value
@@ -106,6 +107,7 @@ def pub clamp_i64(value: i64, low: i64, high: i64) -> I64Result {
             value: high
         };
     }
+
     return I64Result {
         status: status.OK,
         value: value
@@ -145,6 +147,7 @@ def pub clamp_u64(value: u64, low: u64, high: u64) -> U64Result {
             value: high
         };
     }
+
     return U64Result {
         status: status.OK,
         value: value
@@ -184,6 +187,7 @@ def pub clamp_f32(value: f32, low: f32, high: f32) -> F32Result {
             value: high
         };
     }
+
     return F32Result {
         status: status.OK,
         value: value
@@ -223,6 +227,7 @@ def pub clamp_f64(value: f64, low: f64, high: f64) -> F64Result {
             value: high
         };
     }
+
     return F64Result {
         status: status.OK,
         value: value
@@ -244,6 +249,7 @@ def pub abs_i32(value: i32) -> I32Result {
             value: -value
         };
     }
+
     return I32Result {
         status: status.OK,
         value: value
@@ -265,6 +271,7 @@ def pub abs_i64(value: i64) -> I64Result {
             value: -value
         };
     }
+
     return I64Result {
         status: status.OK,
         value: value
@@ -277,7 +284,8 @@ def pub abs_i64(value: i64) -> I64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub abs_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(0, value, &outcome);
+    def code: i32        = __math_unary_f32(0, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -290,7 +298,8 @@ def pub abs_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub floor_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(1, value, &outcome);
+    def code: i32        = __math_unary_f32(1, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -303,7 +312,8 @@ def pub floor_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub ceil_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(2, value, &outcome);
+    def code: i32        = __math_unary_f32(2, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -316,7 +326,8 @@ def pub ceil_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub trunc_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(3, value, &outcome);
+    def code: i32        = __math_unary_f32(3, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -329,7 +340,8 @@ def pub trunc_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub round_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(4, value, &outcome);
+    def code: i32        = __math_unary_f32(4, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -342,7 +354,8 @@ def pub round_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub sqrt_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(5, value, &outcome);
+    def code: i32        = __math_unary_f32(5, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -355,7 +368,8 @@ def pub sqrt_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub exp_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(6, value, &outcome);
+    def code: i32        = __math_unary_f32(6, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -368,7 +382,8 @@ def pub exp_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub log_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(7, value, &outcome);
+    def code: i32        = __math_unary_f32(7, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -381,7 +396,8 @@ def pub log_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub log10_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(8, value, &outcome);
+    def code: i32        = __math_unary_f32(8, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -394,7 +410,8 @@ def pub log10_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub sin_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(9, value, &outcome);
+    def code: i32        = __math_unary_f32(9, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -407,7 +424,8 @@ def pub sin_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub cos_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(10, value, &outcome);
+    def code: i32        = __math_unary_f32(10, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -420,7 +438,8 @@ def pub cos_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub tan_f32(value: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_unary_f32(11, value, &outcome);
+    def code: i32        = __math_unary_f32(11, value, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -433,7 +452,8 @@ def pub tan_f32(value: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub pow_f32(base: f32, exponent: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_binary_f32(0, base, exponent, &outcome);
+    def code: i32        = __math_binary_f32(0, base, exponent, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -446,7 +466,8 @@ def pub pow_f32(base: f32, exponent: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub atan2_f32(y: f32, x: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_binary_f32(1, y, x, &outcome);
+    def code: i32        = __math_binary_f32(1, y, x, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -459,7 +480,8 @@ def pub atan2_f32(y: f32, x: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
 def pub hypot_f32(x: f32, y: f32) -> F32Result {
     def mut outcome: f32 = 0.0;
-    def code: i32 = __math_binary_f32(2, x, y, &outcome);
+    def code: i32        = __math_binary_f32(2, x, y, &outcome);
+
     return F32Result {
         status: code,
         value: outcome
@@ -472,7 +494,8 @@ def pub hypot_f32(x: f32, y: f32) -> F32Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub abs_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(0, value, &outcome);
+    def code: i32        = __math_unary_f64(0, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -485,7 +508,8 @@ def pub abs_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub floor_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(1, value, &outcome);
+    def code: i32        = __math_unary_f64(1, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -498,7 +522,8 @@ def pub floor_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub ceil_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(2, value, &outcome);
+    def code: i32        = __math_unary_f64(2, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -511,7 +536,8 @@ def pub ceil_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub trunc_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(3, value, &outcome);
+    def code: i32        = __math_unary_f64(3, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -524,7 +550,8 @@ def pub trunc_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub round_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(4, value, &outcome);
+    def code: i32        = __math_unary_f64(4, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -537,7 +564,8 @@ def pub round_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub sqrt_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(5, value, &outcome);
+    def code: i32        = __math_unary_f64(5, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -550,7 +578,8 @@ def pub sqrt_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub exp_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(6, value, &outcome);
+    def code: i32        = __math_unary_f64(6, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -563,7 +592,8 @@ def pub exp_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub log_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(7, value, &outcome);
+    def code: i32        = __math_unary_f64(7, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -576,7 +606,8 @@ def pub log_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub log10_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(8, value, &outcome);
+    def code: i32        = __math_unary_f64(8, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -589,7 +620,8 @@ def pub log10_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub sin_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(9, value, &outcome);
+    def code: i32        = __math_unary_f64(9, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -602,7 +634,8 @@ def pub sin_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub cos_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(10, value, &outcome);
+    def code: i32        = __math_unary_f64(10, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -615,7 +648,8 @@ def pub cos_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub tan_f64(value: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_unary_f64(11, value, &outcome);
+    def code: i32        = __math_unary_f64(11, value, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -628,7 +662,8 @@ def pub tan_f64(value: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub pow_f64(base: f64, exponent: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_binary_f64(0, base, exponent, &outcome);
+    def code: i32        = __math_binary_f64(0, base, exponent, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -641,7 +676,8 @@ def pub pow_f64(base: f64, exponent: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub atan2_f64(y: f64, x: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_binary_f64(1, y, x, &outcome);
+    def code: i32        = __math_binary_f64(1, y, x, &outcome);
+
     return F64Result {
         status: code,
         value: outcome
@@ -654,7 +690,8 @@ def pub atan2_f64(y: f64, x: f64) -> F64Result {
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
 def pub hypot_f64(x: f64, y: f64) -> F64Result {
     def mut outcome: f64 = 0.0;
-    def code: i32 = __math_binary_f64(2, x, y, &outcome);
+    def code: i32        = __math_binary_f64(2, x, y, &outcome);
+
     return F64Result {
         status: code,
         value: outcome

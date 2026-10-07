@@ -29,10 +29,12 @@ def struct Pairs {
 }
 
 def main() -> i32 {
-    def pair: Pair<i32, i32> = Pairs.create<i32, i32>(40, 2);
+    def pair: Pair<i32, i32>           = Pairs.create<i32, i32>(40, 2);
     def triple: Triple<i32, i32, bool> = pair.with_third<bool>(true);
+
     if triple.third {
         return triple.first + triple.second;
     }
+
     return 1;
 }

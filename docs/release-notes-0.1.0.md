@@ -4,6 +4,32 @@ This is an unreleased candidate for Apple Silicon macOS and Ubuntu 24.04 Linux.
 The latest published release remains 0.0.4. The candidate uses LLVM/MLIR
 21.1.6 on macOS and 21.1.8 on Linux and includes the following work since 0.0.4:
 
+- The former repository Python tools and test drivers now run in Gloin, including HTTP/HTTPS
+  peers with independent wire expectations, delayed responses and 32 concurrent
+  exchanges. CMake no longer requires Python. See the [tooling record](tooling-roadmap.md)
+  and [HTTP acceptance guide](../tests/http/README.md).
+
+- `@process` adds explicit child launch, poll/wait, normal and signaled exit
+  statuses, termination and alias-aware cleanup using `result<T>` and GloinIR.
+  Streams can be inherited or piped; bounded binary stdout/stderr capture drains
+  concurrently with stdin, with explicit deadlines and direct-child cleanup.
+  `start_with` adds child cwd, inherited or supplied environments and opt-in
+  process-group cleanup, including descendants holding pipes after leader exit.
+  Group cleanup is not containment for descendants that leave the group.
+  `Options.stack_limit_bytes` sets a child soft stack limit before execution;
+  zero inherits and nonzero limits require the host's main thread on macOS.
+  See [child processes](child-processes.md).
+
+- `@fs` adds non-replacing `symlink` creation and bounded `read_link`, both
+  using built-in `result<T>` and the GloinIR ABI boundary. Reads preserve the
+  immediate target text, including broken/cyclic links, and never silently
+  truncate. The formatter fixture now creates its symlink in Gloin. See the
+  [filesystem guide](filesystem-process.md#symbolic-links).
+- `@fs` also adds bounded `canonical_path`, exclusive `temp_dir` and
+  empty-directory `remove_dir`, with output allocation before directory creation.
+  The formatter driver now launches children, captures results and cleans up its
+  fixtures in Gloin; CTest invokes it directly. See the [workspace contract](filesystem-process.md#canonical-paths-and-temporary-directories).
+
 - `@json` adds a bounded pull reader, complete-document validation, string
   conversion, and a writer, all in Gloin with built-in `result<T>`. It checks
   UTF-8/Unicode escapes and retains exact number tokens without implicit float
@@ -58,6 +84,11 @@ The latest published release remains 0.0.4. The candidate uses LLVM/MLIR
   queue, and the broader HTTPS/WebSocket use cases remain unfinished.
   Building and running the compiler now requires OpenSSL 3; native executables
   using TLS require the corresponding runtime libraries.
+- `@net` adds reusable PEM server configurations, nonblocking accepted TLS
+  sessions and explicit bidirectional shutdown for clients and servers.
+  Linux TLS calls preserve the host's SIGPIPE policy. The TLS acceptance driver
+  is now written in Gloin, with independent direct-OpenSSL interoperability tests.
+  See the [server guide and runnable example](server-tls.md).
 - Checked calls, returns, and expression values retain source types through
   GloinIR until an explicit storage-layout boundary. Result and error
   construction and access have dedicated verified dialect operations. See the
@@ -66,7 +97,8 @@ The latest published release remains 0.0.4. The candidate uses LLVM/MLIR
   link with Ubuntu's default PIE linker settings. Ubuntu 24.04 has a pinned
   LLVM/MLIR installer, a Linux package format, and a separate CI acceptance job.
 - `gloinfmt` is now built from Gloin source and packaged with the compiler. It
-  formats a file to standard output or checks source trees recursively. Its
+  formats a file to standard output, checks source trees recursively, and
+  supports checked in-place writes and Git-aware discovery. Its
   conservative layout rules, exit codes, and limits are in the
   [formatter guide](gloinfmt.md).
 - Extensionless local imports now discover immediate `.gloin` files in a named

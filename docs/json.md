@@ -221,9 +221,12 @@ precision arithmetic remain separate work.
 
 ## Verification
 
-`python3 tests/json_smoke.py build/gloinc` checks valid/invalid documents and
-compares string conversions and example output with Python's independent
-JSON/UTF-8 codecs. A fixed seed supplies extra Unicode/nested cases. The state
+Build `gloin_json_tests`, then run `build/gloin-json-test build/gloinc . build`.
+The Gloin driver checks valid/invalid documents and compares string conversions
+and example output with fixed independent expected bytes. The corpus was
+frozen from the earlier independent JSON/UTF-8 codecs, including its seeded
+Unicode/nested cases; see the [provenance and update rules](../tests/fixtures/json/README.md).
+No Python interpreter is used by this suite. The state
 fixture checks exact bounds, depth 64, offsets, reader copies, terminal errors,
 writer ordering, duplicate keys, and numeric conversion failures. It runs in
 JIT, native `-O0`, and native `-O2` modes. `JsonSmoke.CodecAndState` belongs to

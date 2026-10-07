@@ -28,12 +28,15 @@ def struct Deadline {
 
     def static create(timeout_ms: i32) -> result<Deadline> {
         if timeout_ms <= 0 { return error("HTTP timeout must be positive"); }
+
         def now: time.InstantResult = time.monotonic_now();
         if now.status != status.OK { return error("HTTP clock read failed"); }
+
         def duration: u64 = std.u64_from_i64(std.i64_from_i32(timeout_ms).value).value * 1000000;
         if duration > 18446744073709551615 - now.value.ticks_ns {
             return error("HTTP deadline overflows clock range");
         }
+
         return Deadline {
             start: now.value.ticks_ns,
             end: now.value.ticks_ns + duration
@@ -46,9 +49,11 @@ def struct Deadline {
             return error("HTTP clock read failed or moved backwards");
         }
         if now.value.ticks_ns >= self.end { return error("HTTP request timed out"); }
+
         def remaining: u64 = self.end - now.value.ticks_ns;
         // Round upward so sub-millisecond waits do not become busy polling.
         def milliseconds: u64 = (remaining + 999999) / 1000000;
+
         return std.i32_from_i64(std.i64_from_u64(milliseconds).value).value;
     }
 
@@ -62,12 +67,16 @@ def struct Transport {
         if self.tls != null {
             def read: result<net.TlsReadOutcome> = (&*self.tls).read(bytes);
             if read.erroneous { return read.error; }
+
             return read.value;
         }
+
         def read: result<net.ReadOutcome> = self.socket.read(bytes);
         if read.erroneous { return read.error; }
+
         def mut wait_for: i32 = 0;
         if read.value.state == status.WOULD_BLOCK { wait_for = net.READABLE; }
+
         return net.TlsReadOutcome {
             state: read.value.state,
             count: read.value.count,
@@ -79,12 +88,16 @@ def struct Transport {
         if self.tls != null {
             def written: result<net.TlsWriteOutcome> = (&*self.tls).write(bytes);
             if written.erroneous { return written.error; }
+
             return written.value;
         }
+
         def written: result<net.WriteOutcome> = self.socket.write(bytes);
         if written.erroneous { return written.error; }
+
         def mut wait_for: i32 = 0;
         if written.value.would_block { wait_for = net.WRITABLE; }
+
         return net.TlsWriteOutcome {
             count: written.value.count,
             wait_for: wait_for
@@ -94,39 +107,46 @@ def struct Transport {
     def close(self: &Transport) -> result<void> {
         if self.tls != null {
             def closed_tls: result<void> = (&*self.tls).close();
+
             if closed_tls.erroneous {
-                def failure: error = closed_tls.error;
+                def failure: error              = closed_tls.error;
                 def closed_socket: result<void> = self.socket.close();
+
                 if closed_socket.erroneous { return closed_socket.error; }
+
                 return failure;
             }
+
             def closed_socket: result<void> = self.socket.close();
             if closed_socket.erroneous { return closed_socket.error; }
+
             return;
         }
+
         def closed: result<void> = self.socket.close();
         if closed.erroneous { return closed.error; }
+
         return;
     }
 
 }
 
 // Each step does bounded work and never waits for socket readiness.
-def pub const PROGRESS: i32 = 0;
-def pub const WAIT: i32 = 1;
-def pub const NEED_INPUT: i32 = 2;
+def pub const PROGRESS: i32    = 0;
+def pub const WAIT: i32        = 1;
+def pub const NEED_INPUT: i32  = 2;
 def pub const HAVE_OUTPUT: i32 = 3;
-def pub const COMPLETE: i32 = 4;
+def pub const COMPLETE: i32    = 4;
 
-def const CONNECT: i32 = 0;
+def const CONNECT: i32    = 0;
 def const CONNECTING: i32 = 1;
-def const TLS_SETUP: i32 = 2;
-def const HANDSHAKE: i32 = 3;
-def const EXCHANGE: i32 = 4;
-def const DONE: i32 = 5;
-def const FAILED: i32 = 6;
-def const CANCELLED: i32 = 7;
-def const ZERO: u64 = 0;
+def const TLS_SETUP: i32  = 2;
+def const HANDSHAKE: i32  = 3;
+def const EXCHANGE: i32   = 4;
+def const DONE: i32       = 5;
+def const FAILED: i32     = 6;
+def const CANCELLED: i32  = 7;
+def const ZERO: u64       = 0;
 
 def pub struct StreamingRequest {
     def pub method: string,
@@ -164,6 +184,7 @@ def matches(wanted: i32, ready: i32) -> bool {
 def combine(a: i32, b: i32) -> i32 {
     if a == 0 { return b; }
     if b == 0 || a == b { return a; }
+
     return 3;
 }
 
@@ -197,6 +218,7 @@ def struct ExchangeState {
             def closed: result<void> = self.transport.close();
             if closed.erroneous { return closed.error; }
         }
+
         return;
     }
 
@@ -214,12 +236,14 @@ def struct ExchangeState {
             strings.view_bytes(self.buffers.receive[self.receive_offset..self.receive_used]),
             self.eof, self.buffers.body);
         if decoded.erroneous { return decoded.error; }
+
         def progress: http.StreamProgress = decoded.value;
         self.receive_offset = self.receive_offset + progress.consumed;
-        self.body_used = progress.produced;
-        self.body_offset = 0;
-        self.head_ready = progress.head_ready;
-        self.complete = progress.complete;
+        self.body_used      = progress.produced;
+        self.body_offset    = 0;
+        self.head_ready     = progress.head_ready;
+        self.complete       = progress.complete;
+
         // A final response stops every further upload, including a pending TLS
         // write. This connection is always closed, never reused.
         return;
@@ -229,16 +253,21 @@ def struct ExchangeState {
         def written: result<net.TlsWriteOutcome> = self.transport.write(
             self.buffers.send[self.send_offset..self.send_used]);
         if written.erroneous { return written.error; }
+
         def step: net.TlsWriteOutcome = written.value;
-        self.write_wait = step.wait_for;
+        self.write_wait  = step.wait_for;
         self.send_offset = self.send_offset + step.count;
+
         if step.wait_for == 0 && step.count == 0 { return error("HTTP write made no progress"); }
+
         if self.send_offset == self.send_used {
             self.send_offset = 0;
-            self.send_used = 0;
+            self.send_used   = 0;
         }
+
         // A successful TLS operation may have buffered readable plaintext.
         if step.count > 0 { self.read_wait = 0; }
+
         return;
     }
 
@@ -247,67 +276,97 @@ def struct ExchangeState {
         if self.phase == CANCELLED { return error("HTTP exchange cancelled"); }
         if self.phase == DONE { return self.event(COMPLETE, 0, 0); }
         if ready < 0 || ready > 3 { return error("invalid HTTP readiness mask"); }
+
         def timed: result<i32> = self.deadline.remaining();
         if timed.erroneous { return timed.error; }
+
         def timeout_ms: i32 = timed.value;
         if self.body_offset < self.body_used { return self.event(HAVE_OUTPUT, 0, timeout_ms); }
+
         if self.complete {
             def closed: result<void> = self.close();
             if closed.erroneous { return closed.error; }
+
             self.phase = DONE;
+
             return self.event(COMPLETE, 0, 0);
         }
+
         if self.phase == CONNECT {
             def connected: result<bool> = self.transport.socket.connect(self.endpoint.address);
             if connected.erroneous { return connected.error; }
+
             self.phase = CONNECTING;
+
             if connected.value {
                 self.phase = TLS_SETUP;
+
                 return self.event(PROGRESS, 0, timeout_ms);
             }
+
             return self.event(WAIT, net.WRITABLE, timeout_ms);
         }
+
         if self.phase == CONNECTING {
             if !matches(net.WRITABLE, ready) { return self.event(WAIT, net.WRITABLE, timeout_ms); }
+
             def connected: result<bool> = self.transport.socket.finish_connect();
             if connected.erroneous { return connected.error; }
             if !connected.value { return self.event(WAIT, net.WRITABLE, timeout_ms); }
+
             self.phase = TLS_SETUP;
+
             return self.event(PROGRESS, 0, timeout_ms);
         }
+
         if self.phase == TLS_SETUP {
             self.phase = EXCHANGE;
+
             if self.endpoint.tls {
                 def started: result<net.TlsClient> = self.transport.socket.start_tls_client(
                     &self.owner, self.endpoint.hostname, self.endpoint.trust_file);
                 if started.erroneous { return started.error; }
+
                 def mut session: net.TlsClient = started.value;
-                def saved: *net.TlsClient = self.owner.try_alloc(session);
+                def saved: *net.TlsClient      = self.owner.try_alloc(session);
+
                 if saved == null {
                     def closed: result<void> = session.close();
                     if closed.erroneous { return closed.error; }
+
                     return error("HTTP TLS metadata allocation failed");
                 }
+
                 self.transport.tls = saved;
-                self.phase = HANDSHAKE;
+                self.phase         = HANDSHAKE;
             }
+
             return self.event(PROGRESS, 0, timeout_ms);
         }
+
         if self.phase == HANDSHAKE {
             if !matches(self.read_wait, ready) { return self.event(WAIT, self.read_wait, timeout_ms); }
+
             def handshaken: result<i32> = (&*self.transport.tls).handshake();
             if handshaken.erroneous { return handshaken.error; }
+
             self.read_wait = handshaken.value;
+
             if self.read_wait != 0 { return self.event(WAIT, self.read_wait, timeout_ms); }
+
             self.phase = EXCHANGE;
+
             return self.event(PROGRESS, 0, timeout_ms);
         }
+
         if self.receive_offset < self.receive_used || self.eof {
             def decoded: result<void> = self.decode();
             if decoded.erroneous { return decoded.error; }
             if self.body_used > 0 { return self.event(HAVE_OUTPUT, 0, timeout_ms); }
+
             return self.event(PROGRESS, 0, timeout_ms);
         }
+
         // SSL_write WANT_READ must resume that same write before other TLS I/O.
         if !self.head_ready && self.write_wait == net.READABLE {
             if matches(self.write_wait, ready) {
@@ -317,47 +376,60 @@ def struct ExchangeState {
                 // read/write watch set so an early response can still wake us.
                 if self.write_wait != net.READABLE { return self.event(PROGRESS, 0, timeout_ms); }
             }
+
             return self.event(WAIT, self.write_wait, timeout_ms);
         }
+
         if matches(self.read_wait, ready) {
             def read: result<net.TlsReadOutcome> = self.transport.read(self.buffers.receive);
             if read.erroneous { return read.error; }
+
             def step: net.TlsReadOutcome = read.value;
-            self.read_wait = step.wait_for;
-            self.receive_used = step.count;
+            self.read_wait      = step.wait_for;
+            self.receive_used   = step.count;
             self.receive_offset = 0;
-            self.eof = step.state == status.END;
+            self.eof            = step.state == status.END;
+
             if step.count > 0 || self.eof {
                 def decoded: result<void> = self.decode();
                 if decoded.erroneous { return decoded.error; }
                 if self.body_used > 0 { return self.event(HAVE_OUTPUT, 0, timeout_ms); }
+
                 return self.event(PROGRESS, 0, timeout_ms);
             }
         }
+
         // A TLS read that wants to write takes priority over application writes.
         if self.read_wait == net.WRITABLE { return self.event(WAIT, net.WRITABLE, timeout_ms); }
+
         if !self.head_ready {
             if self.send_used == 0 && self.head_offset < strings.byte_length(self.request_head) {
                 def mut count: u64 = strings.byte_length(self.request_head) - self.head_offset;
                 if count > self.buffers.send.len { count = self.buffers.send.len; }
+
                 for def mut i: u64 = 0; i < count; i = i + 1 {
                     self.buffers.send[i] = strings.byte_at(self.request_head, self.head_offset + i).value;
                 }
+
                 self.head_offset = self.head_offset + count;
-                self.send_used = count;
+                self.send_used   = count;
             }
+
             if self.send_used > 0 {
                 if matches(self.write_wait, ready) {
                     def written: result<void> = self.write_once();
                     if written.erroneous { return written.error; }
                     if self.write_wait == 0 { return self.event(PROGRESS, 0, timeout_ms); }
                 }
+
                 return self.event(WAIT, combine(self.read_wait, self.write_wait), timeout_ms);
             }
+
             if self.supplied < self.content_length {
                 return self.event(NEED_INPUT, self.read_wait, timeout_ms);
             }
         }
+
         return self.event(WAIT, self.read_wait, timeout_ms);
     }
 
@@ -379,16 +451,21 @@ def pub struct Exchange {
         if endpoint.tls && strings.is_empty(endpoint.hostname) {
             return error("HTTPS requires a verification hostname");
         }
+
         def timed: result<Deadline> = Deadline.create(limits.timeout_ms);
         if timed.erroneous { return timed.error; }
+
         def decoded: result<http.ResponseDecoder> = http.ResponseDecoder.create(
             buffers.head, limits.response_body, request.method, limits.response_metadata);
         if decoded.erroneous { return decoded.error; }
+
         def formatted: result<string> = http.format_request(owner, request.method,
             request.host, request.target, headers, request.content_length, limits.request_head);
         if formatted.erroneous { return formatted.error; }
+
         def opened: result<net.Socket> = net.Socket.open(owner);
         if opened.erroneous { return opened.error; }
+
         def mut socket: net.Socket = opened.value;
         def state: *ExchangeState = owner.try_alloc(ExchangeState {
             owner: *owner,
@@ -418,11 +495,14 @@ def pub struct Exchange {
             complete: false,
             failure: error("HTTP exchange failed")
         });
+
         if state == null {
             def closed: result<void> = socket.close();
             if closed.erroneous { return closed.error; }
+
             return error("HTTP exchange metadata allocation failed");
         }
+
         return Exchange {
             state: state
         };
@@ -432,18 +512,24 @@ def pub struct Exchange {
     // Fatal errors close the transport and remain sticky across every alias.
     def pub step(self: &Exchange, ready: i32) -> result<Progress> {
         def advanced: result<Progress> = (&*self.state).advance(ready);
+
         if advanced.erroneous {
-            def failure: error = advanced.error;
+            def failure: error       = advanced.error;
             def closed: result<void> = (&*self.state).close();
+
             if closed.erroneous {
-                self.state.phase = FAILED;
+                self.state.phase   = FAILED;
                 self.state.failure = closed.error;
+
                 return closed.error;
             }
-            self.state.phase = FAILED;
+
+            self.state.phase   = FAILED;
             self.state.failure = failure;
+
             return failure;
         }
+
         return advanced.value;
     }
 
@@ -454,27 +540,35 @@ def pub struct Exchange {
             || self.state.head_offset != strings.byte_length(self.state.request_head) {
             return error("HTTP exchange is not accepting upload data");
         }
+
         def mut count: u64 = strings.byte_length(bytes);
         if count == 0 || count > self.state.content_length - self.state.supplied {
             return error("HTTP upload must match declared Content-Length");
         }
+
         if count > self.state.buffers.send.len { count = self.state.buffers.send.len; }
+
         for def mut i: u64 = 0; i < count; i = i + 1 {
             self.state.buffers.send[i] = strings.byte_at(bytes, i).value;
         }
+
         self.state.send_used = count;
-        self.state.supplied = self.state.supplied + count;
+        self.state.supplied  = self.state.supplied + count;
+
         return count;
     }
 
     def pub finish_input(self: &Exchange) -> result<void> {
         if self.state.phase == FAILED { return self.state.failure; }
         if self.state.phase == CANCELLED { return error("HTTP exchange cancelled"); }
+
         if self.state.supplied != self.state.content_length && !self.state.head_ready {
             def cancelled: result<void> = self.cancel();
             if cancelled.erroneous { return cancelled.error; }
+
             return error("HTTP upload ended before Content-Length");
         }
+
         return;
     }
 
@@ -482,6 +576,7 @@ def pub struct Exchange {
     // bytes remain, step yields HAVE_OUTPUT and performs no further socket I/O.
     def pub output(self: &const Exchange) -> string {
         if self.state.phase != EXCHANGE { return ""; }
+
         return strings.view_bytes(self.state.buffers.body[self.state.body_offset..self.state.body_used]);
     }
 
@@ -490,7 +585,9 @@ def pub struct Exchange {
             || count > self.state.body_used - self.state.body_offset {
             return error("invalid HTTP output consumption");
         }
+
         self.state.body_offset = self.state.body_offset + count;
+
         return;
     }
 
@@ -498,8 +595,10 @@ def pub struct Exchange {
         if self.state.phase == FAILED || self.state.phase == CANCELLED {
             return error("HTTP exchange has no usable response");
         }
+
         def head: result<http.ResponseInfo> = self.state.decoder.head();
         if head.erroneous { return head.error; }
+
         return head.value;
     }
 
@@ -509,11 +608,14 @@ def pub struct Exchange {
     // cancellation, but shared metadata stays in the arena until reset/free.
     def pub cancel(self: &Exchange) -> result<void> {
         if self.state.phase == DONE || self.state.phase == CANCELLED || self.state.phase == FAILED { return; }
-        self.state.phase = CANCELLED;
-        self.state.body_used = 0;
+
+        self.state.phase       = CANCELLED;
+        self.state.body_used   = 0;
         self.state.body_offset = 0;
+
         def closed: result<void> = (&*self.state).close();
         if closed.erroneous { return closed.error; }
+
         return;
     }
 
@@ -533,9 +635,10 @@ def pub request(endpoint: Endpoint, request: Request, headers: [const http.Heade
     timeout_ms: i32) -> result<http.Response> {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
+
     def mut receive: [u8; 4096] = zeroed;
-    def mut send: [u8; 4096] = zeroed;
-    def mut output: [u8; 4096] = zeroed;
+    def mut send: [u8; 4096]    = zeroed;
+    def mut output: [u8; 4096]  = zeroed;
     def opened: result<Exchange> = Exchange.open(&owner, endpoint, StreamingRequest {
         method: request.method,
         host: request.host,
@@ -552,46 +655,61 @@ def pub request(endpoint: Endpoint, request: Request, headers: [const http.Heade
         response_body: body_storage.len,
         timeout_ms: timeout_ms
     });
+
     if opened.erroneous { return opened.error; }
+
     def mut exchange: Exchange = opened.value;
     defer cleanup(&exchange);
-    def mut sent: u64 = 0;
+
+    def mut sent: u64     = 0;
     def mut received: u64 = 0;
-    def mut ready: i32 = 0;
+    def mut ready: i32    = 0;
+
     while true {
         def advanced: result<Progress> = exchange.step(ready);
         if advanced.erroneous { return advanced.error; }
+
         def step: Progress = advanced.value;
         ready = 0;
+
         if step.state == COMPLETE {
             def head: result<http.ResponseInfo> = exchange.head();
             if head.erroneous { return head.error; }
+
             return http.Response {
                 code: head.value.code,
                 head: head.value.head,
                 body: strings.view_bytes(body_storage[0..received])
             };
         }
+
         if step.state == HAVE_OUTPUT {
             def bytes: string = exchange.output();
-            def count: u64 = strings.byte_length(bytes);
+            def count: u64    = strings.byte_length(bytes);
+
             for def mut i: u64 = 0; i < count; i = i + 1 {
                 body_storage[received + i] = strings.byte_at(bytes, i).value;
             }
+
             received = received + count;
+
             def consumed: result<void> = exchange.consume(count);
             if consumed.erroneous { return consumed.error; }
         } else if step.state == NEED_INPUT {
             def accepted: result<u64> = exchange.supply(strings.slice_bytes(
                 request.body, sent, strings.byte_length(request.body) - sent).value);
             if accepted.erroneous { return accepted.error; }
+
             sent = sent + accepted.value;
         } else if step.state == WAIT {
             def mut socket: net.Socket = exchange.socket();
-            def waited: result<i32> = socket.wait(step.wait_for, step.timeout_ms);
+            def waited: result<i32>    = socket.wait(step.wait_for, step.timeout_ms);
+
             if waited.erroneous { return waited.error; }
+
             ready = waited.value;
         }
     }
+
     return error("HTTP exchange ended unexpectedly");
 }

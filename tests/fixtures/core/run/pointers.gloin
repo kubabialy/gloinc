@@ -3,12 +3,16 @@ def update(value: &i64) -> void {
 }
 
 def main() -> i32 {
-    def mut value: i64 = 42;
-    def reference: &i64 = &value;
-    def pointer: *i64 = reference;
+    def mut value: i64   = 42;
+    def reference: &i64  = &value;
+    def pointer: *i64    = reference;
     def view: &const i64 = &value;
+
     if pointer == null || *pointer != 42 { return 1; }
+
     update(&*pointer);
+
     if *view != 100 || value != 100 { return 2; }
+
     return 100;
 }

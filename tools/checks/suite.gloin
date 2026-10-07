@@ -1,0 +1,84 @@
+// Classify complete CTest JUnit reports without hiding deferred failures.
+import "./common";
+import "./markup";
+import "@arena";
+import "@strings";
+import "@vector";
+
+def pub struct Summary { def pub count: i64, }
+
+def struct Case { def name: string, def mut failed: bool, def mut skipped: bool, }
+
+def known(name: string) -> bool {
+    return strings.equal(name, "AsyncTest.SpawnGeneration") || strings.equal(name, "SemaAsyncTest.AsyncTypes")
+        || strings.equal(name, "AsyncTest.DeferredFunctionGeneration") || strings.equal(name, "CodeGenTest.GenerateSpawn");
+}
+
+def pub classify(text: string) -> result<Summary> {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+
+    def created: result<markup.Reader> = markup.Reader.create(text, false);
+    if created.erroneous { return created.error; }
+
+    def mut reader: markup.Reader      = created.value;
+    def mut cases: vector.Vector<Case> = vector.Vector<Case>.empty(&memory, 0);
+    def mut scanning: bool             = true;
+    def mut active: bool               = false;
+    def mut case_depth: u64            = 0;
+
+    while scanning {
+        scratch.reset();
+        def read: result<markup.Token> = reader.next(&scratch);
+        if read.erroneous { return read.error; }
+
+        def mut token: markup.Token = read.value;
+        if token.kind == markup.END { scanning = false; }
+        if token.kind == markup.OPEN {
+            if token.depth == 0 && !strings.equal(token.name, "testsuite") && !strings.equal(token.name, "testsuites") {
+                return error("expected JUnit testsuite/testsuites root");
+            }
+
+            if strings.equal(token.name, "testcase") {
+                if token.depth == 0 || active { return error("invalid nested testcase"); }
+
+                def name: string = token.attribute("name");
+                if strings.is_empty(name) { return error("testcase requires a nonempty name"); }
+                if cases.len() >= 65536 { return error("report exceeds 65536 test cases"); }
+
+                for def mut i: i64 = 0; i < cases.len(); i = i + 1 {
+                    if strings.equal(cases.get_mut(i).name, name) { return error("duplicate test names"); }
+                }
+
+                def copied: result<string> = common.copy(&memory, name);
+                if copied.erroneous { return copied.error; }
+                if !cases.push(Case { name: copied.value, failed: false, skipped: false }) { return error("cannot retain testcase"); }
+
+                active = !token.empty; case_depth = token.depth;
+            } else if active && token.depth == case_depth + 1 {
+                def current: *Case = cases.get_mut(cases.len() - 1);
+                if strings.equal(token.name, "failure") || strings.equal(token.name, "error") { current.failed = true; }
+                if strings.equal(token.name, "skipped") { current.skipped = true; }
+            }
+        } else if token.kind == markup.CLOSE && token.depth == case_depth { active = false; }
+    }
+
+    if cases.len() == 0 { return error("report contains no test cases"); }
+
+    def mut failures: i64    = 0;
+    def mut unexpected: bool = false;
+
+    for def mut i: i64 = 0; i < cases.len(); i = i + 1 {
+        def current: *Case = cases.get_mut(i);
+        if current.skipped { common.report(current.name); unexpected = true; }
+        if current.failed { failures = failures + 1; }
+        if current.failed != known(current.name) { common.report(current.name); unexpected = true; }
+    }
+
+    if unexpected || failures != 4 { return error("unexpected failures, skipped tests, or missing known deferred failures"); }
+
+    return Summary { count: cases.len() };
+}

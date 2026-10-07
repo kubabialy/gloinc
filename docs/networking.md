@@ -1,4 +1,4 @@
-# Nonblocking TCP, client TLS, and HTTP/1.1 (0.1.0 candidate)
+# Nonblocking TCP, TLS, and HTTP/1.1 (0.1.0 candidate)
 
 `@net` provides nonblocking IPv4 TCP sockets on Apple Silicon macOS and Ubuntu
 24.04 Linux. `@http` parses and formats bounded HTTP/1.1 message heads. The
@@ -33,7 +33,7 @@ number: `127.0.0.1` is `2130706433`. Use `net.Address.ipv4(127, 0, 0, 1, port)
 connections, or `net.Address.any(port)` for a listener on all interfaces. Port
 zero requests an OS-assigned local port; obtain it with `local_address()` after
 binding. Blocking IPv4 hostname lookup is described below; asynchronous DNS,
-IPv6, UDP, TLS servers, and Windows sockets remain outside this API. Exposing a listener
+IPv6, UDP, and Windows sockets remain outside this API. Exposing a listener
 with `Address.any` is an explicit decision;
 the example binds only to loopback.
 
@@ -187,17 +187,32 @@ when the socket is no longer readable. OpenSSL may allocate internally.
 
 Copies of `TlsClient` alias one native TLS session. Close the TLS client once,
 then close its socket, then reset/free the arena. Raw `Socket.read`, `write`,
-`write_text`, `shutdown_write`, and `close` reject use while TLS is active;
-`Socket.wait` and `net.wait_many` remain available for readiness. `close()`
+`write_text` and `shutdown_write` reject use after TLS has started, including
+after TLS cleanup. Socket close requires TLS cleanup first; no plaintext reuse
+or second TLS session is supported. `Socket.wait` and `net.wait_many` remain
+available for readiness. `close()`
 sends a best-effort TLS close notification and releases TLS state; it does not
-wait for the peer's notification. For protocols where full bidirectional TLS
-shutdown matters, the caller needs a more complete shutdown API. The API
+wait for the peer's notification. For bidirectional completion use the new
+`shutdown() -> result<i32>`: zero means both alerts were exchanged; otherwise
+wait for the returned readiness event and retry with a deadline. Consume expected
+application input first. Shutdown prohibits further writes, and fatal TLS errors
+allow only cleanup. The API
 currently exposes static `error` messages, not OpenSSL's detailed error stack.
-The [local TLS smoke test](../tests/tls_client_smoke.py) covers a trusted peer,
-wrong-host rejection, and untrusted-peer rejection in JIT and native modes.
+The [Gloin TLS driver](../tests/tls/README.md) covers a trusted peer,
+wrong-host rejection, untrusted-peer rejection and graceful shutdown in JIT,
+`-O0` and `-O2`. Native tests also use independent direct-OpenSSL peers.
 `gloinc -o` links OpenSSL automatically for TLS programs. If linking a
 `--emit-object` output yourself, place `libgloin_runtime.a` before the OpenSSL
 SSL and Crypto libraries on the link command.
+
+## Server TLS
+
+Load `net.TlsServerConfig` from a PEM chain and unencrypted private-key file,
+then call `accepted_socket.start_tls_server(&owner, &config)`. Each returned
+`TlsServer` supports handshake, encrypted read/write, graceful shutdown and
+explicit cleanup. A configuration is reusable and existing sessions survive
+its closure. Read the [server TLS guide](server-tls.md) for the full API,
+ownership, retry rules, restrictions and a runnable loopback server example.
 
 ## HTTP/1.1 parsing and clients
 

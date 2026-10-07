@@ -53,12 +53,18 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
         return mlir::LLVM::LLVMFunctionType::get(
             i32, {i32, pointer, i64, pointer, i64, pointer, pointer}, false);
     case StandardPrimitive::NetTlsHandshake:
+    case StandardPrimitive::NetTlsShutdown:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer, pointer}, false);
+    case StandardPrimitive::NetTlsServerConfig:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::NetTlsServerCreate:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer, pointer, pointer}, false);
     case StandardPrimitive::NetTlsRead:
     case StandardPrimitive::NetTlsWrite:
         return mlir::LLVM::LLVMFunctionType::get(
             i32, {pointer, pointer, i64, pointer, pointer, pointer}, false);
     case StandardPrimitive::NetTlsClose:
+    case StandardPrimitive::NetTlsServerConfigClose:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer}, false);
     case StandardPrimitive::TimeMonotonic:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false);
@@ -68,10 +74,18 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, pointer, pointer},
                                                  false);
     case StandardPrimitive::FsMkdir:
+    case StandardPrimitive::FsRemoveDir:
     case StandardPrimitive::FsRemoveFile:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer}, false);
+    case StandardPrimitive::FsSymlink:
     case StandardPrimitive::FsRenameReplace:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, i64, pointer}, false);
+    case StandardPrimitive::FsReplaceFile:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, i64, pointer, i64, pointer}, false);
+    case StandardPrimitive::FsCanonicalPath:
+    case StandardPrimitive::FsTempDir:
+    case StandardPrimitive::FsReadLink:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, i64, pointer, pointer}, false);
     case StandardPrimitive::FsDirOpen:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, pointer}, false);
     case StandardPrimitive::FsDirNext:
@@ -86,6 +100,28 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
         return mlir::LLVM::LLVMFunctionType::get(pointer, {pointer, i64, pointer, pointer}, false);
     case StandardPrimitive::ProcessCwd:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::ProcessStart:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::ProcessWait:
+    case StandardPrimitive::ProcessObserve:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i64, i32, pointer, pointer, pointer}, false);
+    case StandardPrimitive::ProcessSignal:
+    case StandardPrimitive::ProcessGroupSignal:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i64, i32, pointer}, false);
+    case StandardPrimitive::ProcessStartPiped:
+        return mlir::LLVM::LLVMFunctionType::get(
+            i32, {pointer, i64, pointer, i64, pointer, pointer, pointer, pointer, pointer}, false);
+    case StandardPrimitive::ProcessPipeRead:
+    case StandardPrimitive::ProcessPipeWrite:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::ProcessPipeClose:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, pointer}, false);
+    case StandardPrimitive::ProcessPipeWait:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, i32, i32, pointer, pointer}, false);
+    case StandardPrimitive::ProcessStartOptions:
+        return mlir::LLVM::LLVMFunctionType::get(i32,
+            {pointer, i64, pointer, i64, pointer, i64, pointer, i64, i32, i32, i32, i64,
+             pointer, pointer, pointer, pointer, pointer}, false);
     case StandardPrimitive::IoStandard:
         return mlir::LLVM::LLVMFunctionType::get(pointer, {i32}, false);
     case StandardPrimitive::IoOpen:

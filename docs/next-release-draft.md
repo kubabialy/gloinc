@@ -25,6 +25,39 @@ revision and must rerun before publication.
 - The current required core suite passed 935/935 on Ubuntu ARM64. The earlier
   hosted x86_64 CI core gate passed 918/918; it must rerun on this revision.
 
+## Gloin tooling release gate
+
+As of 2026-10-06, 0.1.0 also requires Gloin replacements for the remaining
+repository-owned Python tools and test drivers. The
+[tooling roadmap](tooling-roadmap.md) records the completed migrations; no
+repository-owned Python files remain. Required capabilities include child
+processes/pipes, stack limits, symlink and temporary-directory operations,
+timed waits, server TLS and explicit graceful TLS shutdown. Preserve independent
+JSON, protocol and simulation expectations while porting the tests.
+
+The first [child-process milestone](child-processes.md) implements explicit
+launch with inherited streams/cwd/environment, polling, waiting, exit status,
+termination and direct-child cleanup. It also provides nonblocking pipes,
+bounded binary stdout/stderr capture, concurrent stdin writes and explicit
+deadlines. `start_with` adds child cwd, replacement environments and opt-in
+process-group cleanup that remains usable after the leader exits. Explicit
+search paths, stream redirection and resource limits other than stack remain pending.
+`Options.stack_limit_bytes` now applies a child-only soft stack limit, with a
+documented macOS main-thread requirement.
+`fs.symlink` and bounded `fs.read_link` are implemented with built-in results;
+bounded canonical paths, exclusive temporary directories and empty-directory
+removal are implemented too. Checked file replacement now supports
+`gloinfmt --write`, and `--git` discovers tracked/unignored sources. Formatter,
+documentation links, complete-suite classification and JSON orchestration now
+run in Gloin. The [tool guide](repository-tools.md) documents bounds and input
+rules; the JSON oracle remains independent. The million-record stress driver
+also runs in Gloin with independent fixed expectations and a 2 MiB child soft
+stack limit. Server TLS, graceful shutdown and the TLS driver now run through
+the Gloin API. The HTTP drivers now also run in Gloin, including independent
+wire fixtures, delayed responses and 32 concurrent HTTP/HTTPS exchanges.
+Existing validation below records the earlier candidate boundary and does not
+satisfy this new release gate.
+
 ## Current local validation
 
 On 2026-10-05, the compiler and standard-library tree passed these Release-build
@@ -276,13 +309,16 @@ contain those programs, and HTML links and repository formatting pass.
 
 ## Before publication
 
-1. Review the 0.1.0 candidate boundary, compatibility notes, and final diff;
+1. Complete the [Gloin tooling release gate](tooling-roadmap.md), including
+   the standard-library APIs, migrated drivers, independent reference cases,
+   candidate documentation, and macOS/Linux acceptance.
+2. Review the 0.1.0 candidate boundary, compatibility notes, and final diff;
    commit the candidate and run fresh hosted CI, including Ubuntu x86_64 and
    the macOS sanitizer gate.
-2. Keep the site root on published 0.0.4 while this is a candidate. After
+3. Keep the site root on published 0.0.4 while this is a candidate. After
    approval, remove candidate wording and update `latestVersion` and the root
    redirect; keep older numbered pages unchanged.
-3. The current macOS and Ubuntu ARM64 tree passed the core, package, and
+4. The previous macOS and Ubuntu ARM64 candidate passed the core, package, and
    full-suite gates. Rebuild archives with the final documentation and rerun
    affected checks if code or package contents change before publication.
-4. Confirm the final version and release artifacts before tagging or publishing.
+5. Confirm the final version and release artifacts before tagging or publishing.

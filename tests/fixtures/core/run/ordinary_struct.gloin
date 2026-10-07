@@ -22,8 +22,10 @@ def main() -> i32 {
     };
     def mut updated: Record = copy(initial);
     updated.inner.value = 42;
+
     if initial.inner.value != 1 || updated.tag != 255 || updated.count != 18446744073709551615 {
         return 1;
     }
+
     return updated.inner.value;
 }

@@ -1,0 +1,370 @@
+// HTTP acceptance driver and child peer. No shell, Python, or public services.
+import "./peer";
+import "./wire";
+import "../../tools/checks/common";
+import "../support/tool_runner";
+import "@arena";
+import "@fs";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def close_child(child: &process.Child) -> void {
+    if child.is_open() { def closed: result<void> = child.close(); if closed.erroneous { common.report(closed.error.message); } }
+}
+
+def join_text(memory: &arena.GeneralArena, a: string, b: string) -> result<string> {
+    def made: strings.StringResult = strings.concat(memory, a, b, 65536);
+    if made.status != status.OK { return error("HTTP test text exceeds limit"); }
+
+    return made.value;
+}
+
+def checked(memory: &arena.GeneralArena, work: string, name: string, executable: string,
+    args: [const string], expected: string) -> result<void> {
+    def captured: result<void> = tool_runner.capture_timed(work, name, executable, args, "", 0, "",
+        time.Duration { nanoseconds: 120000000000 });
+    if captured.erroneous { return captured.error; }
+
+    def suffixes: [string; 2] = {".out", ".err"};
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def leaf: result<string> = join_text(memory, name, suffixes[i]);
+        if leaf.erroneous { return leaf.error; }
+
+        def path: result<string> = common.join(memory, work, leaf.value);
+        if path.erroneous { return path.error; }
+
+        def read: result<string> = common.read(memory, path.value, 262144);
+        if read.erroneous { return read.error; }
+
+        def mut wanted: string = "";
+        if i == 0 { wanted = expected; }
+        if !strings.equal(read.value, wanted) { common.report(name); common.report(read.value); return error("HTTP child output differs from fixed expectation"); }
+    }
+
+    return;
+}
+
+def port_line(memory: &arena.GeneralArena, child: &process.Child) -> result<string> {
+    def clock: time.InstantResult = time.monotonic_now();
+    if clock.status != status.OK { return error("cannot read HTTP startup clock"); }
+
+    def start: u64         = clock.value.ticks_ns;
+    def mut bytes: [u8; 7] = zeroed;
+    def mut size: u64      = 0;
+
+    while size < 7 {
+        def now: time.InstantResult = time.monotonic_now();
+        if now.status != status.OK { return error("cannot read HTTP startup clock"); }
+        if now.value.ticks_ns < start || now.value.ticks_ns - start > 5000000000 { return error("HTTP peer did not announce its port within five seconds"); }
+
+        def read: result<process.PipeOutcome> = child.read_stdout(bytes[size..]);
+        if read.erroneous { return read.error; }
+        if read.value.state == status.END { return error("HTTP peer exited before announcing its port"); }
+
+        size = size + read.value.count;
+
+        def line: string = strings.view_bytes(bytes[..size]);
+
+        if strings.ends_with(line, "\n") {
+            def text: string        = common.part(line, 0, size - 1);
+            def parsed: result<u64> = wire.decimal(text, 65535);
+
+            if parsed.erroneous { return parsed.error; }
+
+            def value: u64 = parsed.value;
+            if value == 0 { return error("HTTP peer announced port zero"); }
+
+            def copied: result<string> = common.copy(memory, text);
+            if copied.erroneous { return copied.error; }
+
+            return copied.value;
+        }
+
+        def waited: result<i32> = child.wait_io(false, 100);
+        if waited.erroneous { return waited.error; }
+    }
+
+    return error("invalid HTTP peer port announcement");
+}
+
+// Patch exactly one default port declaration, preserving the rest of the fixture.
+def source_at_port(memory: &arena.GeneralArena, work: string, name: string, source: string, port: string) -> result<string> {
+    def read: result<string> = common.read(memory, source, 262144);
+    if read.erroneous { return read.error; }
+
+    def text: string              = read.value;
+    def found: strings.FindResult = strings.find(text, "def const PORT: u16");
+
+    if !found.found { return error("fixture lacks default PORT declaration"); }
+    if found.offset > 0 && common.byte(text, found.offset - 1) != 10 { return error("PORT declaration is not at line start"); }
+
+    def rest: string                  = common.part(text, found.offset, strings.byte_length(text));
+    def semicolon: strings.FindResult = strings.find(rest, ";");
+
+    if !semicolon.found { return error("unterminated PORT declaration"); }
+
+    def statement: string  = common.part(rest, strings.byte_length("def const PORT: u16"), semicolon.offset);
+    def assignment: string = strings.trim_ascii(statement);
+
+    if !strings.starts_with(assignment, "=") || !strings.equal(strings.trim_ascii(common.part(assignment, 1, strings.byte_length(assignment))), "8080") {
+        return error("fixture default PORT must be 8080");
+    }
+
+    def tail: string = common.part(rest, semicolon.offset + 1, strings.byte_length(rest));
+    if strings.contains(tail, "def const PORT: u16") { return error("fixture repeats PORT declaration"); }
+
+    def built: strings.BuilderResult = strings.StringBuilder.create(memory, 262208);
+    if built.status != status.OK { return error("cannot allocate patched fixture"); }
+
+    def mut builder: strings.StringBuilder = built.value;
+    if builder.append(common.part(text, 0, found.offset)) != status.OK || builder.append("def const PORT: u16 = ") != status.OK
+        || builder.append(port) != status.OK || builder.append(";") != status.OK || builder.append(tail) != status.OK { return error("patched fixture exceeds limit"); }
+
+    def output: strings.StringResult = builder.to_string(memory);
+    if output.status != status.OK { return error("cannot retain patched source"); }
+
+    def saved: result<void> = tool_runner.record(memory, work, name, ".gloin", output.value);
+    if saved.erroneous { return saved.error; }
+
+    def leaf: result<string> = join_text(memory, name, ".gloin");
+    if leaf.erroneous { return leaf.error; }
+
+    def path: result<string> = common.join(memory, work, leaf.value);
+    if path.erroneous { return path.error; }
+
+    return path.value;
+}
+
+def clients(memory: &arena.GeneralArena, work: string, label: string, compiler: string,
+    source: string, kind: string, tls: bool, certificate: string) -> result<void> {
+    def example: bool        = strings.ends_with(kind, "-example");
+    def mut expected: string = "";
+
+    if strings.equal(kind, "client-example") { expected = "200\napplication/json\n{\"ok\":true}\n"; }
+    if strings.equal(kind, "stream-example") { expected = "31 streamed downloads verified; stalled exchange cancelled\n"; }
+
+    def mut mode: string = "plain";
+    if tls { mode = "tls"; }
+
+    def mut arguments: [string; 5] = {"--jit", source, "--", mode, certificate};
+    def mut count: u64             = 5;
+
+    if example && !tls { count = 2; }
+
+    def jit_name: result<string> = join_text(memory, label, "-jit");
+    if jit_name.erroneous { return jit_name.error; }
+
+    def jit: result<void> = checked(memory, work, jit_name.value, compiler, arguments[..count], expected);
+    if jit.erroneous { return jit.error; }
+
+    def modes: [string; 2] = {"-O0", "-O2"};
+    def names: [string; 2] = {"-O0", "-O2"};
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def name: result<string> = join_text(memory, label, names[i]);
+        if name.erroneous { return name.error; }
+
+        def binary: result<string> = common.join(memory, work, name.value);
+        if binary.erroneous { return binary.error; }
+
+        def compile_name: result<string> = join_text(memory, name.value, "-compile");
+        if compile_name.erroneous { return compile_name.error; }
+
+        def compile_args: [string; 4] = {modes[i], "-o", binary.value, source};
+        def compiled: result<void>    = checked(memory, work, compile_name.value, compiler, compile_args[..], "");
+
+        if compiled.erroneous { return compiled.error; }
+
+        def args: [string; 2] = {mode, certificate};
+        count = 2;
+        if example && !tls { count = 0; }
+
+        def executed: result<void> = checked(memory, work, name.value, binary.value, args[..count], expected);
+        if executed.erroneous { return executed.error; }
+    }
+
+    return;
+}
+
+def finish_peer(memory: &arena.GeneralArena, child: &process.Child, work: string, name: string, success: bool) -> result<void> {
+    if !success {
+        def killed: result<void> = child.kill();
+        if killed.erroneous { common.report(killed.error.message); }
+    }
+
+    def input: [u8; 0]          = {};
+    def mut output: [u8; 65536] = zeroed;
+    def mut errors: [u8; 65536] = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..],
+        time.Duration { nanoseconds: 10000000000 });
+
+    if captured.erroneous { return captured.error; }
+
+    def value: process.Output = captured.value;
+    def out: result<void>     = tool_runner.record(memory, work, name, ".peer.out", strings.view_bytes(value.stdout));
+
+    if out.erroneous { return out.error; }
+
+    def err: result<void> = tool_runner.record(memory, work, name, ".peer.err", strings.view_bytes(value.stderr));
+    if err.erroneous { return err.error; }
+    if !success || !value.status.success() || !strings.is_empty(strings.view_bytes(value.stderr))
+        || !strings.equal(strings.view_bytes(value.stdout), "HTTP peer verified all connections and cleanup\n") {
+        common.report(strings.view_bytes(value.stderr));
+        return error("HTTP peer failed its wire/cleanup expectations");
+    }
+
+    return;
+}
+
+def group(memory: &arena.GeneralArena, work: string, driver: string, compiler: string, source: string,
+    kind: string, tls: bool, certificate: string, key: string) -> result<void> {
+    def mut mode: string = "plain";
+    if tls { mode = "tls"; }
+
+    def prefix: result<string> = join_text(memory, mode, "-");
+    if prefix.erroneous { return prefix.error; }
+
+    def label: result<string> = join_text(memory, prefix.value, kind);
+    if label.erroneous { return label.error; }
+
+    def args: [string; 5]            = {"--peer", kind, mode, certificate, key};
+    def mut options: process.Options = process.Options.defaults();
+    options.piped             = true;
+    options.new_process_group = true;
+
+    def started: result<process.Child> = process.start_with(memory, driver, args[..], options);
+    if started.erroneous { return started.error; }
+
+    def mut child: process.Child = started.value;
+    defer close_child(&child);
+
+    def announced: result<string> = port_line(memory, &child);
+
+    if announced.erroneous {
+        def stopped: result<void> = finish_peer(memory, &child, work, label.value, false);
+        if stopped.erroneous { common.report(stopped.error.message); }
+
+        return announced.error;
+    }
+
+    def saved: result<void> = tool_runner.record(memory, work, label.value, ".port", announced.value);
+    if saved.erroneous { return saved.error; }
+
+    def patched: result<string> = source_at_port(memory, work, label.value, source, announced.value);
+    if patched.erroneous { return patched.error; }
+
+    def tested: result<void> = clients(memory, work, label.value, compiler, patched.value, kind, tls, certificate);
+
+    if tested.erroneous {
+        def stopped: result<void> = finish_peer(memory, &child, work, label.value, false);
+        if stopped.erroneous { common.report(stopped.error.message); }
+
+        return tested.error;
+    }
+
+    def finished: result<void> = finish_peer(memory, &child, work, label.value, true);
+    if finished.erroneous { return finished.error; }
+
+    std.println(label.value);
+
+    return;
+}
+
+def jobs(memory: &arena.GeneralArena, work: string, driver: string, kind: string,
+    compiler: string, root: string, openssl: string, example: string) -> result<void> {
+    def cert_path: result<string> = common.join(memory, work, "cert.pem");
+    if cert_path.erroneous { return cert_path.error; }
+
+    def key_path: result<string> = common.join(memory, work, "key.pem");
+    if key_path.erroneous { return key_path.error; }
+
+    def certificate: string = cert_path.value;
+    def key: string         = key_path.value;
+    def args: [string; 16] = {"req", "-x509", "-newkey", "rsa:2048", "-sha256", "-nodes",
+        "-days", "1", "-keyout", key, "-out", certificate, "-subj", "/CN=localhost",
+        "-addext", "subjectAltName=DNS:localhost"};
+    def generated: result<void> = tool_runner.capture(work, "certificate", openssl, args[..], "", 0);
+
+    if generated.erroneous { return generated.error; }
+
+    def mut fixture: string = "tests/fixtures/network/http_client_cases.gloin";
+    if strings.equal(kind, "stream") { fixture = "tests/fixtures/network/http_stream_cases.gloin"; }
+
+    def path: result<string> = common.join(memory, root, fixture);
+    if path.erroneous { return path.error; }
+
+    def example_kind: result<string> = join_text(memory, kind, "-example");
+    if example_kind.erroneous { return example_kind.error; }
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def tested: result<void> = group(memory, work, driver, compiler, path.value, kind, i == 1, certificate, key);
+        if tested.erroneous { return tested.error; }
+
+        def shown: result<void> = group(memory, work, driver, compiler, example, example_kind.value, i == 1, certificate, key);
+        if shown.erroneous { return shown.error; }
+    }
+
+    std.println("HTTP/HTTPS wire fixtures, deadlines and cleanup: JIT/O0/O2 passed");
+
+    return;
+}
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def mode: process.TextResult = process.arg(&memory, 1);
+    if mode.status != status.OK { return 2; }
+
+    if strings.equal(mode.value, "--peer") && process.arg_count() == 6 {
+        def mut args: [string; 4] = zeroed;
+
+        for def mut i: u64 = 0; i < 4; i = i + 1 {
+            def read: process.TextResult = process.arg(&memory, i + 2);
+            if read.status != status.OK { return 2; }
+
+            args[i] = read.value;
+        }
+
+        def served: result<void> = peer.serve(&memory, args[0], strings.equal(args[1], "tls"), args[2], args[3]);
+        if served.erroneous { common.report(served.error.message); return 1; }
+
+        return 0;
+    }
+
+    if process.arg_count() != 7 || (!strings.equal(mode.value, "client") && !strings.equal(mode.value, "stream")) {
+        common.report("usage: gloin-http-test client|stream COMPILER REPOSITORY_ROOT TEMP_PARENT OPENSSL EXAMPLE"); return 2;
+    }
+
+    def mut args: [string; 6] = zeroed;
+
+    for def mut i: u64 = 0; i < 6; i = i + 1 {
+        def mut index: u64 = i + 1;
+        if i == 0 { index = 0; }
+
+        def read: process.TextResult = process.arg(&memory, index);
+        if read.status != status.OK { return 2; }
+
+        def canonical: result<string> = fs.canonical_path(&memory, read.value, 65536);
+        if canonical.erroneous { common.report(canonical.error.message); return 2; }
+
+        args[i] = canonical.value;
+    }
+
+    def made: result<string> = fs.temp_dir(&memory, args[3], "http checks", 65536);
+    if made.erroneous { common.report(made.error.message); return 1; }
+
+    def work: string         = made.value;
+    def tested: result<void> = jobs(&memory, work, args[0], mode.value, args[1], args[2], args[4], args[5]);
+
+    if tested.erroneous { common.report(tested.error.message); common.report(work); return 1; }
+
+    def removed: result<void> = tool_runner.remove_fixture_tree(work, 64);
+    if removed.erroneous { common.report(removed.error.message); common.report(work); return 1; }
+
+    return 0;
+}

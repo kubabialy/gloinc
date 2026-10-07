@@ -11,6 +11,8 @@ def main() -> i32 {
     def counter: Counter = Counter {
         value: 0
     };
+
     counter.add();
+
     return 0;
 }

@@ -1,0 +1,191 @@
+// Serve one fixed PING/PONG exchange over loopback TLS, then close gracefully.
+// Usage: tls-server CERTIFICATE_CHAIN.pem PRIVATE_KEY.pem
+import "@arena";
+import "@net";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def close_socket(socket: &net.Socket) -> void {
+    if socket.is_open() {
+        def closed: result<void> = socket.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+def close_tls(tls: &net.TlsServer) -> void {
+    if tls.is_open() {
+        def closed: result<void> = tls.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+def close_config(config: &net.TlsServerConfig) -> void {
+    if config.is_open() {
+        def closed: result<void> = config.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+// One deadline covers accept, handshake, request, response and TLS shutdown.
+def within(start: time.Instant) -> bool {
+    def now: time.InstantResult = time.monotonic_now();
+    if now.status != status.OK { return false; }
+
+    def elapsed: time.DurationResult = time.elapsed(start, now.value);
+
+    return elapsed.status == status.OK && elapsed.value.nanoseconds < 30000000000;
+}
+
+def wait_ready(socket: &net.Socket, event: i32, start: time.Instant) -> bool {
+    if !within(start) { return false; }
+    if event == 0 { return true; }
+
+    def waited: result<i32> = socket.wait(event, 10);
+    if waited.erroneous { return false; }
+
+    return true;
+}
+
+def serve(owner: &arena.GeneralArena, certificate: string, key: string) -> result<void> {
+    def loaded: result<net.TlsServerConfig> = net.TlsServerConfig.load(owner, certificate, key);
+    if loaded.erroneous { return loaded.error; }
+
+    def mut config: net.TlsServerConfig = loaded.value;
+    defer close_config(&config);
+
+    def opened: result<net.Socket> = net.Socket.open(owner);
+    if opened.erroneous { return opened.error; }
+
+    def mut listener: net.Socket = opened.value;
+    defer close_socket(&listener);
+
+    def bound: result<void> = listener.bind(net.Address.loopback(0));
+    if bound.erroneous { return bound.error; }
+
+    def listening: result<void> = listener.listen(1);
+    if listening.erroneous { return listening.error; }
+
+    def address: result<net.Address> = listener.local_address();
+    if address.erroneous { return address.error; }
+
+    def port: result<string> = std.to_string_u16(owner, address.value.port);
+    if port.erroneous { return port.error; }
+
+    std.println(port.value);
+
+    def clock: time.InstantResult = time.monotonic_now();
+    if clock.status != status.OK { return error("cannot read server clock"); }
+
+    def start: time.Instant = clock.value;
+
+    while within(start) {
+        def accepted: result<net.AcceptOutcome> = listener.accept(owner);
+        if accepted.erroneous { return accepted.error; }
+
+        if accepted.value.available {
+            def mut socket: net.Socket = accepted.value.socket;
+            defer close_socket(&socket);
+
+            def created: result<net.TlsServer> = socket.start_tls_server(owner, &config);
+            if created.erroneous { return created.error; }
+
+            def mut tls: net.TlsServer = created.value;
+            defer close_tls(&tls);
+
+            def mut ready: bool = false;
+
+            while !ready && within(start) {
+                def step: result<i32> = tls.handshake();
+                if step.erroneous { return step.error; }
+
+                ready = step.value == 0;
+
+                if !wait_ready(&socket, step.value, start) { return error("TLS handshake timed out"); }
+            }
+
+            if !ready { return error("TLS handshake timed out"); }
+
+            def mut request: [u8; 4] = zeroed;
+            def mut received: u64    = 0;
+
+            while received < 4 && within(start) {
+                def step: result<net.TlsReadOutcome> = tls.read(request[received..]);
+                if step.erroneous { return step.error; }
+                if step.value.state == status.END { return error("request ended before PING"); }
+
+                received = received + step.value.count;
+
+                if !wait_ready(&socket, step.value.wait_for, start) { return error("TLS request timed out"); }
+            }
+
+            if received != 4 || !strings.equal(strings.view_bytes(request[..]), "PING") {
+                return error("expected exactly four PING bytes");
+            }
+
+            def response: [u8; 4] = {80, 79, 78, 71};
+            def mut sent: u64     = 0;
+
+            while sent < 4 && within(start) {
+                def step: result<net.TlsWriteOutcome> = tls.write(response[sent..]);
+                if step.erroneous { return step.error; }
+
+                sent = sent + step.value.count;
+
+                if !wait_ready(&socket, step.value.wait_for, start) { return error("TLS response timed out"); }
+            }
+
+            if sent != 4 { return error("TLS response timed out"); }
+
+            ready = false;
+
+            while !ready && within(start) {
+                def step: result<i32> = tls.shutdown();
+                if step.erroneous { return step.error; }
+
+                ready = step.value == 0;
+
+                if !wait_ready(&socket, step.value, start) { return error("TLS shutdown timed out"); }
+            }
+
+            if !ready { return error("TLS shutdown timed out"); }
+
+            def tls_closed: result<void> = tls.close();
+            if tls_closed.erroneous { return tls_closed.error; }
+
+            def socket_closed: result<void> = socket.close();
+            if socket_closed.erroneous { return socket_closed.error; }
+
+            def listener_closed: result<void> = listener.close();
+            if listener_closed.erroneous { return listener_closed.error; }
+
+            def config_closed: result<void> = config.close();
+            if config_closed.erroneous { return config_closed.error; }
+
+            return;
+        }
+
+        if !wait_ready(&listener, net.READABLE, start) { return error("TLS accept timed out"); }
+    }
+
+    return error("TLS accept timed out");
+}
+
+def main() -> i32 {
+    if process.arg_count() != 3 { std.println("usage: tls-server CERTIFICATE.pem PRIVATE_KEY.pem"); return 2; }
+
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def certificate: process.TextResult = process.arg(&owner, 1);
+    def key: process.TextResult         = process.arg(&owner, 2);
+
+    if certificate.status != status.OK || key.status != status.OK { return 2; }
+
+    def served: result<void> = serve(&owner, certificate.value, key.value);
+    if served.erroneous { std.println(served.error.message); return 1; }
+
+    return 0;
+}

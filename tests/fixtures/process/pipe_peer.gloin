@@ -1,0 +1,36 @@
+// Writes more than pipe capacity before reading stdin: a sequential parent deadlocks.
+import "@io";
+import "@status";
+
+def main() -> i32 {
+    def mut input: io.Stream  = io.stdin();
+    def mut output: io.Stream = io.stdout();
+    def mut errors: io.Stream = io.stderr();
+    def mut block: [u8; 4096] = zeroed;
+
+    for def mut i: u64 = 0; i < 4096; i = i + 1 { block[i] = 42; }
+
+    for def mut i: i32 = 0; i < 64; i = i + 1 {
+        if errors.write_all_bytes(block[..]).status != status.OK { return 81; }
+    }
+
+    if errors.flush().status != status.OK { return 82; }
+
+    for def mut i: u64 = 0; i < 4096; i = i + 1 { block[i] = 37; }
+
+    for def mut i: i32 = 0; i < 64; i = i + 1 {
+        if output.write_all_bytes(block[..]).status != status.OK { return 83; }
+    }
+
+    if output.flush().status != status.OK { return 84; }
+
+    while true {
+        def read: io.ByteReadResult = input.read_into(block[..]);
+        if read.status == status.END { return 37; }
+        if read.status != status.OK { return 85; }
+        if output.write_all_bytes(block[..read.read]).status != status.OK { return 86; }
+        if output.flush().status != status.OK { return 87; }
+    }
+
+    return 88;
+}

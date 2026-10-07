@@ -1,5 +1,7 @@
 def main() -> i32 {
     def pointer: *const i64 = null;
+
     *pointer;
+
     return 0;
 }

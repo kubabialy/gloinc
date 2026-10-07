@@ -2,5 +2,6 @@ import "@std";
 
 def main() -> i32 {
     def value: i32 = std.to_int("42");
+
     return value;
 }

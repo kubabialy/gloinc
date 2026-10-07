@@ -1,0 +1,148 @@
+// Native driver for the independent fixed JSON corpus; no reference-codec round trip.
+import "../../tools/checks/common";
+import "../support/tool_runner";
+import "@arena";
+import "@fs";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def checked_capture(memory: &arena.GeneralArena, work: string, name: string, executable: string, args: [const string], expected: string) -> result<void> {
+    def captured: result<void> = tool_runner.capture_timed(work, name, executable, args, "", 0, "",
+        time.Duration { nanoseconds: 120000000000 });
+    if captured.erroneous { return captured.error; }
+
+    def suffixes: [string; 2] = {".out", ".err"};
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def leaf: strings.StringResult = strings.concat(memory, name, suffixes[i], 256);
+        if leaf.status != status.OK { return error("cannot make JSON capture name"); }
+
+        def path: result<string> = common.join(memory, work, leaf.value);
+        if path.erroneous { return path.error; }
+
+        def read: result<string> = common.read(memory, path.value, 262144);
+        if read.erroneous { return read.error; }
+
+        def mut wanted: string = "";
+        if i == 0 { wanted = expected; }
+        if !strings.equal(read.value, wanted) { common.report(name); return error("JSON child output differs from the independent fixed oracle"); }
+    }
+
+    return;
+}
+
+def jobs(memory: &arena.GeneralArena, compiler: string, root: string, example: string, work: string) -> result<void> {
+    def fixtures: [string; 3]    = {"tests/fixtures/json/matrix.gloin", "tests/fixtures/json/behavior.gloin", example};
+    def mut sources: [string; 3] = zeroed;
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def path: result<string> = common.join(memory, root, fixtures[i]);
+        if path.erroneous { return path.error; }
+
+        sources[i] = path.value;
+    }
+
+    def names: [string; 3]          = {"matrix", "behavior", "example"};
+    def expected_files: [string; 2] = {"tests/fixtures/json/matrix.expected", "tests/fixtures/json/example.expected"};
+    def mut oracles: [string; 2]    = zeroed;
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def path: result<string> = common.join(memory, root, expected_files[i]);
+        if path.erroneous { return path.error; }
+
+        def read: result<string> = common.read(memory, path.value, 262144);
+        if read.erroneous { return read.error; }
+
+        oracles[i] = read.value;
+    }
+
+    def expected: [string; 3] = {oracles[0], "JSON state and limit checks passed\n", oracles[1]};
+    def modes: [string; 3]    = {"jit", "O0", "O2"};
+    def options: [string; 3]  = {"--jit", "-O0", "-O2"};
+
+    for def mut mode: u64 = 0; mode < 3; mode = mode + 1 {
+        for def mut source: u64 = 0; source < 3; source = source + 1 {
+            def joined: strings.StringResult = strings.concat(memory, modes[mode], names[source], 128);
+            if joined.status != status.OK { return error("cannot make JSON job name"); }
+
+            def label: string = joined.value;
+
+            if mode == 0 {
+                def args: [string; 2]      = {options[mode], sources[source]};
+                def captured: result<void> = checked_capture(memory, work, label, compiler, args[..], expected[source]);
+
+                if captured.erroneous { return captured.error; }
+            } else {
+                def path: result<string> = common.join(memory, work, label);
+                if path.erroneous { return path.error; }
+
+                def compile_label: strings.StringResult = strings.concat(memory, label, "-compile", 256);
+                if compile_label.status != status.OK { return error("cannot make JSON compile label"); }
+
+                def args: [string; 4]   = {options[mode], "-o", path.value, sources[source]};
+                def built: result<void> = checked_capture(memory, work, compile_label.value, compiler, args[..], "");
+
+                if built.erroneous { return built.error; }
+
+                def empty: [string; 0]     = zeroed;
+                def executed: result<void> = checked_capture(memory, work, label, path.value, empty[..], expected[source]);
+
+                if executed.erroneous { return executed.error; }
+            }
+        }
+
+        std.print(modes[mode]);
+        std.println(": 142 accepted documents, 53 rejected documents, 54 independent Unicode expectations, state/limit checks and example passed");
+    }
+
+    return;
+}
+
+def main() -> i32 {
+    if process.arg_count() != 4 && process.arg_count() != 5 {
+        common.report("usage: gloin-json-test COMPILER REPOSITORY_ROOT TEMP_PARENT [EXAMPLE]"); return 2;
+    }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def mut args: [string; 3] = zeroed;
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def argument: process.TextResult = process.arg(&memory, i + 1);
+        if argument.status != status.OK { return 2; }
+
+        def canonical: result<string> = fs.canonical_path(&memory, argument.value, 65536);
+        if canonical.erroneous { common.report(canonical.error.message); return 2; }
+
+        args[i] = canonical.value;
+    }
+
+    def mut example: string = "examples/json.gloin";
+
+    if process.arg_count() == 5 {
+        def argument: process.TextResult = process.arg(&memory, 4);
+        if argument.status != status.OK { return 2; }
+
+        def canonical: result<string> = fs.canonical_path(&memory, argument.value, 65536);
+        if canonical.erroneous { common.report(canonical.error.message); return 2; }
+
+        example = canonical.value;
+    }
+
+    def made: result<string> = fs.temp_dir(&memory, args[2], "json checks", 65536);
+    if made.erroneous { common.report(made.error.message); return 1; }
+
+    def work: string         = made.value;
+    def tested: result<void> = jobs(&memory, args[0], args[1], example, work);
+
+    if tested.erroneous { common.report(tested.error.message); common.report("Evidence retained in:"); common.report(work); return 1; }
+
+    def removed: result<void> = tool_runner.remove_fixture_tree(work, 64);
+    if removed.erroneous { common.report(removed.error.message); common.report(work); return 1; }
+
+    return 0;
+}

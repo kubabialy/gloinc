@@ -22,6 +22,6 @@ examples, and version selector's selected value, then append the version to
 `versions.js` and change the root redirect. Keep links relative so the site works from a source checkout, an
 installed package, and an extracted release archive without a server.
 
-Run `python3 scripts/check-doc-links.py` from the repository root after editing
+Build `gloin_checks`, then run `build/gloin-check-docs` from the repository root after editing
 the site. Each versioned page links to the installed Markdown API guides for exact
 function signatures, ownership, costs, and errors.

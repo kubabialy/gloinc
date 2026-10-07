@@ -24,7 +24,7 @@ jobs:
       - name: Install build tools and pinned LLVM/MLIR
         run: |
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cmake ninja-build g++ python3 openssl libssl-dev
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cmake ninja-build g++ openssl libssl-dev
           bash scripts/install-llvm-linux.sh
 
       - name: Record environment
@@ -36,9 +36,6 @@ jobs:
             ninja --version
             "$GLOIN_LLVM_PREFIX/bin/llvm-config" --version
           } | tee ci-reports-linux/environment.log
-
-      - name: Check documentation links
-        run: python3 scripts/check-doc-links.py
 
       - name: Build compiler and tests
         id: build
@@ -53,6 +50,9 @@ jobs:
 
       - name: Check Gloin source style
         run: build-ci-linux/gloinfmt --check .
+
+      - name: Check documentation links
+        run: build-ci-linux/gloin-check-docs
 
       - name: Verify executable core acceptance
         id: core
@@ -79,7 +79,7 @@ jobs:
           parallel_status=${PIPESTATUS[0]}
           set -e
           test "$serial_status" -ne 0 && test "$parallel_status" -ne 0
-          python3 scripts/check-full-suite.py ci-reports-linux/serial.xml ci-reports-linux/parallel.xml
+          build-ci-linux/gloin-check-suite ci-reports-linux/serial.xml ci-reports-linux/parallel.xml
 
       - name: Publish Linux build and test evidence
         if: ${{ always() }}
@@ -132,9 +132,6 @@ jobs:
             ninja --version
             "$GLOIN_LLVM_PREFIX/bin/llvm-config" --version
           } | tee ci-reports/environment.log
-
-      - name: Check versioned documentation links
-        run: python3 scripts/check-doc-links.py
 
       - name: Build without test dependencies
         run: |
@@ -194,6 +191,9 @@ jobs:
       - name: Check Gloin source style
         run: build-ci/gloinfmt --check .
 
+      - name: Check versioned documentation links
+        run: build-ci/gloin-check-docs
+
       - name: Verify executable core acceptance
         id: core
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -247,7 +247,7 @@ jobs:
             echo 'Known language failures remain failures; see tests/README.md for task IDs.'
           } >> "$GITHUB_STEP_SUMMARY"
           test "$serial_status" -ne 0 && test "$parallel_status" -ne 0
-          python3 scripts/check-full-suite.py ci-reports/serial.xml ci-reports/parallel.xml
+          build-ci/gloin-check-suite ci-reports/serial.xml ci-reports/parallel.xml
 
       - name: Publish build and test evidence
         if: ${{ always() }}

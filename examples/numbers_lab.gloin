@@ -10,12 +10,15 @@ import "@strings";
 def main() -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
-    def mut count: i64 = 0;
-    def mut mean: f64 = 0.0;
+
+    def mut count: i64    = 0;
+    def mut mean: f64     = 0.0;
     def mut reading: bool = true;
+
     while reading {
         memory.reset();
         def line: std.InputResult = std.input(&memory, 128);
+
         if line.status == status.END {
             reading = false;
         } else {
@@ -23,6 +26,7 @@ def main() -> i32 {
                 std.println("input failed");
                 return 1;
             }
+
             def measurement: std.F64Result = std.parse_f64(strings.trim_ascii(line.value));
             if measurement.status != status.OK {
                 std.println("invalid number");
@@ -37,22 +41,30 @@ def main() -> i32 {
                 std.println("too many measurements");
                 return 4;
             }
+
             count = count + 1;
+
             def denominator: std.F64Result = std.f64_from_i64_exact(count);
             if denominator.status != status.OK { return 5; }
+
             mean = mean + (measurement.value - mean) / denominator.value;
         }
     }
+
     memory.reset();
     def total: std.FormatResult = std.format_i64(&memory, count);
     if total.status != status.OK { return 6; }
+
     std.print("count=");
     std.println(total.value);
+
     if count != 0 {
         def average: std.FormatResult = std.format_f64_fixed(&memory, mean, 2);
         if average.status != status.OK { return 7; }
+
         std.print("mean=");
         std.println(average.value);
     }
+
     return 0;
 }

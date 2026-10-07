@@ -1,0 +1,88 @@
+// XML's five predefined names and numeric references; strict semicolon syntax.
+// The HTML checker additionally accepts the named references in html_names.
+import "./common";
+import "./html_names";
+import "@arena";
+import "@status";
+import "@strings";
+
+def pub decode(memory: &arena.GeneralArena, text: string, html: bool) -> result<string> {
+    if !strings.contains(text, "&") && (html || (!strings.contains(text, "\r") && !strings.contains(text, "\n") && !strings.contains(text, "\t"))) { return text; }
+
+    def made: strings.BuilderResult = strings.StringBuilder.create(memory, strings.byte_length(text) * 4 + 4);
+    if made.status != status.OK { return error("cannot allocate entity decoder"); }
+
+    def mut out: strings.StringBuilder = made.value;
+    def size: u64                      = strings.byte_length(text);
+    def mut i: u64                     = 0;
+
+    while i < size {
+        if common.byte(text, i) != 38 {
+            def mut value: u8 = common.byte(text, i);
+            if !html && (value == 9 || value == 10 || value == 13) { value = 32; }
+            if out.append_byte(value) != status.OK { return error("entity decoder capacity exceeded"); }
+
+            if !html && common.byte(text, i) == 13 && i + 1 < size && common.byte(text, i + 1) == 10 { i = i + 1; }
+
+            i = i + 1;
+        } else {
+            def mut end: u64 = i + 1;
+
+            while end < size && end - i < 34 && common.byte(text, end) != 59
+                && !common.space(common.byte(text, end)) && common.byte(text, end) != 38 {
+                end = end + 1;
+            }
+
+            if end == size || common.byte(text, end) != 59 {
+                if !html { return error("unterminated XML entity"); }
+                if out.append_byte(38) != status.OK { return error("entity decoder capacity exceeded"); }
+
+                i = i + 1;
+            } else {
+                def name: string = common.part(text, i + 1, end);
+
+                if strings.starts_with(name, "#") {
+                    def mut position: u64 = 1;
+                    def mut base: u64     = 10;
+
+                    if strings.starts_with(name, "#x") || (html && strings.starts_with(name, "#X")) { position = 2; base = 16; }
+                    if position == strings.byte_length(name) { return error("empty numeric entity"); }
+
+                    def mut value: u64 = 0;
+
+                    while position < strings.byte_length(name) {
+                        def digit: result<u8> = common.hex(common.byte(name, position));
+                        if digit.erroneous { return digit.error; }
+
+                        def number: u64 = common.widen(digit.value);
+                        if number >= base || value > (1114111 - number) / base { return error("numeric entity out of range"); }
+
+                        value    = value * base + number;
+                        position = position + 1;
+                    }
+
+                    if !common.scalar(&out, value) { return error("invalid entity character"); }
+                } else {
+                    def mut value: string = "";
+
+                    if strings.equal(name, "amp") { value = "&"; }
+                    else if strings.equal(name, "lt") { value = "<"; }
+                    else if strings.equal(name, "gt") { value = ">"; }
+                    else if strings.equal(name, "quot") { value = "\""; }
+                    else if strings.equal(name, "apos") { value = "'"; }
+                    else if html { value = html_names.lookup(name); }
+
+                    if strings.is_empty(value) { return error("unknown named entity"); }
+                    if out.append(value) != status.OK { return error("entity decoder capacity exceeded"); }
+                }
+
+                i = end + 1;
+            }
+        }
+    }
+
+    def copied: strings.StringResult = out.to_string(memory);
+    if copied.status != status.OK { return error("cannot retain decoded entities"); }
+
+    return copied.value;
+}

@@ -1,0 +1,330 @@
+// Fixed PING/PONG bytes; TLS behavior is also checked against direct OpenSSL in C++.
+import "@arena";
+import "@net";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def close_socket(socket: &net.Socket) -> void {
+    if socket.is_open() {
+        def closed: result<void> = socket.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+def close_client(client: &net.TlsClient) -> void {
+    if client.is_open() {
+        def closed: result<void> = client.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+def close_server(server: &net.TlsServer) -> void {
+    if server.is_open() {
+        def closed: result<void> = server.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+def close_config(config: &net.TlsServerConfig) -> void {
+    if config.is_open() {
+        def closed: result<void> = config.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+def within(start: time.Instant) -> bool {
+    def now: time.InstantResult = time.monotonic_now();
+    if now.status != status.OK { return false; }
+
+    def elapsed: time.DurationResult = time.elapsed(start, now.value);
+
+    return elapsed.status == status.OK && elapsed.value.nanoseconds < 5000000000;
+}
+
+def wait_pair(client: net.Socket, server: net.Socket, client_event: i32, server_event: i32) -> bool {
+    def sockets: [net.Socket; 2] = {client, server};
+    def events: [i32; 2]         = {client_event, server_event};
+    def mut ready: [i32; 2]      = zeroed;
+    def mut scratch: [i32; 2]    = zeroed;
+    def waited: result<u64>      = net.wait_many(sockets[..], events[..], ready[..], scratch[..], 10);
+
+    if waited.erroneous { return false; }
+
+    return true;
+}
+
+def exchange(certificate: string, key: string, hostname: string, trust: string, expect_failure: bool) -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def clock: time.InstantResult = time.monotonic_now();
+    if clock.status != status.OK { return 1; }
+
+    def start: time.Instant                 = clock.value;
+    def loaded: result<net.TlsServerConfig> = net.TlsServerConfig.load(&owner, certificate, key);
+
+    if loaded.erroneous { return 2; }
+
+    def mut config: net.TlsServerConfig = loaded.value;
+    defer close_config(&config);
+
+    def mut config_alias: net.TlsServerConfig = config;
+    def listening: result<net.Socket>         = net.Socket.open(&owner);
+
+    if listening.erroneous { return 3; }
+
+    def mut listener: net.Socket = listening.value;
+    defer close_socket(&listener);
+
+    def bound: result<void> = listener.bind(net.Address.loopback(0));
+    if bound.erroneous { return 4; }
+
+    def begun: result<void> = listener.listen(2);
+    if begun.erroneous { return 5; }
+
+    def address: result<net.Address> = listener.local_address();
+    if address.erroneous { return 6; }
+
+    def opened: result<net.Socket> = net.Socket.open(&owner);
+    if opened.erroneous { return 7; }
+
+    def mut socket: net.Socket = opened.value;
+    defer close_socket(&socket);
+
+    def connected: result<bool> = socket.connect(address.value);
+    if connected.erroneous { return 8; }
+
+    def mut connection_ready: bool = connected.value;
+
+    while !connection_ready && within(start) {
+        def waited: result<i32> = socket.wait(net.WRITABLE, 10);
+        if waited.erroneous { return 9; }
+
+        def finished: result<bool> = socket.finish_connect();
+        if finished.erroneous { return 10; }
+
+        connection_ready = finished.value;
+    }
+
+    if !connection_ready { return 11; }
+
+    def accepted: result<net.AcceptOutcome> = listener.accept(&owner);
+    if accepted.erroneous { return 12; }
+    if !accepted.value.available { return 13; }
+
+    def mut peer: net.Socket = accepted.value.socket;
+    defer close_socket(&peer);
+
+    def made_client: result<net.TlsClient> = socket.start_tls_client(&owner, hostname, trust);
+    if made_client.erroneous { return 14; }
+
+    def mut client: net.TlsClient = made_client.value;
+    defer close_client(&client);
+
+    def made_server: result<net.TlsServer> = peer.start_tls_server(&owner, &config);
+    if made_server.erroneous { return 15; }
+
+    def mut server: net.TlsServer = made_server.value;
+    defer close_server(&server);
+
+    def mut alias: net.TlsServer    = server;
+    def config_closed: result<void> = config.close();
+
+    if config_closed.erroneous { return 16; }
+    if config_alias.is_open() { return 17; }
+
+    def repeated: result<void> = config_alias.close();
+    if !repeated.erroneous { return 18; }
+
+    def premature: result<void> = peer.close();
+    if !premature.erroneous { return 19; }
+
+    def premature_shutdown: result<i32> = server.shutdown();
+    if !premature_shutdown.erroneous { return 20; }
+
+    def mut client_ready: bool = false;
+    def mut server_ready: bool = false;
+    def mut failed: bool       = false;
+
+    while (!client_ready || !server_ready) && !failed && within(start) {
+        def mut client_event: i32 = net.READABLE;
+        def mut server_event: i32 = net.READABLE;
+
+        if !client_ready {
+            def step: result<i32> = client.handshake();
+
+            if step.erroneous { failed = true; }
+            else if step.value == 0 { client_ready = true; }
+            else { client_event = step.value; }
+        }
+
+        if !server_ready && !failed {
+            def step: result<i32> = server.handshake();
+            if step.erroneous { return 21; }
+
+            if step.value == 0 { server_ready = true; }
+            else { server_event = step.value; }
+        }
+
+        if !failed && (!client_ready || !server_ready) {
+            if !wait_pair(socket, peer, client_event, server_event) { return 22; }
+        }
+    }
+
+    if expect_failure {
+        if !failed { return 23; }
+
+        def retried: result<i32> = client.handshake();
+        if !retried.erroneous { return 24; }
+
+        return 0;
+    }
+
+    if failed || !client_ready || !server_ready { return 25; }
+
+    def mut bytes: [u8; 4]           = zeroed;
+    def raw: result<net.ReadOutcome> = peer.read(bytes[..]);
+
+    if !raw.erroneous { return 26; }
+
+    def ping: [u8; 4]     = {80, 73, 78, 71};
+    def pong: [u8; 4]     = {80, 79, 78, 71};
+    def mut sent: u64     = 0;
+    def mut received: u64 = 0;
+
+    while (sent < 4 || received < 4) && within(start) {
+        if sent < 4 {
+            def wrote: result<net.TlsWriteOutcome> = client.write(ping[sent..sent + 1]);
+            if wrote.erroneous { return 27; }
+
+            sent = sent + wrote.value.count;
+        }
+
+        if received < 4 {
+            def read: result<net.TlsReadOutcome> = server.read(bytes[received..received + 1]);
+            if read.erroneous { return 28; }
+            if read.value.state == status.END { return 29; }
+
+            received = received + read.value.count;
+        }
+
+        if !wait_pair(socket, peer, net.WRITABLE, net.READABLE) { return 30; }
+    }
+
+    if sent != 4 || received != 4 || !strings.equal(strings.view_bytes(bytes[..]), "PING") { return 31; }
+
+    sent     = 0;
+    received = 0;
+
+    while (sent < 4 || received < 4) && within(start) {
+        if sent < 4 {
+            def wrote: result<net.TlsWriteOutcome> = server.write(pong[sent..sent + 1]);
+            if wrote.erroneous { return 32; }
+
+            sent = sent + wrote.value.count;
+        }
+
+        if received < 4 {
+            def read: result<net.TlsReadOutcome> = client.read(bytes[received..received + 1]);
+            if read.erroneous { return 33; }
+            if read.value.state == status.END { return 34; }
+
+            received = received + read.value.count;
+        }
+
+        if !wait_pair(socket, peer, net.READABLE, net.WRITABLE) { return 35; }
+    }
+
+    if sent != 4 || received != 4 || !strings.equal(strings.view_bytes(bytes[..]), "PONG") { return 36; }
+
+    def first_shutdown: result<i32> = server.shutdown();
+    if first_shutdown.erroneous { return 37; }
+    if first_shutdown.value != net.READABLE { return 38; }
+
+    def empty: [u8; 0]                              = {};
+    def after_shutdown: result<net.TlsWriteOutcome> = alias.write(empty[..]);
+
+    if !after_shutdown.erroneous { return 39; }
+
+    def mut ended: bool = false;
+    def zero: u64       = 0;
+
+    while !ended && within(start) {
+        def read: result<net.TlsReadOutcome> = client.read(bytes[..]);
+        if read.erroneous { return 40; }
+
+        if read.value.state == status.END { ended = true; }
+        else if read.value.count != zero { return 41; }
+        else {
+            def waited: result<i32> = socket.wait(read.value.wait_for, 10);
+            if waited.erroneous { return 42; }
+        }
+    }
+
+    if !ended { return 43; }
+
+    client_ready = false;
+    server_ready = false;
+
+    while (!client_ready || !server_ready) && within(start) {
+        def a: result<i32> = client.shutdown();
+        if a.erroneous { return 44; }
+
+        client_ready = a.value == 0;
+
+        def b: result<i32> = server.shutdown();
+        if b.erroneous { return 45; }
+
+        server_ready = b.value == 0;
+
+        if !client_ready || !server_ready {
+            if !wait_pair(socket, peer, net.READABLE, net.READABLE) { return 46; }
+        }
+    }
+
+    if !client_ready || !server_ready { return 47; }
+
+    def repeated_shutdown: result<i32> = alias.shutdown();
+    if repeated_shutdown.erroneous { return 48; }
+    if repeated_shutdown.value != 0 { return 49; }
+
+    def closed: result<void> = server.close();
+    if closed.erroneous { return 50; }
+    if alias.is_open() { return 51; }
+
+    def reused: result<net.WriteOutcome> = peer.write(empty[..]);
+    if !reused.erroneous { return 52; }
+
+    def tls_again: result<net.TlsClient> = peer.start_tls_client(&owner, "localhost", certificate);
+    if !tls_again.erroneous { return 53; }
+
+    return 0;
+}
+
+def main() -> i32 {
+    if process.arg_count() != 3 { return 90; }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def certificate: process.TextResult = process.arg(&memory, 1);
+    def key: process.TextResult         = process.arg(&memory, 2);
+
+    if certificate.status != status.OK || key.status != status.OK { return 91; }
+
+    def trusted: i32 = exchange(certificate.value, key.value, "localhost", certificate.value, false);
+    if trusted != 0 { return trusted; }
+
+    def wrong_host: i32 = exchange(certificate.value, key.value, "127.0.0.1", certificate.value, true);
+    if wrong_host != 0 { return wrong_host; }
+
+    def untrusted: i32 = exchange(certificate.value, key.value, "localhost", "", true);
+    if untrusted != 0 { return untrusted; }
+
+    std.println("TLS trusted, wrong-host, untrusted, aliases and graceful shutdown passed");
+
+    return 0;
+}

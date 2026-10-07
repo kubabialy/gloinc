@@ -19,16 +19,23 @@ def struct BumpArena {
         if self.data == null || self.used < 0 || self.used > self.capacity {
             return null;
         }
+
         def remaining: i64 = self.capacity - self.used;
-        def cursor: *u8 = self.data + self.used;
-        def padding: i64 = memory.padding<T>(cursor);
+        def cursor: *u8    = self.data + self.used;
+        def padding: i64   = memory.padding<T>(cursor);
+
         if padding < 0 || padding > remaining { return null; }
+
         def available: i64 = remaining - padding;
-        def size: i64 = memory.size_of<T>();
+        def size: i64      = memory.size_of<T>();
+
         if size > available { return null; }
+
         def aligned: *u8 = cursor + padding;
-        def item: *T = memory.place<T>(aligned, available, value);
+        def item: *T     = memory.place<T>(aligned, available, value);
+
         if item != null { self.used = self.used + padding + size; }
+
         return item;
     }
 
@@ -52,18 +59,23 @@ def struct Record {
 def main() -> i32 {
     def mut memory: BumpArena = BumpArena.create(32);
     defer memory.free();
-    def first: *i32 = memory.place<i32>(20);
+
+    def first: *i32  = memory.place<i32>(20);
     def second: *i32 = memory.place<i32>(22);
     def record: *Record = memory.place<Record>(Record {
         tag: 1,
         value: 42
     });
+
     if first == null || second == null || record == null { return 1; }
     if *first + *second != 42 || record.value != 42 { return 2; }
+
     def too_large: *[i64; 2] = memory.place<[i64; 2]>({0; 2});
     if too_large != null { return 3; }
+
     memory.reset();
     def again: *i32 = memory.place<i32>(42);
     if again == null { return 4; }
+
     return *again;
 }

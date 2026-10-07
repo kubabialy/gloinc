@@ -1,0 +1,12 @@
+def move() -> i32 {
+*left = *right;
+*right=old;
+cursor = cursor + 1;
+state.x=1;
+state.longer=2;
+other.x=3;
+// This group starts independently.
+def small: i32 = 1;
+def longer: i32 = 2;
+return 0;
+}
