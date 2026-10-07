@@ -338,8 +338,17 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     else()
         set(GLOIN_COMPILER_TEST_TIMEOUT 30)
     endif()
-    gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*"
+    set(GLOIN_SIGNATURE_MATRIX_TEST "ContextLibraryTest.PublicSignaturesAndCanonicalPrimitivePrivacyAreChecked")
+    gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
+    # This matrix launches 143 compiler processes. Instrumented startup alone
+    # took 120 seconds locally; keep headroom for the four-worker sanitizer gate.
+    set(GLOIN_SIGNATURE_MATRIX_TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
+    if(GLOIN_ENABLE_SANITIZERS)
+        set(GLOIN_SIGNATURE_MATRIX_TIMEOUT 300)
+    endif()
+    gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_SIGNATURE_MATRIX_TEST}"
+        PROPERTIES TIMEOUT ${GLOIN_SIGNATURE_MATRIX_TIMEOUT})
     # The round-trip case can compile twice (JIT and native), then run the binary.
     gtest_discover_tests(gloinc_test TEST_FILTER "NetworkLibraryTest.*"
         PROPERTIES TIMEOUT 150)

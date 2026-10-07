@@ -155,8 +155,12 @@ Its aggregate limit remains 90 seconds. The repository style gate is
 
 Compiler CTest cases have a 30-second timeout on ordinary macOS builds and
 120 seconds on Linux or sanitizer builds. Linux trap cases take longer under
-VM/CI load; instrumented Debug cases can perform ten compiler invocations
-within one test. Individual invocation deadlines still apply. The HTTP compiler/API
+VM/CI load; instrumented Debug cases can perform many compiler invocations
+within one test. The filesystem/process signature matrix launches 143 compiler
+processes and has a 300-second aggregate limit in sanitizer builds only. Its
+isolated instrumented run took 119.9 seconds during release validation.
+Individual compiler invocations allow ten seconds normally or 30 seconds under
+sanitizers. The HTTP compiler/API
 fixtures allow 60 seconds per compiler invocation and 150 seconds per CTest
 case on both platforms. JIT compilation of the complete module can exceed the
 ordinary ten-second harness budget under parallel load, including cold relocated
@@ -298,7 +302,7 @@ participate in installed/relocated validation.
 
 ## Filesystem and process context (SPEC-030e)
 
-Nineteen filesystem/context `ContextLibraryTest` cases cover the lexical path matrix, exact/overflow
+The filesystem/context `ContextLibraryTest` cases cover the lexical path matrix, exact/overflow
 bounds, both join allocation failures, metadata/mutations, CLI forwarding and
 filename escaping, missing/empty/copied environment values, process allocation
 failures, host cwd, invocation argument restoration and rejected NUL, type/privacy
@@ -306,7 +310,7 @@ checks, native collisions/ABIs, directory iteration, external execution, and the
 The tool runs from another directory with spaced paths, missing/empty/nonempty
 labels, and malformed options that leave the filesystem untouched.
 
-Seventeen native filesystem/context `ContextRuntimeTest` cases cover regular files/directories/broken
+The native filesystem/context `ContextRuntimeTest` cases cover regular files/directories/broken
 symlinks/FIFOs, counted paths and invalid-input preservation, mkdir/unlink/rename
 semantics, directory cursors, permission errors, deep-copied C argument scopes, invalid/LIFO cleanup,
 thread isolation, raw environment bytes, exact cwd bounds, and deleted cwd.
@@ -317,14 +321,15 @@ The Gloin symlink and workspace fixtures run through JIT and native `-O0`/`-O2`,
 assertions and public-signature/result-handling checks. Workspace tests cover
 canonical exact/overflow/zero limits, broken/cyclic paths, exclusive private
 temporary directories, rejection of nonempty directories/final symlinks/special
-leaves, and every arena allocation failure before creation. Sixteen further native
-cases cover child processes as described above.
+leaves, and every arena allocation failure before creation. Further native
+cases cover child processes as described above. The inventory table gives the
+current totals for both suites.
 Both suites belong to required and sanitizer validation; compiler cases also run
 against installed and relocated packages.
 
 ## Streams and files (SPEC-030d)
 
-Fifteen `IoLibraryTest` cases exercise borrowed stdin/stdout/stderr, compatible
+Sixteen `IoLibraryTest` cases exercise borrowed stdin/stdout/stderr, compatible
 stdio buffering, each file mode and I/O method, alias close state, bounded binary
 reads and EOF, partial read_all prefixes, wrong directions, malformed paths,
 OS errors/messages, metadata allocation before destructive opens, read allocation
@@ -442,7 +447,7 @@ The previous unchecked `Arena::new` test has been replaced by these executable
 source tests. Core fixtures cover success, invalid type-valued arguments, the
 required import, and use of a cleared handle.
 
-Nine independent `ArenaRuntimeTest` cases exercise the actual native allocator,
+Eleven independent `ArenaRuntimeTest` cases exercise the actual native allocator,
 including alignment through 64 KiB, mixed-size object contents across growth,
 zero-sized allocations, large blocks, reset retention/reuse, independent arenas,
 overflow, deterministic allocation failure, unchanged state on failure, and
@@ -488,7 +493,7 @@ method) participate in both required and package checks.
 
 ## Pointers and references (SPEC-025)
 
-Eighteen `PointerTest` cases cover all scalar pointees, whole structs/strings,
+Twenty `PointerTest` cases cover all scalar pointees, whole structs/strings,
 stable local/parameter addresses, read-only views, nested pointer qualifiers,
 reference/raw-pointer conversions, recursive struct links, privacy, null traps,
 evaluation order, invalid addresses, live aliases, caller-reference returns,
@@ -550,7 +555,7 @@ establish parsing, type support, numeric conversion, or string execution.
 
 ## Parser contract checks
 
-All 49 parser tests pass. Twenty new cases cover complete canonical programs,
+All 53 parser tests pass. The contract cases cover complete canonical programs,
 identifier conditions, precedence/associativity, newline trivia at every token
 boundary, strict lists, mandatory annotations, modifier order, declaration scopes,
 statement-only assignment, required loop separators, malformed/truncated input,
@@ -592,7 +597,7 @@ prove that raw ASTs cannot call `CodeGen::generate` and clients cannot construct
 
 Existing stage-isolated backend tests now use the explicit
 `generate_unchecked_for_testing` entry; their feature assertions and failures are
-preserved. All 29 E2E cases use executable-mode checked generation. The seventh executes an
+preserved. All 31 E2E cases use executable-mode checked generation. The seventh executes an
 `int` alias and nested shadowing, confirming the outer binding still returns 42.
 
 ## External execution

@@ -302,15 +302,19 @@ TEST_F(ContextLibraryTest, PublicSignaturesAndCanonicalPrimitivePrivacyAreChecke
           "process.start_piped(&memory,\"/bin/cat\",false);",
           "def mut options: process.Options = process.Options.defaults(); options.stack_limit_bytes = -1;",
           "def args: [string;0] = {}; process.start(&memory,\"/bin/echo\",args[..]);"}) {
+        SCOPED_TRACE(body);
         auto file = program(body + "return 0;");
-        for (std::string mode : {"--check", "--emit-ir", "--emit-llvm", "--run"})
+        for (std::string mode : {"--check", "--emit-ir", "--emit-llvm", "--run"}) {
+            SCOPED_TRACE(mode);
             expect_error(invoke({mode, file}), 1, "error:");
+        }
     }
     const auto file =
         source("import \"@process\"; def main() -> i32 { process.probe(); return 0; }");
     for (std::string body : {"__process_arg_count(1);",
                              "def mut n: u64 = 0; def mut s: i32 = 0; __process_arg(true,&n,&s);",
                              "__fs_mkdir(\"x\");"}) {
+        SCOPED_TRACE(body);
         source("def pub probe() -> void {" + body + "}", "process.gloin");
         expect_error(invoke({"--stdlib-dir", directory, "--check", file}), 1, "error:");
     }
