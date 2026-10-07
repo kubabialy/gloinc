@@ -240,8 +240,10 @@ TEST_F(IntegratedExamplesTest, StatisticsRejectsInvalidColumnSelections) {
 }
 TEST_F(IntegratedExamplesTest, StatisticsRejectsMalformedRowsBeforeCreatingOutput) {
     for (const std::string text :
-         {"", "\n", "x,1\n", "x,1,2\ny,3\n", "x,NaN,2\n", "x,1e13,2\n", "x,\"1\",2\n", "x,,2\n"})
+         {"", "\n", "x,1\n", "x,1,2\ny,3\n", "x,NaN,2\n", "x,1e13,2\n", "x,\"1\",2\n", "x,,2\n"}) {
+        SCOPED_TRACE(text);
         expect_error(statistics(text), 2, "statistics:");
+    }
     expect_error(statistics(std::string("x,1,2\0\n", 7)), 2, "statistics:");
     expect_error(statistics(std::string(4097, 'x') + ",1,2\n"), 2, "line too long");
 }

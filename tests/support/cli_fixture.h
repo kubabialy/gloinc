@@ -21,7 +21,9 @@ class CliFixture : public testing::Test {
   protected:
     std::string directory;
     std::atomic<unsigned> calls{0};
-    unsigned timeout_seconds = 10;
+    // Instrumented compiler/JIT startup can exceed ten seconds under the
+    // four-worker gate. This bounds the compiler process, not program deadlines.
+    unsigned timeout_seconds = cli_timeout_seconds;
     void SetUp() override {
         llvm::SmallString<128> path;
         auto error = llvm::sys::fs::createUniqueDirectory("gloinc-cli", path);

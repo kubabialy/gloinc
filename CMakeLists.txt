@@ -236,6 +236,7 @@ if(BUILD_TESTING)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/tests/$<CONFIG>/tool_paths.h" CONTENT
 "#pragma once
 namespace gloin_test {
+inline constexpr unsigned cli_timeout_seconds = $<IF:$<BOOL:${GLOIN_ENABLE_SANITIZERS}>,30,10>;
 inline constexpr auto gloinc = R\"tool($<TARGET_FILE:gloinc>)tool\";
 inline constexpr auto core_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/core_counter.gloin)tool\";
 inline constexpr auto standard_example = R\"tool(${CMAKE_CURRENT_SOURCE_DIR}/examples/standard_library.gloin)tool\";
