@@ -483,7 +483,13 @@ install(FILES scripts/install-llvm.sh scripts/install-llvm-linux.sh
 install(FILES README.md CONTRIBUTING.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs
     PATTERN ".DS_Store" EXCLUDE)
-install(FILES examples/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples)
+# Preserve the source layout used by the guides' relative example/module links.
+# These small source copies also retain example imports and fixture data when
+# readers open a guide from an installed or relocated prefix.
+install(DIRECTORY examples/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples
+    FILES_MATCHING PATTERN "*.gloin" PATTERN "*.md" PATTERN "*.conf" PATTERN "*.txt")
+install(DIRECTORY stdlib/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/stdlib
+    FILES_MATCHING PATTERN "*.gloin" PATTERN "*.md")
 install(FILES tests/fixtures/core/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/tests/fixtures/core)
 install(FILES third_party/fast_float/LICENSE-MIT third_party/fast_float/README.md third_party/fast_float/SHA256SUMS
     DESTINATION ${CMAKE_INSTALL_DOCDIR}/third_party/fast_float)

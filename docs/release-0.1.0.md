@@ -105,12 +105,13 @@ checksum. A candidate archive contains:
 | `share/gloinc/scripts/install-llvm.sh`, `install-llvm-linux.sh` | Platform installers for the pinned external LLVM/MLIR toolchains |
 | `share/doc/gloinc/docs/site/0.1.0/` | Candidate HTML language guide |
 | `share/doc/gloinc/docs/` | API, ownership, lowering, and diagnostic guides |
+| `share/doc/gloinc/examples/`, `share/doc/gloinc/stdlib/` | Source copies preserving the guides' relative links, including example modules and data |
 | `share/doc/gloinc/CONTRIBUTING.md` | Contribution and manual verification rules |
 
 `check-package.sh` installs into one prefix and extracts the archive into a
 different prefix whose path contains spaces. It runs CLI, standard library,
 module, compiler, and source acceptance cases against both copies. It also
-checks the version, archive checksum, installed documentation, executable
+checks the version, archive checksum, installed HTML links, executable
 output, and module relocation behavior. See [the full check script](../scripts/check-package.sh).
 
 To inspect a macOS archive from the build directory:

@@ -38,6 +38,7 @@ mkdir -p "$2"
 report_dir=$(cd "$2" && pwd)
 work_dir=$(mktemp -d "$report_dir/work.XXXXXX")
 cmake --install "$build_dir" --prefix "$work_dir/install prefix"
+"$build_dir/gloin-check-docs" "$work_dir/install prefix/share/doc/gloinc/docs/site"
 [[ -x "$work_dir/install prefix/bin/gloinfmt" ]]
 "$work_dir/install prefix/bin/gloinfmt" --check "$work_dir/install prefix/share/gloinc/examples/hello_world.gloin"
 cmake -E env "GLOIN_TEST_CLI=$work_dir/install prefix/bin/gloinc" \
@@ -76,6 +77,7 @@ fi
 mkdir "$work_dir/extracted prefix"
 tar -xzf "$archive" -C "$work_dir/extracted prefix"
 package_root="$work_dir/extracted prefix/$archive_name"
+"$build_dir/gloin-check-docs" "$package_root/share/doc/gloinc/docs/site"
 [[ -x "$package_root/bin/gloinfmt" ]]
 "$package_root/bin/gloinfmt" --check "$package_root/share/gloinc/examples/hello_world.gloin"
 [[ "$("$package_root/bin/gloinfmt" "$package_root/share/gloinc/examples/hello_world.gloin")" == "$(cat "$package_root/share/gloinc/examples/hello_world.gloin")" ]]
