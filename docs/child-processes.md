@@ -1,13 +1,13 @@
 # Child processes
 
-The unreleased 0.1.0 tree can start and manage a native child through `@process`.
+Gloin 0.1.0 can start and manage a native child through `@process`.
 All fallible operations below return built-in `result<T>`. Invocation arguments,
 environment lookup and cwd queries retain their existing APIs in the
 [process-context guide](filesystem-process.md).
 
 ## Current setup and design rationale
 
-This describes the **unreleased 0.1.0 implementation** on macOS and Linux.
+This describes the **0.1.0 implementation** on macOS and Linux.
 The public guarantee is process-group cleanup. No process-tree sandbox or
 strict containment mode is currently implemented or enabled by default.
 

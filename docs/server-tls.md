@@ -1,6 +1,6 @@
 # Server TLS and graceful shutdown
 
-The unreleased 0.1.0 tree provides nonblocking server TLS in `@net`, alongside
+Gloin 0.1.0 provides nonblocking server TLS in `@net`, alongside
 the existing verified client. Fallible public operations use built-in
 `result<T>`. OpenSSL 3 performs cryptography; the four new host operations pass
 through source-typed GloinIR and verified `gloin.abi_call` before LLVM lowering.

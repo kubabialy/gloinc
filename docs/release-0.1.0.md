@@ -1,9 +1,8 @@
-# Gloinc 0.1.0 candidate guide
+# Gloinc 0.1.0 release guide
 
-This page describes an **unreleased candidate**. The latest published version
-is 0.0.4. The candidate targets Apple Silicon macOS with LLVM/MLIR 21.1.6 and
+Gloin 0.1.0 was released on 2026-10-08. It targets Apple Silicon macOS with LLVM/MLIR 21.1.6 and
 Ubuntu 24.04 Linux with LLVM/MLIR 21.1.8. The
-[release draft](next-release-draft.md) records the exact validation boundary
+[release validation record](next-release-draft.md) records the exact validation boundary
 for builds, JIT/native execution, tests, sanitizers and packages. Windows
 support is not planned, though
 contributions are welcome.
@@ -11,11 +10,10 @@ contributions are welcome.
 Child-process, filesystem and server-TLS APIs are implemented, and all
 repository-owned Python-driver migrations are complete. The
 [Gloin tooling record](tooling-roadmap.md) describes their implementation and
-validation. Publication requires the completed candidate to pass the release
-gates below.
+validation. The release passed the gates below.
 
 The [0.1.0 HTML guide](site/0.1.0/index.html) teaches the language accepted by
-this candidate. The [release notes](release-notes-0.1.0.md) list changes since
+this release. The [release notes](release-notes-0.1.0.md) list changes since
 0.0.4 and compatibility limits. The [language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec)
 also contains proposed features; the HTML guide and API pages describe the
 implemented boundary.
@@ -91,7 +89,8 @@ bash scripts/check-package.sh build build/package-check
 The package target creates a `gloinc-0.1.0-macos-arm64.tar.gz`,
 `gloinc-0.1.0-linux-aarch64.tar.gz`, or
 `gloinc-0.1.0-linux-x86_64.tar.gz` archive for the current host, with a SHA-256
-checksum. A candidate archive contains:
+checksum. Download the archives from the [0.1.0 release](https://github.com/kubabialy/gloinc/releases/tag/v0.1.0).
+Each archive contains:
 
 | Path below archive root | Contents |
 | --- | --- |
@@ -103,7 +102,7 @@ checksum. A candidate archive contains:
 | `share/gloinc/examples/` | Runnable programs, including result handling, directory/package discovery, custom arena, binary NUL filtering, bounded JSON, a local HTTP round trip, and synchronous/streaming HTTP/HTTPS clients |
 | `share/gloinc/core-fixtures/` | Source acceptance cases |
 | `share/gloinc/scripts/install-llvm.sh`, `install-llvm-linux.sh` | Platform installers for the pinned external LLVM/MLIR toolchains |
-| `share/doc/gloinc/docs/site/0.1.0/` | Candidate HTML language guide |
+| `share/doc/gloinc/docs/site/0.1.0/` | Versioned HTML language guide |
 | `share/doc/gloinc/docs/` | API, ownership, lowering, and diagnostic guides |
 | `share/doc/gloinc/examples/`, `share/doc/gloinc/stdlib/` | Source copies preserving the guides' relative links, including example modules and data |
 | `share/doc/gloinc/CONTRIBUTING.md` | Contribution and manual verification rules |
@@ -137,11 +136,11 @@ Run the bundled platform installer first if the matching toolchain is absent.
 An archive built on a newer macOS version is not claimed to run on an older
 system. Linux packaging is scoped to Ubuntu 24.04 and the architecture named
 by the archive. Intel macOS, cross compilation, and bundled LLVM are outside
-this candidate.
+this release.
 
 ## Verification boundary
 
-The complete hosted tooling gate passed on candidate commit `3ce4e81`, with
+The complete hosted tooling gate passed on validated commit `95eb48d`, with
 independently inspected test reports and archive checksums:
 
 | Check | macOS 15 ARM64 | Ubuntu 24.04 x86_64 |
@@ -164,9 +163,10 @@ HTML links, archive checksums, native output, and relocation checks passed.
 The [validation record](next-release-draft.md#current-local-validation) explains
 local ARM64 results, corrected cleanup races, test budgets and retained failed
 attempts. The [test inventory](../tests/README.md) describes the checks.
-Both the [PR workflow](https://github.com/kubabialy/gloinc/actions/runs/37695280617)
-and [push workflow](https://github.com/kubabialy/gloinc/actions/runs/37695275816)
-passed the corrected code. The [candidate PR](https://github.com/kubabialy/gloinc/pull/6)
-tracks later documentation revisions and their checks. Rerun affected checks
-when candidate code or package contents change. A public tag and release
-require a separate final decision.
+Both the [PR workflow](https://github.com/kubabialy/gloinc/actions/runs/37742310590)
+and [push workflow](https://github.com/kubabialy/gloinc/actions/runs/37742305156)
+passed the final implementation. The [release PR](https://github.com/kubabialy/gloinc/pull/6)
+records publication checks. Release archives preserve the validated compiler,
+runtime, headers and runnable source payload; only bundled documentation was
+refreshed for publication. HTML links and archive checksums were rechecked.
+The release assets include a provenance record and per-archive SHA-256 files.

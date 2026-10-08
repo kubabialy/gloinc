@@ -154,7 +154,7 @@ idempotence. See the [formatter guide](gloinfmt.md#write-contract).
 
 ## Symbolic links
 
-The unreleased 0.1.0 tree exposes these operations on macOS and Linux:
+Gloin 0.1.0 exposes these operations on macOS and Linux:
 
 | API | Success | Failure |
 | --- | --- | --- |
@@ -236,7 +236,7 @@ explicit ABI/storage boundary.
 
 ## Canonical paths and temporary directories
 
-These additions are part of the unreleased 0.1.0 tree on macOS and Linux. They
+These additions are part of Gloin 0.1.0 on macOS and Linux. They
 use built-in results: inspect `.erroneous`, then `.value` or `.error`. Errors
 currently contain static messages without errno or a structured error category;
 message text is not a stable error code.

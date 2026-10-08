@@ -5,7 +5,7 @@ The supporting process, filesystem and server-TLS APIs are implemented. The
 existing C++ compiler/runtime tests and the CMake build remain part of the
 toolchain. The milestone sections preserve the evidence gathered during each
 migration; the [release validation record](next-release-draft.md#current-local-validation)
-tracks the completed candidate.
+tracks the completed 0.1.0 release.
 
 ## First milestone: child lifecycle
 
@@ -268,7 +268,9 @@ Final validation corrected packaged documentation links, sanitizer test
 budgets, a macOS process-exit cleanup race and an HTTP peer's early-response
 cleanup assumption. The record retains failed attempts, focused regressions,
 local platform boundaries and fresh hosted evidence. These are completed
-implementation checks; 0.1.0 remains an unreleased candidate.
+implementation checks. Final revision `95eb48d` repeated the same hosted gates
+successfully; publication updates documentation only. See the
+[0.1.0 release guide](release-0.1.0.md) for packages and validation provenance.
 
 ## Inventory
 
@@ -378,9 +380,10 @@ readers and explicit state machines can cover these tools.
 5. Verify source-typed GloinIR and `gloin.abi_call` at native boundaries; run
    JIT/native, macOS/Linux, sanitizer, installed and relocated-package gates.
    All Gloin tools must pass `gloinfmt`. Document the public APIs and their
-   ownership, limits, failure and cleanup contracts in the candidate guide.
+   ownership, limits, failure and cleanup contracts in the release guide.
 
-Publication requires these gates on the completed implementation. The
+These gates passed on the completed implementation. The
 [release validation record](next-release-draft.md#current-local-validation)
-and [candidate PR](https://github.com/kubabialy/gloinc/pull/6) record results and
-any remaining failures. Repeat affected checks when candidate contents change.
+and [release PR](https://github.com/kubabialy/gloinc/pull/6) record results and
+the four documented unsupported async/spawn failures. Repeat affected checks
+when implementation or package contents change.

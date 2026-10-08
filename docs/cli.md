@@ -1,6 +1,6 @@
 # Command-line interface (SPEC-020)
 
-Build instructions are in [the README](../README.md). The 0.1.0 candidate
+Build instructions are in [the README](../README.md). The 0.1.0 release
 targets Apple Silicon macOS with LLVM/MLIR 21.1.6 and 64-bit Ubuntu 24.04 Linux
 with LLVM/MLIR 21.1.8.
 
@@ -98,10 +98,10 @@ supported platform, following [the JIT contract](jit.md). They produce no result
 shells may describe the signal and map it to a shell-specific status. The CLI
 does not add signal recovery or execution timeouts.
 
-The 0.1.0 candidate reports `gloinc 0.1.0 (LLVM/MLIR 21.1.6)` on macOS or
+The 0.1.0 release reports `gloinc 0.1.0 (LLVM/MLIR 21.1.6)` on macOS or
 `gloinc 0.1.0 (LLVM/MLIR 21.1.8)` on Linux with
-`--version`; this version has not been published. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
-core acceptance; [the candidate guide](release-0.1.0.md) documents installation,
+`--version`. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
+core acceptance; [the release guide](release-0.1.0.md) documents installation,
 packaging, and validation. `import "@std";` enables `std.print(string)` and
 `std.println(string)`. Output preserves exact bytes, including embedded NULs;
 println appends LF. Both return void. Missing modules/members fail before execution.

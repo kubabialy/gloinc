@@ -12,10 +12,8 @@ new numbered directory, replace development wording with that version, verify
 every example against the release build, then update `versions.js` and the root
 redirect. The old numbered pages remain unchanged.
 
-`0.1.0/` is currently a numbered **candidate** page. It appears in the selector,
-but the root redirect and `latestVersion` remain at published 0.0.4. On release,
-remove candidate wording, set `latestVersion` to 0.1.0, and update the root
-redirect after final package validation and publication approval.
+`0.1.0/` describes the latest published release. The root redirect and
+`latestVersion` select 0.1.0; older numbered pages retain their release content.
 
 For a new patch, minor, or major release, update its title, feature boundary,
 examples, and version selector's selected value, then append the version to

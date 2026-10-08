@@ -1,11 +1,11 @@
-# Next release proposal (unreleased)
+# Gloin 0.1.0 scope and validation record
 
-The latest published compiler is 0.0.4. **0.1.0 is prepared as an unreleased
-candidate** for the current development batch. It targets Apple Silicon macOS
+Gloin 0.1.0 was released on 2026-10-08. It targets Apple Silicon macOS
 with LLVM/MLIR 21.1.6 and Ubuntu 24.04 Linux with LLVM/MLIR 21.1.8. Windows
 support is not planned, though contributions are welcome.
-This document proposes a boundary and records local validation. It is not a
-release announcement.
+This document preserves the release scope and validation history, including
+earlier incomplete milestones. See the [release notes](release-notes-0.1.0.md)
+and [release guide](release-0.1.0.md) for the published release.
 
 **Linux acceptance is required for 0.1.0.** Hosted Ubuntu x86_64 passed the
 987-case core gate, both 501-case package gates, and serial/parallel complete
@@ -116,7 +116,12 @@ builds with `BUILD_TESTING=OFF` and checks JIT, object and executable output.
 Both platforms run the Gloin TLS, HTTP/HTTPS, JSON and million-record drivers
 against installed and relocated compilers. JSON and HTTP run in JIT, `-O0`
 and `-O2`. The [candidate PR](https://github.com/kubabialy/gloinc/pull/6) records
-subsequent documentation-only revisions and their checks.
+subsequent documentation-only revisions and their checks. Final implementation
+revision `95eb48d` passed both the
+[PR workflow](https://github.com/kubabialy/gloinc/actions/runs/37742310590) and
+[push workflow](https://github.com/kubabialy/gloinc/actions/runs/37742305156),
+reproducing every count above; downloaded reports and archive checksums were
+independently verified.
 
 ## Corrections found during final validation
 
@@ -146,10 +151,11 @@ The preceding [PR run](https://github.com/kubabialy/gloinc/actions/runs/37679022
 retains the process and HTTP failures; the preceding
 [push run](https://github.com/kubabialy/gloinc/actions/runs/37679015477) retains
 the signature timeout and job cancellation. Neither is counted as a pass.
-Validation documentation follows the code checks; rebuild archives with final
-release wording and rerun affected checks before publication.
+Publication updates documentation only. The release archives retain the
+validated compiler, runtime, headers and runnable source payload. Their
+documentation was refreshed, HTML links rechecked, and new checksums recorded.
 
-## Proposed contents
+## Release contents
 
 - Gloin replacements for every repository-owned Python tool and test driver,
   including independent TLS/HTTP peers, JSON and million-record stress checks.
@@ -200,7 +206,7 @@ release wording and rerun affected checks before publication.
   operations for string/ABI preparation and defer bookkeeping; see the
   [lowering audit](lowering.md).
 
-The [0.1.0 candidate HTML guide](site/0.1.0/index.html) teaches the complete
+The [0.1.0 HTML guide](site/0.1.0/index.html) teaches the complete
 current language, including the published 0.0.4 features. The numbered
 [0.0.4 guide](site/0.0.4/index.html) continues to describe that published
 release. The [examples guide](../examples/README.md) links the runnable programs.
@@ -365,17 +371,16 @@ the complete package suites and hosted x86_64 CI still need to rerun before
 publication. Both Markdown guide programs run, both candidate HTML pages
 contain those programs, and HTML links and repository formatting pass.
 
-## Before publication
+## Publication
 
-1. Review the completed [Gloin tooling release gate](tooling-roadmap.md),
-   standard-library contracts, independent reference cases and candidate docs.
-2. Review the 0.1.0 candidate boundary, compatibility notes, and final diff;
-   require successful hosted CI for the final candidate, including Ubuntu
-   x86_64 and the macOS sanitizer gate.
-3. Keep the site root on published 0.0.4 while this is a candidate. After
-   approval, remove candidate wording and update `latestVersion` and the root
-   redirect; keep older numbered pages unchanged.
-4. Preserve the recorded local and hosted validation boundary. Rebuild archives
-   with the final publication documentation and rerun
-   affected checks if code or package contents change before publication.
-5. Confirm the final version and release artifacts before tagging or publishing.
+The completed candidate was approved for release on 2026-10-08. The final
+implementation passed hosted macOS and Ubuntu x86_64 CI, including macOS
+sanitizers; local Ubuntu ARM64 validation is recorded above. The site root and
+version selector now open 0.1.0. Older numbered guides retain their contents.
+
+Release archives carry the final publication documentation with unchanged
+validated compiler, runtime, headers and runnable sources. Package HTML links,
+payload equality and SHA-256 checksums are checked during publication. The
+[release](https://github.com/kubabialy/gloinc/releases/tag/v0.1.0) includes the
+archives, checksum files and provenance record. Historical milestone sections
+above describe the evidence available at those earlier points in development.

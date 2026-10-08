@@ -1,6 +1,6 @@
 # Bounded HTTP and HTTPS clients
 
-The 0.1.0 candidate includes `@http_client`, written in Gloin on top of `@net`,
+The 0.1.0 release includes `@http_client`, written in Gloin on top of `@net`,
 `@http`, and `@time`. It opens one connection, sends one request, reads one final
 HTTP/1.1 response, and closes the connection. Public operations use built-in
 `result<T>` errors. HTTP status codes, including 4xx and 5xx, are successful

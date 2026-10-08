@@ -1,7 +1,7 @@
-# Gloin 0.1.0 candidate
+# Gloin 0.1.0
 
-This is an unreleased candidate for Apple Silicon macOS and Ubuntu 24.04 Linux.
-The latest published release remains 0.0.4. The candidate uses LLVM/MLIR
+Released on 2026-10-08 for Apple Silicon macOS and Ubuntu 24.04 Linux
+(ARM64 and x86_64). This release uses LLVM/MLIR
 21.1.6 on macOS and 21.1.8 on Linux and includes the following work since 0.0.4:
 
 - The former repository Python tools and test drivers now run in Gloin, including HTTP/HTTPS
@@ -124,14 +124,15 @@ bookkeeping. Maps, enum payloads and matching, package downloading and version
 resolution, and async/spawn remain unsupported. Windows support is not planned, though contributors may
 work on it.
 
-The [0.1.0 candidate HTML guide](site/0.1.0/index.html) walks through complete
+The [0.1.0 HTML guide](site/0.1.0/index.html) walks through complete
 programs and links to the exact API and ownership rules. The
-[candidate release guide](release-0.1.0.md) covers installation, package
-contents, and verification. Neither a tag nor a public release has been made.
+[release guide](release-0.1.0.md) covers installation, package
+contents, and verification. Download the packages from the
+[0.1.0 release](https://github.com/kubabialy/gloinc/releases/tag/v0.1.0).
 
 ## Validation
 
-The completed tooling candidate at `3ce4e81` passed hosted macOS ARM64 and
+The completed implementation at `95eb48d` passed hosted macOS ARM64 and
 Ubuntu 24.04 x86_64 gates: **987/987 required core cases**, **501/501 installed
 package cases**, and **501/501 relocated package cases** on each platform.
 Serial and four-job parallel complete suites each passed **1,030/1,034**, with
@@ -146,9 +147,10 @@ links, checksums, native output, and relocation checks passed. Final validation
 also fixed a macOS exiting-process cleanup race and an HTTP test-peer cleanup
 assumption; the validation record preserves the preceding failed runs.
 
-Both the [PR workflow](https://github.com/kubabialy/gloinc/actions/runs/37695280617)
-and [push workflow](https://github.com/kubabialy/gloinc/actions/runs/37695275816)
-passed the corrected candidate; later revisions must pass their affected gates
-before publication. The
+Both the [PR workflow](https://github.com/kubabialy/gloinc/actions/runs/37742310590)
+and [push workflow](https://github.com/kubabialy/gloinc/actions/runs/37742305156)
+passed the final implementation. Publication updates documentation only;
+release packages retain the validated compiler, runtime, headers and runnable
+sources, with refreshed documentation and verified checksums. The
 [current validation record](next-release-draft.md#current-local-validation)
 contains local and hosted results, corrections, and earlier milestone history.

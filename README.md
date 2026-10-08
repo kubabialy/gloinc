@@ -8,7 +8,7 @@ verification evidence in order.
 ## Current status
 
 Fresh builds work locally and in hosted CI on Apple Silicon macOS with LLVM/MLIR
-21.1.6. The 0.1.0 candidate also builds on Ubuntu 24.04 ARM64 with LLVM/MLIR
+21.1.6. Gloin 0.1.0 also builds on Ubuntu 24.04 ARM64 with LLVM/MLIR
 21.1.8; local ARM64 release acceptance and hosted x86_64 CI passed.
 **The matching LLVM/MLIR version must also be installed to run a downloaded
 `gloinc` compiler.**
@@ -26,10 +26,10 @@ modes are also available. Version 0.0.4 adds generics, payloadless enums,
 `zeroed` and repeated array initialization, borrowed slices, and inline and
 arena vectors to the 0.0.3 language.
 Installation and package validation are documented
-in the [0.0.4 release guide](docs/release-0.0.4.md). The [versioned HTML
-guide](docs/site/0.0.4/index.html) documents the 0.0.4 language and compiler.
+in the [0.1.0 release guide](docs/release-0.1.0.md). The [versioned HTML
+guide](docs/site/0.1.0/index.html) documents the 0.1.0 language and compiler.
 Native object and executable output work on Apple Silicon macOS and on the
-Ubuntu 24.04 ARM64 candidate. Linux x86_64 is covered by the new CI gate.
+Ubuntu 24.04 ARM64 and x86_64 release targets.
 
 Version 0.0.4 includes checked [generic structs and functions](docs/generics.md)
 and the [fixed-array `zeroed` initializer](docs/fixed-arrays.md#zeroed-and-repeated-initializers).
@@ -37,17 +37,17 @@ Methods can also declare their own type parameters and require explicit call arg
 It supports [payloadless enums](docs/enums.md) with nominal values and checked equality.
 Borrowed [slices, inline fixed-capacity vectors, and growable arena vectors](docs/slices-vectors.md) are also
 available; each has a runnable example.
-The current development tree adds live-element slice views, collection
+Version 0.1.0 adds live-element slice views, collection
 operations, generic slice helpers, and an empty growable vector constructor.
 Arena vector capacity is reserved without filling unused slots. These changes
 are newer than the 0.0.4 release and its versioned HTML guide.
-The development tree also provides [raw memory and typed placement](docs/raw-memory.md)
+Version 0.1.0 also provides [raw memory and typed placement](docs/raw-memory.md)
 so programs can implement their own arenas; see the runnable
 [custom arena](examples/custom_arena.gloin).
-The development tree also has built-in [`result<T>` and `error`](docs/results.md)
+Version 0.1.0 also has built-in [`result<T>` and `error`](docs/results.md)
 with explicit success/error handling. The [SPEC-034 design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented)
 predates this implementation; the current guide documents the implemented rules.
-The candidate also adds [nonblocking IPv4 TCP, client/server TLS, and bounded HTTP/1.1 heads](docs/networking.md)
+The release also adds [nonblocking IPv4 TCP, client/server TLS, and bounded HTTP/1.1 heads](docs/networking.md)
 through `@net` and `@http`. Their public operations use built-in `result<T>`;
 the [local round-trip example](examples/network_http.gloin) runs in JIT and native modes.
 The Gloin-written [`@http_client`](docs/http-client.md) adds bounded HTTP/HTTPS
@@ -68,22 +68,20 @@ write-side shutdown, a synchronous IPv4 hostname resolver, and a verified
 nonblocking TLS client. Reusable [server TLS configurations and graceful shutdown](docs/server-tls.md)
 now support accepted sessions too, with a [runnable loopback server](examples/tls_server.gloin).
 The networking guides specify ownership, blocking and error limits.
-The [tooling validation record](docs/tooling-roadmap.md) distinguishes the latest
-focused checks from the complete release gates that must rerun before publication.
+The [tooling validation record](docs/tooling-roadmap.md) records focused checks
+and the completed release gates.
 The repository's former Python tools and test drivers now run in Gloin; Python
 is no longer a project test dependency. The [HTTP acceptance driver](tests/http/README.md)
 preserves independent wire fixtures and concurrent HTTP/HTTPS checks.
-The [0.1.0 candidate HTML guide](docs/site/0.1.0/index.html) presents the
-current language as a whole. The [0.0.4 guide](docs/site/0.0.4/index.html)
-remains the reference for the published release. Build metadata now reports
-0.1.0, but the candidate is **not published**. See its
+The [0.1.0 HTML guide](docs/site/0.1.0/index.html) presents the
+current language as a whole. Download [Gloin 0.1.0](https://github.com/kubabialy/gloinc/releases/tag/v0.1.0)
+for macOS ARM64 or Ubuntu 24.04 ARM64/x86_64. See its
 [release notes](docs/release-notes-0.1.0.md),
 [installation guide](docs/release-0.1.0.md), and
-[scope and validation draft](docs/next-release-draft.md).
-Linux support remains a required 0.1.0 release gate. The current macOS and
-Ubuntu 24.04 ARM64 tree passed local core, package, and full-suite classification
-gates. Hosted x86_64 CI passed an earlier revision and must rerun on this tree
-before publication.
+[scope and validation record](docs/next-release-draft.md).
+The release passed local macOS and Ubuntu 24.04 ARM64 core, package, and
+full-suite classification gates, plus hosted macOS ARM64 and Ubuntu x86_64 CI.
+Older numbered guides remain available for their corresponding releases.
 
 | Area | Verified status |
 | --- | --- |
@@ -125,7 +123,7 @@ semantic data and ownership boundary required by normal codegen.
 
 [The JIT API](docs/jit.md) executes compiled modules in process. The
 [core acceptance matrix](tests/fixtures/core/README.md) maps the release contract
-to source fixtures. The [candidate guide](docs/release-0.1.0.md) describes package contents,
+to source fixtures. The [release guide](docs/release-0.1.0.md) describes package contents,
 runtime dependencies, and the SPEC-046 validation gate.
 
 Test pass counts are not specification-coverage percentages. The compiler is not
@@ -157,7 +155,7 @@ from the example. Today's `brew install llvm` may install an unsupported release
 
 ## Build on Ubuntu 24.04 Linux
 
-The 0.1.0 Linux candidate uses the shared **LLVM/MLIR 21.1.8** packages from
+The 0.1.0 Linux release uses the shared **LLVM/MLIR 21.1.8** packages from
 apt.llvm.org. The installer verifies the repository signing key and pins the
 tested package revision. On ARM64 or x86_64 Ubuntu 24.04:
 
@@ -273,7 +271,7 @@ arguments/environment/cwd. Programs receive arguments after `FILE --`; copied
 values use caller arenas. See [API usage and costs](docs/filesystem-process.md)
 and the [command-line file tool](examples/file_tool.gloin). The
 [directory walker](examples/directory_walk.gloin) shows the new cursor API.
-The unreleased tree also provides `fs.symlink` and bounded `fs.read_link` with
+Version 0.1.0 also provides `fs.symlink` and bounded `fs.read_link` with
 built-in `result<T>`; see the [symlink rules](docs/filesystem-process.md#symbolic-links)
 and [runnable example](examples/symlinks.gloin). `fs.canonical_path`, `fs.temp_dir`
 and `fs.remove_dir` add bounded path resolution, exclusive temporary directories
@@ -281,7 +279,7 @@ and empty-directory removal. The [workspace example](examples/temporary_workspac
 shows explicit cleanup and arena ownership; the formatter test driver now uses
 these APIs and child-process capture entirely from Gloin.
 
-The unreleased 0.1.0 tree also adds child processes with built-in `result<T>`,
+Version 0.1.0 also adds child processes with built-in `result<T>`,
 pipes, bounded output capture, cwd/environment options and explicit group
 cleanup. **Group cleanup is opt-in** through `new_process_group = true`;
 `start_piped` alone still manages only the direct child. Descendants that change
@@ -414,13 +412,13 @@ cmake --build build --target package
 bash scripts/check-package.sh build build/package-check
 ```
 
-CPack writes a candidate `gloinc-0.1.0-macos-arm64.tar.gz`,
+CPack writes a `gloinc-0.1.0-macos-arm64.tar.gz`,
 `gloinc-0.1.0-linux-aarch64.tar.gz`, or `gloinc-0.1.0-linux-x86_64.tar.gz`
 under `build/`, with a `.sha256` checksum.
 The archive contains `bin/gloinc`, `bin/gloinfmt`, standard modules, native arena libraries and header,
 documentation, runnable examples, and the core source fixtures. The verification script runs the CLI, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases against
 both an installed copy and an archive unpacked into a different path containing
-spaces. See [the candidate guide](docs/release-0.1.0.md) for extraction, dependencies,
+spaces. See [the release guide](docs/release-0.1.0.md) for extraction, dependencies,
 sanitizer checks, and the supported-platform limits.
 
 ## Verify the build
@@ -441,7 +439,7 @@ the built executable directly and verifies actual file-dependent results.
 
 ## JSON payloads
 
-The 0.1.0 candidate adds `@json`: a bounded reader and writer implemented in
+Version 0.1.0 adds `@json`: a bounded reader and writer implemented in
 Gloin, using built-in `result<T>`, checked Unicode, exact number text, and
 caller-owned buffers. Run `./build/gloinc --jit examples/json.gloin`; it needs
 no external service. See [JSON usage and limits](docs/json.md).
@@ -461,7 +459,7 @@ compilation and nullable pointer offsets; see [CLI options](docs/cli.md) and
 [implementation checklist](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist)
 tracks the remaining work.
 
-Version 0.0.4 supports Apple Silicon macOS. Linux is planned for 0.1.0. Windows
+Version 0.1.0 supports Apple Silicon macOS and Ubuntu 24.04 ARM64/x86_64. Windows
 support is not planned, although contributions are welcome. See
 [contributing rules](CONTRIBUTING.md) for the manual verification and deterministic
 change requirements.
@@ -480,5 +478,6 @@ including on failure. The complete suite still reports its four deferred-feature
 failures; CI succeeds only when they match the documented list exactly.
 Compiler build outputs are not restored from a cache.
 The Linux job uses the pinned LLVM/MLIR 21.1.8 packages and runs core,
-installed/relocated package, and complete-suite checks. The Linux CI gate must
-pass before the 0.1.0 candidate can be published.
+installed/relocated package, and complete-suite checks. Both platform gates
+passed for 0.1.0; the [validation record](docs/next-release-draft.md#hosted-validation)
+links their reports.

@@ -1,4 +1,4 @@
-# Nonblocking TCP, TLS, and HTTP/1.1 (0.1.0 candidate)
+# Nonblocking TCP, TLS, and HTTP/1.1 (0.1.0)
 
 `@net` provides nonblocking IPv4 TCP sockets on Apple Silicon macOS and Ubuntu
 24.04 Linux. `@http` parses and formats bounded HTTP/1.1 message heads. The

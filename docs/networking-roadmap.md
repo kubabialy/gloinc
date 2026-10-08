@@ -1,6 +1,6 @@
 # Networking milestones after the first TCP and HTTP layer
 
-The 0.1.0 candidate provides nonblocking IPv4 TCP, a verified nonblocking TLS
+The 0.1.0 release provides nonblocking IPv4 TCP, a verified nonblocking TLS
 client, bounded multi-socket readiness waits, and a Gloin HTTP/HTTPS client
 with streaming fixed-length, chunked, and clean-EOF response decoding,
 backpressure, cancellation, and per-exchange deadlines. The

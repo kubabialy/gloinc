@@ -1,4 +1,4 @@
-# Bounded JSON (`@json`, 0.1.0 candidate)
+# Bounded JSON (`@json`, 0.1.0)
 
 `import "@json";` provides a pull reader, complete-document validation, quoted
 string conversion, and a writer. [json.gloin](../stdlib/json.gloin) is ordinary

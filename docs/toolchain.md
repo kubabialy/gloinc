@@ -11,8 +11,9 @@ Ninja, and Homebrew's LLVM/MLIR 21.1.6. The
 [verified hosted run](https://github.com/kubabialy/gloinc/actions/runs/34242653935)
 used macOS 15.7.9 arm64, AppleClang 17.0.0, CMake 4.4.3, Ninja 1.13.2, and the
 same LLVM/MLIR release. The project requires CMake 3.28 or newer and uses C++23.
-The 0.1.0 candidate has also been built locally on Ubuntu 24.04 ARM64 with
-LLVM/MLIR 21.1.8. Linux x86_64 CI acceptance is required before publication.
+The 0.1.0 release also passed local Ubuntu 24.04 ARM64 and hosted x86_64
+acceptance with LLVM/MLIR 21.1.8. See the
+[release validation record](next-release-draft.md#hosted-validation).
 The networking runtime additionally requires OpenSSL 3 development headers and
 libraries. Install `openssl@3` with Homebrew or `openssl libssl-dev` on Ubuntu.
 The compiler and TLS-enabled native executables need OpenSSL runtime libraries.
