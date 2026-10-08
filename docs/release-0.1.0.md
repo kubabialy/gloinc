@@ -2,17 +2,17 @@
 
 This page describes an **unreleased candidate**. The latest published version
 is 0.0.4. The candidate targets Apple Silicon macOS with LLVM/MLIR 21.1.6 and
-Ubuntu 24.04 Linux with LLVM/MLIR 21.1.8. The current tree passed local macOS
-and Linux ARM64 build, JIT/native, core, complete-suite classification, and
-package acceptance. Hosted x86_64 CI passed an earlier revision; rerun hosted
-CI before publishing this tree. The [release draft](next-release-draft.md)
-records the exact validation boundary. Windows support is not planned, though
+Ubuntu 24.04 Linux with LLVM/MLIR 21.1.8. The
+[release draft](next-release-draft.md) records the exact validation boundary
+for builds, JIT/native execution, tests, sanitizers and packages. Windows
+support is not planned, though
 contributions are welcome.
 
-The [Gloin tooling release gate](tooling-roadmap.md) is undergoing final
-validation. Child-process, filesystem and server-TLS APIs are implemented, and
-repository-owned Python-driver migrations are complete. Full validation of the
-completed tooling tree must finish before publication.
+Child-process, filesystem and server-TLS APIs are implemented, and all
+repository-owned Python-driver migrations are complete. The
+[Gloin tooling record](tooling-roadmap.md) describes their implementation and
+validation. Publication requires the completed candidate to pass the release
+gates below.
 
 The [0.1.0 HTML guide](site/0.1.0/index.html) teaches the language accepted by
 this candidate. The [release notes](release-notes-0.1.0.md) list changes since
@@ -141,29 +141,32 @@ this candidate.
 
 ## Verification boundary
 
-The 2026-10-05 local validation covered the current compiler and standard
-library on Apple Silicon macOS and Ubuntu 24.04 ARM64:
+The complete hosted tooling gate passed on candidate commit `3ce4e81`, with
+independently inspected test reports and archive checksums:
 
-| Check | macOS ARM64 | Ubuntu ARM64 |
+| Check | macOS 15 ARM64 | Ubuntu 24.04 x86_64 |
 | --- | --- | --- |
-| Required `check-core` | 935/935 passed | 935/935 passed |
-| Installed package acceptance | 489/489 passed | 489/489 passed |
-| Relocated package acceptance | 489/489 passed | 489/489 passed |
-| Complete suite, serial | 978/982 passed | 978/982 passed |
-| Complete suite, four parallel jobs | 978/982 passed | 978/982 passed |
+| Required `check-core` | 987/987 passed | 987/987 passed |
+| Installed package acceptance | 501/501 passed | 501/501 passed |
+| Relocated package acceptance | 501/501 passed | 501/501 passed |
+| Complete suite, serial | 1,030/1,034 passed | 1,030/1,034 passed |
+| Complete suite, four parallel jobs | 1,030/1,034 passed | 1,030/1,034 passed |
+| Debug ASan/UBSan core | 987/987 passed | Not part of this job |
 
 Both complete-suite audits contained exactly the four documented unsupported
 async/spawn failures, with no skipped tests. Installed and relocated compilers
 also passed TLS certificate checks, synchronous and streaming HTTP/HTTPS
 matrices, and JSON codec/state/limit checks. JSON ran in JIT, `-O0`, and `-O2`
-modes. All 41 example sources passed `--check` on both systems. Formatting,
+modes. All 48 example sources passed `--check` locally on macOS and Ubuntu
+ARM64. Formatting,
 HTML links, archive checksums, native output, and relocation checks passed.
 
 The [validation record](next-release-draft.md#current-local-validation) explains
-the networking test timeout correction and preserves the earlier milestone
-history. The [test inventory](../tests/README.md) describes the checks.
-Hosted CI last passed [commit `688c04c`](https://github.com/kubabialy/gloinc/actions/runs/37147497367),
-which predates these changes. Fresh hosted Linux x86_64 and macOS CI, including
-its sanitizer gate, remain required before publication. Rerun affected checks
-if candidate code or package contents change. A public tag and release require
-a separate final decision.
+local ARM64 results, corrected cleanup races, test budgets and retained failed
+attempts. The [test inventory](../tests/README.md) describes the checks.
+Both the [PR workflow](https://github.com/kubabialy/gloinc/actions/runs/37695280617)
+and [push workflow](https://github.com/kubabialy/gloinc/actions/runs/37695275816)
+passed the corrected code. The [candidate PR](https://github.com/kubabialy/gloinc/pull/6)
+tracks later documentation revisions and their checks. Rerun affected checks
+when candidate code or package contents change. A public tag and release
+require a separate final decision.

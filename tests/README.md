@@ -168,25 +168,22 @@ packages. HTTP integration fixtures allow 360 seconds for the entire matrix on b
 systems. Each JIT invocation runs a complete scenario matrix to avoid repeated
 compilation; request-level deadlines (including deliberate 500 ms expiry cases)
 remain unchanged. No known failures are disabled or marked as expected
-successes. On 2026-10-05, both macOS and Ubuntu ARM64 passed **935/935** required
-core cases. Serial and four-job parallel complete suites each passed
-**978/982**, with exactly the four documented unsupported async/spawn failures
-and no skips. Installed and relocated packages on both systems each passed
-**489/489** acceptance cases, plus TLS, synchronous HTTP/HTTPS, streaming, and
-JSON fixtures. All 41 example sources type-check on both platforms. The
-complete client guide program also type-checks. The sibling streaming example's Gloin client and concurrent Gloin HTTP server
-pass together in JIT and `-O2` native modes on macOS and Ubuntu ARM64. Native
-checks also cover repeated batches and rejected requests; the entire sibling
-project passes `gloinfmt --check`.
+successes. The completed tooling candidate at `3ce4e81` passed the **987/987**
+required gate and both **501/501** package gates on hosted macOS ARM64 and
+Ubuntu x86_64. Serial and parallel audits each passed **1,030/1,034**, with
+exactly the four unsupported async/spawn failures and no skips. The macOS
+ASan/UBSan core passed **987/987**. All 48 example sources passed `--check`
+locally on macOS and Ubuntu ARM64.
 
-Earlier runs were interrupted by host sleep or the old Linux compiler budget.
-The latest validation also exposed macOS HTTP JIT timeouts under parallel load,
-including cold relocated packages. The fixture now uses the same bounded
-compiler allowance on both platforms. Final validation ran one platform at a
-time and passed those local gates; that revision contained 982 unique cases.
-The current inventory above also includes the subsequent child-process work. Fresh hosted CI, including Linux x86_64 and macOS sanitizers,
-remains required before release. See the
-[validation record](../docs/next-release-draft.md#current-local-validation).
+The [validation record](../docs/next-release-draft.md#current-local-validation)
+distinguishes complete local audits, subsequent focused checks and the complete
+hosted matrix. It preserves initial timeouts, the macOS exiting-process cleanup
+race, the early-413 peer correction and laptop sleep interruptions. All checks
+still run; the macOS workflow has a 60-minute overall budget.
+
+Earlier networking validation also checked the sibling streaming example's
+Gloin client and concurrent Gloin server in JIT and `-O2` on macOS and Ubuntu
+ARM64, including repeated batches, rejected requests and `gloinfmt`.
 
 ## Development features after 0.0.4
 

@@ -131,20 +131,24 @@ contents, and verification. Neither a tag nor a public release has been made.
 
 ## Validation
 
-The 2026-10-05 local Release-build checks passed on macOS ARM64 and Ubuntu
-24.04 ARM64: **935/935 required core cases**, **489/489 installed package
-cases**, and **489/489 relocated package cases** on each platform. Serial and
-four-job parallel complete suites each passed **978/982**, with exactly the
-four documented unsupported async/spawn failures and no skips.
+The completed tooling candidate at `3ce4e81` passed hosted macOS ARM64 and
+Ubuntu 24.04 x86_64 gates: **987/987 required core cases**, **501/501 installed
+package cases**, and **501/501 relocated package cases** on each platform.
+Serial and four-job parallel complete suites each passed **1,030/1,034**, with
+exactly the four documented unsupported async/spawn failures and no skips.
+The macOS Debug ASan/UBSan gate passed **987/987**.
 
 Installed and relocated packages also passed TLS certificate verification,
 synchronous and streaming HTTP/HTTPS matrices, and JSON codec/state/limit
-checks. JSON ran in JIT, `-O0`, and `-O2`. All 41 example source files passed
-`--check` on both platforms; formatting, HTML links, checksums, native output,
-and relocation checks passed. A networking test timeout was corrected without
-changing compiler/runtime code, socket deadlines, or assertions.
+checks. JSON and HTTP ran in JIT, `-O0`, and `-O2`. All 48 example source files
+passed `--check` locally on macOS and Ubuntu ARM64. Formatting, installed HTML
+links, checksums, native output, and relocation checks passed. Final validation
+also fixed a macOS exiting-process cleanup race and an HTTP test-peer cleanup
+assumption; the validation record preserves the preceding failed runs.
 
-Fresh hosted CI, including Linux x86_64 and the macOS sanitizer gate, must
-pass on this revision before publication. The
+Both the [PR workflow](https://github.com/kubabialy/gloinc/actions/runs/37695280617)
+and [push workflow](https://github.com/kubabialy/gloinc/actions/runs/37695275816)
+passed the corrected candidate; later revisions must pass their affected gates
+before publication. The
 [current validation record](next-release-draft.md#current-local-validation)
-contains the results, test-harness correction, and earlier milestone history.
+contains local and hosted results, corrections, and earlier milestone history.

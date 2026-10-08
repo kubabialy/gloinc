@@ -1,9 +1,11 @@
 # Gloin tooling required for 0.1.0
 
-Repository-owned Python tools and test drivers must have Gloin replacements
-before 0.1.0 is published. This is an additional release requirement, not a
-claim that the APIs below are implemented. The existing C++ compiler/runtime
-tests and the CMake build remain part of the toolchain.
+All repository-owned Python tools and test drivers now have Gloin replacements.
+The supporting process, filesystem and server-TLS APIs are implemented. The
+existing C++ compiler/runtime tests and the CMake build remain part of the
+toolchain. The milestone sections preserve the evidence gathered during each
+migration; the [release validation record](next-release-draft.md#current-local-validation)
+tracks the completed candidate.
 
 ## First milestone: child lifecycle
 
@@ -252,6 +254,22 @@ These focused package checks do not replace full CPack acceptance, complete
 serial/parallel macOS/Linux suites, the full sanitizer gate or hosted CI on
 the final 0.1.0 release tree.
 
+## Completed candidate gate
+
+The [full validation record](next-release-draft.md#hosted-validation) covers
+candidate `3ce4e81`. Both hosted macOS ARM64 and Ubuntu x86_64 passed 987 core
+tests, 501 installed and 501 relocated package cases, and complete serial and
+parallel classification. Each complete audit passed 1,030/1,034 with exactly
+the four documented unsupported async/spawn failures. The macOS ASan/UBSan
+gate passed all 987 cases. Gloin TLS, HTTP/HTTPS, JSON and million-record drivers
+also passed against installed and relocated compilers.
+
+Final validation corrected packaged documentation links, sanitizer test
+budgets, a macOS process-exit cleanup race and an HTTP peer's early-response
+cleanup assumption. The record retains failed attempts, focused regressions,
+local platform boundaries and fresh hosted evidence. These are completed
+implementation checks; 0.1.0 remains an unreleased candidate.
+
 ## Inventory
 
 No repository-owned Python files or Python tool/test invocations remain.
@@ -362,5 +380,7 @@ readers and explicit state machines can cover these tools.
    All Gloin tools must pass `gloinfmt`. Document the public APIs and their
    ownership, limits, failure and cleanup contracts in the candidate guide.
 
-Existing release validation predates these additions. Repeat affected gates on
-the completed implementation before publishing 0.1.0.
+Publication requires these gates on the completed implementation. The
+[release validation record](next-release-draft.md#current-local-validation)
+and [candidate PR](https://github.com/kubabialy/gloinc/pull/6) record results and
+any remaining failures. Repeat affected checks when candidate contents change.

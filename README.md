@@ -89,7 +89,7 @@ before publication.
 | --- | --- |
 | Build | Shared compiler libraries, optional tests, pinned GoogleTest, consistent shared LLVM/MLIR linkage. |
 | Execution tests | 31 E2E cases (including IR checks), nine if/while and ten unless/for executions, numeric bit probes, and operator executions verify values, branches/loops, evaluation order, and arithmetic traps. |
-| Full test suite | The development tree discovers 1,034 tests; macOS `check-core` passed 987/987. Focused Linux, sanitizer and package checks cover the new tooling work. Complete macOS/Linux serial, parallel and package release gates predate these additions and must run again. See the [tooling validation](docs/tooling-roadmap.md) and [earlier candidate record](docs/next-release-draft.md#current-local-validation). |
+| Full test suite | The required 987-case gate passes on macOS and Linux. Full serial/parallel audits pass 1,030/1,034, retaining exactly four unsupported async/spawn failures. Installed and relocated packages each pass 501 cases; macOS sanitizers pass 987/987. See the [validation record](docs/next-release-draft.md#hosted-validation) for commits, corrections and platform boundaries. |
 | Core acceptance | CLI-driven source cases cover `zeroed` arrays, enums, borrowed slices, and both vector forms in addition to the 0.0.3 cases. |
 | Lexer | All 34 tests pass: vocabulary, UTF-8 validation, malformed literals, and byte positions. Reserved tokens do not establish feature support. |
 | Parsing | All 53 development parser tests pass: core grammar, precedence, strict annotations/delimiters, generic call/literal lookahead, and rejection of unsupported syntax. Constants and visibility retain AST metadata. |
