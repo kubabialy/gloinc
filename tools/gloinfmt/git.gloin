@@ -1,0 +1,55 @@
+// Git supplies tracked and unignored paths, NUL separated (including newlines).
+import "@arena";
+import "@process";
+import "@status";
+import "@strings";
+import "@time";
+import "@vector";
+
+def close_child(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { return; }
+}
+
+def pub files(memory: &arena.GeneralArena) -> result<vector.Vector<string>> {
+    def args: [string; 7]            = {"ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.gloin"};
+    def mut options: process.Options = process.Options.defaults();
+    options.piped             = true;
+    options.new_process_group = true;
+
+    def started: result<process.Child> = process.start_with(memory, "/usr/bin/git", args[..], options);
+    if started.erroneous { return started.error; }
+
+    def mut child: process.Child = started.value;
+    defer close_child(&child);
+
+    def input: [u8; 0]           = zeroed;
+    def mut output: [u8; 262144] = zeroed;
+    def mut errors: [u8; 16384]  = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..],
+        time.Duration { nanoseconds: 10000000000 });
+
+    if captured.erroneous { return captured.error; }
+    if !captured.value.status.exited || captured.value.status.code != 0 {
+        return error("Git discovery failed; run inside a Git working tree with /usr/bin/git installed");
+    }
+
+    def text: string                     = strings.view_bytes(captured.value.stdout);
+    def mut names: vector.Vector<string> = vector.Vector<string>.empty(memory, 0);
+    def mut start: u64                   = 0;
+
+    for def mut i: u64 = 0; i < strings.byte_length(text); i = i + 1 {
+        if strings.byte_at(text, i).value == 0 {
+            if i == start { return error("Git returned an empty path"); }
+
+            def copied: strings.StringResult = strings.copy(memory, strings.slice_bytes(text, start, i - start).value);
+            if copied.status != status.OK || !names.push(copied.value) { return error("cannot retain Git path"); }
+
+            start = i + 1;
+        }
+    }
+
+    if start != strings.byte_length(text) { return error("Git returned an unterminated path"); }
+
+    return names;
+}

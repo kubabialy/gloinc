@@ -65,6 +65,23 @@ bool matches_storage(mlir::Type source, mlir::Type storage) {
            mlir::isa<mlir::LLVM::LLVMPointerType>(record.getBody()[0]) &&
            record.getBody()[1].isInteger(64);
   }
+  if (mlir::isa<gloin::GloinErrorType>(source)) {
+    auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(storage);
+    return record && !record.isOpaque() && record.getBody().size() == 2 &&
+           mlir::isa<mlir::LLVM::LLVMPointerType>(record.getBody()[0]) &&
+           record.getBody()[1].isInteger(64);
+  }
+  if (auto result = mlir::dyn_cast<gloin::GloinResultType>(source)) {
+    auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(storage);
+    if (!record || record.isOpaque() ||
+        record.getBody().size() != (mlir::isa<mlir::NoneType>(result.getValueType()) ? 2 : 3) ||
+        !record.getBody()[0].isInteger(1) ||
+        !matches_storage(gloin::GloinErrorType::get(source.getContext()),
+                         record.getBody().back()))
+      return false;
+    return mlir::isa<mlir::NoneType>(result.getValueType()) ||
+           matches_storage(result.getValueType(), record.getBody()[1]);
+  }
   return source == storage;
 }
 
@@ -125,6 +142,106 @@ mlir::LogicalResult FromLayoutOp::verify() {
 mlir::LogicalResult ToLayoutOp::verify() {
   if (!matches_storage(getSourceValue().getType(), getValue().getType()))
     return emitOpError("requires a layout result matching the input source type");
+  return mlir::success();
+}
+
+mlir::LogicalResult ErrorLiteralOp::verify() {
+  auto source = mlir::isa<gloin::GloinErrorType>(getValue().getType());
+  if ((!source && getValue().getType() != getLayoutType()) ||
+      !matches_storage(gloin::GloinErrorType::get(getContext()), getLayoutType()) ||
+      (source && !mlir::isa<gloin::GloinStringType>(getMessage().getType())) ||
+      (!source && getMessage().getType() != getLayoutType()))
+    return emitOpError("requires a checked string message and error layout");
+  return mlir::success();
+}
+
+mlir::LogicalResult ErrorMessageOp::verify() {
+  if (!matches_storage(gloin::GloinStringType::get(getContext()), getLayoutType()))
+    return emitOpError("requires a string layout");
+  if (mlir::isa<gloin::GloinErrorType>(getError().getType())) {
+    if (!mlir::isa<gloin::GloinStringType>(getMessage().getType()))
+      return emitOpError("requires a source string result");
+  } else if (getError().getType() != getMessage().getType() ||
+             getMessage().getType() != getLayoutType() ||
+             !matches_storage(gloin::GloinErrorType::get(getContext()),
+                              getError().getType())) {
+    return emitOpError("requires matching error and string storage layouts");
+  }
+  return mlir::success();
+}
+
+mlir::LogicalResult ResultSuccessOp::verify() {
+  auto source = mlir::dyn_cast<gloin::GloinResultType>(getValue().getType());
+  if ((!source && getValue().getType() != getLayoutType()) ||
+      (source && !matches_storage(source, getLayoutType())))
+    return emitOpError("requires a result source type matching its layout");
+  auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getLayoutType());
+  if (!record || record.isOpaque() ||
+      getPayload().size() != (record.getBody().size() == 2 ? 0u : 1u))
+    return emitOpError("has the wrong success payload count");
+  if (!getPayload().empty() && getPayload()[0].getType() !=
+                                  (source ? source.getValueType() : record.getBody()[1]))
+    return emitOpError("has the wrong success payload type");
+  return mlir::success();
+}
+
+mlir::LogicalResult ResultFailureOp::verify() {
+  auto source = mlir::dyn_cast<gloin::GloinResultType>(getValue().getType());
+  auto layout = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getLayoutType());
+  if (!layout || layout.isOpaque() ||
+      (layout.getBody().size() != 2 && layout.getBody().size() != 3) ||
+      !matches_storage(gloin::GloinErrorType::get(getContext()),
+                       layout.getBody().back()) ||
+      (!source && getValue().getType() != getLayoutType()) ||
+      (source && !matches_storage(source, getLayoutType())) ||
+      getError().getType() != (source ? mlir::Type(gloin::GloinErrorType::get(getContext()))
+                                     : layout.getBody().back()))
+    return emitOpError("requires an error payload and matching result layout");
+  return mlir::success();
+}
+
+mlir::LogicalResult ResultIsErrorOp::verify() {
+  if (!mlir::isa<gloin::GloinResultType>(getValue().getType())) {
+    auto layout = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getValue().getType());
+    if (!layout || layout.isOpaque() ||
+        (layout.getBody().size() != 2 && layout.getBody().size() != 3) ||
+        !layout.getBody()[0].isInteger(1))
+      return emitOpError("requires a result value");
+  }
+  return mlir::success();
+}
+
+mlir::LogicalResult ResultValueOp::verify() {
+  if (auto result = mlir::dyn_cast<gloin::GloinResultType>(getOutcome().getType())) {
+    if (mlir::isa<mlir::NoneType>(result.getValueType()) ||
+        getValue().getType() != result.getValueType() ||
+        !matches_storage(result.getValueType(), getLayoutType()))
+      return emitOpError("requires the result's non-void payload type");
+  } else if (auto layout = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getOutcome().getType())) {
+    if (layout.isOpaque() || layout.getBody().size() != 3 ||
+        getValue().getType() != layout.getBody()[1] ||
+        getLayoutType() != layout.getBody()[1])
+      return emitOpError("requires the result payload storage type");
+  } else {
+    return emitOpError("requires a result operand");
+  }
+  return mlir::success();
+}
+
+mlir::LogicalResult ResultErrorOp::verify() {
+  if (mlir::isa<gloin::GloinResultType>(getOutcome().getType())) {
+    if (!mlir::isa<gloin::GloinErrorType>(getError().getType()) ||
+        !matches_storage(getError().getType(), getLayoutType()))
+      return emitOpError("requires a source error result");
+  } else if (auto layout = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getOutcome().getType())) {
+    if (layout.isOpaque() ||
+        (layout.getBody().size() != 2 && layout.getBody().size() != 3) ||
+        getError().getType() != layout.getBody().back() ||
+        getLayoutType() != layout.getBody().back())
+      return emitOpError("requires the error storage type");
+  } else {
+    return emitOpError("requires a result operand");
+  }
   return mlir::success();
 }
 
@@ -327,6 +444,35 @@ mlir::LogicalResult ArenaTypedPointerOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult RawPlaceOp::verify() {
+  auto target = mlir::dyn_cast<gloin::GloinPointerType>(getSourceType());
+  auto raw = mlir::dyn_cast<gloin::GloinPointerType>(getStorage().getType());
+  bool typed = raw && target && raw.getPointee().isInteger(8) &&
+               raw.getNullable() && target.getNullable() &&
+               !raw.getReadOnly() && !target.getReadOnly() &&
+               getPointer().getType() == getSourceType() &&
+               getInitial().getType() == getElementSourceType();
+  bool layout = mlir::isa<mlir::LLVM::LLVMPointerType>(getStorage().getType()) &&
+                getPointer().getType() == getStorage().getType() &&
+                getInitial().getType() == getElementType();
+  if (!target || !target.getNullable() || (!typed && !layout) ||
+      !mlir::LLVM::isCompatibleType(getElementType()) ||
+      !matches_storage(target.getPointee(), getElementType()) ||
+      target.getPointee() != getElementSourceType())
+    return emitOpError("requires writable raw byte storage and a matching nullable typed pointer");
+  return mlir::success();
+}
+
+mlir::LogicalResult RawPaddingOp::verify() {
+  auto raw = mlir::dyn_cast<gloin::GloinPointerType>(getStorage().getType());
+  if (((raw && raw.getPointee().isInteger(8) && raw.getNullable() &&
+       !raw.getReadOnly()) ||
+      mlir::isa<mlir::LLVM::LLVMPointerType>(getStorage().getType())) &&
+      mlir::LLVM::isCompatibleType(getElementType()))
+    return mlir::success();
+  return emitOpError("requires writable nullable raw byte storage");
+}
+
 mlir::LogicalResult PointerOffsetOp::verify() {
   auto source = mlir::dyn_cast<gloin::GloinPointerType>(getSourceType());
   bool typed = getBase().getType() == getSourceType() &&
@@ -410,6 +556,21 @@ mlir::LogicalResult SliceSubrangeOp::verify() {
       !matches_storage(source.getElement(), getElementType()) ||
       (!typed && !layout))
     return emitOpError("requires a matching source slice and element layout");
+  return mlir::success();
+}
+
+mlir::LogicalResult SliceFromPointerOp::verify() {
+  auto source = mlir::dyn_cast<gloin::GloinSliceType>(getSourceType());
+  auto base = mlir::dyn_cast<gloin::GloinPointerType>(getBase().getType());
+  bool typed = source && base && base.getPointee() == source.getElement() &&
+               base.getReadOnly() == source.getReadOnly() &&
+               getValue().getType() == getSourceType();
+  bool layout = source && mlir::isa<mlir::LLVM::LLVMPointerType>(getBase().getType()) &&
+                getValue().getType() == getLayoutType();
+  if (!source || !matches_storage(source, getLayoutType()) ||
+      !matches_storage(source.getElement(), getElementType()) ||
+      (!typed && !layout))
+    return emitOpError("requires matching pointer storage and slice borrow capability");
   return mlir::success();
 }
 

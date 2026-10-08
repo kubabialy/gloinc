@@ -122,6 +122,10 @@ struct identity, mutability, visibility, and static versus instance call form.
 Static calls use `Type.method(...)` or `module.Type.method(...)`; no additional
 call operator is introduced. Async methods remain syntax-only/deferred.
 
+The lowercase `result` and `error` spellings are reserved for the built-in
+[result and error types](results.md). `error("literal")` constructs an error;
+`.error` names the failure member of a checked result.
+
 ## Function-exit defer (SPEC-027)
 
 `defer expression;` parses a `DeferStatement`; semantic analysis requires the

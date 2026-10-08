@@ -1,0 +1,202 @@
+// Shared bounded child capture and private fixture cleanup for Gloin test drivers.
+import "@arena";
+import "@fs";
+import "@io";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def pub report(message: string) -> void {
+    def mut output: io.Stream = io.stderr();
+
+    output.write_line(message);
+}
+
+def close_file(file: &io.File) -> void {
+    if file.is_open() { file.close(); }
+}
+
+def close_directory(directory: &fs.Directory) -> void {
+    if directory.is_open() { directory.close(); }
+}
+
+def close_child(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { report(closed.error.message); }
+}
+
+def pub joined(memory: &arena.GeneralArena, left: string, right: string) -> result<string> {
+    def path: fs.PathResult = fs.join(memory, left, right, 65536);
+    if path.status != status.OK { return error("cannot join tool-test path"); }
+
+    return path.value;
+}
+
+def pub record(memory: &arena.GeneralArena, work: string, name: string, suffix: string, text: string) -> result<void> {
+    def leaf: strings.StringResult = strings.concat(memory, name, suffix, 1024);
+    if leaf.status != status.OK { return error("cannot construct capture name"); }
+
+    def path: result<string> = joined(memory, work, leaf.value);
+    if path.erroneous { return path.error; }
+
+    def opened: io.FileResult = io.File.create_new(memory, path.value);
+    if opened.status != status.OK { return error("cannot create capture file"); }
+
+    def mut file: io.File = opened.value;
+    defer close_file(&file);
+
+    if file.write_all(text).status != status.OK { return error("cannot write capture file"); }
+    if file.close().status != status.OK { return error("cannot close capture file"); }
+
+    return;
+}
+
+def pub capture(work: string, name: string, executable: string, arguments: [const string], input_path: string, expected: i32) -> result<void> {
+    def captured: result<void> = capture_at(work, name, executable, arguments, input_path, expected, "");
+    if captured.erroneous { return captured.error; }
+
+    return;
+}
+
+def pub capture_at(work: string, name: string, executable: string, arguments: [const string], input_path: string, expected: i32, cwd: string) -> result<void> {
+    def captured: result<void> = capture_timed(work, name, executable, arguments, input_path, expected, cwd,
+        time.Duration { nanoseconds: 30000000000 });
+    if captured.erroneous { return captured.error; }
+
+    return;
+}
+
+def pub capture_timed(work: string, name: string, executable: string, arguments: [const string], input_path: string, expected: i32, cwd: string, timeout: time.Duration) -> result<void> {
+    def captured: result<void> = capture_limited(work, name, executable, arguments, input_path, expected, cwd, timeout, 0);
+    if captured.erroneous { return captured.error; }
+
+    return;
+}
+
+// The explicit soft stack limit applies to the child before it executes.
+def pub capture_limited(work: string, name: string, executable: string, arguments: [const string], input_path: string, expected: i32, cwd: string, timeout: time.Duration, stack_bytes: u64) -> result<void> {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def mut input_text: string = "";
+
+    if !strings.is_empty(input_path) {
+        def opened: io.FileResult = io.File.open_read(&memory, input_path);
+        if opened.status != status.OK { return error("cannot open child stdin fixture"); }
+
+        def mut file: io.File = opened.value;
+        defer close_file(&file);
+
+        def read: io.ReadResult = file.read_all(&memory, 262144);
+        if read.status != status.OK { return error("child stdin fixture exceeds limit or cannot be read"); }
+        if file.close().status != status.OK { return error("cannot close child stdin fixture"); }
+
+        input_text = read.value;
+    }
+
+    def size: u64                = strings.byte_length(input_text);
+    def mut input: [u8; 262144]  = zeroed;
+    def mut output: [u8; 262144] = zeroed;
+    def mut errors: [u8; 262144] = zeroed;
+
+    for def mut i: u64 = 0; i < size; i = i + 1 { input[i] = strings.byte_at(input_text, i).value; }
+
+    def mut options: process.Options = process.Options.defaults();
+    options.piped             = true;
+    options.new_process_group = true;
+    options.cwd               = cwd;
+    options.stack_limit_bytes = stack_bytes;
+
+    def started: result<process.Child> = process.start_with(&memory, executable, arguments, options);
+    if started.erroneous { return started.error; }
+
+    def mut child: process.Child = started.value;
+    defer close_child(&child);
+
+    def captured: result<process.Output> = child.communicate(input[..size], output[..], errors[..], timeout);
+    if captured.erroneous { return captured.error; }
+
+    def outcome: process.Output = captured.value;
+    def out: result<void>       = record(&memory, work, name, ".out", strings.view_bytes(outcome.stdout));
+
+    if out.erroneous { return out.error; }
+
+    def err: result<void> = record(&memory, work, name, ".err", strings.view_bytes(outcome.stderr));
+    if err.erroneous { return err.error; }
+    if !outcome.status.exited { return error("tool-test child terminated by a signal"); }
+
+    def code: result<string> = std.to_string_i32(&memory, outcome.status.code);
+    if code.erroneous { return code.error; }
+
+    def line: strings.StringResult = strings.concat(&memory, code.value, "\n", 64);
+    if line.status != status.OK { return error("cannot format child status"); }
+
+    def saved: result<void> = record(&memory, work, name, ".status", line.value);
+    if saved.erroneous { return saved.error; }
+
+    if outcome.status.code != expected {
+        report(name);
+        report(strings.view_bytes(outcome.stdout));
+        report(strings.view_bytes(outcome.stderr));
+
+        return error("tool-test child exited with an unexpected status");
+    }
+
+    return;
+}
+
+// Private fixture-tree cleanup, only for a tree we exclusively created and whose
+// children have stopped. No symlink traversal under that stable-tree assumption.
+// Concurrent renaming/replacement is unsupported; this is not a public rm -rf API.
+def pub remove_fixture_tree(path: string, depth: u64) -> result<void> {
+    if depth == 0 { return error("fixture cleanup depth limit exceeded"); }
+
+    def metadata: fs.MetadataResult = fs.metadata(path);
+    if metadata.status != status.OK { return error("cannot inspect fixture cleanup path"); }
+
+    if metadata.kind != fs.DIRECTORY {
+        if fs.remove_file(path).status != status.OK { return error("cannot unlink fixture entry"); }
+
+        return;
+    }
+
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+
+    def opened: fs.DirectoryResult = fs.Directory.open(&owner, path);
+    if opened.status != status.OK { return error("cannot open fixture cleanup directory"); }
+
+    def mut directory: fs.Directory = opened.value;
+    defer close_directory(&directory);
+
+    def mut scanning: bool = true;
+
+    while scanning {
+        scratch.reset();
+        def entry: fs.DirectoryEntryResult = directory.next(&scratch);
+
+        if entry.status == status.END {
+            scanning = false;
+        } else if entry.status != status.OK {
+            return error("cannot read fixture cleanup directory");
+        } else {
+            def child: result<string> = joined(&scratch, path, entry.name);
+            if child.erroneous { return child.error; }
+
+            def removed: result<void> = remove_fixture_tree(child.value, depth - 1);
+            if removed.erroneous { return removed.error; }
+        }
+    }
+
+    if directory.close().status != status.OK { return error("cannot close fixture cleanup directory"); }
+
+    def removed: result<void> = fs.remove_dir(path);
+    if removed.erroneous { return removed.error; }
+
+    return;
+}

@@ -24,4 +24,15 @@ clear diagnostics. Run the relevant targeted tests and the `check-core` target
 before proposing a release change.
 
 Follow the [Gloin source style](docs/gloin-style.md) for `.gloin` files and run
-`python3 scripts/format-gloin.py --check` before submitting them.
+`build/gloinfmt --check .` before submitting them. See the
+[formatter guide](docs/gloinfmt.md) for single-file output and exit codes.
+
+## Versioning before 1.0
+
+We use `0.minor.patch` while the language and standard library are evolving.
+A release that adds or changes user-visible language or standard-library
+functionality increments the minor version; several related features may ship
+together in one release. A release limited to compatible fixes and documentation
+increments the patch version. Breaking changes are possible before 1.0, but
+release notes must identify them and explain the migration. Versions change when
+we cut a release, not for each individual commit.

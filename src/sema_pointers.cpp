@@ -52,6 +52,10 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
             log_error("Address requires runtime storage, not a function or constant");
             return {};
         }
+        if (take_address && dynamic_cast<ResultType *>(type.get())) {
+            log_error("Result bindings cannot be aliased through a pointer");
+            return {};
+        }
         if (take_address)
             recording->address_taken.insert(symbol->id);
         return {type, symbol->is_mutable, true};
@@ -69,6 +73,12 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
         return {type, base.writable, base.addressable};
     }
     if (const auto *member = dynamic_cast<const MemberAccessExpression *>(expression)) {
+        if (auto result = recording->types.find(member->left.get());
+            result != recording->types.end() &&
+            (result->second.is_result() || result->second.is_error())) {
+            log_error("Result and error members are read-only");
+            return {};
+        }
         if (auto *name = dynamic_cast<const Identifier *>(member->member.get());
             name && name->value == "len" &&
             std::dynamic_pointer_cast<SliceType>(check_expression(member->left.get()))) {

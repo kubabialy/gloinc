@@ -1,0 +1,187 @@
+// Conservative, byte-preserving layout formatter for Gloin source.
+import "@arena";
+import "@status";
+import "@strings";
+import "./style.gloin";
+
+def struct Layout {
+    def mut braces: i32,
+    def mut brace_parens: [i32; 256],
+    def mut parens: i32,
+    def mut brackets: i32,
+    def mut boolean_continuation: bool,
+}
+
+def byte(source: string, index: u64) -> u8 {
+    return strings.byte_at(source, index).value;
+}
+
+def whitespace(value: u8) -> bool {
+    return value == 32 || value == 9 || value == 13;
+}
+
+def scan_line(layout: &Layout, source: string, start: u64, end: u64) -> bool {
+    def mut quote: u8     = 0;
+    def mut escaped: bool = false;
+    def mut cursor: u64   = start;
+
+    while cursor < end {
+        def current: u8 = byte(source, cursor);
+
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+            } else if current == 92 {
+                escaped = true;
+            } else if current == quote {
+                quote = 0;
+            }
+        } else if current == 47 && cursor + 1 < end && byte(source, cursor + 1) == 47 {
+            layout.boolean_continuation = false;
+
+            return true;
+        } else if current == 34 || current == 39 {
+            quote = current;
+        } else if current == 123 {
+            if layout.braces == 256 { return false; }
+
+            layout.brace_parens[layout.braces] = layout.parens;
+            layout.braces                      = layout.braces + 1;
+        } else if current == 125 {
+            if layout.braces > 0 { layout.braces = layout.braces - 1; }
+        } else if current == 40 {
+            layout.parens = layout.parens + 1;
+        } else if current == 41 {
+            if layout.parens > 0 { layout.parens = layout.parens - 1; }
+        } else if current == 91 {
+            layout.brackets = layout.brackets + 1;
+        } else if current == 93 {
+            if layout.brackets > 0 { layout.brackets = layout.brackets - 1; }
+        }
+
+        cursor = cursor + 1;
+    }
+
+    layout.boolean_continuation = end - start >= 2 &&
+        ((byte(source, end - 2) == 124 && byte(source, end - 1) == 124) ||
+            (byte(source, end - 2) == 38 && byte(source, end - 1) == 38));
+
+    return true;
+}
+
+def indentation(layout: &Layout, source: string, start: u64, end: u64) -> i32 {
+    def mut braces: i32   = layout.braces;
+    def mut parens: i32   = layout.parens;
+    def mut brackets: i32 = layout.brackets;
+    def mut cursor: u64   = start;
+    def mut closing: bool = true;
+
+    while closing && cursor < end {
+        def current: u8 = byte(source, cursor);
+
+        if current == 125 {
+            if braces > 0 { braces = braces - 1; }
+        } else if current == 41 {
+            if parens > 0 { parens = parens - 1; }
+        } else if current == 93 {
+            if brackets > 0 { brackets = brackets - 1; }
+        } else {
+            closing = false;
+        }
+
+        if closing { cursor = cursor + 1; }
+    }
+
+    def mut level: i32    = braces;
+    def mut baseline: i32 = 0;
+
+    if braces > 0 && braces <= 256 { baseline = layout.brace_parens[braces - 1]; }
+    if parens > baseline { level = level + 1; }
+    if brackets > 0 { level = level + 1; }
+
+    if layout.boolean_continuation || (end - start >= 2 &&
+            ((byte(source, start) == 124 && byte(source, start + 1) == 124) ||
+            (byte(source, start) == 38 && byte(source, start + 1) == 38))) {
+        level = level + 1;
+    }
+
+    return level;
+}
+
+// Normalizes indentation before statement grouping and assignment alignment.
+// Input is bounded to 8 MiB; output is bounded to eight times that plus 64 bytes.
+def pub format_text(memory: &arena.GeneralArena, source: string) -> result<string> {
+    def length: u64 = strings.byte_length(source);
+    if length > 8388608 { return error("source exceeds 8 MiB"); }
+    if length == 0 { return ""; }
+
+    def made: strings.BuilderResult = strings.StringBuilder.create(memory, length * 8 + 64);
+    if made.status != status.OK { return error("formatter output allocation failed"); }
+
+    def mut output: strings.StringBuilder = made.value;
+
+    def mut newline: string = "\n";
+    if strings.contains(source, "\r\n") { newline = "\r\n"; }
+
+    def mut layout: Layout = Layout {
+        braces: 0,
+        brace_parens: zeroed,
+        parens: 0,
+        brackets: 0,
+        boolean_continuation: false
+    };
+
+    def mut cursor: u64         = 0;
+    def mut wrote: bool         = false;
+    def mut pending_blank: bool = false;
+
+    while cursor < length {
+        def mut end: u64 = cursor;
+
+        while end < length && byte(source, end) != 10 { end = end + 1; }
+
+        def mut first: u64 = cursor;
+        def mut last: u64  = end;
+
+        while first < last && whitespace(byte(source, first)) { first = first + 1; }
+        while last > first && whitespace(byte(source, last - 1)) { last = last - 1; }
+
+        if first == last {
+            if wrote { pending_blank = true; }
+        } else {
+            if pending_blank {
+                if output.append(newline) != status.OK { return error("formatter output too large"); }
+
+                pending_blank = false;
+            }
+
+            def level: i32 = indentation(&layout, source, first, last);
+
+            for def mut index: i32 = 0; index < level; index = index + 1 {
+                if output.append("    ") != status.OK { return error("formatter output too large"); }
+            }
+
+            def line: string = strings.slice_bytes(source, first, last - first).value;
+            if output.append(line) != status.OK || output.append(newline) != status.OK {
+                return error("formatter output too large");
+            }
+
+            if !scan_line(&layout, source, first, last) {
+                return error("source nesting exceeds 256 braces");
+            }
+
+            wrote = true;
+        }
+
+        cursor = end;
+        if cursor < length { cursor = cursor + 1; }
+    }
+
+    def formatted: strings.StringResult = output.to_string(memory);
+    if formatted.status != status.OK { return error("formatter output copy failed"); }
+
+    def styled: result<string> = style.apply(memory, formatted.value, length * 8 + 64);
+    if styled.erroneous { return styled.error; }
+
+    return styled.value;
+}

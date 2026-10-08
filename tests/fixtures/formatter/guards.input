@@ -1,0 +1,9 @@
+def load() -> result<string> {
+def opened: result<string> = open();
+if opened.erroneous { return opened.error; }
+// Release with the resource's scope.
+def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+defer memory.free();
+def text: string = opened.value;
+return text;
+}

@@ -261,8 +261,9 @@ TEST_F(StandardLibraryTest, PackagedExampleChecksOutputAndConversionErrors) {
                prompt + "accepted: 10\naccepted: -3\naccepted: 35\ncount: 3\nsum: 42\n");
     expect_run(invoke({example}, source("", "stdin")), 0, prompt + "count: 0\nsum: 0\n");
     expect_run(invoke({example}, source("2147483648\n", "stdin")), 3,
-               prompt + "conversion error: 3\n");
-    expect_run(invoke({example}, source("oops\n", "stdin")), 3, prompt + "conversion error: 2\n");
+               prompt + "conversion error: signed decimal i32 is out of range\n");
+    expect_run(invoke({example}, source("oops\n", "stdin")), 3,
+               prompt + "conversion error: invalid signed decimal i32\n");
     expect_run(invoke({example}, source(std::string(129, '1') + "\n", "stdin")), 2,
                prompt + "input error: 5\n");
 }
@@ -292,8 +293,8 @@ TEST_F(StandardLibraryTest, AllocationFailureHasDefinedInputAndFormattingPolicie
         def pub try_alloc_bytes(self: &GeneralArena, size: u64) -> *u8 { return null; }
     })",
            "arena.gloin");
-    auto file = program(R"(def result: std.InputResult = std.input(&memory, 10);
-        if result.status != std.NO_MEMORY { return 1; } std.print(result.value); return 0;)");
+    auto file = program(R"(def outcome: std.InputResult = std.input(&memory, 10);
+        if outcome.status != std.NO_MEMORY { return 1; } std.print(outcome.value); return 0;)");
     expect_run(invoke({"--stdlib-dir", directory, file}), 0);
     expect_run(invoke({"--stdlib-dir", directory, gloin_test::standard_example}), 2,
                "Enter decimal i32 values, one per line; EOF finishes:\ninput error: 6\n");

@@ -1,7 +1,620 @@
-// Invocation arguments, host environment, and current working directory.
+// Invocation context and explicit child processes. See docs/child-processes.md.
 import "@arena";
 import "@strings";
 import "@status";
+import "@time";
+
+// A child exit is a value, including nonzero exits and signal termination.
+def pub struct ExitStatus {
+    def pub exited: bool,
+    def pub code: i32,
+    def pub signal: i32,
+
+    def pub success(self: &const ExitStatus) -> bool {
+        return self.exited && self.code == 0;
+    }
+}
+
+def pub struct PollOutcome {
+    def pub ready: bool,
+    def pub status: ExitStatus,
+}
+
+// Borrowed launch configuration, consumed synchronously by start_with.
+// Empty cwd inherits. Explicit environment entries replace the entire host env.
+def pub struct Options {
+    def pub mut cwd: string,
+    def pub mut inherit_environment: bool,
+    def pub mut environment: [const string],
+    def pub mut piped: bool,
+    def pub mut new_process_group: bool,
+    // Zero inherits. Nonzero sets only the child's soft RLIMIT_STACK before exec.
+    // macOS: nonzero requires the host main thread. See the process guide.
+    def pub mut stack_limit_bytes: u64,
+
+    def pub static defaults() -> Options {
+        def empty: [string; 0] = {};
+
+        return Options {
+            cwd: "",
+            inherit_environment: true,
+            environment: empty[..],
+            piped: false,
+            new_process_group: false,
+            stack_limit_bytes: 0
+        };
+    }
+}
+
+// Native readiness bits returned by wait_io.
+def pub const STDIN_WRITABLE: i32  = 1;
+def pub const STDOUT_READABLE: i32 = 2;
+def pub const STDERR_READABLE: i32 = 4;
+
+def pub struct PipeOutcome {
+    def pub state: i32, // status.OK, END, or WOULD_BLOCK
+    def pub count: u64,
+}
+
+// Borrowed output views; retain the caller buffers for as long as these are used.
+def pub struct Output {
+    def pub status: ExitStatus,
+    def pub stdout: [const u8],
+    def pub stderr: [const u8],
+    def pub stdin_written: u64,
+}
+
+def close_descriptor(descriptor: &i32) -> i32 {
+    if *descriptor < 0 { return status.OK; }
+
+    def fd: i32 = *descriptor;
+    *descriptor = -1;
+
+    def mut detail: i32 = 0;
+
+    return __process_pipe_close(fd, &detail);
+}
+
+// At most 10ms between child-status checks, rounded up to 1ms near deadline.
+// Subtraction avoids overflow for long duration budgets.
+def wait_interval(started: time.Instant, timeout: time.Duration) -> result<i32> {
+    def now: time.InstantResult = time.monotonic_now();
+    if now.status != status.OK { return error("child deadline clock failed"); }
+
+    def elapsed: time.DurationResult = time.elapsed(started, now.value);
+    if elapsed.status != status.OK { return error("child deadline clock moved backwards"); }
+    if elapsed.value.nanoseconds >= timeout.nanoseconds { return 0; }
+    if timeout.nanoseconds - elapsed.value.nanoseconds < 10000000 { return 1; }
+
+    return 10;
+}
+
+def struct ChildState {
+    def mut pid: i64,
+    def piped: bool,
+    def group: bool,
+    def mut input: i32,
+    def mut output: i32,
+    def mut errors: i32,
+    def mut finished: bool,
+    def mut closed: bool,
+    def mut status: ExitStatus,
+}
+
+// Copies alias arena-owned state. Reap/close before resetting the owner arena.
+def pub struct Child {
+    def state: *ChildState,
+
+    def pub is_open(self: &const Child) -> bool {
+        return self.state != null && !self.state.closed;
+    }
+
+    def observe(self: &Child, block: i32) -> result<PollOutcome> {
+        if !self.is_open() { return error("child process is closed"); }
+
+        if !self.state.finished {
+            def mut kind: i32    = 0;
+            def mut code: i32    = 0;
+            def mut detail: i32  = 0;
+            def mut outcome: i32 = 0;
+
+            if self.state.group {
+                outcome = __process_observe(self.state.pid, block, &kind, &code, &detail);
+            } else {
+                outcome = __process_wait(self.state.pid, block, &kind, &code, &detail);
+            }
+
+            if outcome == status.CLOSED {
+                def released: i32 = self.close_pipes();
+                self.state.closed = true;
+                self.state.pid    = 0;
+
+                if released != status.OK { return error("child pipe cleanup failed after external reap"); }
+
+                return error("child process was reaped outside its owner");
+            }
+
+            if outcome != status.OK { return error("cannot wait for child process"); }
+
+            if kind != 0 {
+                def mut exit_code: i32 = 0;
+                def mut signal: i32    = 0;
+
+                if kind == 1 {
+                    exit_code = code;
+                } else {
+                    signal = code;
+                }
+
+                self.state.finished = true;
+                if !self.state.group { self.state.pid = 0; }
+
+                self.state.status = ExitStatus {
+                    exited: kind == 1,
+                    code: exit_code,
+                    signal: signal
+                };
+            }
+        }
+
+        return PollOutcome {
+            ready: self.state.finished,
+            status: self.state.status
+        };
+    }
+
+    // Nonblocking observation. Group leaders remain waitable until close.
+    def pub poll(self: &Child) -> result<PollOutcome> {
+        def observed: result<PollOutcome> = self.observe(0);
+        if observed.erroneous { return observed.error; }
+
+        return observed.value;
+    }
+
+    // Blocks without a deadline. Cached terminal status is shared by all aliases.
+    def pub wait(self: &Child) -> result<ExitStatus> {
+        def observed: result<PollOutcome> = self.observe(1);
+        if observed.erroneous { return observed.error; }
+
+        return observed.value.status;
+    }
+
+    def send_signal(self: &Child, force: i32) -> result<void> {
+        def observed: result<PollOutcome> = self.poll();
+        if observed.erroneous { return observed.error; }
+        if observed.value.ready && !self.state.group { return; }
+
+        def mut detail: i32 = 0;
+        def mut code: i32   = 0;
+
+        if self.state.group {
+            code = __process_group_signal(self.state.pid, force, &detail);
+        } else {
+            code = __process_signal(self.state.pid, force, &detail);
+        }
+
+        if code == status.CLOSED {
+            def released: i32 = self.close_pipes();
+            self.state.closed = true;
+            self.state.pid    = 0;
+
+            if released != status.OK { return error("child pipe cleanup failed after external reap"); }
+
+            return error("child process was reaped outside its owner");
+        }
+
+        if code != status.OK { return error("cannot signal child process"); }
+
+        return;
+    }
+
+    // Requests SIGTERM; the child may handle/ignore it. Wait/close separately.
+    def pub terminate(self: &Child) -> result<void> {
+        def sent: result<void> = self.send_signal(0);
+        if sent.erroneous { return sent.error; }
+
+        return;
+    }
+
+    // Requests SIGKILL. Completion still requires wait/close.
+    def pub kill(self: &Child) -> result<void> {
+        def sent: result<void> = self.send_signal(1);
+        if sent.erroneous { return sent.error; }
+
+        return;
+    }
+
+    // One nonblocking operation. END/WOULD_BLOCK are ordinary outcomes.
+    def pub write_stdin(self: &Child, bytes: [const u8]) -> result<PipeOutcome> {
+        if !self.is_open() || !self.state.piped { return error("child has no piped stdin"); }
+        if self.state.input < 0 { return PipeOutcome { state: status.END, count: 0 }; }
+
+        def zero: u64 = 0;
+        if bytes.len == zero { return PipeOutcome { state: status.OK, count: 0 }; }
+
+        def mut count: u64  = 0;
+        def mut detail: i32 = 0;
+        def code: i32       = __process_pipe_write(self.state.input, &bytes[0], bytes.len, &count, &detail);
+
+        if code != status.OK && code != status.END && code != status.WOULD_BLOCK {
+            return error("child stdin write failed");
+        }
+
+        if code == status.END {
+            def closed: result<void> = self.close_stdin();
+            if closed.erroneous { return closed.error; }
+        }
+
+        return PipeOutcome { state: code, count: count };
+    }
+
+    // Closing stdin sends EOF after bytes already accepted by the pipe.
+    def pub close_stdin(self: &Child) -> result<void> {
+        if !self.is_open() || !self.state.piped { return error("child has no piped stdin"); }
+        if close_descriptor(&self.state.input) != status.OK { return error("child stdin close failed"); }
+
+        return;
+    }
+
+    def read_pipe(self: &Child, descriptor: &i32, destination: [u8]) -> result<PipeOutcome> {
+        if !self.is_open() || !self.state.piped { return error("child has no piped output"); }
+
+        def zero: u64 = 0;
+        if destination.len == zero { return error("child pipe read needs nonempty storage"); }
+        if *descriptor < 0 { return PipeOutcome { state: status.END, count: 0 }; }
+
+        def mut count: u64  = 0;
+        def mut detail: i32 = 0;
+        def code: i32       = __process_pipe_read(*descriptor, &destination[0], destination.len, &count, &detail);
+
+        if code != status.OK && code != status.END && code != status.WOULD_BLOCK {
+            return error("child pipe read failed");
+        }
+        if code == status.END && close_descriptor(descriptor) != status.OK {
+            return error("child output close failed");
+        }
+
+        return PipeOutcome { state: code, count: count };
+    }
+
+    def pub read_stdout(self: &Child, destination: [u8]) -> result<PipeOutcome> {
+        if !self.is_open() { return error("child process is closed"); }
+
+        def read: result<PipeOutcome> = self.read_pipe(&self.state.output, destination);
+        if read.erroneous { return read.error; }
+
+        return read.value;
+    }
+
+    def pub read_stderr(self: &Child, destination: [u8]) -> result<PipeOutcome> {
+        if !self.is_open() { return error("child process is closed"); }
+
+        def read: result<PipeOutcome> = self.read_pipe(&self.state.errors, destination);
+        if read.erroneous { return read.error; }
+
+        return read.value;
+    }
+
+    // A readiness hint, including EOF/broken pipe. EINTR can return zero early.
+    // Suppress stdin interest when there is no pending input, avoiding busy loops.
+    def pub wait_io(self: &Child, write_input: bool, timeout_ms: i32) -> result<i32> {
+        if !self.is_open() || !self.state.piped { return error("child has no pipes"); }
+
+        def mut input: i32 = -1;
+        if write_input { input = self.state.input; }
+
+        def mut ready: i32  = 0;
+        def mut detail: i32 = 0;
+        def code: i32       = __process_pipe_wait(input, self.state.output, self.state.errors, timeout_ms, &ready, &detail);
+
+        if code != status.OK { return error("child pipe readiness wait failed"); }
+
+        return ready;
+    }
+
+    // Expiration is ready=false and leaves the child owned and running.
+    def pub wait_timeout(self: &Child, timeout: time.Duration) -> result<PollOutcome> {
+        def started: time.InstantResult = time.monotonic_now();
+        if started.status != status.OK { return error("child deadline clock failed"); }
+
+        while true {
+            def observed: result<PollOutcome> = self.poll();
+            if observed.erroneous { return observed.error; }
+            if observed.value.ready { return observed.value; }
+
+            def interval: result<i32> = wait_interval(started.value, timeout);
+            if interval.erroneous { return interval.error; }
+            if interval.value == 0 { return observed.value; }
+
+            def mut ready: i32  = 0;
+            def mut detail: i32 = 0;
+
+            if __process_pipe_wait(-1, -1, -1, interval.value, &ready, &detail) != status.OK {
+                return error("child timed wait failed");
+            }
+        }
+
+        return error("child timed wait ended unexpectedly");
+    }
+
+    // Capture has no dynamic allocation. Buffers and input must not overlap.
+    def pump(self: &Child, input: [const u8], output: [u8], errors: [u8], timeout: time.Duration) -> result<Output> {
+        if !self.is_open() || !self.state.piped { return error("child has no pipes"); }
+
+        def started: time.InstantResult = time.monotonic_now();
+        if started.status != status.OK { return error("child deadline clock failed"); }
+
+        def mut sent: u64            = 0;
+        def mut received: u64        = 0;
+        def mut received_errors: u64 = 0;
+        def mut probe: [u8; 1]       = zeroed;
+
+        while true {
+            def interval: result<i32> = wait_interval(started.value, timeout);
+            if interval.erroneous { return interval.error; }
+            if interval.value == 0 { return error("child communication timed out"); }
+
+            if self.state.input >= 0 {
+                if sent < input.len {
+                    def written: result<PipeOutcome> = self.write_stdin(input[sent..]);
+                    if written.erroneous { return written.error; }
+
+                    sent = sent + written.value.count;
+                }
+
+                if sent == input.len {
+                    def closed: result<void> = self.close_stdin();
+                    if closed.erroneous { return closed.error; }
+                }
+            }
+
+            if self.state.output >= 0 {
+                def mut storage: [u8] = probe[..];
+                if received < output.len { storage = output[received..]; }
+
+                def read: result<PipeOutcome> = self.read_stdout(storage);
+                if read.erroneous { return read.error; }
+                if read.value.count > output.len - received { return error("child stdout limit exceeded"); }
+
+                received = received + read.value.count;
+            }
+
+            if self.state.errors >= 0 {
+                def mut storage: [u8] = probe[..];
+                if received_errors < errors.len { storage = errors[received_errors..]; }
+
+                def read: result<PipeOutcome> = self.read_stderr(storage);
+                if read.erroneous { return read.error; }
+                if read.value.count > errors.len - received_errors { return error("child stderr limit exceeded"); }
+
+                received_errors = received_errors + read.value.count;
+            }
+
+            def observed: result<PollOutcome> = self.poll();
+            if observed.erroneous { return observed.error; }
+            if observed.value.ready && self.state.output < 0 && self.state.errors < 0 {
+                return Output {
+                    status: observed.value.status,
+                    stdout: output[..received],
+                    stderr: errors[..received_errors],
+                    stdin_written: sent
+                };
+            }
+
+            def ready: result<i32> = self.wait_io(self.state.input >= 0, interval.value);
+            if ready.erroneous { return ready.error; }
+        }
+
+        return error("child communication ended unexpectedly");
+    }
+
+    // Always closes pipes and reaps; failure/timeout kills the configured scope.
+    // A cleanup failure takes precedence and the caller must retry close.
+    def pub communicate(self: &Child, input: [const u8], output: [u8], errors: [u8], timeout: time.Duration) -> result<Output> {
+        if !self.is_open() || !self.state.piped { return error("child has no pipes"); }
+
+        def outcome: result<Output> = self.pump(input, output, errors, timeout);
+
+        if outcome.erroneous {
+            def closed: result<void> = self.close();
+            if closed.erroneous { return closed.error; }
+
+            return outcome.error;
+        }
+
+        def captured: Output     = outcome.value;
+        def closed: result<void> = self.close();
+
+        if closed.erroneous { return closed.error; }
+
+        return captured;
+    }
+
+    def close_pipes(self: &Child) -> i32 {
+        def input: i32  = close_descriptor(&self.state.input);
+        def output: i32 = close_descriptor(&self.state.output);
+        def errors: i32 = close_descriptor(&self.state.errors);
+
+        if input != status.OK { return input; }
+        if output != status.OK { return output; }
+
+        return errors;
+    }
+
+    // Idempotent cleanup: signal the configured scope, reap, invalidate aliases.
+    // A group is cleaned up even when its leader has already exited.
+    // May block waiting for OS termination. Failure retains ownership when possible.
+    def pub close(self: &Child) -> result<void> {
+        if !self.is_open() { return; }
+
+        def released: i32         = self.close_pipes();
+        def stopped: result<void> = self.kill();
+
+        if stopped.erroneous { return stopped.error; }
+
+        def finished: result<ExitStatus> = self.wait();
+        if finished.erroneous { return finished.error; }
+
+        if self.state.group {
+            def mut kind: i32   = 0;
+            def mut code: i32   = 0;
+            def mut detail: i32 = 0;
+            def reaped: i32     = __process_wait(self.state.pid, 1, &kind, &code, &detail);
+
+            if reaped == status.CLOSED {
+                self.state.closed = true;
+                self.state.pid    = 0;
+
+                return error("child process was reaped outside its owner");
+            }
+            if reaped != status.OK { return error("cannot reap child group leader"); }
+
+            self.state.pid = 0;
+        }
+
+        self.state.closed = true;
+
+        if released != status.OK { return error("child pipe cleanup failed"); }
+
+        return;
+    }
+}
+
+// arguments excludes argv[0]. No shell/PATH lookup. Inherits cwd, environment,
+// and standard streams; all other file descriptors are closed in the child.
+// Argument bytes are copied during start and need not outlive it.
+def pub start(owner: &arena.GeneralArena, executable: string, arguments: [const string]) -> result<Child> {
+    def started: result<Child> = start_impl(owner, executable, arguments, Options.defaults(), false);
+    if started.erroneous { return started.error; }
+
+    return started.value;
+}
+
+// Replace stdin/stdout/stderr with independent pipes; parent ends never block.
+def pub start_piped(owner: &arena.GeneralArena, executable: string, arguments: [const string]) -> result<Child> {
+    def mut options: Options = Options.defaults();
+    options.piped = true;
+
+    def started: result<Child> = start_impl(owner, executable, arguments, options, false);
+    if started.erroneous { return started.error; }
+
+    return started.value;
+}
+
+// Configuration strings and slices must remain live only until this returns.
+def pub start_with(owner: &arena.GeneralArena, executable: string, arguments: [const string], options: Options) -> result<Child> {
+    def started: result<Child> = start_impl(owner, executable, arguments, options, true);
+    if started.erroneous { return started.error; }
+
+    return started.value;
+}
+
+def start_impl(owner: &arena.GeneralArena, executable: string, arguments: [const string], options: Options, configured: bool) -> result<Child> {
+    if strings.is_empty(executable) || strings.contains(executable, "\0") {
+        return error("invalid child executable path");
+    }
+
+    for def mut i: u64 = 0; i < arguments.len; i = i + 1 {
+        if strings.contains(arguments[i], "\0") { return error("child argument contains NUL"); }
+    }
+
+    if strings.contains(options.cwd, "\0") { return error("child working directory contains NUL"); }
+    if options.stack_limit_bytes > 9223372036854775806 { return error("child stack limit is too large"); }
+
+    def zero: u64 = 0;
+    if options.inherit_environment && options.environment.len != zero {
+        return error("child environment must be inherited or supplied, not both");
+    }
+
+    for def mut i: u64 = 0; i < options.environment.len; i = i + 1 {
+        def entry: string             = options.environment[i];
+        def equal: strings.FindResult = strings.find(entry, "=");
+
+        if !equal.found || equal.offset == zero || strings.contains(entry, "\0") {
+            return error("invalid child environment entry");
+        }
+
+        def key: string = strings.slice_bytes(entry, 0, equal.offset).value;
+
+        for def mut j: u64 = 0; j < i; j = j + 1 {
+            def previous: string              = options.environment[j];
+            def separator: strings.FindResult = strings.find(previous, "=");
+
+            if strings.equal(key, strings.slice_bytes(previous, 0, separator.offset).value) {
+                return error("duplicate child environment name");
+            }
+        }
+    }
+
+    def state: *ChildState = owner.try_alloc(ChildState {
+        pid: 0,
+        piped: options.piped,
+        group: options.new_process_group,
+        input: -1,
+        output: -1,
+        errors: -1,
+        finished: false,
+        closed: false,
+        status: ExitStatus {
+            exited: false,
+            code: 0,
+            signal: 0
+        }
+    });
+    if state == null { return error("child metadata allocation failed"); }
+
+    def mut data: *const string = null;
+
+    if arguments.len > zero { data = &arguments[0]; }
+
+    def mut detail: i32 = 0;
+    def mut code: i32   = 0;
+
+    if configured {
+        def mut environment: *const string = null;
+        if options.environment.len > zero { environment = &options.environment[0]; }
+
+        def mut inherited: i32 = 0;
+        def mut piped: i32     = 0;
+        def mut group: i32     = 0;
+
+        if options.inherit_environment { inherited = 1; }
+        if options.piped { piped = 1; }
+        if options.new_process_group { group = 1; }
+
+        code = __process_start_options(executable, options.cwd, data, arguments.len,
+            environment, options.environment.len, inherited, piped, group, options.stack_limit_bytes,
+            &state.pid, &state.input, &state.output, &state.errors, &detail);
+    } else if options.piped {
+        code = __process_start_piped(executable, data, arguments.len, &state.pid,
+            &state.input, &state.output, &state.errors, &detail);
+    } else {
+        code = __process_start(executable, data, arguments.len, &state.pid, &detail);
+    }
+
+    if code == status.NO_MEMORY { return error("child launch allocation failed"); }
+    if code == status.INVALID && options.stack_limit_bytes != zero {
+        return error("child stack limit or host launch context is invalid or unsupported");
+    }
+
+    if code == status.NOT_FOUND {
+        if configured { return error("child executable or working directory was not found"); }
+
+        return error("child executable was not found");
+    }
+
+    if code == status.PERMISSION_DENIED {
+        if configured { return error("child executable or working directory permission denied"); }
+
+        return error("child executable permission denied");
+    }
+
+    if code != status.OK { return error("cannot start child process"); }
+
+    return Child {
+        state: state
+    };
+}
 
 // Failures have static empty text; nonempty success owns arena bytes until reset/free.
 // arg/env have os_error=0; cwd preserves native errno. Empty success can be static.
@@ -22,8 +635,9 @@ def pub arg_count() -> u64 {
 // NO_MEMORY is recoverable; bytes survive argument-scope exit but expire on memory reset/free.
 def pub arg(memory: &arena.GeneralArena, index: u64) -> TextResult {
     def mut length: u64 = 0;
-    def mut code: i32 = 0;
-    def bytes: *u8 = __process_arg(index, &length, &code);
+    def mut code: i32   = 0;
+    def bytes: *u8      = __process_arg(index, &length, &code);
+
     if code != status.OK {
         return TextResult {
             status: code,
@@ -31,11 +645,13 @@ def pub arg(memory: &arena.GeneralArena, index: u64) -> TextResult {
             value: ""
         };
     }
-    def result: strings.StringResult = strings.copy(memory, __process_string_view(bytes, length));
+
+    def outcome: strings.StringResult = strings.copy(memory, __process_string_view(bytes, length));
+
     return TextResult {
-        status: result.status,
+        status: outcome.status,
         os_error: 0,
-        value: result.value
+        value: outcome.value
     };
 }
 
@@ -45,8 +661,9 @@ def pub arg(memory: &arena.GeneralArena, index: u64) -> TextResult {
 // and one exact-size arena request for nonempty value. NO_MEMORY is recoverable; arena lifetime applies.
 def pub env(memory: &arena.GeneralArena, name: string) -> TextResult {
     def mut length: u64 = 0;
-    def mut code: i32 = 0;
-    def bytes: *u8 = __process_env(name, &length, &code);
+    def mut code: i32   = 0;
+    def bytes: *u8      = __process_env(name, &length, &code);
+
     if code != status.OK {
         return TextResult {
             status: code,
@@ -54,11 +671,13 @@ def pub env(memory: &arena.GeneralArena, name: string) -> TextResult {
             value: ""
         };
     }
-    def result: strings.StringResult = strings.copy(memory, __process_string_view(bytes, length));
+
+    def outcome: strings.StringResult = strings.copy(memory, __process_string_view(bytes, length));
+
     return TextResult {
-        status: result.status,
+        status: outcome.status,
         os_error: 0,
-        value: result.value
+        value: outcome.value
     };
 }
 
@@ -74,6 +693,7 @@ def pub cwd(memory: &arena.GeneralArena, max_bytes: u64) -> TextResult {
             value: ""
         };
     }
+
     def bytes: *u8 = memory.try_alloc_bytes(max_bytes + 1);
     if bytes == null {
         return TextResult {
@@ -82,16 +702,19 @@ def pub cwd(memory: &arena.GeneralArena, max_bytes: u64) -> TextResult {
             value: ""
         };
     }
-    def mut length: u64 = 0;
-    def mut error: i32 = 0;
-    def code: i32 = __process_cwd(&*bytes, max_bytes + 1, &length, &error);
+
+    def mut length: u64       = 0;
+    def mut failure_code: i32 = 0;
+    def code: i32             = __process_cwd(&*bytes, max_bytes + 1, &length, &failure_code);
+
     if code != status.OK {
         return TextResult {
             status: code,
-            os_error: error,
+            os_error: failure_code,
             value: ""
         };
     }
+
     return TextResult {
         status: code,
         os_error: 0,

@@ -6,9 +6,9 @@ that pattern is in the explicit target source list and fails configuration if a
 suite is omitted. Support programs under `tests/support` are harness fixtures,
 not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
-`tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
+`tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **933 tests**:
+The current source definitions and CTest discovery contain **1034 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -23,7 +23,7 @@ The current source definitions and CTest discovery contain **933 tests**:
 | OperatorsTest | 16 |
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
-| LoweringTest | 45 |
+| LoweringTest | 47 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -32,6 +32,7 @@ The current source definitions and CTest discovery contain **933 tests**:
 | CodeGenSpecTest | 2 |
 | CodeGenGenericsTest | 4 |
 | CheckedGenericsTest | 13 |
+| ResultTest | 8 |
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
 | ArenaTest | 21 |
@@ -47,23 +48,33 @@ The current source definitions and CTest discovery contain **933 tests**:
 | TextLibraryTest | 17 |
 | NumericLibraryTest | 12 |
 | NumericRuntimeTest | 16 |
-| IoLibraryTest | 15 |
+| IoLibraryTest | 16 |
 | IoRuntimeTest | 14 |
-| ContextLibraryTest | 14 |
-| ContextRuntimeTest | 9 |
+| NetworkLibraryTest | 10 |
+| NetRuntimeTest | 3 |
+| TlsRuntimeTest | 7 |
+| TlsClientSmoke | 1 |
+| HttpClientSmoke | 1 |
+| HttpStreamSmoke | 1 |
+| JsonSmoke | 1 |
+| GloinFormatterSmoke | 1 |
+| GloinToolingSmoke | 2 |
+| GloinIntegratedStress | 1 |
+| ContextLibraryTest | 25 |
+| ContextRuntimeTest | 40 |
 | MathLibraryTest | 12 |
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 15 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
-| ModuleTest | 25 |
+| ModuleTest | 29 |
 | OrdinaryStructTest | 14 |
 | EnumTest | 3 |
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 155 |
+| CoreAcceptanceTest | 171 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -78,9 +89,31 @@ passing on a non-null module.
 Maintained tests cover loops (SPEC-017), standard modules (SPEC-023), and local
 modules (SPEC-029). The CLI also exercises `core_counter.gloin`, `hello_world.gloin`,
 `arena_lab.gloin`, `module_lab.gloin`, `standard_library.gloin`, and
-`strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, and `statistics_tool.gloin`. Every remaining example passes `gloinc --check`.
+`strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, `statistics_tool.gloin`, `network_http.gloin`, `http_client.gloin`, `http_stream.gloin`, `json.gloin`, and `module_discovery.gloin`. The `.gloin` files under `examples/` pass `gloinc --check` on macOS and Ubuntu ARM64.
 
 ## Running and inspecting tests
+
+Child-process checks cover literal/empty arguments, normal and signaled exits,
+poll/wait caching, alias invalidation, cleanup, inherited cwd/environment/streams,
+nonstandard descriptor closure and signal-policy handling. The Gloin lifecycle
+fixture runs in JIT, native `-O0` and native `-O2`; IR assertions require the
+`gloin.abi_call` boundary. Native runtime checks also cover failed launches and
+invalid process IDs. The pipe fixture runs a Gloin peer that writes 256 KiB to
+each output before reading stdin; capture verifies binary bytes, exact and
+overflow limits, early stdin closure, deadlines, closed-output/live-child waits,
+and alias invalidation. Native tests cover descriptor leaks, closed host
+standard streams, readiness/EOF, and SIGPIPE policy in a multithreaded host.
+Launch-option tests cover relative executables inside a child cwd, inherited,
+empty and supplied environments, invalid/duplicate entries, unchanged parent
+state, grouped and ungrouped signals, retained exit status, descendant-held
+pipes, unrelated-child survival, external reaping and failed-cwd descriptor
+cleanup. The options fixture runs in JIT, `-O0` and `-O2` with GloinIR assertions.
+It repeats both the default launch path and the 2 MiB child soft stack path.
+An independent native probe verifies the actual soft/hard limits in all three
+Gloin modes. Native cases check unchanged parent limits/signals, hard ceilings,
+descriptors above a lowered limit, closed standard descriptors, failed setup
+without leaked children/pipes, normal exit 127 and platform thread restrictions.
+See [child processes](../docs/child-processes.md).
 
 After a tests-enabled build (see [toolchain.md](../docs/toolchain.md)):
 
@@ -91,10 +124,121 @@ ctest --test-dir build -j 4 --output-on-failure
 ctest --test-dir build -R '^(E2ETest|ExternalRunnerTest)' -j 4 --output-on-failure
 ```
 
-All CTest cases have a 30-second timeout. No known failures are disabled or marked
-as expected successes. A local parallel run excluding the four documented
-unsupported async/spawn cases passed **922 of 922 tests**, with no unexpected
-test-process crashes or skips.
+`GloinFormatterSmoke.LayoutAndTraversal` uses the Gloin test program in
+[`formatter/main.gloin`](formatter/main.gloin), compiled to a native executable
+and also run through JIT. It checks exact layout against `.input`/`.expected`
+pairs in `fixtures/formatter/`, recursive traversal, symlink exclusions, CRLF,
+CLI output and exit codes, and repeat formatting. Its independent Gloin token
+scanner checks source preservation across `examples/`, `stdlib/`, `tests/`, and
+`tools/`, including rejection fixtures. Installed/extracted copies in CI report
+directories do not expand this corpus.
+
+The [Gloin runner](formatter/runner.gloin) also creates its exclusive work
+directory, launches/captures children, checks exit codes, and removes successful
+fixtures. CTest only invokes the native harness; the temporary CMake script is
+gone. Pipes and new process groups are enabled together. Each child has a
+30-second communication deadline and 256 KiB input/output/error limits. Failures
+retain the evidence directory and print its path. Cleanup is bounded to 64
+levels and 64 KiB paths, assumes a stable owned tree, and tests broken/cyclic
+links plus a link to a separate sentinel directory. Native and JIT assertion
+passes, independent expected fixture bytes and token scanning are preserved.
+This test does not require Python.
+Build and run it with:
+
+```sh
+cmake --build build --target gloin_formatter gloin_formatter_tests
+ctest --test-dir build -R '^GloinFormatterSmoke\.' --output-on-failure
+```
+
+Its aggregate limit remains 90 seconds. The repository style gate is
+`build/gloinfmt --check .`.
+
+Compiler CTest cases have a 30-second timeout on ordinary macOS builds and
+120 seconds on Linux or sanitizer builds. Linux trap cases take longer under
+VM/CI load; instrumented Debug cases can perform many compiler invocations
+within one test. The filesystem/process signature matrix launches 143 compiler
+processes and has a 300-second aggregate limit in sanitizer builds only. Its
+isolated instrumented run took 119.9 seconds during release validation.
+Individual compiler invocations allow ten seconds normally or 30 seconds under
+sanitizers. The HTTP compiler/API
+fixtures allow 60 seconds per compiler invocation and 150 seconds per CTest
+case on both platforms. JIT compilation of the complete module can exceed the
+ordinary ten-second harness budget under parallel load, including cold relocated
+packages. HTTP integration fixtures allow 360 seconds for the entire matrix on both
+systems. Each JIT invocation runs a complete scenario matrix to avoid repeated
+compilation; request-level deadlines (including deliberate 500 ms expiry cases)
+remain unchanged. No known failures are disabled or marked as expected
+successes. The completed tooling candidate at `3ce4e81` passed the **987/987**
+required gate and both **501/501** package gates on hosted macOS ARM64 and
+Ubuntu x86_64. Serial and parallel audits each passed **1,030/1,034**, with
+exactly the four unsupported async/spawn failures and no skips. The macOS
+ASan/UBSan core passed **987/987**. All 48 example sources passed `--check`
+locally on macOS and Ubuntu ARM64.
+
+The [validation record](../docs/next-release-draft.md#current-local-validation)
+distinguishes complete local audits, subsequent focused checks and the complete
+hosted matrix. It preserves initial timeouts, the macOS exiting-process cleanup
+race, the early-413 peer correction and laptop sleep interruptions. All checks
+still run; the macOS workflow has a 60-minute overall budget.
+
+Earlier networking validation also checked the sibling streaming example's
+Gloin client and concurrent Gloin server in JIT and `-O2` on macOS and Ubuntu
+ARM64, including repeated batches, rejected requests and `gloinfmt`.
+
+## Development features after 0.0.4
+
+Eight `ResultTest` cases check success and failure returns, explicit forwarding,
+required `.erroneous` proofs including early returns, invalid construction and
+storage, `result<void>`, static error messages, source-typed struct/array/string
+payloads, JIT and native output, and checked `@std`/`@strings` APIs. Raw memory
+and custom arena acceptance cases check allocation, alignment, typed placement,
+release, and rejected unsafe arguments. Direct byte-slice I/O and vector live
+views/collection methods run through compiler, runtime, and packaged examples.
+Eight `NetworkLibraryTest` cases exercise local HTTP over JIT and native
+executables, exact request-head limits and injection rejection, every response
+split point, one-byte chunk decoding, malformed/truncated framing, metadata/body
+limits, built-in results, address construction, and socket alias close state.
+Streaming decoder cases vary every split with 1–3-byte reusable output buffers,
+stop at final-head/output boundaries, preserve following bytes, and enforce
+cumulative body limits.
+`HttpClientSmoke.LocalPeers` checks HTTP and verified HTTPS against local peers
+in JIT/native modes, including multi-buffer binary POSTs/responses, certificate
+rejection, deadlines despite progress, and connection cleanup. It also runs the
+packaged example with an ephemeral port. The zeroed-array acceptance case now
+checks a 64 KiB byte buffer in JIT and default native output. Three `NetRuntimeTest` cases check nonblocking and
+close-on-exec flags, readiness, partial-I/O statuses, TLS client validation, and invalid arguments.
+Seven `TlsRuntimeTest` cases add independent direct-OpenSSL interoperability,
+TLS 1.2/1.3 and old-protocol rejection, reusable configuration lifetime,
+encrypted/mismatched key rejection, binary backpressure, graceful shutdown,
+truncation and SIGPIPE policy. Two compiler cases check the new source-typed
+GloinIR ABI calls, public setup failures and private primitive access.
+`TlsClientSmoke.LocalPeers` now uses the [Gloin TLS driver](tls/README.md);
+trusted, wrong-host, untrusted, aliases and shutdown run in JIT/`-O0`/`-O2`.
+`HttpStreamSmoke.LocalPeers` runs known-length uploads, early rejection,
+producer/consumer pauses, deadline expiry during both pauses, partial output
+consumption, alias cancellation, short/excess input, and truncation after body
+delivery. It also runs 32 simultaneous exchanges over HTTP and HTTPS in JIT and
+native modes; 31 bodies exceed reusable buffers and one peer remains stalled
+until cancelled. Package gates run the installed streaming example too.
+The [network guide](../docs/networking.md) and [client guide](../docs/http-client.md) state the supported HTTP subset.
+
+`JsonSmoke.CodecAndState` checks `@json` in JIT, native `-O0`, and native `-O2`
+modes. The deterministic corpus contains 142 accepted documents, 53 rejection
+cases, and 54 Unicode cases checked against fixed independently verified input,
+decoded-byte and encoded-output data. The corpus was frozen from the earlier
+independent codecs; [provenance and update rules](fixtures/json/README.md) keep
+the oracle separate from the production codec. The Gloin driver handles child
+execution, capture, deadlines and fixture cleanup. The fixture additionally checks buffer/depth limits, grammar
+states, failure latching, duplicate-key order, reader copies, offsets, and
+numeric conversion boundaries. Package verification runs the same checks with
+installed and relocated compilers and their packaged JSON example. See the
+[JSON contract](../docs/json.md).
+The [repository-tool guide](../docs/repository-tools.md) covers the Gloin
+documentation/report checkers and their native/JIT rejection tests.
+The JSON matrix passed JIT/`-O0`/`-O2` with source-tree, installed, and relocated
+compilers on macOS and Ubuntu ARM64 as part of the complete local release gates.
+See the [development HTML guide](../docs/site/development/index.html) for the
+implemented language boundary and the linked API guides for exact rules.
 
 ## Integrated examples (SPEC-030h)
 
@@ -111,9 +255,10 @@ failures preserve descriptor counts. Source-library substitutions inject write,
 flush, and close failures; controlled clocks test simulation failures. Two additional
 `ArenaRuntimeTest` cases verify nested allocator scopes, retained allocator contexts,
 failure restoration, and thread isolation. These checks participate in required
-and sanitizer gates. The larger [stress script](../scripts/check-integrated-examples.py)
-checks all three programs at one million records/samples with a 2 MiB stack,
-including rejection of one-over-limit inputs. See [the guide](../docs/integrated-examples.md).
+and sanitizer gates. The larger [Gloin stress driver](integrated/README.md)
+checks all three programs at one million records/samples with a 2 MiB soft stack
+limit, including rejection of one-over-limit inputs. It is required by `check-core`
+and installed/relocated package checks. See [the guide](../docs/integrated-examples.md).
 
 ## Timing and seeded randomness (SPEC-030g)
 
@@ -154,24 +299,34 @@ participate in installed/relocated validation.
 
 ## Filesystem and process context (SPEC-030e)
 
-Fourteen `ContextLibraryTest` cases cover the lexical path matrix, exact/overflow
+The filesystem/context `ContextLibraryTest` cases cover the lexical path matrix, exact/overflow
 bounds, both join allocation failures, metadata/mutations, CLI forwarding and
 filename escaping, missing/empty/copied environment values, process allocation
 failures, host cwd, invocation argument restoration and rejected NUL, type/privacy
-checks, native collisions/ABIs, external execution, and the packaged tool/guide.
+checks, native collisions/ABIs, directory iteration, external execution, and the packaged tool/guide.
 The tool runs from another directory with spaced paths, missing/empty/nonempty
 labels, and malformed options that leave the filesystem untouched.
 
-Nine native `ContextRuntimeTest` cases cover regular files/directories/broken
+The native filesystem/context `ContextRuntimeTest` cases cover regular files/directories/broken
 symlinks/FIFOs, counted paths and invalid-input preservation, mkdir/unlink/rename
-semantics, permission errors, deep-copied C argument scopes, invalid/LIFO cleanup,
+semantics, directory cursors, permission errors, deep-copied C argument scopes, invalid/LIFO cleanup,
 thread isolation, raw environment bytes, exact cwd bounds, and deleted cwd.
+Symlink tests cover creation without replacement, immediate target reads for
+normal/broken/cyclic links, exact/overflow/zero bounds, allocation failure,
+counted non-UTF-8 bytes, intermediate-component cycles and unlink ownership.
+The Gloin symlink and workspace fixtures run through JIT and native `-O0`/`-O2`, with GloinIR ABI
+assertions and public-signature/result-handling checks. Workspace tests cover
+canonical exact/overflow/zero limits, broken/cyclic paths, exclusive private
+temporary directories, rejection of nonempty directories/final symlinks/special
+leaves, and every arena allocation failure before creation. Further native
+cases cover child processes as described above. The inventory table gives the
+current totals for both suites.
 Both suites belong to required and sanitizer validation; compiler cases also run
 against installed and relocated packages.
 
 ## Streams and files (SPEC-030d)
 
-Fifteen `IoLibraryTest` cases exercise borrowed stdin/stdout/stderr, compatible
+Sixteen `IoLibraryTest` cases exercise borrowed stdin/stdout/stderr, compatible
 stdio buffering, each file mode and I/O method, alias close state, bounded binary
 reads and EOF, partial read_all prefixes, wrong directions, malformed paths,
 OS errors/messages, metadata allocation before destructive opens, read allocation
@@ -227,7 +382,8 @@ with a 2 MiB stack.
 
 ## Byte strings (SPEC-030a)
 
-Eighteen `StringLibraryTest` cases cover all 14 public functions, shared status
+Eighteen `StringLibraryTest` cases cover the byte-string functions, including
+two checked result alternatives, shared status
 compatibility, unsigned ordering, NUL/arbitrary bytes, UTF-8 byte slicing,
 extreme/empty bounds, first/absent/empty search, exact ASCII trimming, and a
 64-case independent search/order oracle. They exercise copy lifetime independence,
@@ -264,13 +420,14 @@ also run against installed/relocated packages.
 
 ## Local modules (SPEC-029)
 
-Twenty-five `ModuleTest` cases cover source-relative and parent paths, optional
+Twenty-nine `ModuleTest` cases cover source-relative and parent paths, optional
 extensions, spaces, shared dependencies and nominal types, unique emitted symbols,
 exported constants, private declarations/fields/methods, isolated file scopes,
 imported entry names, unused invalid code, forbidden globals, constant errors,
 duplicate imports, shadowing, symlinks, cycles, depth limits, located diagnostics,
 fresh reads, standard dependencies, native primitive identity, in-memory roots,
-qualified deferred calls, invalid function values/addresses, and the module lab.
+qualified deferred calls, invalid function values/addresses, deterministic
+directory discovery, local `#name` packages, and the module lab.
 Successful cases execute through the CLI; selected cases inspect LLVM definitions
 and execute externally. Negative cases exercise every CLI compilation mode.
 The suite participates in required, sanitizer, and installed/relocated package checks.
@@ -287,7 +444,7 @@ The previous unchecked `Arena::new` test has been replaced by these executable
 source tests. Core fixtures cover success, invalid type-valued arguments, the
 required import, and use of a cleared handle.
 
-Nine independent `ArenaRuntimeTest` cases exercise the actual native allocator,
+Eleven independent `ArenaRuntimeTest` cases exercise the actual native allocator,
 including alignment through 64 KiB, mixed-size object contents across growth,
 zero-sized allocations, large blocks, reset retention/reuse, independent arenas,
 overflow, deterministic allocation failure, unchanged state on failure, and
@@ -333,7 +490,7 @@ method) participate in both required and package checks.
 
 ## Pointers and references (SPEC-025)
 
-Eighteen `PointerTest` cases cover all scalar pointees, whole structs/strings,
+Twenty `PointerTest` cases cover all scalar pointees, whole structs/strings,
 stable local/parameter addresses, read-only views, nested pointer qualifiers,
 reference/raw-pointer conversions, recursive struct links, privacy, null traps,
 evaluation order, invalid addresses, live aliases, caller-reference returns,
@@ -395,7 +552,7 @@ establish parsing, type support, numeric conversion, or string execution.
 
 ## Parser contract checks
 
-All 49 parser tests pass. Twenty new cases cover complete canonical programs,
+All 53 parser tests pass. The contract cases cover complete canonical programs,
 identifier conditions, precedence/associativity, newline trivia at every token
 boundary, strict lists, mandatory annotations, modifier order, declaration scopes,
 statement-only assignment, required loop separators, malformed/truncated input,
@@ -437,7 +594,7 @@ prove that raw ASTs cannot call `CodeGen::generate` and clients cannot construct
 
 Existing stage-isolated backend tests now use the explicit
 `generate_unchecked_for_testing` entry; their feature assertions and failures are
-preserved. All 29 E2E cases use executable-mode checked generation. The seventh executes an
+preserved. All 31 E2E cases use executable-mode checked generation. The seventh executes an
 `int` alias and nested shadowing, confirming the outer binding still returns 42.
 
 ## External execution
@@ -472,6 +629,20 @@ either tool, missing executables, malformed results, timeouts in both stages,
 and concurrent calls returning different values. Its executable path contains a
 space to exercise argument handling. Fixture timeouts are one second; the
 parent test remains subject to CTest's 30-second limit.
+
+## HTTP acceptance in Gloin
+
+The HTTP and streaming suites now use a Gloin driver and bounded concurrent
+Gloin HTTP/HTTPS peers. They preserve independent wire fixtures and verify
+JIT, `-O0` and `-O2` clients, including 32 simultaneous exchanges:
+
+```sh
+cmake --build build --target gloin_http_tests
+ctest --test-dir build -R '^Http(Client|Stream)Smoke\.' --output-on-failure
+```
+
+See [HTTP acceptance](http/README.md) for exact coverage and resource limits.
+All repository-owned test drivers now run without Python.
 
 ## Remaining failures
 

@@ -2,6 +2,8 @@
 
 `import "@arena";` loads [arena.gloin](../stdlib/arena.gloin). Its first allocator
 is `arena.GeneralArena`; future allocator types can live in the same module.
+Programs can also build independent arenas from the lower-level
+[raw memory API](raw-memory.md).
 
 ```gloin
 import "@arena";
@@ -29,8 +31,10 @@ Gloin 0.0.4 also provides `alloc_many(fill, capacity: i64) -> &T`.
 It allocates aligned space for `capacity` elements of the fill value's type,
 checks negative capacity and byte-size overflow, and copies the captured fill
 value into every slot. It traps on allocation failure. A zero capacity returns
-a non-null pointer with no valid element to dereference. This bridge supports
-the growable [arena vector](slices-vectors.md).
+a non-null pointer with no valid element to dereference. The growable
+[arena vector](slices-vectors.md) uses a separate internal bridge that reserves
+aligned capacity without initializing unused elements. Only `@vector` can call
+that bridge from source.
 
 Growth never moves existing objects. `reset()` invalidates all objects and keeps
 all blocks for reuse, including large blocks. Never use old references after a
@@ -83,9 +87,11 @@ choices. Each arena has its own allocation state and backing allocator.
 
 The compiler links the runtime statically and registers its native symbols with
 the JIT after exact ABI validation. Installation also includes
-`lib/libgloin_runtime.a`, `lib/libgloin_runtime.dylib` on macOS, and
-`include/gloin/arena_runtime.h`. External `mlir-runner` executions load the shared
-runtime using `--shared-libs=/path/to/libgloin_runtime.dylib`.
+`lib/libgloin_runtime.a`, `lib/libgloin_runtime.dylib` on macOS or
+`lib/libgloin_runtime.so` on Linux, and `include/gloin/arena_runtime.h`.
+External `mlir-runner` executions load the platform's shared runtime using
+`--shared-libs=/path/to/libgloin_runtime.dylib` on macOS or the corresponding
+`.so` path on Linux.
 
 The complete language contract is in the [language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec#arena-allocation-spec-028).
 

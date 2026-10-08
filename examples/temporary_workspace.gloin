@@ -1,0 +1,56 @@
+// Run with an EXISTING parent directory, for example: -- ./build
+import "@arena";
+import "@fs";
+import "@io";
+import "@process";
+import "@status";
+import "@std";
+
+def remove_file(path: string) -> void {
+    if fs.remove_file(path).status != status.OK { std.println("Could not remove the work file"); }
+}
+
+def remove_directory(path: string) -> void {
+    def removed: result<void> = fs.remove_dir(path);
+    if removed.erroneous { std.println(removed.error.message); }
+}
+
+def close_file(file: &io.File) -> void {
+    if file.is_open() { file.close(); }
+}
+
+def main() -> i32 {
+    if process.arg_count() != 2 { std.println("Usage: temporary_workspace EXISTING_PARENT"); return 2; }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def parent: process.TextResult = process.arg(&memory, 1);
+    if parent.status != status.OK { return 1; }
+
+    def canonical: result<string> = fs.canonical_path(&memory, parent.value, 65536);
+    if canonical.erroneous { std.println(canonical.error.message); return 1; }
+
+    def made: result<string> = fs.temp_dir(&memory, canonical.value, "gloin-work", 65536);
+    if made.erroneous { std.println(made.error.message); return 1; }
+    // Defer runs in reverse order: close the file, unlink it, remove the empty
+    // directory, then free the arena that owns all those path strings.
+    defer remove_directory(made.value);
+
+    std.println(made.value);
+
+    def path: fs.PathResult = fs.join(&memory, made.value, "message.txt", 65536);
+    if path.status != status.OK { return 1; }
+
+    def opened: io.FileResult = io.File.create_new(&memory, path.value);
+    if opened.status != status.OK { return 1; }
+    defer remove_file(path.value);
+
+    def mut file: io.File = opened.value;
+    defer close_file(&file);
+
+    if file.write_all("Temporary work, explicitly cleaned up.\n").status != status.OK { return 1; }
+    if file.close().status != status.OK { return 1; }
+
+    return 0;
+}

@@ -22,8 +22,11 @@ def main() -> i32 {
     def line: std.InputResult = std.input(&memory, 128);
     if line.status == std.END { return 0; }
     if line.status != std.OK { return 1; }
-    def number: std.IntResult = std.to_int(line.value);
-    if number.status != std.OK { return 2; }
+    def number: result<i32> = std.parse_i32_checked(line.value);
+    if number.erroneous {
+        std.println(number.error.message);
+        return 2;
+    }
     std.println(std.to_string(&memory, number.value));
     return 0;
 }
@@ -35,6 +38,7 @@ def main() -> i32 {
 | --- | --- |
 | `std.input(memory: &arena.GeneralArena, max_bytes: u64)` | `std.InputResult { status: i32, value: string }`; attempts `max_bytes + 1` zeroed bytes in the caller's arena |
 | `std.to_int(value: string)` | `std.IntResult { status: i32, value: i32 }`; no allocation |
+| `std.parse_i32_checked(value: string)` | `result<i32>`; no allocation, static error messages; development tree only |
 | `std.to_string(memory: &arena.GeneralArena, value: i32)` | `string`; allocates 12 zeroed bytes in the caller's arena; traps on allocation failure |
 
 Successful strings are non-owning descriptors over arena bytes. Copying, returning,
@@ -118,8 +122,9 @@ moves the existing status values into dependency-free `status.gloin`; the public
 `std` names remain compatible aliases. See [byte-string APIs](strings.md) for the
 new checked string operations and the additional OUT_OF_RANGE status.
 
-The LLVM-independent runtime is included in both `libgloin_runtime.a` and
-`libgloin_runtime.dylib`. Installed C headers cover arenas and standard routines.
+The LLVM-independent runtime is included in `libgloin_runtime.a` and the
+platform shared library (`libgloin_runtime.dylib` or `.so`). Installed C headers
+cover arenas and standard routines.
 External LLVM runners can load the shared library for conversion, input, arena,
 and `gloin.runtime.output` symbols. The external output implementation aborts on
 write failure; the compiler JIT retains its source execution-error reporting.

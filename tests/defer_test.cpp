@@ -28,14 +28,14 @@ void redirect_allocator(mlir::ModuleOp module, mlir::OpBuilder &builder, bool re
 TEST_F(DeferTest, CapturesAtRegistrationAndRunsLifoAfterReturnValue) {
     auto file = source(R"(
         import "@std";
-        def result() -> i32 { std.print("return;"); return 42; }
+        def outcome() -> i32 { std.print("return;"); return 42; }
         def main() -> i32 {
             def mut text: string = "first;";
             defer std.print(text);
             text = "second;";
             defer std.print(text);
             std.print("body;");
-            return result();
+            return outcome();
         }
     )");
     expect_run(invoke({file}), 42, "body;return;second;first;");

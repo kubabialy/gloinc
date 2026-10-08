@@ -1,0 +1,180 @@
+import "@arena";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def cleanup(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def duplex(owner: &arena.GeneralArena, peer: string) -> i32 {
+    def args: [string; 0]              = {};
+    def started: result<process.Child> = process.start_piped(owner, peer, args[..]);
+
+    if started.erroneous { return 1; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def mut alias: process.Child = child;
+    def mut input: [u8; 262144]  = zeroed;
+    def mut output: [u8; 524288] = zeroed;
+    def mut errors: [u8; 262144] = zeroed;
+
+    for def mut i: u64 = 1; i < input[..].len; i = i + 2 { input[i] = 255; }
+
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration { nanoseconds: 5000000000 });
+    if captured.erroneous { std.println(captured.error.message); return 2; }
+    if captured.value.status.code != 37 || !captured.value.status.exited { return 3; }
+    if captured.value.stdout.len != output[..].len || captured.value.stderr.len != errors[..].len { return 4; }
+    if captured.value.stdin_written != input[..].len { return 5; }
+
+    def out_byte: u8 = 37;
+    def err_byte: u8 = 42;
+
+    for def mut i: u64 = 0; i < input[..].len; i = i + 1 {
+        if captured.value.stdout[i] != out_byte || captured.value.stderr[i] != err_byte { return 6; }
+        if captured.value.stdout[i + 262144] != input[i] { return 7; }
+    }
+
+    if alias.is_open() { return 8; }
+
+    def invalid: result<process.PollOutcome> = alias.poll();
+    if !invalid.erroneous { return 9; }
+
+    return 0;
+}
+
+def bounded(owner: &arena.GeneralArena, script: string, expected_error: string, limit: u64) -> i32 {
+    def args: [string; 2]              = {"-c", script};
+    def started: result<process.Child> = process.start_piped(owner, "/bin/sh", args[..]);
+
+    if started.erroneous { return 10; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def empty: [u8; 0]      = {};
+    def mut output: [u8; 4] = zeroed;
+    def mut errors: [u8; 4] = zeroed;
+    def mut budget: u64     = 5000000000;
+
+    if strings.equal(expected_error, "child communication timed out") { budget = 100000000; }
+
+    def captured: result<process.Output> = child.communicate(empty[..], output[..limit], errors[..limit], time.Duration { nanoseconds: budget });
+
+    if captured.erroneous {
+        if !strings.equal(captured.error.message, expected_error) { std.println(captured.error.message); return 11; }
+    } else {
+        if !strings.is_empty(expected_error) { return 12; }
+        if captured.value.stdout.len != limit { return 13; }
+    }
+
+    if child.is_open() { return 14; }
+
+    return 0;
+}
+
+def early_input_close(owner: &arena.GeneralArena) -> i32 {
+    def args: [string; 2]              = {"-c", "exec 0<&-; printf done; printf err >&2"};
+    def started: result<process.Child> = process.start_piped(owner, "/bin/sh", args[..]);
+
+    if started.erroneous { return 15; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def mut input: [u8; 262144]          = zeroed;
+    def mut output: [u8; 4]              = zeroed;
+    def mut errors: [u8; 3]              = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration { nanoseconds: 5000000000 });
+
+    if captured.erroneous { return 16; }
+    if !strings.equal(strings.view_bytes(captured.value.stdout), "done") { return 17; }
+    if !strings.equal(strings.view_bytes(captured.value.stderr), "err") { return 18; }
+    if captured.value.stdin_written >= input[..].len { return 19; }
+
+    return 0;
+}
+
+def manual(owner: &arena.GeneralArena) -> i32 {
+    def args: [string; 0]              = {};
+    def started: result<process.Child> = process.start_piped(owner, "/bin/cat", args[..]);
+
+    if started.erroneous { return 20; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def mut buffer: [u8; 1]                  = zeroed;
+    def pending: result<process.PipeOutcome> = child.read_stdout(buffer[..]);
+
+    if pending.erroneous { return 21; }
+    if pending.value.state != status.WOULD_BLOCK { return 22; }
+
+    def polled: result<process.PollOutcome> = child.wait_timeout(time.Duration { nanoseconds: 0 });
+    if polled.erroneous { return 23; }
+    if polled.value.ready { return 24; }
+
+    def ready: result<i32> = child.wait_io(true, 1000);
+    if ready.erroneous { return 25; }
+    if ready.value != process.STDIN_WRITABLE { return 26; }
+
+    def bytes: [u8; 1]                       = {0};
+    def written: result<process.PipeOutcome> = child.write_stdin(bytes[..]);
+
+    if written.erroneous { return 27; }
+    if written.value.count != bytes[..].len { return 28; }
+
+    def closed: result<void> = child.close_stdin();
+    if closed.erroneous { return 29; }
+
+    def empty: [u8; 0]                   = {};
+    def mut errors: [u8; 0]              = {};
+    def captured: result<process.Output> = child.communicate(empty[..], buffer[..], errors[..], time.Duration { nanoseconds: 5000000000 });
+
+    if captured.erroneous { return 30; }
+    if captured.value.stdout.len != bytes[..].len || captured.value.stdout[0] != bytes[0] { return 31; }
+
+    return 0;
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def peer: process.TextResult = process.arg(&owner, 1);
+    if peer.status != status.OK { return 90; }
+
+    def a: i32 = duplex(&owner, peer.value);
+    if a != 0 { return a; }
+
+    def b: i32 = early_input_close(&owner);
+    if b != 0 { return b; }
+
+    def c: i32 = manual(&owner);
+    if c != 0 { return c; }
+
+    def d: i32 = bounded(&owner, "printf 1234", "", 4);
+    if d != 0 { return d; }
+
+    def e: i32 = bounded(&owner, "printf 12345", "child stdout limit exceeded", 4);
+    if e != 0 { return e; }
+
+    def f: i32 = bounded(&owner, "printf 12345 >&2", "child stderr limit exceeded", 4);
+    if f != 0 { return f; }
+
+    def g: i32 = bounded(&owner, "exit 0", "", 0);
+    if g != 0 { return g; }
+
+    def h: i32 = bounded(&owner, "printf x", "child stdout limit exceeded", 0);
+    if h != 0 { return h; }
+
+    def i: i32 = bounded(&owner, "exec /bin/sleep 30", "child communication timed out", 4);
+    if i != 0 { return i; }
+
+    return bounded(&owner, "exec 1>&- 2>&-; exec /bin/sleep 30", "child communication timed out", 4);
+}

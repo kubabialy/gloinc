@@ -1,0 +1,256 @@
+// Independent expected outputs and deliberately corrupted inputs for native tools.
+import "../../tools/checks/common";
+import "../../tools/checks/docs";
+import "../../tools/checks/entities";
+import "../../tools/checks/suite";
+import "../support/tool_runner";
+import "@arena";
+import "@fs";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+
+def report_failure(label: string) -> bool { common.report(label); return false; }
+
+def xml_cases() -> bool {
+    def good: string                 = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites><testsuite><testcase name='pass &amp; go'/><testcase name='AsyncTest.SpawnGeneration'><failure/></testcase><testcase name='SemaAsyncTest.AsyncTypes'><error>reason &lt;x&gt;&#x1F40D;</error></testcase><testcase name='AsyncTest.DeferredFunctionGeneration'><failure><![CDATA[&not-an-entity; <x>]]></failure></testcase><testcase name='CodeGenTest.GenerateSpawn'><failure><!-- comment -->failure</failure></testcase></testsuite></testsuites>";
+    def valid: result<suite.Summary> = suite.classify(good);
+
+    if valid.erroneous { return report_failure("valid JUnit rejected"); }
+
+    def five: i64 = 5;
+    if valid.value.count != five { return report_failure("wrong JUnit case count"); }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def find: [string; 18] = {"pass &amp; go", "pass &amp; go", "pass &amp; go", "<testcase name='pass &amp; go'/>", "<testcase name='pass &amp; go'/>", "<failure/>", "<failure/>", "</testsuites>", "</testsuites>", "<testsuites>", "pass &amp; go", "<testcase name='pass &amp; go'/>", "<testcase name='pass &amp; go'/>", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>", "<!-- comment -->", "<failure/>", "pass &amp; go", "</testsuite>"};
+    def bad: [string; 18]  = {"AsyncTest.SpawnGeneration", "&#65;syncTest.SpawnGeneration", "pass &unknown;", "<testcase name='pass'><skipped/></testcase>", "<testcase name='pass'><error/></testcase>", "", "<nested><failure/></nested>", "", "</bad>", "<testsuites><!DOCTYPE x>", "pass &#x110000;", "<testcase name='a' name='b'/>", "<testcase/>", "<?XML version=\"1.0\" encoding=\"UTF-8\"?>", "<!-- bad -- comment -->", "<failure bogus=>", "pass &amp", "</testsuite><testcase name='extra'><skipped/></testcase>"};
+
+    for def mut i: u64 = 0; i < 18; i = i + 1 {
+        memory.reset();
+        def changed: strings.StringResult = strings.replace_all(&memory, good, find[i], bad[i], 65536);
+        if changed.status != status.OK { return false; }
+
+        def rejected: result<suite.Summary> = suite.classify(changed.value);
+        if !rejected.erroneous { common.report(bad[i]); return report_failure("invalid JUnit accepted"); }
+    }
+
+    def malformed: [string; 10] = {"", "<testsuite/>", "<testsuite/><testsuite/>", "text<testsuite/>", "<testsuite/>text", "<testsuite><testcase name=x/></testsuite>", "<testsuite><testcase name='a<b'/></testsuite>", "<testsuite>]]></testsuite>", "<testsuite>&#0;</testsuite>", "<!DOCTYPE testsuite [<!ENTITY x 'x'>]><testsuite/>"};
+
+    for def mut i: u64 = 0; i < 10; i = i + 1 {
+        def rejected: result<suite.Summary> = suite.classify(malformed[i]);
+        if !rejected.erroneous { return report_failure("malformed XML accepted"); }
+    }
+
+    def nested: strings.StringResult = strings.repeat(&memory, "<x>", 64, 1024);
+    if nested.status != status.OK { return false; }
+
+    def deeper: strings.StringResult = strings.concat(&memory, "<testsuite>", nested.value, 2048);
+    if deeper.status != status.OK { return false; }
+
+    def depth: result<suite.Summary> = suite.classify(deeper.value);
+    if !depth.erroneous { return report_failure("excess XML nesting accepted"); }
+
+    return true;
+}
+
+def same(path: string, expected: string) -> bool {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def read: result<string> = common.read(&memory, path, 262144);
+    if read.erroneous { return report_failure(read.error.message); }
+    if !strings.equal(read.value, expected) { common.report(path); return report_failure("unexpected fixture bytes"); }
+
+    return true;
+}
+
+def must_record(memory: &arena.GeneralArena, work: string, name: string, text: string) -> bool {
+    def saved: result<void> = tool_runner.record(memory, work, name, "", text);
+    if saved.erroneous { return report_failure(saved.error.message); }
+
+    return true;
+}
+
+def doc_cases(memory: &arena.GeneralArena, work: string, checker: string) -> result<void> {
+    def joined: result<string> = common.join(memory, work, "site");
+    if joined.erroneous { return joined.error; }
+
+    def site: string = joined.value;
+    if fs.mkdir(site).status != status.OK { return error("cannot make checker site"); }
+
+    def page: string = "<!DOCTYPE html><HTML><head><style>.a::after { content: '<a href=missing>'; }</style></head><body><script>const x = '<a href=missing>';</script><!-- <a href=missing> --><a HREF='other%20page.html?q=1&amp;x=2#caf%C3%A9'>one</a><a href='other%20page.html#&NotEqualTilde;'>two</a><img src=asset.txt><a href=./>index</a><a href='https://example.invalid/missing'>external</a><a href='/unavailable'>root</a><a href='//example.invalid/no'>authority</a><a href='mailto:a@example.invalid'>mail</a><a href=missing href=asset.txt>last wins</a></body></HTML>";
+    if !must_record(memory, site, "index.html", page)
+        || !must_record(memory, site, "other page.html", "<p id='café'></p><p id='≂̸'></p>")
+        || !must_record(memory, site, "asset.txt", "asset") { return error("cannot write documentation fixtures"); }
+
+    def valid: result<i64> = docs.check(site);
+    if valid.erroneous { return valid.error; }
+
+    def two: i64 = 2;
+    if valid.value != two { return error("wrong HTML page count"); }
+
+    def args: [string; 1]    = {site};
+    def native: result<void> = tool_runner.capture(work, "docs-valid", checker, args[..], "", 0);
+
+    if native.erroneous { return native.error; }
+
+    def index: result<string> = common.join(memory, site, "index.html");
+    if index.erroneous { return index.error; }
+
+    def index_path: string   = index.value;
+    def mut before: string   = page;
+    def invalid: [string; 7] = {"<a href=missing>missing</a>", "<a href='other%20page.html#absent'>anchor</a>", "<a href='bad%QQ'>escape</a>", "<a href='other%20page.html#%00'>nul</a>", "<a href='other%20page.html#&#xD800;'>surrogate</a>", "<a href='unterminated>", "<a href='other%20page.html#&unknown;'>entity</a>"};
+
+    for def mut i: u64 = 0; i < 7; i = i + 1 {
+        def replaced: result<void> = fs.replace_file(index_path, before, invalid[i]);
+        if replaced.erroneous { return replaced.error; }
+
+        before = invalid[i];
+
+        def rejected: result<i64> = docs.check(site);
+        if !rejected.erroneous { return error("invalid documentation accepted"); }
+    }
+
+    def failure: result<void> = tool_runner.capture(work, "docs-invalid", checker, args[..], "", 1);
+    if failure.erroneous { return failure.error; }
+
+    def decoded: result<string> = entities.decode(memory, "&copy;&#233;&#x1F40D;&NotEqualTilde;", true);
+    if decoded.erroneous { return decoded.error; }
+    if !strings.equal(decoded.value, "©é🐍≂̸") { return error("HTML entity decoder changed characters"); }
+
+    def bad_utf8: [u8; 2]           = {192, 128};
+    def bad_page: result<docs.Page> = docs.inspect(memory, "bad", strings.view_bytes(bad_utf8[..]));
+
+    if !bad_page.erroneous { return error("invalid UTF-8 HTML accepted"); }
+
+    return;
+}
+
+def formatter_cases(memory: &arena.GeneralArena, work: string, formatter: string, compiler: string, root: string) -> result<void> {
+    def joined: result<string> = common.join(memory, work, "repo");
+    if joined.erroneous { return joined.error; }
+
+    def repo: string = joined.value;
+    if fs.mkdir(repo).status != status.OK { return error("cannot make Git fixture"); }
+
+    def before: string = "def main() -> i32 {\nreturn 0;\n}\n";
+    def after: string  = "def main() -> i32 {\n    return 0;\n}\n";
+
+    if !must_record(memory, repo, "tracked.gloin", before) || !must_record(memory, repo, "with space\nand newline.gloin", before)
+        || !must_record(memory, repo, "ignored.gloin", before) || !must_record(memory, repo, ".gitignore", "ignored.gloin\n") { return error("cannot create Git source fixtures"); }
+
+    def init: [string; 4]         = {"-C", repo, "init", "--quiet"};
+    def initialized: result<void> = tool_runner.capture(work, "git-init", "/usr/bin/git", init[..], "", 0);
+
+    if initialized.erroneous { return initialized.error; }
+
+    def add: [string; 4]    = {"-C", repo, "add", "tracked.gloin"};
+    def added: result<void> = tool_runner.capture(work, "git-add", "/usr/bin/git", add[..], "", 0);
+
+    if added.erroneous { return added.error; }
+
+    def check: [string; 2]  = {"--check", "--git"};
+    def dirty: result<void> = tool_runner.capture_at(work, "git-check", formatter, check[..], "", 1, repo);
+
+    if dirty.erroneous { return dirty.error; }
+
+    def write: [string; 2]    = {"--write", "--git"};
+    def written: result<void> = tool_runner.capture_at(work, "git-write", formatter, write[..], "", 0, repo);
+
+    if written.erroneous { return written.error; }
+
+    def repeated: result<void> = tool_runner.capture_at(work, "git-repeat", formatter, write[..], "", 0, repo);
+    if repeated.erroneous { return repeated.error; }
+
+    def clean: result<void> = tool_runner.capture_at(work, "git-clean", formatter, check[..], "", 0, repo);
+    if clean.erroneous { return clean.error; }
+
+    def names: [string; 3] = {"tracked.gloin", "with space\nand newline.gloin", "ignored.gloin"};
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def path: result<string> = common.join(memory, repo, names[i]);
+        if path.erroneous { return path.error; }
+
+        def mut expected: string = after;
+        if i == 2 { expected = before; }
+        if !same(path.value, expected) { return error("Git write changed the wrong files"); }
+    }
+
+    def repeated_path: result<string> = common.join(memory, work, "git-repeat.out");
+    if repeated_path.erroneous { return repeated_path.error; }
+    if !same(repeated_path.value, "") { return error("second write was not idempotent"); }
+
+    def linked_path: result<string> = common.join(memory, repo, "linked.gloin");
+    if linked_path.erroneous { return linked_path.error; }
+
+    def linked: result<void> = fs.symlink("ignored.gloin", linked_path.value);
+    if linked.erroneous { return linked.error; }
+
+    def symlink_args: [string; 2] = {"--write", linked_path.value};
+    def rejected: result<void>    = tool_runner.capture(work, "write-symlink", formatter, symlink_args[..], "", 2);
+
+    if rejected.erroneous { return rejected.error; }
+
+    def ignored: result<string> = common.join(memory, repo, "ignored.gloin");
+    if ignored.erroneous { return ignored.error; }
+
+    def source: result<string> = common.join(memory, root, "tools/gloinfmt/main.gloin");
+    if source.erroneous { return source.error; }
+
+    def jit_args: [string; 5] = {"--jit", source.value, "--", "--write", ignored.value};
+    def jit: result<void>     = tool_runner.capture(work, "jit-write", compiler, jit_args[..], "", 0);
+
+    if jit.erroneous { return jit.error; }
+    if !same(ignored.value, after) { return error("JIT writer output mismatch"); }
+
+    return;
+}
+
+def execute(compiler: string, formatter: string, checker: string, root: string, parent: string) -> i32 {
+    if !xml_cases() { return 1; }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def made: result<string> = fs.temp_dir(&memory, parent, "tool checks", 65536);
+    if made.erroneous { common.report(made.error.message); return 1; }
+
+    def work: string               = made.value;
+    def docs_checked: result<void> = doc_cases(&memory, work, checker);
+
+    if docs_checked.erroneous { common.report(docs_checked.error.message); common.report(work); return 1; }
+
+    def formatter_checked: result<void> = formatter_cases(&memory, work, formatter, compiler, root);
+    if formatter_checked.erroneous { common.report(formatter_checked.error.message); common.report(work); return 1; }
+
+    def removed: result<void> = tool_runner.remove_fixture_tree(work, 64);
+    if removed.erroneous { common.report(removed.error.message); common.report(work); return 1; }
+
+    std.println("Gloin tooling checks passed; fixtures removed");
+
+    return 0;
+}
+
+def main() -> i32 {
+    if process.arg_count() != 6 { common.report("usage: gloin-tools-test COMPILER FORMATTER DOC_CHECKER ROOT PARENT"); return 2; }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def mut args: [string; 5] = zeroed;
+
+    for def mut i: u64 = 0; i < 5; i = i + 1 {
+        def argument: process.TextResult = process.arg(&memory, i + 1);
+        if argument.status != status.OK { return 2; }
+
+        def canonical: result<string> = fs.canonical_path(&memory, argument.value, 65536);
+        if canonical.erroneous { common.report(canonical.error.message); return 2; }
+
+        args[i] = canonical.value;
+    }
+
+    return execute(args[0], args[1], args[2], args[3], args[4]);
+}

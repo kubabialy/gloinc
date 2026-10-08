@@ -1,7 +1,7 @@
 # Gloinc 0.0.2 release
 
 This is the archived 0.0.2 release guide. For the current source package, use
-the [0.0.4 release guide](release-0.0.4.md).
+the [0.1.0 release guide](release-0.1.0.md).
 
 Version 0.0.2 includes SPEC-001 through SPEC-030 and the SPEC-030a through
 SPEC-030h standard-library expansion. It runs on Apple Silicon macOS with

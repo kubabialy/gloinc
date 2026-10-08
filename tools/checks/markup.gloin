@@ -1,0 +1,360 @@
+// Bounded UTF-8 markup tokenizer for the repository checkers. XML is deliberately
+// restricted to ASCII names, predefined/numeric entities, no DTD or namespaces.
+// HTML is an attribute scanner, not a browser DOM/tree-construction implementation.
+import "./common";
+import "./entities";
+import "@arena";
+import "@status";
+import "@strings";
+import "@vector";
+
+def pub const END: i32   = 0;
+def pub const OPEN: i32  = 1;
+def pub const CLOSE: i32 = 2;
+def pub const TEXT: i32  = 3;
+def pub const OTHER: i32 = 4;
+
+def pub struct Attribute { def pub name: string, def pub value: string, }
+
+def pub struct Token {
+    def pub mut kind: i32,
+    def pub mut name: string,
+    def pub mut text: string,
+    def pub mut attributes: vector.Vector<Attribute>,
+    def pub mut depth: u64,
+    def pub mut empty: bool,
+
+    def pub attribute(self: &Token, name: string) -> string {
+        // HTMLParser retained the last duplicate attribute; XML rejects them.
+        def mut value: string = "";
+
+        for def mut i: i64 = 0; i < self.attributes.len(); i = i + 1 {
+            def attr: *Attribute = self.attributes.get_mut(i);
+            if strings.equal(attr.name, name) { value = attr.value; }
+        }
+
+        return value;
+    }
+}
+
+def letter(value: u8) -> bool { return (value >= 65 && value <= 90) || (value >= 97 && value <= 122) || value == 95; }
+
+def name_byte(value: u8) -> bool { return letter(value) || (value >= 48 && value <= 57) || value == 45 || value == 46; }
+
+def folded_at(text: string, start: u64, name: string) -> bool {
+    for def mut i: u64 = 0; i < strings.byte_length(name); i = i + 1 {
+        def mut value: u8 = common.byte(text, start + i);
+        if value >= 65 && value <= 90 { value = value + 32; }
+        if value != common.byte(name, i) { return false; }
+    }
+
+    return true;
+}
+
+def lower(memory: &arena.GeneralArena, value: string) -> result<string> {
+    def lowered: strings.StringResult = strings.lower_ascii(memory, value, 65536);
+    if lowered.status != status.OK { return error("markup name exceeds limit or cannot be allocated"); }
+
+    return lowered.value;
+}
+
+def pub struct Reader {
+    def text: string,
+    def html: bool,
+    def mut position: u64,
+    def mut stack: [string; 64],
+    def mut depth: u64,
+    def mut roots: u64,
+    def mut raw: string,
+
+    def pub static create(text: string, html: bool) -> result<Reader> {
+        if !common.valid_text(text) { return error("markup is not valid UTF-8/XML character data"); }
+
+        def mut start: u64 = 0;
+        if strings.starts_with(text, "﻿") { start = 3; }
+
+        return Reader { text: text, html: html, position: start, stack: zeroed, depth: 0, roots: 0, raw: "" };
+    }
+
+    def skip_space(self: &Reader) -> void {
+        while self.position < strings.byte_length(self.text) && common.space(common.byte(self.text, self.position)) {
+            self.position = self.position + 1;
+        }
+    }
+
+    def take_name(self: &Reader) -> result<string> {
+        def start: u64 = self.position;
+        if start == strings.byte_length(self.text) || !letter(common.byte(self.text, start)) { return error("invalid markup name"); }
+
+        self.position = start + 1;
+
+        while self.position < strings.byte_length(self.text) && name_byte(common.byte(self.text, self.position)) {
+            self.position = self.position + 1;
+        }
+
+        if self.position - start > 65536 { return error("markup name exceeds 65536 bytes"); }
+
+        return common.part(self.text, start, self.position);
+    }
+
+    def until(self: &Reader, ending: string) -> result<string> {
+        def start: u64                = self.position;
+        def found: strings.FindResult = strings.find(common.part(self.text, start, strings.byte_length(self.text)), ending);
+
+        if !found.found { return error("unterminated markup construct"); }
+
+        self.position = start + found.offset + strings.byte_length(ending);
+
+        return common.part(self.text, start, start + found.offset);
+    }
+
+    def pub next(self: &Reader, memory: &arena.GeneralArena) -> result<Token> {
+        def mut token: Token = Token { kind: OTHER, name: "", text: "", attributes: vector.Vector<Attribute>.empty(memory, 0), depth: self.depth, empty: false };
+        def size: u64        = strings.byte_length(self.text);
+
+        if self.html && !strings.is_empty(self.raw) {
+            def mut seeking: bool = true;
+
+            while self.position < size && seeking {
+                if common.byte(self.text, self.position) == 60 && size - self.position >= strings.byte_length(self.raw) + 3 {
+                    def end: u64 = self.position + 2 + strings.byte_length(self.raw);
+
+                    if common.byte(self.text, self.position + 1) == 47 && folded_at(self.text, self.position + 2, self.raw)
+                        && (common.byte(self.text, end) == 62 || common.space(common.byte(self.text, end))) { seeking = false; }
+                }
+
+                if seeking { self.position = self.position + 1; }
+            }
+
+            self.raw = "";
+        }
+
+        if self.position == size {
+            if !self.html && (self.depth != 0 || self.roots != 1) { return error("XML must contain one complete root"); }
+
+            token.kind = END; return token;
+        }
+
+        if common.byte(self.text, self.position) != 60 {
+            def start: u64 = self.position;
+
+            while self.position < size && common.byte(self.text, self.position) != 60 { self.position = self.position + 1; }
+
+            token.kind = TEXT;
+            token.text = common.part(self.text, start, self.position);
+
+            if !self.html {
+                if self.depth == 0 && !strings.is_empty(strings.trim_ascii(token.text)) { return error("text outside XML root"); }
+                if strings.contains(token.text, "]]>") { return error("CDATA terminator in XML text"); }
+
+                def decoded: result<string> = entities.decode(memory, token.text, false);
+                if decoded.erroneous { return decoded.error; }
+            }
+
+            return token;
+        }
+
+        def rest: string = common.part(self.text, self.position, size);
+
+        if strings.starts_with(rest, "<!--") {
+            self.position = self.position + 4;
+
+            def comment: result<string> = self.until("-->");
+            if comment.erroneous { return comment.error; }
+            if !self.html && (strings.contains(comment.value, "--") || strings.ends_with(comment.value, "-")) { return error("invalid XML comment"); }
+
+            return token;
+        }
+
+        if strings.starts_with(rest, "<![CDATA[") && !self.html {
+            if self.depth == 0 { return error("CDATA outside XML root"); }
+
+            self.position = self.position + 9;
+
+            def data: result<string> = self.until("]]>");
+            if data.erroneous { return data.error; }
+
+            return token;
+        }
+
+        if strings.starts_with(rest, "<?") {
+            def start: u64 = self.position;
+            self.position = self.position + 2;
+
+            def target: result<string> = self.take_name();
+            if target.erroneous { return target.error; }
+            if self.position < size && !common.space(common.byte(self.text, self.position))
+                && !strings.starts_with(common.part(self.text, self.position, size), "?>") { return error("invalid processing instruction"); }
+
+            def instruction: result<string> = self.until("?>");
+            if instruction.erroneous { return instruction.error; }
+
+            def target_lower: result<string> = lower(memory, target.value);
+            if target_lower.erroneous { return target_lower.error; }
+            if strings.equal(target_lower.value, "xml") && (self.roots != 0 || self.depth != 0
+                    || !strings.equal(target.value, "xml") || (start != 0 && !(start == 3 && strings.starts_with(self.text, "﻿")))
+                    || !strings.starts_with(rest, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")) {
+                return error("only the CTest UTF-8 XML declaration is supported");
+            }
+
+            return token;
+        }
+
+        if strings.starts_with(rest, "<!") {
+            if !self.html { return error("XML declarations/DTDs are unsupported"); }
+
+            self.position = self.position + 2;
+
+            def declaration: result<string> = self.until(">");
+            if declaration.erroneous { return declaration.error; }
+
+            def lowered: result<string> = lower(memory, declaration.value);
+            if lowered.erroneous { return lowered.error; }
+            if !strings.equal(strings.trim_ascii(lowered.value), "doctype html") { return error("only HTML5 doctype is supported"); }
+
+            return token;
+        }
+
+        self.position = self.position + 1;
+
+        def closing: bool = self.position < size && common.byte(self.text, self.position) == 47;
+        if closing { self.position = self.position + 1; }
+
+        def read_name: result<string> = self.take_name();
+        if read_name.erroneous { return read_name.error; }
+
+        token.name = read_name.value;
+
+        if self.html {
+            def lowered: result<string> = lower(memory, token.name);
+            if lowered.erroneous { return lowered.error; }
+
+            token.name = lowered.value;
+        }
+
+        if closing {
+            self.skip_space();
+
+            if self.position == size || common.byte(self.text, self.position) != 62 { return error("malformed closing tag"); }
+
+            self.position = self.position + 1;
+            token.kind = CLOSE;
+
+            if !self.html {
+                if self.depth == 0 || !strings.equal(self.stack[self.depth - 1], token.name) { return error("mismatched XML closing tag"); }
+
+                self.depth = self.depth - 1;
+                token.depth = self.depth;
+            }
+
+            return token;
+        }
+
+        def mut complete: bool = false;
+
+        while !complete {
+            def before_space: u64 = self.position;
+
+            self.skip_space();
+
+            if self.position == size { return error("unterminated opening tag"); }
+
+            def value: u8 = common.byte(self.text, self.position);
+
+            if value == 62 { self.position = self.position + 1; complete = true; }
+            else if value == 47 && self.position + 1 < size && common.byte(self.text, self.position + 1) == 62 {
+                self.position = self.position + 2; token.empty = true; complete = true;
+            } else {
+                if before_space == self.position { return error("attributes require separating whitespace"); }
+                if token.attributes.len() >= 1024 { return error("tag exceeds 1024 attributes"); }
+
+                def attr_name: result<string> = self.take_name();
+                if attr_name.erroneous { return attr_name.error; }
+
+                def mut name: string = attr_name.value;
+
+                if self.html {
+                    def lowered: result<string> = lower(memory, name);
+                    if lowered.erroneous { return lowered.error; }
+
+                    name = lowered.value;
+                }
+
+                for def mut i: i64 = 0; i < token.attributes.len(); i = i + 1 {
+                    if !self.html && strings.equal(token.attributes.get_mut(i).name, name) { return error("duplicate XML attribute"); }
+                }
+
+                def after_name: u64 = self.position;
+
+                self.skip_space();
+
+                def mut raw: string = "";
+
+                if self.position < size && common.byte(self.text, self.position) == 61 {
+                    self.position = self.position + 1; self.skip_space();
+
+                    if self.position == size { return error("missing attribute value"); }
+
+                    def quote: u8 = common.byte(self.text, self.position);
+
+                    if quote == 34 || quote == 39 {
+                        self.position = self.position + 1;
+
+                        def start: u64 = self.position;
+
+                        while self.position < size && common.byte(self.text, self.position) != quote { self.position = self.position + 1; }
+                        if self.position == size { return error("unterminated attribute value"); }
+
+                        raw = common.part(self.text, start, self.position);
+                        self.position = self.position + 1;
+                    } else {
+                        if !self.html { return error("XML attribute must be quoted"); }
+
+                        def start: u64 = self.position;
+
+                        while self.position < size && !common.space(common.byte(self.text, self.position)) && common.byte(self.text, self.position) != 62 {
+                            if common.byte(self.text, self.position) == 60 || common.byte(self.text, self.position) == 34
+                                || common.byte(self.text, self.position) == 39 || common.byte(self.text, self.position) == 61 { return error("invalid unquoted HTML attribute"); }
+
+                            self.position = self.position + 1;
+                        }
+
+                        if start == self.position { return error("empty unquoted HTML attribute"); }
+
+                        raw = common.part(self.text, start, self.position);
+                    }
+                } else if !self.html { return error("XML attribute requires a value"); }
+                else { self.position = after_name; }
+
+                if !self.html && strings.contains(raw, "<") { return error("less-than sign in XML attribute"); }
+                if strings.byte_length(raw) > 65536 { return error("attribute exceeds 65536 bytes"); }
+
+                // Other HTML attributes cannot affect a link check and need no decoding.
+                def mut decoded: string = raw;
+
+                if !self.html || strings.equal(name, "id") || strings.equal(name, "href") || strings.equal(name, "src") {
+                    def decoded_value: result<string> = entities.decode(memory, raw, self.html);
+                    if decoded_value.erroneous { return decoded_value.error; }
+
+                    decoded = decoded_value.value;
+                }
+
+                if !token.attributes.push(Attribute { name: name, value: decoded }) { return error("cannot retain markup attribute"); }
+            }
+        }
+
+        token.kind = OPEN;
+
+        if self.html {
+            if !token.empty && strings.equal(token.name, "script") { self.raw = "script"; }
+            if !token.empty && strings.equal(token.name, "style") { self.raw = "style"; }
+        } else {
+            if self.depth == 0 { self.roots = self.roots + 1; if self.roots > 1 { return error("multiple XML roots"); } }
+            if self.depth == 64 { return error("XML exceeds 64 element levels"); }
+
+            if !token.empty { self.stack[self.depth] = token.name; self.depth = self.depth + 1; }
+        }
+
+        return token;
+    }
+}

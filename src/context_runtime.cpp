@@ -2,10 +2,12 @@
 #include "context_runtime_internal.h"
 #include "io_runtime_internal.h"
 #include "stdlib_runtime.h"
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -189,4 +191,148 @@ extern "C" int32_t gloin_fs_rename_replace(const char *from, uint64_t from_size,
         return GLOIN_STD_NO_MEMORY;
     errno = 0;
     return std::rename(source.get(), destination.get()) ? failure(errno, os_error) : GLOIN_STD_OK;
+}
+extern "C" int32_t gloin_fs_symlink(const char *target, uint64_t target_size,
+                                    const char *link_path, uint64_t link_size, int32_t *os_error) {
+    *os_error = 0;
+    if (!valid_path(target, target_size) || !valid_path(link_path, link_size))
+        return GLOIN_STD_INVALID;
+    auto text = terminated(target, target_size), name = terminated(link_path, link_size);
+    if (!text || !name)
+        return GLOIN_STD_NO_MEMORY;
+    errno = 0;
+    return symlink(text.get(), name.get()) ? failure(errno, os_error) : GLOIN_STD_OK;
+}
+extern "C" int32_t gloin_fs_read_link(const char *path, uint64_t size, uint8_t *bytes,
+                                      uint64_t capacity, uint64_t *length, int32_t *os_error) {
+    *length = 0;
+    *os_error = 0;
+    if (!valid_path(path, size) || !bytes || !capacity || capacity > uint64_t(PTRDIFF_MAX))
+        return GLOIN_STD_INVALID;
+    auto name = terminated(path, size);
+    if (!name)
+        return GLOIN_STD_NO_MEMORY;
+    // Linux's syscall takes a signed int count even though libc exposes size_t.
+    // Keep large caller bounds usable without narrowing that count to negative.
+    const auto request = std::min(capacity, uint64_t(std::numeric_limits<int>::max()));
+    ssize_t count;
+    do {
+        count = readlink(name.get(), reinterpret_cast<char *>(bytes), request);
+    } while (count < 0 && errno == EINTR);
+    if (count < 0) {
+        // EINVAL from readlink means the final entry is not a symbolic link.
+        if (errno == EINVAL) {
+            *os_error = EINVAL;
+            return GLOIN_STD_INVALID;
+        }
+        return failure(errno, os_error);
+    }
+    if (uint64_t(count) >= request)
+        return GLOIN_STD_TOO_LONG;
+    *length = uint64_t(count);
+    return GLOIN_STD_OK;
+}
+extern "C" int32_t gloin_fs_canonical_path(const char *path, uint64_t size, uint8_t *bytes,
+                                           uint64_t capacity, uint64_t *length, int32_t *os_error) {
+    *length = 0;
+    *os_error = 0;
+    if (!valid_path(path, size) || !bytes || !capacity || capacity > uint64_t(PTRDIFF_MAX))
+        return GLOIN_STD_INVALID;
+    auto name = terminated(path, size);
+    if (!name)
+        return GLOIN_STD_NO_MEMORY;
+    errno = 0;
+    NativeText resolved(realpath(name.get(), nullptr), &std::free);
+    if (!resolved)
+        return failure(errno, os_error);
+    const auto count = std::strlen(resolved.get());
+    if (count >= capacity)
+        return GLOIN_STD_TOO_LONG;
+    std::memcpy(bytes, resolved.get(), count + 1);
+    *length = count;
+    return GLOIN_STD_OK;
+}
+extern "C" int32_t gloin_fs_temp_dir(const char *pattern, uint64_t size, uint8_t *bytes,
+                                     uint64_t capacity, uint64_t *length, int32_t *os_error) {
+    *length = 0;
+    *os_error = 0;
+    if (!valid_path(pattern, size) || size < 6 || std::memcmp(pattern + size - 6, "XXXXXX", 6) ||
+        !bytes || !capacity || capacity > uint64_t(PTRDIFF_MAX))
+        return GLOIN_STD_INVALID;
+    if (size >= capacity)
+        return GLOIN_STD_TOO_LONG;
+    std::memmove(bytes, pattern, size);
+    bytes[size] = 0;
+    errno = 0;
+    if (!mkdtemp(reinterpret_cast<char *>(bytes)))
+        return failure(errno, os_error);
+    *length = size;
+    return GLOIN_STD_OK;
+}
+extern "C" int32_t gloin_fs_remove_dir(const char *path, uint64_t size, int32_t *os_error) {
+    *os_error = 0;
+    if (!valid_path(path, size))
+        return GLOIN_STD_INVALID;
+    while (size && path[size - 1] == '/') --size;
+    uint64_t leaf = size;
+    while (leaf && path[leaf - 1] != '/') --leaf;
+    if (!size || (size - leaf == 1 && path[leaf] == '.') ||
+        (size - leaf == 2 && path[leaf] == '.' && path[leaf + 1] == '.'))
+        return GLOIN_STD_INVALID;
+    auto name = terminated(path, size);
+    if (!name)
+        return GLOIN_STD_NO_MEMORY;
+    errno = 0;
+    if (!rmdir(name.get()))
+        return GLOIN_STD_OK;
+    if (errno == ENOTEMPTY || errno == EEXIST) {
+        *os_error = errno;
+        return GLOIN_STD_ALREADY_EXISTS;
+    }
+    return failure(errno, os_error);
+}
+extern "C" int32_t gloin_fs_dir_open(const char *path, uint64_t size, void **handle,
+                                     int32_t *os_error) {
+    *handle = nullptr;
+    *os_error = 0;
+    if (!valid_path(path, size))
+        return GLOIN_STD_INVALID;
+    auto name = terminated(path, size);
+    if (!name)
+        return GLOIN_STD_NO_MEMORY;
+    errno = 0;
+    auto *directory = opendir(name.get());
+    if (!directory)
+        return failure(errno, os_error);
+    *handle = directory;
+    return GLOIN_STD_OK;
+}
+extern "C" const char *gloin_fs_dir_next(void *handle, uint64_t *length, int32_t *status,
+                                           int32_t *os_error) {
+    *length = 0;
+    *status = GLOIN_STD_INVALID;
+    *os_error = 0;
+    if (!handle)
+        return nullptr;
+    while (true) {
+        errno = 0;
+        auto *entry = readdir(static_cast<DIR *>(handle));
+        if (!entry) {
+            *status = errno ? failure(errno, os_error) : GLOIN_STD_EOF;
+            return nullptr;
+        }
+        if (std::strcmp(entry->d_name, ".") == 0 ||
+            std::strcmp(entry->d_name, "..") == 0)
+            continue;
+        *length = std::strlen(entry->d_name);
+        *status = GLOIN_STD_OK;
+        return entry->d_name;
+    }
+}
+extern "C" int32_t gloin_fs_dir_close(void *handle, int32_t *os_error) {
+    *os_error = 0;
+    if (!handle)
+        return GLOIN_STD_INVALID;
+    errno = 0;
+    return closedir(static_cast<DIR *>(handle)) ? failure(errno, os_error) : GLOIN_STD_OK;
 }

@@ -3,6 +3,7 @@ import "@status";
 import "@std";
 
 def pub const SPLITMIX64_VERSION: i32 = 1;
+
 def pub struct U64Result {
     def pub status: i32,
     def pub value: u64,
@@ -37,12 +38,15 @@ def pub struct SplitMix64 {
                 value: 0
             };
         }
+
         // (2^64 - bound) % bound, computed without overflow in ordinary checked arithmetic.
         def threshold: u64 = (18446744073709551615 - bound + 1) % bound;
         def mut value: u64 = self.next_u64();
+
         while value < threshold {
             value = self.next_u64();
         }
+
         return U64Result {
             status: status.OK,
             value: value % bound
@@ -54,6 +58,7 @@ def pub struct SplitMix64 {
     // Division by 2048 extracts bits without exposing general bitwise/wrapping operators.
     def pub unit_f64(self: &SplitMix64) -> f64 {
         def mantissa: u64 = self.next_u64() / 2048;
+
         return std.f64_from_u64_exact(mantissa).value / 9007199254740992.0;
     }
 

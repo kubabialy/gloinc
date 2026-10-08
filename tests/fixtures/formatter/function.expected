@@ -1,0 +1,3 @@
+def foo() -> i32 {
+    return 3;
+}

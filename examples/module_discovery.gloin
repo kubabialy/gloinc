@@ -1,0 +1,14 @@
+// Both imports collect the immediate .gloin files in their directories.
+import "./modules/calculator";
+import "#math";
+import "@std";
+
+def main() -> i32 {
+    def answer: i32 = calculator.answer();
+    if !calculator.is_expected(answer) || answer != calculator.EXPECTED ||
+        math.double(answer) != 84 { return 1; }
+
+    std.println("module discovery: ok");
+
+    return 0;
+}

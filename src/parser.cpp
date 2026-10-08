@@ -220,6 +220,11 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
     }
     case GLOIN_TOKEN_SELF:
         return parse_name(true);
+    case GLOIN_TOKEN_ERROR: {
+        auto node = located_node<Identifier>("error");
+        advance_token();
+        return node;
+    }
     case GLOIN_TOKEN_IDENTIFIER: {
         bool generic = generic_type_prefix_ahead();
         size_t end = cursor;
@@ -305,7 +310,13 @@ std::unique_ptr<Expression> GloinParser::parse_infix_impl(std::unique_ptr<Expres
     }
     if (type == GLOIN_TOKEN_DOT) {
         advance_token();
-        auto member = generic_type_prefix_ahead() ? parse_type() : parse_name();
+        std::unique_ptr<Identifier> member;
+        if (current_token.type == GLOIN_TOKEN_ERROR) {
+            member = located_node<Identifier>("error");
+            advance_token();
+        } else {
+            member = generic_type_prefix_ahead() ? parse_type() : parse_name();
+        }
         return std::make_unique<MemberAccessExpression>(std::move(left), std::move(member));
     }
     std::string op(current_token.literal);

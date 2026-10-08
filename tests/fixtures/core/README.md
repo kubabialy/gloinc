@@ -44,7 +44,7 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 | Standard import and exact hello-world output (SPEC-023) | [hello_world](run/hello_world.gloin) |
 | Eleven normative invalid fragments | `reject/canonical_01.gloin` through `canonical_11.gloin`; the unknown-type binding is wrapped in a function to reach type checking |
 | Initialization, immutability, scopes, types, literal ranges, calls, returns, constants | Named files under [reject](reject), including [uninitialized](reject/uninitialized.gloin), [mixed_widths](reject/mixed_widths.gloin), [missing_return](reject/missing_return.gloin) |
-| Deferred syntax/type families and unsupported operators | `reject/deferred_*.gloin`: package imports, unsupported string escapes, packed structs, bracket array literals, concurrency, extended numeric/layout types, legacy syntax, range loops, bitwise/shift/compound operators |
+| Deferred syntax/type families and unsupported operators | `reject/deferred_*.gloin`: unsupported string escapes, packed structs, bracket array literals, concurrency, extended numeric/layout types, legacy syntax, range loops, bitwise/shift/compound operators. `reject/missing_package_import.gloin` checks an absent `#package` directory. |
 | Checked integer overflow at every width; zero division and signed-minimum remainder | `trap/overflow_i*.gloin`, `trap/overflow_u*.gloin`, [division_zero](trap/division_zero.gloin), [signed_remainder](trap/signed_remainder.gloin) |
 | Floating zero division and non-finite results at both widths | [f32 division](trap/division_zero_f32.gloin), [f64 division](trap/division_zero_f64.gloin), [f32 overflow](trap/overflow_f32.gloin), [f64 overflow](trap/overflow_f64.gloin) |
 

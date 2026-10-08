@@ -6,36 +6,102 @@ if [[ $# != 2 ]]; then
   exit 2
 fi
 build_dir=$(cd "$1" && pwd)
+source_root=$(cd "$(dirname "$0")/.." && pwd)
+if [[ -x /opt/homebrew/opt/openssl@3/bin/openssl ]]; then
+  openssl_command=/opt/homebrew/opt/openssl@3/bin/openssl
+elif [[ -x /usr/local/opt/openssl@3/bin/openssl ]]; then
+  openssl_command=/usr/local/opt/openssl@3/bin/openssl
+else
+  openssl_command=$(command -v openssl)
+fi
+case "$(uname -s)" in
+  Darwin)
+    runtime_suffix=dylib
+    llvm_version=21.1.6
+    package_platform=macos-arm64
+    checksum_check=(shasum -a 256 -c)
+    dependency_report=(otool -L)
+    ;;
+  Linux)
+    runtime_suffix=so
+    llvm_version=21.1.8
+    package_platform="linux-$(uname -m)"
+    checksum_check=(sha256sum -c)
+    dependency_report=(ldd)
+    ;;
+  *)
+    echo "Package acceptance supports macOS and Linux" >&2
+    exit 2
+    ;;
+esac
 mkdir -p "$2"
 report_dir=$(cd "$2" && pwd)
 work_dir=$(mktemp -d "$report_dir/work.XXXXXX")
 cmake --install "$build_dir" --prefix "$work_dir/install prefix"
+"$build_dir/gloin-check-docs" "$work_dir/install prefix/share/doc/gloinc/docs/site"
+[[ -x "$work_dir/install prefix/bin/gloinfmt" ]]
+"$work_dir/install prefix/bin/gloinfmt" --check "$work_dir/install prefix/share/gloinc/examples/hello_world.gloin"
 cmake -E env "GLOIN_TEST_CLI=$work_dir/install prefix/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$work_dir/install prefix/share/gloinc/core-fixtures" \
-  "GLOIN_TEST_ARENA_RUNTIME=$work_dir/install prefix/lib/libgloin_runtime.dylib" \
+  "GLOIN_TEST_ARENA_RUNTIME=$work_dir/install prefix/lib/libgloin_runtime.$runtime_suffix" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/installed.xml"
+"$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-tls-test" "$source_root/tests/tls/main.gloin"
+"$work_dir/installed-tls-test" "$work_dir/install prefix/bin/gloinc" "$source_root" "$work_dir" "$openssl_command"
+"$work_dir/install prefix/bin/gloinc" --check "$work_dir/install prefix/share/gloinc/examples/tls_server.gloin"
+"$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-http-test" "$source_root/tests/http/main.gloin"
+for kind in client stream; do
+  "$work_dir/installed-http-test" "$kind" "$work_dir/install prefix/bin/gloinc" "$source_root" "$work_dir" "$openssl_command" \
+    "$work_dir/install prefix/share/gloinc/examples/http_$kind.gloin"
+done
+"$work_dir/install prefix/bin/gloinc" --check "$work_dir/install prefix/share/gloinc/examples/http_echo_server.gloin"
+"$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-json-test" "$source_root/tests/json/main.gloin"
+"$work_dir/installed-json-test" "$work_dir/install prefix/bin/gloinc" "$source_root" "$work_dir" \
+  "$work_dir/install prefix/share/gloinc/examples/json.gloin"
+"$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-stress-test" "$source_root/tests/integrated/main.gloin"
+"$work_dir/installed-stress-test" "$work_dir/install prefix/bin/gloinc" \
+  "$work_dir/install prefix/share/gloinc/examples" "$work_dir"
 
 cpack --config "$build_dir/CPackConfig.cmake" -B "$work_dir/packages"
 archives=("$work_dir/packages/"*.tar.gz)
 [[ ${#archives[@]} == 1 && -f "${archives[0]}" ]]
 archive=${archives[0]}
 archive_name=$(basename "$archive" .tar.gz)
+[[ "$archive_name" == "gloinc-0.1.0-$package_platform" ]]
 if tar -tzf "$archive" | grep -F '/.DS_Store'; then
   echo "Package contains Finder metadata" >&2
   exit 1
 fi
-(cd "$work_dir/packages" && LC_ALL=C shasum -a 256 -c "$(basename "$archive").sha256")
+(cd "$work_dir/packages" && LC_ALL=C "${checksum_check[@]}" "$(basename "$archive").sha256")
 mkdir "$work_dir/extracted prefix"
 tar -xzf "$archive" -C "$work_dir/extracted prefix"
 package_root="$work_dir/extracted prefix/$archive_name"
+"$build_dir/gloin-check-docs" "$package_root/share/doc/gloinc/docs/site"
+[[ -x "$package_root/bin/gloinfmt" ]]
+"$package_root/bin/gloinfmt" --check "$package_root/share/gloinc/examples/hello_world.gloin"
+[[ "$("$package_root/bin/gloinfmt" "$package_root/share/gloinc/examples/hello_world.gloin")" == "$(cat "$package_root/share/gloinc/examples/hello_world.gloin")" ]]
 cmake -E env "GLOIN_TEST_CLI=$package_root/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$package_root/share/gloinc/core-fixtures" \
-  "GLOIN_TEST_ARENA_RUNTIME=$package_root/lib/libgloin_runtime.dylib" \
+  "GLOIN_TEST_ARENA_RUNTIME=$package_root/lib/libgloin_runtime.$runtime_suffix" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/extracted.xml"
+"$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-tls-test" "$source_root/tests/tls/main.gloin"
+"$work_dir/relocated-tls-test" "$package_root/bin/gloinc" "$source_root" "$work_dir" "$openssl_command"
+"$package_root/bin/gloinc" --check "$package_root/share/gloinc/examples/tls_server.gloin"
+"$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-http-test" "$source_root/tests/http/main.gloin"
+for kind in client stream; do
+  "$work_dir/relocated-http-test" "$kind" "$package_root/bin/gloinc" "$source_root" "$work_dir" "$openssl_command" \
+    "$package_root/share/gloinc/examples/http_$kind.gloin"
+done
+"$package_root/bin/gloinc" --check "$package_root/share/gloinc/examples/http_echo_server.gloin"
+"$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-json-test" "$source_root/tests/json/main.gloin"
+"$work_dir/relocated-json-test" "$package_root/bin/gloinc" "$source_root" "$work_dir" \
+  "$package_root/share/gloinc/examples/json.gloin"
+"$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-stress-test" "$source_root/tests/integrated/main.gloin"
+"$work_dir/relocated-stress-test" "$package_root/bin/gloinc" \
+  "$package_root/share/gloinc/examples" "$work_dir"
 program_status=0
 result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/core_counter.gloin") || program_status=$?
 [[ "$program_status" == 42 && -z "$result" ]]
@@ -45,12 +111,23 @@ result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/a
 [[ "$result" == 'arena lab: ok' ]]
 result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/module_lab.gloin")
 [[ "$result" == 'module lab: ok' ]]
-[[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" && -f "$package_root/include/gloin/stdlib_runtime.h" && -f "$package_root/include/gloin/io_runtime.h" && -f "$package_root/include/gloin/context_runtime.h" && -f "$package_root/include/gloin/math_runtime.h" && -f "$package_root/include/gloin/time_runtime.h" && -f "$package_root/include/gloin/random_runtime.h" ]]
+result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/module_discovery.gloin")
+[[ "$result" == 'module discovery: ok' ]]
+[[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" && -f "$package_root/include/gloin/memory_runtime.h" && -f "$package_root/include/gloin/stdlib_runtime.h" && -f "$package_root/include/gloin/io_runtime.h" && -f "$package_root/include/gloin/net_runtime.h" && -f "$package_root/include/gloin/context_runtime.h" && -f "$package_root/include/gloin/math_runtime.h" && -f "$package_root/include/gloin/time_runtime.h" && -f "$package_root/include/gloin/random_runtime.h" ]]
 [[ -f "$package_root/share/doc/gloinc/third_party/fast_float/LICENSE-MIT" && -f "$package_root/share/doc/gloinc/third_party/fast_float/README.md" ]]
-[[ -f "$package_root/share/doc/gloinc/docs/site/0.0.4/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
-[[ -f "$package_root/share/gloinc/scripts/install-llvm.sh" && -f "$package_root/share/gloinc/examples/fixed_arrays.gloin" && -f "$package_root/share/gloinc/examples/pointer_offsets.gloin" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/site/0.1.0/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
+[[ -f "$package_root/share/gloinc/scripts/install-llvm.sh" && -f "$package_root/share/gloinc/scripts/install-llvm-linux.sh" && -f "$package_root/share/gloinc/examples/fixed_arrays.gloin" && -f "$package_root/share/gloinc/examples/pointer_offsets.gloin" ]]
 [[ -f "$package_root/share/gloinc/stdlib/vector.gloin" ]]
-for example in generic_structs generic_functions generic_methods enums slices vector fixed_vector; do
+[[ -f "$package_root/share/gloinc/stdlib/slices.gloin" ]]
+[[ -f "$package_root/share/gloinc/stdlib/memory.gloin" ]]
+[[ -f "$package_root/share/gloinc/stdlib/net.gloin" && -f "$package_root/share/gloinc/stdlib/http.gloin" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/results.md" && -f "$package_root/share/doc/gloinc/docs/raw-memory.md" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/networking.md" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/site/development/index.html" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/release-0.1.0.md" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/release-notes-0.1.0.md" ]]
+"$package_root/bin/gloinc" --check "$package_root/share/gloinc/examples/strip_nuls.gloin"
+for example in generic_structs generic_functions generic_methods enums slices vector fixed_vector custom_arena; do
   source_file="$package_root/share/gloinc/examples/$example.gloin"
   [[ -f "$source_file" ]]
   "$package_root/bin/gloinc" --check "$source_file"
@@ -60,7 +137,23 @@ for example in generic_structs generic_functions generic_methods enums slices ve
   "$package_root/bin/gloinc" --jit "$source_file" || example_status=$?
   [[ "$example_status" == "$expected_status" ]]
 done
-[[ "$("$package_root/bin/gloinc" --version)" == 'gloinc 0.0.4 (LLVM/MLIR 21.1.6)' ]]
+result_example="$package_root/share/gloinc/examples/result_handling.gloin"
+[[ -f "$result_example" ]]
+"$package_root/bin/gloinc" --check "$result_example"
+result_status=0
+result_output=$("$package_root/bin/gloinc" --jit "$result_example") || result_status=$?
+[[ "$result_status" == 84 && "$result_output" == 'The answer was computed successfully.' ]]
+network_example="$package_root/share/gloinc/examples/network_http.gloin"
+[[ -f "$network_example" ]]
+[[ "$("$package_root/bin/gloinc" --jit "$network_example")" == 'nonblocking HTTP round trip succeeded' ]]
+directory_example="$package_root/share/gloinc/examples/directory_walk.gloin"
+[[ -f "$directory_example" ]]
+mkdir "$work_dir/scan entries"
+: > "$work_dir/scan entries/alpha.gloin"
+: > "$work_dir/scan entries/beta.gloin"
+directory_output=$("$package_root/bin/gloinc" --jit "$directory_example" -- "$work_dir/scan entries")
+[[ "$(printf '%s\n' "$directory_output" | LC_ALL=C sort)" == $'alpha.gloin\nbeta.gloin' ]]
+[[ "$("$package_root/bin/gloinc" --version)" == "gloinc 0.1.0 (LLVM/MLIR $llvm_version)" ]]
 [[ "$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/fixed_arrays.gloin")" == 'sum = 42' ]]
 "$package_root/bin/gloinc" -O2 -o "$work_dir/extracted prefix/pointer-offsets" \
   "$package_root/share/gloinc/examples/pointer_offsets.gloin"
@@ -91,10 +184,10 @@ result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/a
 mv "$work_dir/arena.gloin.saved" "$package_root/share/gloinc/stdlib/arena.gloin"
 [[ "$module_status" == 1 && -z "$result" ]]
 grep -F "Cannot load module '@arena'" "$report_dir/missing-arena.txt"
-otool -L "$package_root/bin/gloinc" "$package_root/lib/libgloin_runtime.dylib" > "$report_dir/dependencies.txt"
+"${dependency_report[@]}" "$package_root/bin/gloinc" "$package_root/lib/libgloin_runtime.$runtime_suffix" > "$report_dir/dependencies.txt"
 if awk -v dir="$build_dir" '/^[[:space:]]/ && index($0, dir) { print; found = 1 } END { exit !found }' "$report_dir/dependencies.txt"; then
   echo "Installed compiler still depends on its build directory" >&2
   exit 1
 fi
 cp "$archive" "$archive.sha256" "$report_dir/"
-echo "Installed and extracted packages passed CLI, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases."
+echo "Installed and extracted packages passed CLI, formatter, standard-library, module, arena, defer, method, pointer, struct, fixed-array, standard-output, and source acceptance cases."

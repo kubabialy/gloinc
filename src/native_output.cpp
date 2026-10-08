@@ -79,8 +79,9 @@ bool temporary(const std::string &output, llvm::SmallString<256> &path, Diagnost
 bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput kind,
                  NativeOptimization optimization, const std::string &compiler_path,
                  Diagnostics &diagnostics) {
-#if !defined(__APPLE__) || !defined(__aarch64__)
-    error(diagnostics, "Native output in 0.0.1 supports Apple Silicon macOS only");
+#if !((defined(__APPLE__) && defined(__aarch64__)) || \
+      (defined(__linux__) && (defined(__aarch64__) || defined(__x86_64__))))
+    error(diagnostics, "Native output requires Apple Silicon macOS or 64-bit Linux");
     return false;
 #else
     if (llvm::InitializeNativeTarget() || llvm::InitializeNativeTargetAsmPrinter()) {
@@ -92,6 +93,11 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
         error(diagnostics, llvm::toString(builder.takeError()));
         return false;
     }
+#if defined(__linux__)
+    // Linux toolchains link PIE executables by default. The emitted object must
+    // also work when users link --emit-object with their ordinary compiler.
+    builder->setRelocationModel(llvm::Reloc::PIC_);
+#endif
     builder->setCodeGenOptLevel(optimization == NativeOptimization::O2
                                     ? llvm::CodeGenOptLevel::Default
                                     : llvm::CodeGenOptLevel::None);
@@ -189,7 +195,21 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
     const std::string object_arg = object_path.str().str();
     const std::string runtime_arg = runtime.str().str();
     const std::string output_arg = executable_path.str().str();
+    const std::string ssl_arg = GLOIN_OPENSSL_SSL_LIBRARY;
+    const std::string crypto_arg = GLOIN_OPENSSL_CRYPTO_LIBRARY;
     llvm::SmallVector<llvm::StringRef> args{linker, object_arg, runtime_arg};
+#if defined(__linux__)
+    args.push_back("-Wl,--as-needed");
+#endif
+    args.push_back(ssl_arg);
+    args.push_back(crypto_arg);
+#if defined(__APPLE__)
+    // Ordinary programs do not need a TLS runtime dependency. Keep OpenSSL
+    // only when the static TLS runtime object is actually pulled into the link.
+    args.push_back("-Wl,-dead_strip_dylibs");
+#elif defined(__linux__)
+    args.push_back("-Wl,--no-as-needed");
+#endif
 #if GLOIN_NATIVE_SANITIZED
     args.push_back("-fsanitize=address,undefined");
 #endif

@@ -1,0 +1,461 @@
+// --run COMPILER FORMATTER HARNESS ROOT PARENT drives the entire smoke test.
+// --prepare/--verify ROOT WORK are child modes; assertions and orchestration are Gloin.
+import "@arena";
+import "@fs";
+import "@io";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@vector";
+import "../../tools/gloinfmt/format.gloin";
+import "../../tools/gloinfmt/tokens.gloin";
+import "./runner.gloin";
+
+def report(path: string, message: string) -> void {
+    def mut output: io.Stream = io.stderr();
+
+    output.write_all(path);
+    output.write_all(": ");
+    output.write_line(message);
+}
+
+def close_file(file: &io.File) -> void {
+    if file.is_open() { file.close(); }
+}
+
+def close_directory(directory: &fs.Directory) -> void {
+    if directory.is_open() { directory.close(); }
+}
+
+def joined(memory: &arena.GeneralArena, left: string, right: string) -> result<string> {
+    def path: fs.PathResult = fs.join(memory, left, right, 65536);
+    if path.status != status.OK { return error("cannot join fixture path"); }
+
+    return path.value;
+}
+
+def read_file(memory: &arena.GeneralArena, path: string) -> result<string> {
+    def opened: io.FileResult = io.File.open_read(memory, path);
+    if opened.status != status.OK { return error("cannot open fixture"); }
+
+    def mut file: io.File = opened.value;
+    defer close_file(&file);
+
+    def read: io.ReadResult = file.read_all(memory, 8388608);
+    if read.status != status.OK { return error("cannot read fixture"); }
+    if file.close().status != status.OK { return error("cannot close fixture"); }
+
+    return read.value;
+}
+
+def write_file(memory: &arena.GeneralArena, path: string, text: string) -> bool {
+    def opened: io.FileResult = io.File.create_new(memory, path);
+    if opened.status != status.OK { return false; }
+
+    def mut file: io.File = opened.value;
+    defer close_file(&file);
+
+    if file.write_all(text).status != status.OK { return false; }
+
+    return file.close().status == status.OK;
+}
+
+def crlf(memory: &arena.GeneralArena, text: string) -> result<string> {
+    def made: strings.BuilderResult = strings.StringBuilder.create(memory, strings.byte_length(text) * 2 + 1);
+    if made.status != status.OK { return error("cannot allocate CRLF fixture"); }
+
+    def mut output: strings.StringBuilder = made.value;
+
+    for def mut i: u64 = 0; i < strings.byte_length(text); i = i + 1 {
+        def byte: u8 = strings.byte_at(text, i).value;
+        if byte == 10 && output.append("\r") != status.OK { return error("cannot build CRLF fixture"); }
+        if output.append_byte(byte) != status.OK { return error("cannot build CRLF fixture"); }
+    }
+
+    def made_text: strings.StringResult = output.to_string(memory);
+    if made_text.status != status.OK { return error("cannot copy CRLF fixture"); }
+
+    return made_text.value;
+}
+
+def fixture(memory: &arena.GeneralArena, root: string, name: string, suffix: string) -> result<string> {
+    def directory: result<string> = joined(memory, root, "tests/fixtures/formatter");
+    if directory.erroneous { return directory.error; }
+
+    def leaf: strings.StringResult = strings.concat(memory, name, suffix, 4096);
+    if leaf.status != status.OK { return error("cannot build fixture name"); }
+
+    def path: result<string> = joined(memory, directory.value, leaf.value);
+    if path.erroneous { return path.error; }
+
+    def text: result<string> = read_file(memory, path.value);
+    if text.erroneous { return text.error; }
+
+    return text.value;
+}
+
+def write_at(memory: &arena.GeneralArena, work: string, name: string, text: string) -> bool {
+    def path: result<string> = joined(memory, work, name);
+    if path.erroneous { return false; }
+
+    return write_file(memory, path.value, text);
+}
+
+def prepare(root: string, work: string) -> bool {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def directories: [string; 5] = {"tree", "tree/nested", "tree/.git", "tree/build", "tree/build-generated"};
+
+    for def mut i: u64 = 0; i < 5; i = i + 1 {
+        def path: result<string> = joined(&memory, work, directories[i]);
+        if path.erroneous { return false; }
+        if fs.mkdir(path.value).status != status.OK { return false; }
+    }
+
+    def link_path: result<string> = joined(&memory, work, "tree/linked");
+    if link_path.erroneous { return false; }
+
+    def linked: result<void> = fs.symlink("nested", link_path.value);
+    if linked.erroneous { return false; }
+
+    def names: [string; 3] = {"indentation", "simple", "function"};
+    def files: [string; 3] = {"tree/a.gloin", "tree/nested/b.gloin", "tree/z.gloin"};
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def input: result<string> = fixture(&memory, root, names[i], ".input");
+        if input.erroneous { return false; }
+
+        def mut text: string = input.value;
+
+        if i == 1 {
+            def converted: result<string> = crlf(&memory, text);
+            if converted.erroneous { return false; }
+
+            text = converted.value;
+        }
+
+        if !write_at(&memory, work, files[i], text) { return false; }
+    }
+
+    def ignored: string = "def ignored() {\nreturn;\n}\n";
+    if !write_at(&memory, work, "tree/.git/ignored.gloin", ignored)
+        || !write_at(&memory, work, "tree/build/ignored.gloin", ignored)
+        || !write_at(&memory, work, "tree/build-generated/ignored.gloin", ignored)
+        || !write_at(&memory, work, "empty", "") { return false; }
+
+    def unaligned: result<string> = fixture(&memory, root, "groups", ".input");
+    if unaligned.erroneous { return false; }
+
+    def aligned: result<string> = fixture(&memory, root, "groups", ".expected");
+    if aligned.erroneous { return false; }
+
+    return write_at(&memory, work, "unaligned.gloin", unaligned.value)
+        && write_at(&memory, work, "aligned.gloin", aligned.value);
+}
+
+def check_layout(before: string, expected: string) -> bool {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def formatted: result<string> = format.format_text(&memory, before);
+    if formatted.erroneous { report("format", formatted.error.message); return false; }
+    if !strings.equal(formatted.value, expected) { report("format", "unexpected layout"); return false; }
+    if !tokens.same(before, formatted.value) { report("format", "tokens changed"); return false; }
+
+    def again: result<string> = format.format_text(&memory, formatted.value);
+    if again.erroneous { report("format", again.error.message); return false; }
+
+    return strings.equal(again.value, formatted.value);
+}
+
+def token_cases() -> bool {
+    if !tokens.same("def x:i32=1;\n", "  def x: i32 = 1;\r\n") { return false; }
+
+    def before: [string; 7] = {"foo bar", "x == y", "x >> 1", "\"a b\"", "// keep\nx;", "x;", "'x'"};
+    def after: [string; 7]  = {"foobar", "x = = y", "x > > 1", "\"ab\"", "// keep x;", "", "'y'"};
+
+    for def mut i: u64 = 0; i < 7; i = i + 1 {
+        if tokens.same(before[i], after[i]) { return false; }
+    }
+
+    return true;
+}
+
+def golden_cases(root: string) -> bool {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def names: [string; 8] = {"indentation", "simple", "function", "groups", "lexical", "generics", "guards", "assignments"};
+
+    for def mut i: u64 = 0; i < 8; i = i + 1 {
+        memory.reset();
+        def input: result<string> = fixture(&memory, root, names[i], ".input");
+        if input.erroneous { report(names[i], input.error.message); return false; }
+
+        def expected: result<string> = fixture(&memory, root, names[i], ".expected");
+        if expected.erroneous { report(names[i], expected.error.message); return false; }
+        if !check_layout(input.value, expected.value) { report(names[i], "LF layout failed"); return false; }
+
+        def input_crlf: result<string> = crlf(&memory, input.value);
+        if input_crlf.erroneous { return false; }
+
+        def expected_crlf: result<string> = crlf(&memory, expected.value);
+        if expected_crlf.erroneous { return false; }
+        if !check_layout(input_crlf.value, expected_crlf.value) { report(names[i], "CRLF layout failed"); return false; }
+    }
+
+    return check_layout("", "") && check_layout(" \t\r\n\n", "");
+}
+
+def same_file(memory: &arena.GeneralArena, work: string, name: string, expected: string) -> bool {
+    def path: result<string> = joined(memory, work, name);
+    if path.erroneous { return false; }
+
+    def read: result<string> = read_file(memory, path.value);
+    if read.erroneous { report(path.value, read.error.message); return false; }
+    if !strings.equal(read.value, expected) { report(path.value, "unexpected file contents"); return false; }
+
+    return true;
+}
+
+def captured(memory: &arena.GeneralArena, work: string, name: string, code: string, output: string) -> bool {
+    def status_name: strings.StringResult = strings.concat(memory, name, ".status", 4096);
+    def output_name: strings.StringResult = strings.concat(memory, name, ".out", 4096);
+    def error_name: strings.StringResult  = strings.concat(memory, name, ".err", 4096);
+
+    if status_name.status != status.OK || output_name.status != status.OK || error_name.status != status.OK { return false; }
+
+    return same_file(memory, work, status_name.value, code)
+        && same_file(memory, work, output_name.value, output)
+        && same_file(memory, work, error_name.value, "");
+}
+
+def cli_cases(root: string, work: string) -> bool {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def names: [string; 3]          = {"indentation", "simple", "function"};
+    def files: [string; 3]          = {"tree/a.gloin", "tree/nested/b.gloin", "tree/z.gloin"};
+    def captures: [string; 3]       = {"native-a", "native-b", "native-z"};
+    def repeats: [string; 3]        = {"repeat-a", "repeat-b", "repeat-z"};
+    def made: strings.BuilderResult = strings.StringBuilder.create(&memory, 262144);
+
+    if made.status != status.OK { return false; }
+
+    def mut changed: strings.StringBuilder = made.value;
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def input: result<string> = fixture(&memory, root, names[i], ".input");
+        if input.erroneous { return false; }
+
+        def expected: result<string> = fixture(&memory, root, names[i], ".expected");
+        if expected.erroneous { return false; }
+
+        def mut before: string = input.value;
+        def mut after: string  = expected.value;
+
+        if i == 1 {
+            def a: result<string> = crlf(&memory, before);
+            if a.erroneous { return false; }
+
+            def b: result<string> = crlf(&memory, after);
+            if b.erroneous { return false; }
+
+            before = a.value;
+            after  = b.value;
+        }
+
+        if !captured(&memory, work, captures[i], "0\n", after)
+            || !captured(&memory, work, repeats[i], "0\n", after)
+            || !same_file(&memory, work, files[i], before) { return false; }
+
+        def path: result<string> = joined(&memory, work, files[i]);
+        if path.erroneous { return false; }
+        if changed.append(path.value) != status.OK || changed.append("\n") != status.OK { return false; }
+        if i == 0 && !captured(&memory, work, "jit-file", "0\n", after) { return false; }
+    }
+
+    def changed_text: strings.StringResult = changed.to_string(&memory);
+    if changed_text.status != status.OK { return false; }
+    if !captured(&memory, work, "check-tree", "1\n", changed_text.value) { return false; }
+    if !captured(&memory, work, "check-clean", "0\n", "") { return false; }
+
+    def path: result<string> = joined(&memory, work, "unaligned.gloin");
+    if path.erroneous { return false; }
+
+    def path_line: strings.StringResult = strings.concat(&memory, path.value, "\n", 65537);
+    if path_line.status != status.OK { return false; }
+    if !captured(&memory, work, "check-style", "1\n", path_line.value) { return false; }
+
+    def aligned: result<string> = fixture(&memory, root, "groups", ".expected");
+    if aligned.erroneous { return false; }
+    if !captured(&memory, work, "jit-style", "0\n", aligned.value) { return false; }
+
+    if !same_file(&memory, work, "missing.status", "2\n")
+        || !same_file(&memory, work, "missing.out", "") { return false; }
+
+    def error_path: result<string> = joined(&memory, work, "missing.err");
+    if error_path.erroneous { return false; }
+
+    def message: result<string> = read_file(&memory, error_path.value);
+    if message.erroneous { return false; }
+
+    return strings.contains(message.value, "cannot inspect input path");
+}
+
+def check_source(path: string) -> bool {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def source: result<string> = read_file(&memory, path);
+    if source.erroneous { report(path, source.error.message); return false; }
+
+    def formatted: result<string> = format.format_text(&memory, source.value);
+    if formatted.erroneous { report(path, formatted.error.message); return false; }
+    if !tokens.same(source.value, formatted.value) { report(path, "tokens changed"); return false; }
+
+    def again: result<string> = format.format_text(&memory, formatted.value);
+    if again.erroneous { report(path, again.error.message); return false; }
+    if !strings.equal(again.value, formatted.value) { report(path, "not idempotent"); return false; }
+    if strings.contains(source.value, "\r\n") && !strings.contains(formatted.value, "\r\n") {
+        report(path, "CRLF changed");
+        return false;
+    }
+
+    return true;
+}
+
+def sort_names(names: &vector.Vector<string>) -> void {
+    for def mut i: i64 = 1; i < names.len(); i = i + 1 {
+        def mut position: i64 = i;
+        def mut sorting: bool = true;
+
+        while position > 0 && sorting {
+            def left: *string  = names.get_mut(position - 1);
+            def right: *string = names.get_mut(position);
+
+            if strings.compare(*left, *right) <= 0 {
+                sorting = false;
+            } else {
+                def saved: string = *left;
+                *left  = *right;
+                *right = saved;
+                position = position - 1;
+            }
+        }
+    }
+}
+
+def corpus(path: string, checked: &i32) -> bool {
+    def metadata: fs.MetadataResult = fs.metadata(path);
+    if metadata.status != status.OK { report(path, "cannot inspect corpus path"); return false; }
+
+    if metadata.kind == fs.FILE {
+        if strings.ends_with(path, ".gloin") {
+            if !check_source(path) { return false; }
+
+            *checked = *checked + 1;
+        }
+
+        return true;
+    }
+
+    if metadata.kind != fs.DIRECTORY { return true; }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def opened: fs.DirectoryResult = fs.Directory.open(&memory, path);
+    if opened.status != status.OK { return false; }
+
+    def mut directory: fs.Directory = opened.value;
+    defer close_directory(&directory);
+
+    def mut names: vector.Vector<string> = vector.Vector<string>.empty(&memory, 0);
+    def mut scanning: bool               = true;
+
+    while scanning {
+        def entry: fs.DirectoryEntryResult = directory.next(&memory);
+
+        if entry.status == status.END {
+            scanning = false;
+        } else if entry.status != status.OK {
+            return false;
+        } else if !strings.equal(entry.name, ".git") && !strings.equal(entry.name, "build")
+            && !strings.starts_with(entry.name, "build-") {
+            if !names.push(entry.name) { return false; }
+        }
+    }
+
+    if directory.close().status != status.OK { return false; }
+
+    sort_names(&names);
+
+    for def mut i: i64 = 0; i < names.len(); i = i + 1 {
+        def child: result<string> = joined(&memory, path, *names.get(i));
+        if child.erroneous { return false; }
+        if !corpus(child.value, checked) { return false; }
+    }
+
+    return true;
+}
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    if process.arg_count() == 7 {
+        def run_mode: process.TextResult    = process.arg(&memory, 1);
+        def compiler: process.TextResult    = process.arg(&memory, 2);
+        def formatter: process.TextResult   = process.arg(&memory, 3);
+        def harness: process.TextResult     = process.arg(&memory, 4);
+        def source_root: process.TextResult = process.arg(&memory, 5);
+        def parent: process.TextResult      = process.arg(&memory, 6);
+
+        if run_mode.status != status.OK || !strings.equal(run_mode.value, "--run")
+            || compiler.status != status.OK || formatter.status != status.OK || harness.status != status.OK
+            || source_root.status != status.OK || parent.status != status.OK { return 2; }
+
+        return runner.execute_suite(compiler.value, formatter.value, harness.value, source_root.value, parent.value);
+    }
+
+    if process.arg_count() != 4 { report("usage", "formatter-tests --prepare|--verify ROOT WORK"); return 2; }
+
+    def mode: process.TextResult = process.arg(&memory, 1);
+    def root: process.TextResult = process.arg(&memory, 2);
+    def work: process.TextResult = process.arg(&memory, 3);
+
+    if mode.status != status.OK || root.status != status.OK || work.status != status.OK { return 2; }
+
+    if strings.equal(mode.value, "--prepare") {
+        if !prepare(root.value, work.value) { report("prepare", "fixture setup failed"); return 1; }
+
+        return 0;
+    }
+
+    if !strings.equal(mode.value, "--verify") { return 2; }
+    if !token_cases() { report("tokens", "token comparison missed a source change"); return 1; }
+    if !golden_cases(root.value) { return 1; }
+    if !cli_cases(root.value, work.value) { return 1; }
+
+    def directories: [string; 4] = {"examples", "stdlib", "tests", "tools"};
+    def mut checked: i32         = 0;
+
+    for def mut i: u64 = 0; i < 4; i = i + 1 {
+        def path: result<string> = joined(&memory, root.value, directories[i]);
+        if path.erroneous { return 1; }
+        if !corpus(path.value, &checked) { return 1; }
+    }
+
+    if checked == 0 { report("corpus", "no Gloin source files found"); return 1; }
+
+    def count: string = std.to_string(&memory, checked);
+
+    std.print("Gloin formatter tests passed; ");
+    std.print(count);
+    std.println(" source files preserve tokens and are idempotent");
+
+    return 0;
+}

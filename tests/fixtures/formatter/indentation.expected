@@ -1,0 +1,7 @@
+def main() -> i32 {
+    if true {
+        std.println("// }"); // {
+    }
+
+    return 0;
+}

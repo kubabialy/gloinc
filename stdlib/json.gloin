@@ -1,0 +1,906 @@
+// Bounded JSON events and construction, entirely in Gloin. See docs/json.md.
+// Input/output views borrow caller storage. UTF-8 must encode Unicode scalars.
+import "@status";
+import "@std";
+import "@strings";
+
+def pub const DONE: i32         = 0;
+def pub const OBJECT_BEGIN: i32 = 1;
+def pub const OBJECT_END: i32   = 2;
+def pub const ARRAY_BEGIN: i32  = 3;
+def pub const ARRAY_END: i32    = 4;
+def pub const KEY: i32          = 5;
+def pub const STRING: i32       = 6;
+def pub const NUMBER: i32       = 7;
+def pub const BOOLEAN: i32      = 8;
+def pub const NULL: i32         = 9;
+def pub const MAX_DEPTH: u64    = 64;
+
+def const ARRAY_FIRST: i32  = 1;
+def const ARRAY_NEXT: i32   = 2;
+def const ARRAY_VALUE: i32  = 3;
+def const OBJECT_FIRST: i32 = 4;
+def const OBJECT_KEY: i32   = 5;
+def const OBJECT_COLON: i32 = 6;
+def const OBJECT_VALUE: i32 = 7;
+def const OBJECT_NEXT: i32  = 8;
+
+def byte(text: string, index: u64) -> u8 {
+    return strings.byte_at(text, index).value;
+}
+
+def whitespace(value: u8) -> bool {
+    return value == 32 || value == 9 || value == 10 || value == 13;
+}
+
+def digit(value: u8) -> bool {
+    return value >= 48 && value <= 57;
+}
+
+def continuation(value: u8) -> bool {
+    return value >= 128 && value <= 191;
+}
+
+// Reject overlong encodings, surrogate code points, and values above U+10FFFF.
+def utf8_width(text: string, position: u64) -> result<u64> {
+    def size: u64 = strings.byte_length(text);
+    if position >= size { return error("truncated JSON UTF-8"); }
+
+    def first: u8 = byte(text, position);
+    if first < 128 { return 1; }
+
+    def mut count: u64 = 0;
+    if first >= 194 && first <= 223 { count = 2; }
+    if first >= 224 && first <= 239 { count = 3; }
+    if first >= 240 && first <= 244 { count = 4; }
+    if count == 0 { return error("invalid JSON UTF-8"); }
+    if count > size - position { return error("truncated JSON UTF-8"); }
+
+    for def mut i: u64 = 1; i < count; i = i + 1 {
+        if !continuation(byte(text, position + i)) { return error("invalid JSON UTF-8 continuation"); }
+    }
+
+    def second: u8 = byte(text, position + 1);
+    if (first == 224 && second < 160) || (first == 237 && second >= 160)
+        || (first == 240 && second < 144) || (first == 244 && second >= 144) {
+        return error("JSON UTF-8 does not encode a Unicode scalar");
+    }
+
+    return count;
+}
+
+def hex_digit(value: u8) -> result<u8> {
+    if value >= 48 && value <= 57 { return value - 48; }
+    if value >= 65 && value <= 70 { return value - 55; }
+    if value >= 97 && value <= 102 { return value - 87; }
+
+    return error("invalid JSON Unicode escape");
+}
+
+def struct CodeUnit {
+    def high: u8,
+    def low: u8,
+}
+
+def code_unit(text: string, position: u64) -> result<CodeUnit> {
+    if strings.byte_length(text) - position < 4 { return error("truncated JSON Unicode escape"); }
+
+    def a: result<u8> = hex_digit(byte(text, position));
+    if a.erroneous { return a.error; }
+
+    def b: result<u8> = hex_digit(byte(text, position + 1));
+    if b.erroneous { return b.error; }
+
+    def c: result<u8> = hex_digit(byte(text, position + 2));
+    if c.erroneous { return c.error; }
+
+    def d: result<u8> = hex_digit(byte(text, position + 3));
+    if d.erroneous { return d.error; }
+
+    return CodeUnit {
+        high: a.value * 16 + b.value,
+        low: c.value * 16 + d.value
+    };
+}
+
+def struct Character {
+    def bytes: [u8; 4],
+    def count: u64,
+    def end: u64,
+}
+
+// Decode one character between the opening and closing quotes of a JSON string.
+def character(text: string, position: u64) -> result<Character> {
+    def size: u64 = strings.byte_length(text);
+    if position >= size { return error("truncated JSON string"); }
+
+    def first: u8           = byte(text, position);
+    def mut output: [u8; 4] = zeroed;
+
+    if first < 32 { return error("unescaped control byte in JSON string"); }
+
+    if first != 92 {
+        def width: result<u64> = utf8_width(text, position);
+        if width.erroneous { return width.error; }
+
+        def count: u64 = width.value;
+
+        for def mut i: u64 = 0; i < count; i = i + 1 {
+            output[i] = byte(text, position + i);
+        }
+
+        return Character {
+            bytes: output,
+            count: count,
+            end: position + count
+        };
+    }
+
+    if size - position < 2 { return error("truncated JSON escape"); }
+
+    def escaped: u8 = byte(text, position + 1);
+
+    if escaped != 117 {
+        if escaped == 34 || escaped == 92 || escaped == 47 {
+            output[0] = escaped;
+        } else if escaped == 98 {
+            output[0] = 8;
+        } else if escaped == 102 {
+            output[0] = 12;
+        } else if escaped == 110 {
+            output[0] = 10;
+        } else if escaped == 114 {
+            output[0] = 13;
+        } else if escaped == 116 {
+            output[0] = 9;
+        } else { return error("invalid JSON escape"); }
+
+        return Character {
+            bytes: output,
+            count: 1,
+            end: position + 2
+        };
+    }
+
+    def unit: result<CodeUnit> = code_unit(text, position + 2);
+    if unit.erroneous { return unit.error; }
+
+    def high: u8       = unit.value.high;
+    def low: u8        = unit.value.low;
+    def mut count: u64 = 0;
+    def mut end: u64   = position + 6;
+
+    if high >= 220 && high <= 223 { return error("unpaired JSON low surrogate"); }
+
+    if high >= 216 && high <= 219 {
+        if size - end < 6 { return error("unpaired JSON high surrogate"); }
+        if byte(text, end) != 92 || byte(text, end + 1) != 117 {
+            return error("unpaired JSON high surrogate");
+        }
+
+        def following: result<CodeUnit> = code_unit(text, end + 2);
+        if following.erroneous { return following.error; }
+
+        def second_high: u8 = following.value.high;
+        def second_low: u8  = following.value.low;
+
+        if second_high < 220 || second_high > 223 { return error("invalid JSON surrogate pair"); }
+
+        // Assemble UTF-8 directly from the two UTF-16 units using byte arithmetic.
+        def top: u8 = 1 + (high - 216) * 4 + low / 64;
+        output[0] = 240 + top / 4;
+        output[1] = 128 + (top % 4) * 16 + (low % 64) / 4;
+        output[2] = 128 + (low % 4) * 16 + (second_high - 220) * 4 + second_low / 64;
+        output[3] = 128 + second_low % 64;
+        count = 4;
+        end   = end + 6;
+    } else if high == 0 && low < 128 {
+        output[0] = low;
+        count = 1;
+    } else if high < 8 {
+        output[0] = 192 + high * 4 + low / 64;
+        output[1] = 128 + low % 64;
+        count = 2;
+    } else {
+        output[0] = 224 + high / 16;
+        output[1] = 128 + (high % 16) * 4 + low / 64;
+        output[2] = 128 + low % 64;
+        count = 3;
+    }
+
+    return Character {
+        bytes: output,
+        count: count,
+        end: end
+    };
+}
+
+def string_end(text: string, start: u64) -> result<u64> {
+    def size: u64 = strings.byte_length(text);
+    if start >= size || byte(text, start) != 34 { return error("expected JSON string"); }
+
+    def mut position: u64 = start + 1;
+
+    while position < size {
+        if byte(text, position) == 34 { return position + 1; }
+
+        def next: result<Character> = character(text, position);
+        if next.erroneous { return next.error; }
+
+        position = next.value.end;
+    }
+
+    return error("unterminated JSON string");
+}
+
+def number_end(text: string, start: u64) -> result<u64> {
+    def size: u64         = strings.byte_length(text);
+    def mut position: u64 = start;
+
+    if position < size && byte(text, position) == 45 { position = position + 1; }
+    if position == size { return error("expected JSON number digits"); }
+
+    if byte(text, position) == 48 {
+        position = position + 1;
+    } else {
+        if byte(text, position) < 49 || byte(text, position) > 57 { return error("invalid JSON number"); }
+
+        while position < size && digit(byte(text, position)) { position = position + 1; }
+    }
+
+    if position < size && byte(text, position) == 46 {
+        position = position + 1;
+
+        def digits: u64 = position;
+
+        while position < size && digit(byte(text, position)) { position = position + 1; }
+        if position == digits { return error("expected JSON fractional digits"); }
+    }
+
+    if position < size && (byte(text, position) == 101 || byte(text, position) == 69) {
+        position = position + 1;
+
+        if position < size && (byte(text, position) == 43 || byte(text, position) == 45) {
+            position = position + 1;
+        }
+
+        def digits: u64 = position;
+
+        while position < size && digit(byte(text, position)) { position = position + 1; }
+        if position == digits { return error("expected JSON exponent digits"); }
+    }
+
+    return position;
+}
+
+// Includes the quotes. Exact decoded capacity is sufficient; errors do not write.
+// Source and destination must not overlap. No allocation or NUL terminator.
+def pub decode_string(quoted: string, output: [u8]) -> result<string> {
+    def end: result<u64> = string_end(quoted, 0);
+    if end.erroneous { return end.error; }
+
+    def stop: u64 = end.value;
+    if stop != strings.byte_length(quoted) { return error("trailing bytes after JSON string"); }
+
+    def mut position: u64 = 1;
+    def mut needed: u64   = 0;
+
+    while position < stop - 1 {
+        def next: result<Character> = character(quoted, position);
+        if next.erroneous { return next.error; }
+        if next.value.count > output.len - needed { return error("JSON decoded string exceeds buffer"); }
+
+        needed   = needed + next.value.count;
+        position = next.value.end;
+    }
+
+    position = 1;
+
+    def mut used: u64 = 0;
+
+    while position < stop - 1 {
+        def next: result<Character> = character(quoted, position);
+        if next.erroneous { return next.error; }
+
+        def decoded: Character = next.value;
+
+        for def mut i: u64 = 0; i < decoded.count; i = i + 1 {
+            output[used] = decoded.bytes[i];
+            used = used + 1;
+        }
+
+        position = decoded.end;
+    }
+
+    return strings.view_bytes(output[0..used]);
+}
+
+def hex_ascii(value: u8) -> u8 {
+    if value < 10 { return 48 + value; }
+
+    return 87 + value;
+}
+
+// Write a quoted JSON string; validate and measure before touching output.
+// Source and destination must not overlap. Controls use lowercase \u00xx.
+def pub encode_string(text: string, output: [u8]) -> result<string> {
+    def capacity: u64 = output.len;
+    if capacity < 2 { return error("JSON encoded string exceeds buffer"); }
+
+    def size: u64         = strings.byte_length(text);
+    def mut position: u64 = 0;
+    def mut needed: u64   = 2;
+
+    while position < size {
+        def width: result<u64> = utf8_width(text, position);
+        if width.erroneous { return width.error; }
+
+        def value: u8      = byte(text, position);
+        def mut extra: u64 = width.value;
+
+        if value < 32 {
+            extra = 6;
+        } else if value == 34 || value == 92 { extra = 2; }
+
+        if extra > output.len - needed { return error("JSON encoded string exceeds buffer"); }
+
+        needed   = needed + extra;
+        position = position + width.value;
+    }
+
+    output[0] = 34;
+
+    def mut used: u64 = 1;
+    position = 0;
+
+    while position < size {
+        def value: u8 = byte(text, position);
+
+        if value < 32 {
+            output[used]     = 92;
+            output[used + 1] = 117;
+            output[used + 2] = 48;
+            output[used + 3] = 48;
+            output[used + 4] = hex_ascii(value / 16);
+            output[used + 5] = hex_ascii(value % 16);
+            used = used + 6;
+        } else {
+            if value == 34 || value == 92 {
+                output[used] = 92;
+                used = used + 1;
+            }
+
+            output[used] = value;
+            used = used + 1;
+        }
+
+        position = position + 1;
+    }
+
+    output[used] = 34;
+
+    return strings.view_bytes(output[0..used + 1]);
+}
+
+def pub struct Event {
+    def pub kind: i32,
+    def pub raw: string,
+    def pub offset: u64,
+
+    def pub as_string(self: &const Event, output: [u8]) -> result<string> {
+        if self.kind != STRING && self.kind != KEY { return error("JSON event is not a string"); }
+
+        def decoded: result<string> = decode_string(self.raw, output);
+        if decoded.erroneous { return decoded.error; }
+
+        return decoded.value;
+    }
+
+    def pub as_bool(self: &const Event) -> result<bool> {
+        if self.kind != BOOLEAN { return error("JSON event is not a boolean"); }
+
+        return strings.equal(self.raw, "true");
+    }
+
+    def pub as_i64(self: &const Event) -> result<i64> {
+        if self.kind != NUMBER { return error("JSON event is not a number"); }
+
+        def parsed: std.I64Result = std.parse_i64(self.raw);
+        if parsed.status != status.OK { return error("JSON number is not a representable i64 integer"); }
+
+        return parsed.value;
+    }
+
+    def pub as_u64(self: &const Event) -> result<u64> {
+        if self.kind != NUMBER { return error("JSON event is not a number"); }
+
+        def parsed: std.U64Result = std.parse_u64(self.raw);
+        if parsed.status != status.OK { return error("JSON number is not a representable u64 integer"); }
+
+        return parsed.value;
+    }
+
+    def pub as_f64(self: &const Event) -> result<f64> {
+        if self.kind != NUMBER { return error("JSON event is not a number"); }
+
+        def parsed: std.F64Result = std.parse_f64(self.raw);
+        if parsed.status != status.OK { return error("JSON number is outside the f64 conversion contract"); }
+
+        return parsed.value;
+    }
+
+}
+
+// Pull events from one complete borrowed input. Copies have independent cursors.
+// Consume DONE to validate the complete document; earlier events can precede errors.
+def pub struct Reader {
+    def text: string,
+    def limit: u64,
+    def mut position: u64,
+    def mut depth: u64,
+    def mut stack: [i32; 64],
+    def mut root: bool,
+    def mut failed: bool,
+
+    def pub static create(text: string, max_bytes: u64, max_depth: u64) -> result<Reader> {
+        if strings.byte_length(text) > max_bytes { return error("JSON input exceeds byte limit"); }
+        if max_depth > MAX_DEPTH { return error("JSON depth limit exceeds 64"); }
+
+        def stack: [i32; 64] = zeroed;
+
+        return Reader {
+            text: text,
+            limit: max_depth,
+            position: 0,
+            depth: 0,
+            stack: stack,
+            root: false,
+            failed: false
+        };
+    }
+
+    def event(self: &const Reader, kind: i32, start: u64) -> Event {
+        return Event {
+            kind: kind,
+            raw: strings.slice_bytes(self.text, start, self.position - start).value,
+            offset: start
+        };
+    }
+
+    def value(self: &Reader) -> result<Event> {
+        def start: u64  = self.position;
+        def current: u8 = byte(self.text, start);
+
+        if self.depth == 0 {
+            self.root = true;
+        } else {
+            def phase: i32 = self.stack[self.depth - 1];
+
+            if phase == OBJECT_VALUE {
+                self.stack[self.depth - 1] = OBJECT_NEXT;
+            } else { self.stack[self.depth - 1] = ARRAY_NEXT; }
+        }
+
+        if current == 123 || current == 91 {
+            if self.depth == self.limit { return error("JSON nesting exceeds depth limit"); }
+
+            self.position          = self.position + 1;
+            self.stack[self.depth] = ARRAY_FIRST;
+
+            def mut kind: i32 = ARRAY_BEGIN;
+
+            if current == 123 {
+                self.stack[self.depth] = OBJECT_FIRST;
+                kind = OBJECT_BEGIN;
+            }
+
+            self.depth = self.depth + 1;
+
+            return self.event(kind, start);
+        }
+
+        if current == 34 {
+            def end: result<u64> = string_end(self.text, start);
+            if end.erroneous { return end.error; }
+
+            self.position = end.value;
+
+            return self.event(STRING, start);
+        }
+
+        if current == 45 || digit(current) {
+            def end: result<u64> = number_end(self.text, start);
+            if end.erroneous { return end.error; }
+
+            self.position = end.value;
+
+            return self.event(NUMBER, start);
+        }
+
+        def rest: string = strings.slice_bytes(self.text, start,
+            strings.byte_length(self.text) - start).value;
+        if strings.starts_with(rest, "true") {
+            self.position = self.position + 4;
+
+            return self.event(BOOLEAN, start);
+        }
+        if strings.starts_with(rest, "false") {
+            self.position = self.position + 5;
+
+            return self.event(BOOLEAN, start);
+        }
+        if strings.starts_with(rest, "null") {
+            self.position = self.position + 4;
+
+            return self.event(NULL, start);
+        }
+
+        return error("expected JSON value");
+    }
+
+    def advance(self: &Reader) -> result<Event> {
+        def size: u64 = strings.byte_length(self.text);
+
+        while true {
+            while self.position < size && whitespace(byte(self.text, self.position)) {
+                self.position = self.position + 1;
+            }
+
+            if self.depth == 0 && self.root {
+                if self.position != size { return error("trailing bytes after JSON value"); }
+
+                return self.event(DONE, self.position);
+            }
+
+            if self.position == size { return error("incomplete JSON document"); }
+
+            def start: u64  = self.position;
+            def current: u8 = byte(self.text, start);
+
+            if self.depth > 0 {
+                def phase: i32 = self.stack[self.depth - 1];
+
+                if ((phase == ARRAY_FIRST || phase == ARRAY_NEXT) && current == 93)
+                    || ((phase == OBJECT_FIRST || phase == OBJECT_NEXT) && current == 125) {
+                    self.depth    = self.depth - 1;
+                    self.position = self.position + 1;
+
+                    if current == 93 { return self.event(ARRAY_END, start); }
+
+                    return self.event(OBJECT_END, start);
+                }
+
+                if phase == ARRAY_NEXT || phase == OBJECT_NEXT {
+                    if current != 44 { return error("expected JSON comma or closing delimiter"); }
+
+                    self.position = self.position + 1;
+
+                    if phase == ARRAY_NEXT {
+                        self.stack[self.depth - 1] = ARRAY_VALUE;
+                    } else { self.stack[self.depth - 1] = OBJECT_KEY; }
+                } else if phase == OBJECT_COLON {
+                    if current != 58 { return error("expected JSON object colon"); }
+
+                    self.position              = self.position + 1;
+                    self.stack[self.depth - 1] = OBJECT_VALUE;
+                } else if phase == OBJECT_FIRST || phase == OBJECT_KEY {
+                    def end: result<u64> = string_end(self.text, start);
+                    if end.erroneous { return end.error; }
+
+                    self.position              = end.value;
+                    self.stack[self.depth - 1] = OBJECT_COLON;
+
+                    return self.event(KEY, start);
+                } else {
+                    def next: result<Event> = self.value();
+                    if next.erroneous { return next.error; }
+
+                    return next.value;
+                }
+            } else {
+                def next: result<Event> = self.value();
+                if next.erroneous { return next.error; }
+
+                return next.value;
+            }
+        }
+
+        return error("invalid JSON reader state");
+    }
+
+    def pub next(self: &Reader) -> result<Event> {
+        if self.failed { return error("JSON reader is failed"); }
+
+        def next: result<Event> = self.advance();
+        if next.erroneous {
+            self.failed = true;
+
+            return next.error;
+        }
+
+        return next.value;
+    }
+
+}
+
+// Validate a complete document without allocating or retaining an object tree.
+def pub validate(text: string, max_bytes: u64, max_depth: u64) -> result<void> {
+    def made: result<Reader> = Reader.create(text, max_bytes, max_depth);
+    if made.erroneous { return made.error; }
+
+    def mut reader: Reader = made.value;
+
+    while true {
+        def next: result<Event> = reader.next();
+        if next.erroneous { return next.error; }
+        if next.value.kind == DONE { return; }
+    }
+
+    return error("invalid JSON validation state");
+}
+
+// One writer owns its output buffer. Copies share bytes but copy counters;
+// use a single writer through &Writer. Any failed operation poisons the writer.
+def pub struct Writer {
+    def output: [u8],
+    def limit: u64,
+    def mut used: u64,
+    def mut depth: u64,
+    def mut stack: [i32; 64],
+    def mut root: bool,
+    def mut failed: bool,
+
+    def pub static create(output: [u8], max_depth: u64) -> result<Writer> {
+        if max_depth > MAX_DEPTH { return error("JSON depth limit exceeds 64"); }
+
+        def stack: [i32; 64] = zeroed;
+
+        return Writer {
+            output: output,
+            limit: max_depth,
+            used: 0,
+            depth: 0,
+            stack: stack,
+            root: false,
+            failed: false
+        };
+    }
+
+    def append(self: &Writer, text: string) -> result<void> {
+        def size: u64 = strings.byte_length(text);
+        if size > self.output.len - self.used { return error("JSON output exceeds buffer"); }
+
+        for def mut i: u64 = 0; i < size; i = i + 1 {
+            self.output[self.used + i] = byte(text, i);
+        }
+
+        self.used = self.used + size;
+
+        return;
+    }
+
+    def prefix(self: &Writer) -> result<void> {
+        if self.depth == 0 {
+            if self.root { return error("JSON writer already has a root value"); }
+
+            self.root = true;
+
+            return;
+        }
+
+        def phase: i32 = self.stack[self.depth - 1];
+        if phase == OBJECT_VALUE {
+            self.stack[self.depth - 1] = OBJECT_NEXT;
+
+            return;
+        }
+        if phase != ARRAY_FIRST && phase != ARRAY_NEXT { return error("JSON object needs a key"); }
+
+        if phase == ARRAY_NEXT {
+            def comma: result<void> = self.append(",");
+            if comma.erroneous { return comma.error; }
+        }
+
+        self.stack[self.depth - 1] = ARRAY_NEXT;
+
+        return;
+    }
+
+    def begin(self: &Writer, object: bool) -> result<void> {
+        if self.failed { return error("JSON writer is failed"); }
+
+        self.failed = true;
+
+        if self.depth == self.limit { return error("JSON nesting exceeds depth limit"); }
+
+        def prefix: result<void> = self.prefix();
+        if prefix.erroneous { return prefix.error; }
+
+        def mut delimiter: string = "[";
+        self.stack[self.depth] = ARRAY_FIRST;
+
+        if object {
+            delimiter = "{";
+            self.stack[self.depth] = OBJECT_FIRST;
+        }
+
+        def added: result<void> = self.append(delimiter);
+        if added.erroneous { return added.error; }
+
+        self.depth  = self.depth + 1;
+        self.failed = false;
+
+        return;
+    }
+
+    def end(self: &Writer, object: bool) -> result<void> {
+        if self.failed { return error("JSON writer is failed"); }
+
+        self.failed = true;
+
+        if self.depth == 0 { return error("JSON writer has no open container"); }
+
+        def phase: i32            = self.stack[self.depth - 1];
+        def mut delimiter: string = "]";
+
+        if object {
+            if phase != OBJECT_FIRST && phase != OBJECT_NEXT { return error("JSON object is incomplete or mismatched"); }
+
+            delimiter = "}";
+        } else {
+            if phase != ARRAY_FIRST && phase != ARRAY_NEXT { return error("JSON array is mismatched"); }
+        }
+
+        def added: result<void> = self.append(delimiter);
+        if added.erroneous { return added.error; }
+
+        self.depth  = self.depth - 1;
+        self.failed = false;
+
+        return;
+    }
+
+    def pub begin_object(self: &Writer) -> result<void> {
+        def added: result<void> = self.begin(true);
+        if added.erroneous { return added.error; }
+
+        return;
+    }
+
+    def pub end_object(self: &Writer) -> result<void> {
+        def added: result<void> = self.end(true);
+        if added.erroneous { return added.error; }
+
+        return;
+    }
+
+    def pub begin_array(self: &Writer) -> result<void> {
+        def added: result<void> = self.begin(false);
+        if added.erroneous { return added.error; }
+
+        return;
+    }
+
+    def pub end_array(self: &Writer) -> result<void> {
+        def added: result<void> = self.end(false);
+        if added.erroneous { return added.error; }
+
+        return;
+    }
+
+    def quoted(self: &Writer, text: string, key: bool) -> result<void> {
+        if self.failed { return error("JSON writer is failed"); }
+
+        self.failed = true;
+
+        if key {
+            if self.depth == 0 { return error("JSON key requires an object"); }
+
+            def phase: i32 = self.stack[self.depth - 1];
+            if phase != OBJECT_FIRST && phase != OBJECT_NEXT { return error("JSON object is not expecting a key"); }
+
+            if phase == OBJECT_NEXT {
+                def comma: result<void> = self.append(",");
+                if comma.erroneous { return comma.error; }
+            }
+        } else {
+            def prefix: result<void> = self.prefix();
+            if prefix.erroneous { return prefix.error; }
+        }
+
+        def encoded: result<string> = encode_string(text, self.output[self.used..]);
+        if encoded.erroneous { return encoded.error; }
+
+        self.used = self.used + strings.byte_length(encoded.value);
+
+        if key {
+            def colon: result<void> = self.append(":");
+            if colon.erroneous { return colon.error; }
+
+            self.stack[self.depth - 1] = OBJECT_VALUE;
+        }
+
+        self.failed = false;
+
+        return;
+    }
+
+    def pub key(self: &Writer, text: string) -> result<void> {
+        def added: result<void> = self.quoted(text, true);
+        if added.erroneous { return added.error; }
+
+        return;
+    }
+
+    def pub string_value(self: &Writer, text: string) -> result<void> {
+        def added: result<void> = self.quoted(text, false);
+        if added.erroneous { return added.error; }
+
+        return;
+    }
+
+    def literal(self: &Writer, text: string) -> result<void> {
+        if self.failed { return error("JSON writer is failed"); }
+
+        self.failed = true;
+
+        def prefix: result<void> = self.prefix();
+        if prefix.erroneous { return prefix.error; }
+
+        def added: result<void> = self.append(text);
+        if added.erroneous { return added.error; }
+
+        self.failed = false;
+
+        return;
+    }
+
+    // Exact JSON number text avoids forcing integers or decimal values through f64.
+    def pub number(self: &Writer, text: string) -> result<void> {
+        if self.failed { return error("JSON writer is failed"); }
+
+        def end: result<u64> = number_end(text, 0);
+        if end.erroneous {
+            self.failed = true;
+
+            return end.error;
+        }
+        if end.value != strings.byte_length(text) {
+            self.failed = true;
+
+            return error("trailing bytes after JSON number");
+        }
+
+        def added: result<void> = self.literal(text);
+        if added.erroneous { return added.error; }
+
+        return;
+    }
+
+    def pub boolean(self: &Writer, value: bool) -> result<void> {
+        def added: result<void> = self.literal(std.format_bool(value));
+        if added.erroneous { return added.error; }
+
+        return;
+    }
+
+    def pub null_value(self: &Writer) -> result<void> {
+        def added: result<void> = self.literal("null");
+        if added.erroneous { return added.error; }
+
+        return;
+    }
+
+    // Returns a borrowed, counted string only for exactly one completed root value.
+    def pub finish(self: &Writer) -> result<string> {
+        if self.failed { return error("JSON writer is failed"); }
+        if !self.root || self.depth != 0 {
+            self.failed = true;
+
+            return error("incomplete JSON output");
+        }
+
+        return strings.view_bytes(self.output[0..self.used]);
+    }
+
+}

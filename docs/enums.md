@@ -43,5 +43,7 @@ made for enums yet.
 
 Payload variants, pattern matching, and exhaustiveness checking remain open
 under SPEC-034. Until those rules exist, use ordinary `if` comparisons and an
-explicit fallback path. Built-in `result<T>` and `error` also remain
-unimplemented; see their [partial design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented).
+explicit fallback path. Built-in `result<T>` and `error` are available in the
+development tree after 0.0.4; see the [implemented result guide](results.md).
+The [wiki design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented)
+predates that implementation.

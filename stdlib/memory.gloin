@@ -1,0 +1,32 @@
+// Individually owned raw blocks. Only release a pointer returned by alloc,
+// exactly once, and only after all views and placed values have stopped using it.
+def pub alloc(bytes: i64, alignment: i64) -> *u8 {
+    return __memory_alloc(bytes, alignment);
+}
+
+def pub free(pointer: *u8) -> void {
+    __memory_free(pointer);
+}
+
+// Compiler layout queries use the native target layout.
+def pub size_of<T>() -> i64 {
+    return __memory_size_of<T>();
+}
+
+def pub align_of<T>() -> i64 {
+    return __memory_align_of<T>();
+}
+
+// Bytes to skip so storage points at an address aligned for T. Null returns -1.
+def pub padding<T>(storage: *u8) -> i64 {
+    if storage == null { return -1; }
+
+    return __memory_padding<T>(storage);
+}
+
+// On success, initializes one T in aligned raw storage and returns its pointer.
+// Null, insufficient bytes, or misalignment return null without writing.
+// The caller guarantees that available describes live writable storage.
+def pub place<T>(storage: *u8, available: i64, value: T) -> *T {
+    return __memory_place<T>(storage, available, value);
+}

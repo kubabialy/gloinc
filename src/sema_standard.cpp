@@ -23,10 +23,26 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
     } else if (kind == StandardPrimitive::FsMetadata)
         parameters = {get_builtin_type("string"), reference("i32"), reference("u64"),
                       reference("i32")};
-    else if (kind == StandardPrimitive::FsMkdir || kind == StandardPrimitive::FsRemoveFile)
+    else if (kind == StandardPrimitive::FsMkdir || kind == StandardPrimitive::FsRemoveFile ||
+             kind == StandardPrimitive::FsRemoveDir)
         parameters = {get_builtin_type("string"), reference("i32")};
-    else if (kind == StandardPrimitive::FsRenameReplace)
+    else if (kind == StandardPrimitive::FsRenameReplace || kind == StandardPrimitive::FsSymlink)
         parameters = {get_builtin_type("string"), get_builtin_type("string"), reference("i32")};
+    else if (kind == StandardPrimitive::FsReplaceFile)
+        parameters = {get_builtin_type("string"), get_builtin_type("string"), get_builtin_type("string"), reference("i32")};
+    else if (kind == StandardPrimitive::FsReadLink || kind == StandardPrimitive::FsCanonicalPath ||
+             kind == StandardPrimitive::FsTempDir)
+        parameters = {get_builtin_type("string"), reference("u8"), get_builtin_type("u64"),
+                      reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::FsDirOpen)
+        parameters = {get_builtin_type("string"),
+                      std::make_shared<PointerType>(byte_pointer, false, false), reference("i32")};
+    else if (kind == StandardPrimitive::FsDirNext)
+        parameters = {byte_pointer, reference("u64"), reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::FsDirClose)
+        parameters = {byte_pointer, reference("i32")};
+    else if (kind == StandardPrimitive::FsStringView)
+        parameters = {byte_pointer, get_builtin_type("u64")};
     else if (kind == StandardPrimitive::ProcessCount)
         parameters = {};
     else if (kind == StandardPrimitive::ProcessArg || kind == StandardPrimitive::ProcessEnv)
@@ -34,6 +50,37 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
                       reference("u64"), reference("i32")};
     else if (kind == StandardPrimitive::ProcessCwd)
         parameters = {reference("u8"), get_builtin_type("u64"), reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::ProcessStart)
+        parameters = {get_builtin_type("string"),
+                      std::make_shared<PointerType>(get_builtin_type("string"), true, true),
+                      get_builtin_type("u64"), reference("i64"), reference("i32")};
+    else if (kind == StandardPrimitive::ProcessWait || kind == StandardPrimitive::ProcessObserve)
+        parameters = {get_builtin_type("i64"), get_builtin_type("i32"), reference("i32"),
+                      reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::ProcessSignal || kind == StandardPrimitive::ProcessGroupSignal)
+        parameters = {get_builtin_type("i64"), get_builtin_type("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::ProcessStartPiped)
+        parameters = {get_builtin_type("string"),
+                      std::make_shared<PointerType>(get_builtin_type("string"), true, true),
+                      get_builtin_type("u64"), reference("i64"), reference("i32"),
+                      reference("i32"), reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::ProcessPipeRead || kind == StandardPrimitive::ProcessPipeWrite)
+        parameters = {get_builtin_type("i32"),
+                      std::make_shared<PointerType>(get_builtin_type("u8"), false,
+                                                    kind == StandardPrimitive::ProcessPipeWrite),
+                      get_builtin_type("u64"), reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::ProcessPipeClose)
+        parameters = {get_builtin_type("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::ProcessPipeWait)
+        parameters = {get_builtin_type("i32"), get_builtin_type("i32"), get_builtin_type("i32"),
+                      get_builtin_type("i32"), reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::ProcessStartOptions)
+        parameters = {get_builtin_type("string"), get_builtin_type("string"),
+                      std::make_shared<PointerType>(get_builtin_type("string"), true, true), get_builtin_type("u64"),
+                      std::make_shared<PointerType>(get_builtin_type("string"), true, true), get_builtin_type("u64"),
+                      get_builtin_type("i32"), get_builtin_type("i32"), get_builtin_type("i32"),
+                      get_builtin_type("u64"),
+                      reference("i64"), reference("i32"), reference("i32"), reference("i32"), reference("i32")};
     else if (kind == StandardPrimitive::IoStandard)
         parameters = {get_builtin_type("i32")};
     else if (kind == StandardPrimitive::IoOpen)
@@ -43,13 +90,78 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
         parameters = {
             byte_pointer,     reference("u8"), get_builtin_type("u64"), get_builtin_type("i32"),
             reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::IoReadBytes)
+        parameters = {byte_pointer, reference("u8"), get_builtin_type("u64"),
+                      reference("u64"), reference("i32")};
     else if (kind == StandardPrimitive::IoWrite)
         parameters = {byte_pointer, get_builtin_type("string"), get_builtin_type("i32"),
                       reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::IoWriteBytes)
+        parameters = {byte_pointer,
+                      std::make_shared<PointerType>(get_builtin_type("u8"), false, true),
+                      get_builtin_type("u64"), get_builtin_type("i32"), reference("u64"),
+                      reference("i32")};
     else if (kind == StandardPrimitive::IoFlush || kind == StandardPrimitive::IoClose)
         parameters = {byte_pointer, reference("i32")};
     else if (kind == StandardPrimitive::IoErrorMessage)
         parameters = {get_builtin_type("i32"), reference("u8"), reference("u64")};
+    else if (kind == StandardPrimitive::NetOpen)
+        parameters = {reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetBind || kind == StandardPrimitive::NetConnect)
+        parameters = {get_builtin_type("i32"), get_builtin_type("u32"),
+                      get_builtin_type("u16"), reference("i32")};
+    else if (kind == StandardPrimitive::NetReuseAddress)
+        parameters = {get_builtin_type("i32"), get_builtin_type("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetListen)
+        parameters = {get_builtin_type("i32"), get_builtin_type("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetAccept)
+        parameters = {get_builtin_type("i32"), reference("i32"), reference("u32"),
+                      reference("u16"), reference("i32")};
+    else if (kind == StandardPrimitive::NetFinishConnect || kind == StandardPrimitive::NetClose ||
+             kind == StandardPrimitive::NetShutdownWrite)
+        parameters = {get_builtin_type("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetWait)
+        parameters = {get_builtin_type("i32"), get_builtin_type("i32"),
+                      get_builtin_type("i32"), reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetWaitMany)
+        parameters = {reference("i32"),
+                      std::make_shared<PointerType>(get_builtin_type("i32"), false, true),
+                      reference("i32"), get_builtin_type("u64"), get_builtin_type("i32"),
+                      reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::NetResolveIpv4)
+        parameters = {get_builtin_type("string"), reference("u32"),
+                      get_builtin_type("u64"), reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::NetRecv || kind == StandardPrimitive::NetSend)
+        parameters = {get_builtin_type("i32"),
+                      std::make_shared<PointerType>(get_builtin_type("u8"), false,
+                                                    kind == StandardPrimitive::NetSend),
+                      get_builtin_type("u64"), reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::NetSendText)
+        parameters = {get_builtin_type("i32"), get_builtin_type("string"),
+                      reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::NetLocal)
+        parameters = {get_builtin_type("i32"), reference("u32"), reference("u16"),
+                      reference("i32")};
+    else if (kind == StandardPrimitive::NetTlsCreate)
+        parameters = {get_builtin_type("i32"), get_builtin_type("string"),
+                      get_builtin_type("string"),
+                      std::make_shared<PointerType>(byte_pointer, false, false), reference("i32")};
+    else if (kind == StandardPrimitive::NetTlsServerConfig)
+        parameters = {get_builtin_type("string"), get_builtin_type("string"),
+                      std::make_shared<PointerType>(byte_pointer, false, false), reference("i32")};
+    else if (kind == StandardPrimitive::NetTlsServerCreate)
+        parameters = {get_builtin_type("i32"), byte_pointer,
+                      std::make_shared<PointerType>(byte_pointer, false, false), reference("i32")};
+    else if (kind == StandardPrimitive::NetTlsHandshake || kind == StandardPrimitive::NetTlsShutdown)
+        parameters = {byte_pointer, reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetTlsRead || kind == StandardPrimitive::NetTlsWrite)
+        parameters = {byte_pointer,
+                      std::make_shared<PointerType>(get_builtin_type("u8"), false,
+                                                    kind == StandardPrimitive::NetTlsWrite),
+                      get_builtin_type("u64"), reference("u64"), reference("i32"),
+                      reference("i32")};
+    else if (kind == StandardPrimitive::NetTlsClose || kind == StandardPrimitive::NetTlsServerConfigClose)
+        parameters = {byte_pointer};
     else if (auto spec = numeric_signature(kind)) {
         if (spec->group == NumericPrimitiveGroup::Parse)
             parameters = {get_builtin_type("string"), reference(spec->output)};
@@ -99,7 +211,8 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
     }
     recording->standard_calls.emplace(call, kind);
     if (kind == StandardPrimitive::IoStandard || kind == StandardPrimitive::IoOpen ||
-        kind == StandardPrimitive::ProcessArg || kind == StandardPrimitive::ProcessEnv)
+        kind == StandardPrimitive::ProcessArg || kind == StandardPrimitive::ProcessEnv ||
+        kind == StandardPrimitive::FsDirNext)
         return byte_pointer;
     return get_builtin_type(
         (kind == StandardPrimitive::StringLength || kind == StandardPrimitive::ProcessCount ||
@@ -110,7 +223,8 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
                 kind == StandardPrimitive::StringView ||
                 kind == StandardPrimitive::StringBufferView ||
                 kind == StandardPrimitive::IoStringView ||
-                kind == StandardPrimitive::ProcessStringView
+                kind == StandardPrimitive::ProcessStringView ||
+                kind == StandardPrimitive::FsStringView
             ? "string"
         : kind == StandardPrimitive::FormatI32 || kind == StandardPrimitive::StringStore ||
                 kind == StandardPrimitive::StringWrite

@@ -131,8 +131,9 @@ program. A generic function can call private helpers in its defining module,
 even when specialized from another module. Its argument and return types are
 checked for each specialization.
 
-Built-in `result<T>` and `error` have a separate
-[partial design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented);
-they are not implemented. Gloin 0.0.4 also has
+Built-in `result<T>` and `error` are available in the development tree after
+0.0.4; see the [implemented result guide](results.md). Their
+[wiki design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented)
+predates implementation. Gloin 0.0.4 also has
 [borrowed slices and both vector forms](slices-vectors.md). See
 [fixed arrays](fixed-arrays.md) for the `zeroed` initializer.

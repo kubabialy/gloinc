@@ -1,0 +1,123 @@
+// Local certificate generation and TLS acceptance; no public network or credentials.
+import "../../tools/checks/common";
+import "../support/tool_runner";
+import "@arena";
+import "@fs";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def checked_capture(memory: &arena.GeneralArena, work: string, name: string,
+    executable: string, args: [const string], expected: string) -> result<void> {
+    def captured: result<void> = tool_runner.capture_timed(work, name, executable, args, "", 0, "",
+        time.Duration { nanoseconds: 120000000000 });
+    if captured.erroneous { return captured.error; }
+
+    def suffixes: [string; 2] = {".out", ".err"};
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def leaf: strings.StringResult = strings.concat(memory, name, suffixes[i], 256);
+        if leaf.status != status.OK { return error("cannot make TLS capture name"); }
+
+        def path: result<string> = common.join(memory, work, leaf.value);
+        if path.erroneous { return path.error; }
+
+        def read: result<string> = common.read(memory, path.value, 262144);
+        if read.erroneous { return read.error; }
+
+        def mut wanted: string = "";
+        if i == 0 { wanted = expected; }
+        if !strings.equal(read.value, wanted) { return error("TLS fixture output differs from its fixed expectation"); }
+    }
+
+    return;
+}
+
+def jobs(memory: &arena.GeneralArena, compiler: string, root: string,
+    work: string, openssl: string) -> result<void> {
+    def cert_path: result<string> = common.join(memory, work, "cert.pem");
+    if cert_path.erroneous { return cert_path.error; }
+
+    def key_path: result<string> = common.join(memory, work, "key.pem");
+    if key_path.erroneous { return key_path.error; }
+
+    def certificate: string = cert_path.value;
+    def key: string         = key_path.value;
+    def generation: [string; 16] = {"req", "-x509", "-newkey", "rsa:2048", "-sha256", "-nodes",
+        "-days", "1", "-keyout", key, "-out", certificate, "-subj", "/CN=localhost",
+        "-addext", "subjectAltName=DNS:localhost"};
+    def generated: result<void> = tool_runner.capture(work, "certificate", openssl, generation[..], "", 0);
+
+    if generated.erroneous { return generated.error; }
+
+    def path: result<string> = common.join(memory, root, "tests/fixtures/network/tls_sessions.gloin");
+    if path.erroneous { return path.error; }
+
+    def source: string            = path.value;
+    def expected: string          = "TLS trusted, wrong-host, untrusted, aliases and graceful shutdown passed\n";
+    def jit_args: [string; 5]     = {"--jit", source, "--", certificate, key};
+    def interpreted: result<void> = checked_capture(memory, work, "jit", compiler, jit_args[..], expected);
+
+    if interpreted.erroneous { return interpreted.error; }
+
+    def modes: [string; 2]  = {"-O0", "-O2"};
+    def labels: [string; 2] = {"O0", "O2"};
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def output: result<string> = common.join(memory, work, labels[i]);
+        if output.erroneous { return output.error; }
+
+        def compile_name: strings.StringResult = strings.concat(memory, labels[i], "-compile", 128);
+        if compile_name.status != status.OK { return error("cannot make TLS compile label"); }
+
+        def compile_args: [string; 4] = {modes[i], "-o", output.value, source};
+        def compiled: result<void>    = checked_capture(memory, work, compile_name.value, compiler, compile_args[..], "");
+
+        if compiled.erroneous { return compiled.error; }
+
+        def args: [string; 2]      = {certificate, key};
+        def executed: result<void> = checked_capture(memory, work, labels[i], output.value, args[..], expected);
+
+        if executed.erroneous { return executed.error; }
+    }
+
+    std.println("TLS trusted, wrong-host, untrusted and graceful shutdown: JIT/O0/O2 passed");
+
+    return;
+}
+
+def main() -> i32 {
+    if process.arg_count() != 5 {
+        common.report("usage: gloin-tls-test COMPILER REPOSITORY_ROOT TEMP_PARENT OPENSSL"); return 2;
+    }
+
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def mut args: [string; 4] = zeroed;
+
+    for def mut i: u64 = 0; i < 4; i = i + 1 {
+        def arg: process.TextResult = process.arg(&memory, i + 1);
+        if arg.status != status.OK { return 2; }
+
+        def canonical: result<string> = fs.canonical_path(&memory, arg.value, 65536);
+        if canonical.erroneous { common.report(canonical.error.message); return 2; }
+
+        args[i] = canonical.value;
+    }
+
+    def made: result<string> = fs.temp_dir(&memory, args[2], "tls checks", 65536);
+    if made.erroneous { common.report(made.error.message); return 1; }
+
+    def work: string         = made.value;
+    def tested: result<void> = jobs(&memory, args[0], args[1], work, args[3]);
+
+    if tested.erroneous { common.report(tested.error.message); common.report(work); return 1; }
+
+    def removed: result<void> = tool_runner.remove_fixture_tree(work, 64);
+    if removed.erroneous { common.report(removed.error.message); common.report(work); return 1; }
+
+    return 0;
+}

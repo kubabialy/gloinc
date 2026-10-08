@@ -132,6 +132,12 @@ void Sema::log_error(const std::string &msg) {
 
 std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
     if (recording) {
+        if (name == "error")
+            return std::make_shared<ErrorType>();
+        if (name == "result") {
+            log_error("result requires exactly one type argument");
+            return nullptr;
+        }
         if (name.starts_with("*") || name.starts_with("&")) {
             auto inner = name.substr(1);
             bool read_only = inner.starts_with("const ");
@@ -139,7 +145,8 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 inner = inner.substr(6);
             auto pointee = resolve_type_from_string(inner);
             if (!pointee || dynamic_cast<VoidType *>(pointee.get()) ||
-                dynamic_cast<ConstSizeType *>(pointee.get()))
+                dynamic_cast<ConstSizeType *>(pointee.get()) ||
+                dynamic_cast<ResultType *>(pointee.get()))
                 return nullptr;
             return std::make_shared<PointerType>(pointee, name[0] == '*', read_only);
         }
@@ -153,7 +160,8 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 auto element = resolve_type_from_string(inner);
                 if (!element || dynamic_cast<VoidType *>(element.get()) ||
                     dynamic_cast<ConstSizeType *>(element.get()) ||
-                    dynamic_cast<FunctionType *>(element.get()))
+                    dynamic_cast<FunctionType *>(element.get()) ||
+                    dynamic_cast<ResultType *>(element.get()))
                     return nullptr;
                 return std::make_shared<SliceType>(element, read_only);
             }
@@ -162,7 +170,8 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
             auto element = resolve_type_from_string(name.substr(1, separator - 1));
             if (!element || dynamic_cast<VoidType *>(element.get()) ||
                 dynamic_cast<ConstSizeType *>(element.get()) ||
-                dynamic_cast<FunctionType *>(element.get()))
+                dynamic_cast<FunctionType *>(element.get()) ||
+                dynamic_cast<ResultType *>(element.get()))
                 return nullptr;
             const auto digits = std::string_view(name).substr(separator + 2,
                                                        name.size() - separator - 3);
@@ -186,6 +195,21 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
             const auto type_arguments =
                 split_type_arguments(std::string_view(name).substr(open + 1,
                                                                    name.size() - open - 2));
+            if (base == "result") {
+                if (type_arguments.size() != 1) {
+                    log_error("result requires exactly one type argument");
+                    return nullptr;
+                }
+                auto value = resolve_type_from_string(type_arguments.front());
+                if (!value || !value_type(value) ||
+                    dynamic_cast<ErrorType *>(value.get()) ||
+                    dynamic_cast<ConstSizeType *>(value.get()) ||
+                    dynamic_cast<ResultType *>(value.get())) {
+                    log_error("result value must be a supported type other than error");
+                    return nullptr;
+                }
+                return std::make_shared<ResultType>(value);
+            }
             const StructDefinition *definition = nullptr;
             if (const auto dot = base.find('.'); dot != std::string::npos) {
                 auto imported = imports.find(base.substr(0, dot));
@@ -275,10 +299,27 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
 
 void Sema::enter_scope() { current_scope = std::make_shared<Scope>(current_scope); }
 
+void Sema::check_live_results_handled() {
+    if (!recording)
+        return;
+    for (auto scope = current_scope; scope && scope->parent; scope = scope->parent)
+        for (const auto &[name, symbol] : scope->symbols)
+            if (dynamic_cast<ResultType *>(symbol.type.get()) &&
+                !result_handled[symbol.id])
+                log_error("Result '" + name + "' must be checked with .erroneous");
+}
+
 void Sema::leave_scope() {
     if (current_scope->parent) {
-        for (const auto &[name, symbol] : current_scope->symbols)
+        for (const auto &[name, symbol] : current_scope->symbols) {
+            if (recording && falls_through &&
+                dynamic_cast<ResultType *>(symbol.type.get()) &&
+                !result_handled[symbol.id])
+                log_error("Result '" + name + "' must be checked with .erroneous");
             initialization.erase(symbol.id);
+            result_proof.erase(symbol.id);
+            result_handled.erase(symbol.id);
+        }
         current_scope = current_scope->parent;
     }
 }
@@ -289,6 +330,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     current_scope = std::make_shared<Scope>();
     collected_functions.clear();
     arena_methods.clear();
+    arena_reserved_methods.clear();
     arena_many_methods.clear();
     for (auto &structure : collected_struct_types)
         structure->fields.clear();
@@ -300,6 +342,8 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     generic_function_specializations.clear();
     generic_specialization_depth = 0;
     initialization.clear();
+    result_proof.clear();
+    result_handled.clear();
     falls_through = true;
     loop_depth = 0;
     current_return_type.reset();
@@ -453,6 +497,7 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
     if (recording && !current_module &&
         (sym.name == "malloc" || sym.name == "free" ||
          arena_operation(sym.name, arena_runtime_names) ||
+         memory_operation(sym.name, memory_runtime_names) ||
          standard_operation(sym.name, standard_runtime_names)))
         recording->linkage_names[recording->bindings.at(func_def->name.get())] =
             "gloin.user." + sym.name;
@@ -530,6 +575,11 @@ std::shared_ptr<Type> Sema::check_generic_function_call(const CallExpression *ca
     const auto base = qualifier + name;
     const auto argument_names = split_type_arguments(
         std::string_view(callee->value).substr(open + 1, callee->value.size() - open - 2));
+    if (!imported_module && current_module && current_module->standard_name == "memory" &&
+        (name == "__memory_size_of" || name == "__memory_align_of" ||
+         name == "__memory_padding" ||
+         name == "__memory_place"))
+        return check_memory_intrinsic(call, name, argument_names);
     const FunctionDefinition *definition = nullptr;
     if (imported_module) {
         definition = module_scopes.at(imported_module)->resolve_generic_function(name);
@@ -704,8 +754,12 @@ void Sema::check_statement(const Statement *stmt) {
             log_error("defer requires a function or method call");
             return;
         }
-        if (check_expression(defer->call.get(), std::nullopt, true))
-            recording->defers[current_function].push_back(defer);
+        if (auto type = check_expression(defer->call.get(), std::nullopt, true)) {
+            if (dynamic_cast<ResultType *>(type.get()))
+                log_error("A deferred result cannot be discarded");
+            else
+                recording->defers[current_function].push_back(defer);
+        }
 
     } else if (const auto *ret = dynamic_cast<const ReturnStatement *>(stmt)) {
         if (recording && !current_return_type) {
@@ -715,14 +769,26 @@ void Sema::check_statement(const Statement *stmt) {
         if (ret->return_value) {
             if (recording && current_return_type->equals(*get_builtin_type("void")))
                 log_error("Void function cannot return a value; use return;");
-            auto type = check_typed_expression(ret->return_value.get(), current_return_type);
-            if (recording && type && !current_return_type->equals(*get_builtin_type("void")) &&
-                !type->equals(*current_return_type))
+            auto *result = recording ? dynamic_cast<ResultType *>(current_return_type.get())
+                                     : nullptr;
+            auto type = check_typed_expression(ret->return_value.get(),
+                                               result ? result->value : current_return_type);
+            if (recording && type && result) {
+                if (!type->equals(*result->value) && !dynamic_cast<ErrorType *>(type.get()))
+                    log_error("result return must be a value of " + result->value->to_string() +
+                              " or an error");
+            } else if (recording && type &&
+                       !current_return_type->equals(*get_builtin_type("void")) &&
+                       !type->equals(*current_return_type))
                 log_error("Return type mismatch. Expected " + current_return_type->to_string() +
                           ", got " + type->to_string());
-        } else if (recording && !current_return_type->equals(*get_builtin_type("void"))) {
+        } else if (recording && !current_return_type->equals(*get_builtin_type("void")) &&
+                   !(dynamic_cast<ResultType *>(current_return_type.get()) &&
+                     dynamic_cast<ResultType *>(current_return_type.get())->value->equals(
+                         *get_builtin_type("void")))) {
             log_error("Non-void function must return a value");
         }
+        check_live_results_handled();
         falls_through = false;
     } else if (const auto *if_stmt = dynamic_cast<const IfStatement *>(stmt)) {
         check_conditional(if_stmt->condition.get(), if_stmt->consequence.get(),
@@ -740,14 +806,34 @@ void Sema::check_statement(const Statement *stmt) {
         }
         auto before = initialization;
         bool before_reaches = falls_through;
+        auto before_proof = result_proof;
+        auto before_handled = result_handled;
+        auto refinement = recording ? result_condition(while_stmt->condition.get())
+                                    : std::nullopt;
+        if (refinement) {
+            before_handled[refinement->first] = true;
+            result_handled[refinement->first] = true;
+            result_proof[refinement->first] = refinement->second;
+        }
         ++loop_depth;
         check_statement(while_stmt->body.get());
         --loop_depth;
+        bool body_reaches = falls_through;
         // The body may execute zero times. Repeated immutable stores to an outer
         // declaration are rejected at the assignment, even on the first iteration.
         merge_initialization(before, before, before_reaches, initialization, falls_through);
+        auto body_proof = result_proof;
+        auto body_handled = result_handled;
+        result_proof = before_proof;
+        result_handled = before_handled;
+        merge_result_flow(before_proof, before_handled, before_reaches,
+                          body_proof, body_handled, body_reaches);
+        for (auto &[id, proof] : result_proof)
+            proof = ResultProof::Unknown;
     } else if (const auto *expr_stmt = dynamic_cast<const ExpressionStatement *>(stmt)) {
-        check_expression(expr_stmt->expression.get(), std::nullopt, true);
+        auto type = check_expression(expr_stmt->expression.get(), std::nullopt, true);
+        if (recording && dynamic_cast<ResultType *>(type.get()))
+            log_error("A result cannot be discarded; bind it and check .erroneous");
     } else if (const auto *struct_def = dynamic_cast<const StructDefinition *>(stmt)) {
         if (recording) {
             log_error("Structs are not supported in checked core programs");
@@ -924,12 +1010,18 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         auto base = check_expression(range->left.get());
         auto array = std::dynamic_pointer_cast<ArrayType>(base);
         auto slice = std::dynamic_pointer_cast<SliceType>(base);
-        if (!array && !slice) {
+        auto pointer = std::dynamic_pointer_cast<PointerType>(base);
+        const bool vector_internal = current_module && current_module->standard_name == "vector";
+        if (!array && !slice && !(pointer && vector_internal)) {
             if (base)
                 log_error("Slicing requires a fixed array or slice");
             return nullptr;
         }
-        bool read_only = slice && slice->read_only;
+        if (pointer && !array && !slice && !range->end) {
+            log_error("Pointer slice requires an explicit end bound");
+            return nullptr;
+        }
+        bool read_only = slice ? slice->read_only : pointer && pointer->read_only;
         if (array) {
             auto place = check_place(range->left.get(), true);
             if (!place.addressable) {
@@ -949,7 +1041,8 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
                 log_error("Slice range bound must be an integer");
             return nullptr;
         }
-        return std::make_shared<SliceType>(array ? array->element : slice->element, read_only);
+        return std::make_shared<SliceType>(array ? array->element :
+                                           slice ? slice->element : pointer->pointee, read_only);
     } else if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
         if (recording && (prefix->op == "&" || prefix->op == "*"))
             return check_pointer_unary(prefix);
@@ -1034,6 +1127,10 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
             log_error("Error: Type mismatch in assignment\n");
         } else if (recording && writable && right_type) {
             initialization[symbol->id] = Initialization::Initialized;
+            if (dynamic_cast<ResultType *>(left_type.get())) {
+                result_proof[symbol->id] = ResultProof::Unknown;
+                result_handled[symbol->id] = false;
+            }
         }
         return left_type;
 
@@ -1076,6 +1173,20 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
 
     } else if (const auto *call = dynamic_cast<const CallExpression *>(expr)) {
         if (recording) {
+            const auto *name = dynamic_cast<const Identifier *>(call->function.get());
+            if (name && name->value == "error") {
+                if (call->arguments.size() != 1 ||
+                    !dynamic_cast<const StringLiteral *>(call->arguments.front().get())) {
+                    log_error("error construction requires one string literal");
+                    return nullptr;
+                }
+                if (!check_expression(call->arguments.front().get(), CoreType::String))
+                    return nullptr;
+                recording->error_constructors.insert(call);
+                return std::make_shared<ErrorType>();
+            }
+        }
+        if (recording) {
             bool handled = false;
             auto generic = check_generic_function_call(call, handled);
             if (handled)
@@ -1093,6 +1204,10 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         if (recording && current_module && current_module->standard_name == "arena" && direct) {
             if (auto kind = arena_operation(direct->value, arena_primitive_names))
                 return check_arena_primitive(call, *kind);
+        }
+        if (recording && current_module && current_module->standard_name == "memory" && direct) {
+            if (auto kind = memory_operation(direct->value, memory_primitive_names))
+                return check_memory_primitive(call, *kind);
         }
         if (recording && current_module && !current_module->standard_name.empty() && direct && direct->value == "__write_stdout") {
             if (call->arguments.size() != 1) {
@@ -1192,7 +1307,7 @@ Sema::check_for_codegen(std::vector<std::unique_ptr<Statement>> program, TargetI
     if (has_error())
         return nullptr;
     if (target.pointer_bits != 64) {
-        log_error("Only the 64-bit Apple Silicon target is supported");
+        log_error("Only 64-bit targets are supported");
         return nullptr;
     }
     recording.emplace();
@@ -1285,6 +1400,10 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
         recording->symbols.push_back({symbol.id, name->value, kind, *core, std::move(parameters),
                                       symbol.is_mutable, name->span});
         recording->bindings[name] = symbol.id;
+        if (dynamic_cast<ResultType *>(symbol.type.get()) && kind != SymbolKind::Function) {
+            result_proof[symbol.id] = ResultProof::Unknown;
+            result_handled[symbol.id] = false;
+        }
     }
     current_scope->define(name->value, std::move(symbol));
     return true;

@@ -1,0 +1,3 @@
+def pub is_expected(value: i32) -> bool {
+    return value == 42;
+}

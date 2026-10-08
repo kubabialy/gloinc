@@ -1,0 +1,388 @@
+import "@json";
+import "@std";
+import "@strings";
+
+def reader_checks() -> bool {
+    def made: result<json.Reader> = json.Reader.create(" [true] ", 8, 1);
+    if made.erroneous { return false; }
+
+    def mut reader: json.Reader = made.value;
+    def mut copy: json.Reader   = reader;
+    def kinds: [i32; 5]         = {json.ARRAY_BEGIN, json.BOOLEAN, json.ARRAY_END, json.DONE, json.DONE};
+    def offsets: [u64; 5]       = {1, 2, 6, 8, 8};
+
+    for def mut i: u64 = 0; i < 5; i = i + 1 {
+        def next: result<json.Event> = reader.next();
+        if next.erroneous { return false; }
+
+        def event: json.Event = next.value;
+        if event.kind != kinds[i] || event.offset != offsets[i] { return false; }
+
+        if event.kind == json.BOOLEAN {
+            def value: result<bool> = event.as_bool();
+            if value.erroneous { return false; }
+            if !value.value { return false; }
+
+            def wrong: result<i64> = event.as_i64();
+            if !wrong.erroneous { return false; }
+        }
+    }
+
+    def independent: result<json.Event> = copy.next();
+    if independent.erroneous { return false; }
+    if independent.value.kind != json.ARRAY_BEGIN { return false; }
+
+    def short: result<json.Reader> = json.Reader.create(" [true] ", 7, 1);
+    if !short.erroneous { return false; }
+
+    def deep: result<json.Reader> = json.Reader.create("0", 1, 65);
+    if !deep.erroneous { return false; }
+
+    def scalar: result<void> = json.validate("0", 1, 0);
+    if scalar.erroneous { return false; }
+
+    def container: result<void> = json.validate("[]", 2, 0);
+    if !container.erroneous { return false; }
+
+    def bad: result<json.Reader> = json.Reader.create("0 x", 3, 0);
+    if bad.erroneous { return false; }
+
+    def mut broken: json.Reader   = bad.value;
+    def first: result<json.Event> = broken.next();
+
+    if first.erroneous { return false; }
+
+    def invalid: result<json.Event> = broken.next();
+    if !invalid.erroneous { return false; }
+
+    def failed: result<json.Event> = broken.next();
+    if !failed.erroneous { return false; }
+
+    return strings.equal(failed.error.message, "JSON reader is failed");
+}
+
+def number_checks() -> bool {
+    def made: result<json.Reader> = json.Reader.create(
+        "[-9223372036854775808,18446744073709551615,1.0,1e400,1e-400,-0]", 128, 1
+    );
+    if made.erroneous { return false; }
+
+    def mut reader: json.Reader    = made.value;
+    def opened: result<json.Event> = reader.next();
+
+    if opened.erroneous { return false; }
+
+    for def mut i: u64 = 0; i < 6; i = i + 1 {
+        def next: result<json.Event> = reader.next();
+        if next.erroneous { return false; }
+
+        def event: json.Event = next.value;
+
+        if i == 0 {
+            def value: result<i64> = event.as_i64();
+            if value.erroneous { return false; }
+
+            def expected: i64 = -9223372036854775808;
+            if value.value != expected { return false; }
+        } else if i == 1 {
+            def value: result<u64> = event.as_u64();
+            if value.erroneous { return false; }
+
+            def expected: u64 = 18446744073709551615;
+            if value.value != expected { return false; }
+
+            def signed: result<i64> = event.as_i64();
+            if !signed.erroneous { return false; }
+        } else if i == 2 {
+            def integer: result<i64> = event.as_i64();
+            if !integer.erroneous { return false; }
+
+            def value: result<f64> = event.as_f64();
+            if value.erroneous { return false; }
+
+            def expected: f64 = 1.0;
+            if value.value != expected { return false; }
+        } else if i == 3 || i == 4 {
+            def value: result<f64> = event.as_f64();
+            if !value.erroneous { return false; }
+        } else {
+            if !strings.equal(event.raw, "-0") { return false; }
+
+            def value: result<i64> = event.as_i64();
+            if value.erroneous { return false; }
+
+            def zero: i64 = 0;
+            if value.value != zero { return false; }
+        }
+    }
+
+    def closed: result<json.Event> = reader.next();
+    if closed.erroneous { return false; }
+
+    def end: result<json.Event> = reader.next();
+    if end.erroneous { return false; }
+
+    return end.value.kind == json.DONE;
+}
+
+def string_checks() -> bool {
+    def mut bytes: [u8; 32]   = {90; 32};
+    def short: result<string> = json.decode_string("\"ab\"", bytes[0..1]);
+
+    if !short.erroneous { return false; }
+
+    def malformed: result<string> = json.decode_string("\"a\\uD800\"", bytes[..]);
+    if !malformed.erroneous { return false; }
+
+    def encoded: result<string> = json.encode_string("x", bytes[0..2]);
+    if !encoded.erroneous { return false; }
+
+    def bad_bytes: [u8; 2]      = {192, 128};
+    def invalid: result<string> = json.encode_string(strings.view_bytes(bad_bytes[..]), bytes[..]);
+
+    if !invalid.erroneous { return false; }
+
+    def untouched: u8 = 90;
+
+    for def mut i: u64 = 0; i < 32; i = i + 1 {
+        if bytes[i] != untouched { return false; }
+    }
+
+    def exact: result<string> = json.encode_string("x", bytes[0..3]);
+    if exact.erroneous { return false; }
+    if !strings.equal(exact.value, "\"x\"") { return false; }
+
+    def decoded: result<string> = json.decode_string("\"\\u0000\"", bytes[0..1]);
+    if decoded.erroneous { return false; }
+
+    return strings.equal(decoded.value, "\0");
+}
+
+def writer_checks() -> bool {
+    def mut bytes: [u8; 64]       = zeroed;
+    def made: result<json.Writer> = json.Writer.create(bytes[..], 2);
+
+    if made.erroneous { return false; }
+
+    def mut writer: json.Writer = made.value;
+    def opened: result<void>    = writer.begin_object();
+
+    if opened.erroneous { return false; }
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def key: result<void> = writer.key("duplicate");
+        if key.erroneous { return false; }
+
+        def value: result<void> = writer.number("1.2300e+04");
+        if value.erroneous { return false; }
+    }
+
+    def closed: result<void> = writer.end_object();
+    if closed.erroneous { return false; }
+
+    def finished: result<string> = writer.finish();
+    if finished.erroneous { return false; }
+
+    def checked: result<void> = json.validate(finished.value, 64, 2);
+    if checked.erroneous { return false; }
+    if !strings.equal(finished.value, "{\"duplicate\":1.2300e+04,\"duplicate\":1.2300e+04}") { return false; }
+
+    def again: result<void> = writer.null_value();
+    if !again.erroneous { return false; }
+
+    def failed: result<string> = writer.finish();
+    if !failed.erroneous { return false; }
+
+    def other: result<json.Writer> = json.Writer.create(bytes[..], 1);
+    if other.erroneous { return false; }
+
+    def mut object: json.Writer = other.value;
+    def start: result<void>     = object.begin_object();
+
+    if start.erroneous { return false; }
+
+    def key: result<void> = object.key("missing");
+    if key.erroneous { return false; }
+
+    def missing: result<void> = object.end_object();
+    if !missing.erroneous { return false; }
+
+    def failure: result<void> = object.null_value();
+    if !failure.erroneous { return false; }
+
+    return strings.equal(failure.error.message, "JSON writer is failed");
+}
+
+def writer_limits() -> bool {
+    def mut bytes: [u8; 8]        = zeroed;
+    def made: result<json.Writer> = json.Writer.create(bytes[0..3], 0);
+
+    if made.erroneous { return false; }
+
+    def mut writer: json.Writer = made.value;
+    def value: result<void>     = writer.string_value("x");
+
+    if value.erroneous { return false; }
+
+    def done: result<string> = writer.finish();
+    if done.erroneous { return false; }
+    if !strings.equal(done.value, "\"x\"") { return false; }
+
+    def small: result<json.Writer> = json.Writer.create(bytes[0..2], 0);
+    if small.erroneous { return false; }
+
+    def mut short: json.Writer = small.value;
+    def overflow: result<void> = short.string_value("x");
+
+    if !overflow.erroneous { return false; }
+
+    def failed: result<string> = short.finish();
+    if !failed.erroneous { return false; }
+
+    def empty: result<json.Writer> = json.Writer.create(bytes[..], 0);
+    if empty.erroneous { return false; }
+
+    def mut scalar: json.Writer = empty.value;
+    def depth: result<void>     = scalar.begin_array();
+
+    if !depth.erroneous { return false; }
+
+    def clean: result<json.Writer> = json.Writer.create(bytes[..], 1);
+    if clean.erroneous { return false; }
+
+    def mut number: json.Writer = clean.value;
+    def invalid: result<void>   = number.number("01");
+
+    if !invalid.erroneous { return false; }
+
+    def invalid_done: result<string> = number.finish();
+    if !invalid_done.erroneous { return false; }
+
+    return true;
+}
+
+def writer_numbers() -> bool {
+    def texts: [string; 15] = {
+        "0", "-0", "1.2300e+04", "1e400", "18446744073709551615",
+        "", "+1", "01", "NaN", "1.", "1e", "1 2", "true", " 1", "1\n"
+    };
+    def mut bytes: [u8; 64] = zeroed;
+
+    for def mut i: u64 = 0; i < 15; i = i + 1 {
+        def made: result<json.Writer> = json.Writer.create(bytes[..], 0);
+        if made.erroneous { return false; }
+
+        def mut writer: json.Writer = made.value;
+        def written: result<void>   = writer.number(texts[i]);
+
+        if written.erroneous {
+            if i < 5 { return false; }
+        } else {
+            if i >= 5 { return false; }
+
+            def finished: result<string> = writer.finish();
+            if finished.erroneous { return false; }
+            if !strings.equal(finished.value, texts[i]) { return false; }
+        }
+    }
+
+    return true;
+}
+
+def writer_order() -> bool {
+    def mut bytes: [u8; 256] = zeroed;
+
+    for def mut i: u64 = 0; i < 7; i = i + 1 {
+        def made: result<json.Writer> = json.Writer.create(bytes[..], 64);
+        if made.erroneous { return false; }
+
+        def mut writer: json.Writer = made.value;
+
+        if i == 0 {
+            def key: result<void> = writer.key("x");
+            if !key.erroneous { return false; }
+        } else if i == 1 {
+            def finished: result<string> = writer.finish();
+            if !finished.erroneous { return false; }
+        } else if i == 2 {
+            def opened: result<void> = writer.begin_array();
+            if opened.erroneous { return false; }
+
+            def wrong: result<void> = writer.end_object();
+            if !wrong.erroneous { return false; }
+        } else if i == 3 {
+            def opened: result<void> = writer.begin_object();
+            if opened.erroneous { return false; }
+
+            def wrong: result<void> = writer.boolean(false);
+            if !wrong.erroneous { return false; }
+        } else if i == 4 {
+            def opened: result<void> = writer.begin_object();
+            if opened.erroneous { return false; }
+
+            def key: result<void> = writer.key("x");
+            if key.erroneous { return false; }
+
+            def wrong: result<void> = writer.key("y");
+            if !wrong.erroneous { return false; }
+        } else if i == 5 {
+            def opened: result<void> = writer.begin_object();
+            if opened.erroneous { return false; }
+
+            def unfinished: result<string> = writer.finish();
+            if !unfinished.erroneous { return false; }
+        } else {
+            for def mut depth: u64 = 0; depth < 64; depth = depth + 1 {
+                def opened: result<void> = writer.begin_array();
+                if opened.erroneous { return false; }
+            }
+
+            def overflow: result<void> = writer.begin_array();
+            if !overflow.erroneous { return false; }
+        }
+
+        def failed: result<void> = writer.null_value();
+        if !failed.erroneous { return false; }
+        if !strings.equal(failed.error.message, "JSON writer is failed") { return false; }
+    }
+
+    def made: result<json.Writer> = json.Writer.create(bytes[..], 64);
+    if made.erroneous { return false; }
+
+    def mut writer: json.Writer = made.value;
+
+    for def mut depth: u64 = 0; depth < 64; depth = depth + 1 {
+        def opened: result<void> = writer.begin_array();
+        if opened.erroneous { return false; }
+    }
+
+    def scalar: result<void> = writer.null_value();
+    if scalar.erroneous { return false; }
+
+    for def mut depth: u64 = 0; depth < 64; depth = depth + 1 {
+        def closed: result<void> = writer.end_array();
+        if closed.erroneous { return false; }
+    }
+
+    def finished: result<string> = writer.finish();
+    if finished.erroneous { return false; }
+
+    def valid: result<void> = json.validate(finished.value, 256, 64);
+    if valid.erroneous { return false; }
+
+    return true;
+}
+
+def main() -> i32 {
+    if !reader_checks() { return 1; }
+    if !number_checks() { return 2; }
+    if !string_checks() { return 3; }
+    if !writer_checks() { return 4; }
+    if !writer_limits() { return 5; }
+    if !writer_numbers() { return 6; }
+    if !writer_order() { return 7; }
+
+    std.println("JSON state and limit checks passed");
+
+    return 0;
+}

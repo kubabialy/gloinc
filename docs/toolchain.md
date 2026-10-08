@@ -1,17 +1,22 @@
 # Supported LLVM/MLIR toolchain
 
-Gloin currently requires **LLVM and MLIR 21.1.6**, from the same installation.
-CMake requests that exact MLIR package version; MLIR's package in turn requires
-the matching LLVM version. Other versions are not yet validated and are rejected
-at configuration time. Do not change the version requirement without rebuilding
-and rerunning the dialect tests.
+Gloin requires LLVM and MLIR from the same shared-library installation. The
+macOS build uses **21.1.6**; the Ubuntu 24.04 Linux build uses **21.1.8**.
+CMake requests the exact version for each platform, and rejects mismatches.
+Do not change either requirement without rebuilding and rerunning the dialect
+and package tests on that platform.
 
 Local verification used Apple Silicon macOS, AppleClang 16.0.0, CMake 4.2.1,
 Ninja, and Homebrew's LLVM/MLIR 21.1.6. The
 [verified hosted run](https://github.com/kubabialy/gloinc/actions/runs/34242653935)
 used macOS 15.7.9 arm64, AppleClang 17.0.0, CMake 4.4.3, Ninja 1.13.2, and the
 same LLVM/MLIR release. The project requires CMake 3.28 or newer and uses C++23.
-Other platforms have not been validated.
+The 0.1.0 release also passed local Ubuntu 24.04 ARM64 and hosted x86_64
+acceptance with LLVM/MLIR 21.1.8. See the
+[release validation record](next-release-draft.md#hosted-validation).
+The networking runtime additionally requires OpenSSL 3 development headers and
+libraries. Install `openssl@3` with Homebrew or `openssl libssl-dev` on Ubuntu.
+The compiler and TLS-enabled native executables need OpenSSL runtime libraries.
 
 `bash scripts/install-llvm.sh` reuses this release or installs the historical
 [Homebrew formula](https://github.com/Homebrew/homebrew-core/blob/67ebbe50b3d4f240f8c34f998edac9a2898cba86/Formula/l/llvm.rb)
@@ -22,6 +27,28 @@ the local tap so a newer, ABI-incompatible Z3 cannot be selected. An incompatibl
 installed LLVM or Z3 is left untouched and causes an actionable installer error.
 The CI workflow uses this installer on the
 [hosted macOS 15 arm64 image](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md).
+
+## Linux toolchain
+
+On Ubuntu 24.04 ARM64 or x86_64, run `bash scripts/install-llvm-linux.sh`.
+It installs the exact tested `llvm-21-dev`, `libmlir-21-dev`, `mlir-21-tools`,
+and `clang-21` package revision from apt.llvm.org after checking that
+repository's signing key fingerprint. It requires `sudo`, leaves other LLVM
+releases alone, and prints the toolchain prefix `/usr/lib/llvm-21`. CMake uses:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLLVM_DIR=/usr/lib/llvm-21/lib/cmake/llvm \
+  -DMLIR_DIR=/usr/lib/llvm-21/lib/cmake/mlir
+cmake --build build -j 2
+```
+
+Install CMake 3.28+, Ninja, a C++23 compiler, `openssl`, and
+`libssl-dev` first. An official
+LLVM 21.1.6 Linux binary archive is insufficient for this compiler's shared
+`MLIR`, `LLVM`, and `MLIRExecutionEngineShared` target requirements. The Linux
+package from apt.llvm.org provides those targets. A downloaded Gloin compiler
+still needs the matching Linux LLVM/MLIR packages; generated executables do not.
 
 ## Configure and build
 
@@ -121,7 +148,8 @@ transitively. That brought overlapping implementations into the executable and
 caused dialect-loading crashes. Do not add component archives alongside the
 shared targets or edit the imported targets to hide their dependencies.
 
-For a custom LLVM build, use the 21.1.6 release with the MLIR project and enable
+For a custom LLVM build, use the platform's required 21.1.6 or 21.1.8 release
+with the MLIR project and enable
 `LLVM_BUILD_LLVM_DYLIB`, `LLVM_LINK_LLVM_DYLIB`, `MLIR_BUILD_MLIR_DYLIB`,
 `MLIR_LINK_MLIR_DYLIB`, and `MLIR_ENABLE_EXECUTION_ENGINE`. Validate the resulting
 installation with the build and dialect tests above; custom builds are not part

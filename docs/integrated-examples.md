@@ -169,10 +169,15 @@ native code; [JIT/prebuilt-library limitations](release-0.0.4.md) still apply.
 The reproducible larger stress check is:
 
 ```sh
-python3 scripts/check-integrated-examples.py build/gloinc
+cmake --build build --target gloin_stress_tests
+build/gloin-stress-test build/gloinc examples build
 ```
 
-It compiles/runs all three programs with a 2 MiB stack, validates a million
+The Gloin driver is also required by `check-core` as
+`GloinIntegratedStress.MillionRecords` and by installed/relocated package checks.
+It compiles/runs all three programs with a 2 MiB soft stack limit, validates a million
 records/lines, rejects one over each bound, and compares a million simulation
-samples with an independent exact-integer oracle. Temporary files are removed
-automatically. This is correctness/stack evidence, not a performance benchmark.
+samples against frozen values from an independent exact-integer oracle.
+See the [reference provenance and runner contract](../tests/integrated/README.md).
+Temporary files are removed on success and retained with captures on failure.
+This is correctness/stack evidence, not a performance benchmark.

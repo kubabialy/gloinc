@@ -1,0 +1,44 @@
+// Binary stdin and bounded stdout/stderr capture with a five-second deadline.
+import "@arena";
+import "@process";
+import "@std";
+import "@strings";
+import "@time";
+
+def cleanup(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def arguments: [string; 0]         = {};
+    def started: result<process.Child> = process.start_piped(&owner, "/bin/cat", arguments[..]);
+
+    if started.erroneous { std.println(started.error.message); return 1; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    // 72, 105, 10 are the counted bytes of "Hi\n". NUL bytes are supported too.
+    def input: [u8; 3]         = {72, 105, 10};
+    def mut output: [u8; 1024] = zeroed;
+    def mut errors: [u8; 1024] = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..],
+        time.Duration { nanoseconds: 5000000000 });
+
+    if captured.erroneous { std.println(captured.error.message); return 2; }
+
+    // communicate closed the pipes, reaped the child and invalidated its aliases.
+    // These views still borrow our buffers; they do not borrow the child handle.
+    def outcome: process.Output = captured.value;
+
+    std.print(strings.view_bytes(outcome.stdout));
+
+    if !outcome.status.success() { return 3; }
+    if outcome.stdin_written != input[..].len { return 4; }
+
+    return 0;
+}

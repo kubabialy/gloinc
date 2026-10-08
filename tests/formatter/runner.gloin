@@ -1,0 +1,182 @@
+// Gloin owns launch, capture, temporary storage and cleanup. CTest only invokes us.
+import "../support/tool_runner";
+import "@arena";
+import "@fs";
+import "@io";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def struct Configuration {
+    def compiler: string,
+    def formatter: string,
+    def harness: string,
+    def root: string,
+}
+
+def cleanup_cases(work: string) -> result<void> {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def keep: result<string> = tool_runner.joined(&memory, work, "cleanup-keep");
+    if keep.erroneous { return keep.error; }
+
+    def tree: result<string> = tool_runner.joined(&memory, work, "cleanup-probe");
+    if tree.erroneous { return tree.error; }
+    if fs.mkdir(keep.value).status != status.OK || fs.mkdir(tree.value).status != status.OK { return error("cannot create cleanup probe"); }
+
+    def saved: result<void> = tool_runner.record(&memory, keep.value, "sentinel", "", "untouched");
+    if saved.erroneous { return saved.error; }
+
+    def keep_path: string    = keep.value;
+    def tree_path: string    = tree.value;
+    def names: [string; 3]   = {"outside", "broken", "cycle"};
+    def targets: [string; 3] = {"../cleanup-keep", "absent", "cycle"};
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def path: result<string> = tool_runner.joined(&memory, tree_path, names[i]);
+        if path.erroneous { return path.error; }
+
+        def linked: result<void> = fs.symlink(targets[i], path.value);
+        if linked.erroneous { return linked.error; }
+    }
+
+    def bounded: result<void> = tool_runner.remove_fixture_tree(tree_path, 0);
+    if !bounded.erroneous { return error("cleanup ignored its depth limit"); }
+
+    def removed: result<void> = tool_runner.remove_fixture_tree(tree_path, 64);
+    if removed.erroneous { return removed.error; }
+
+    def sentinel: result<string> = tool_runner.joined(&memory, keep_path, "sentinel");
+    if sentinel.erroneous { return sentinel.error; }
+
+    def info: fs.MetadataResult = fs.metadata(sentinel.value);
+    if info.status != status.OK || info.kind != fs.FILE || info.size != 9 { return error("cleanup followed a symlink"); }
+
+    return;
+}
+
+def jobs(config: Configuration, work: string) -> result<void> {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def prepare_args: [string; 3] = {"--prepare", config.root, work};
+    def prepared: result<void>    = tool_runner.capture(work, "prepare", config.harness, prepare_args[..], "", 0);
+
+    if prepared.erroneous { return prepared.error; }
+
+    def files: [string; 3]   = {"tree/a.gloin", "tree/nested/b.gloin", "tree/z.gloin"};
+    def names: [string; 3]   = {"native-a", "native-b", "native-z"};
+    def outputs: [string; 3] = {"native-a.out", "native-b.out", "native-z.out"};
+    def repeats: [string; 3] = {"repeat-a", "repeat-b", "repeat-z"};
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def path: result<string> = tool_runner.joined(&memory, work, files[i]);
+        if path.erroneous { return path.error; }
+
+        def args: [string; 1]   = {path.value};
+        def first: result<void> = tool_runner.capture(work, names[i], config.formatter, args[..], "", 0);
+
+        if first.erroneous { return first.error; }
+
+        def input: result<string> = tool_runner.joined(&memory, work, outputs[i]);
+        if input.erroneous { return input.error; }
+
+        def repeat_args: [string; 1] = {"/dev/stdin"};
+        def repeated: result<void>   = tool_runner.capture(work, repeats[i], config.formatter, repeat_args[..], input.value, 0);
+
+        if repeated.erroneous { return repeated.error; }
+    }
+
+    def checks: [string; 4] = {"tree", "tree/missing", "unaligned.gloin", "aligned.gloin"};
+    def labels: [string; 4] = {"check-tree", "missing", "check-style", "check-clean"};
+    def statuses: [i32; 4]  = {1, 2, 1, 0};
+
+    for def mut i: u64 = 0; i < 4; i = i + 1 {
+        def path: result<string> = tool_runner.joined(&memory, work, checks[i]);
+        if path.erroneous { return path.error; }
+
+        def args: [string; 2]     = {"--check", path.value};
+        def checked: result<void> = tool_runner.capture(work, labels[i], config.formatter, args[..], "", statuses[i]);
+
+        if checked.erroneous { return checked.error; }
+    }
+
+    def formatter_source: result<string> = tool_runner.joined(&memory, config.root, "tools/gloinfmt/main.gloin");
+    if formatter_source.erroneous { return formatter_source.error; }
+
+    def file: result<string> = tool_runner.joined(&memory, work, "tree/a.gloin");
+    if file.erroneous { return file.error; }
+
+    def jit_args: [string; 4]  = {"--jit", formatter_source.value, "--", file.value};
+    def jit_file: result<void> = tool_runner.capture(work, "jit-file", config.compiler, jit_args[..], "", 0);
+
+    if jit_file.erroneous { return jit_file.error; }
+
+    def style: result<string> = tool_runner.joined(&memory, work, "unaligned.gloin");
+    if style.erroneous { return style.error; }
+
+    def style_args: [string; 4] = {"--jit", formatter_source.value, "--", "/dev/stdin"};
+    def jit_style: result<void> = tool_runner.capture(work, "jit-style", config.compiler, style_args[..], style.value, 0);
+
+    if jit_style.erroneous { return jit_style.error; }
+
+    def verify_args: [string; 3] = {"--verify", config.root, work};
+    def native: result<void>     = tool_runner.capture(work, "native-tests", config.harness, verify_args[..], "", 0);
+
+    if native.erroneous { return native.error; }
+
+    def harness_source: result<string> = tool_runner.joined(&memory, config.root, "tests/formatter/main.gloin");
+    if harness_source.erroneous { return harness_source.error; }
+
+    def jit_verify_args: [string; 6] = {"--jit", harness_source.value, "--", "--verify", config.root, work};
+    def jit: result<void>            = tool_runner.capture(work, "jit-tests", config.compiler, jit_verify_args[..], "", 0);
+
+    if jit.erroneous { return jit.error; }
+
+    return;
+}
+
+def pub execute_suite(compiler: string, formatter: string, harness: string, root: string, parent: string) -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def resolved_compiler: result<string> = fs.canonical_path(&memory, compiler, 65536);
+    if resolved_compiler.erroneous { tool_runner.report(resolved_compiler.error.message); return 1; }
+
+    def resolved_formatter: result<string> = fs.canonical_path(&memory, formatter, 65536);
+    if resolved_formatter.erroneous { tool_runner.report(resolved_formatter.error.message); return 1; }
+
+    def resolved_harness: result<string> = fs.canonical_path(&memory, harness, 65536);
+    if resolved_harness.erroneous { tool_runner.report(resolved_harness.error.message); return 1; }
+
+    def resolved_root: result<string> = fs.canonical_path(&memory, root, 65536);
+    if resolved_root.erroneous { tool_runner.report(resolved_root.error.message); return 1; }
+
+    def made: result<string> = fs.temp_dir(&memory, parent, "formatter smoke", 65536);
+    if made.erroneous { tool_runner.report(made.error.message); return 1; }
+
+    def work: string                  = made.value;
+    def cleanup_checked: result<void> = cleanup_cases(work);
+
+    if cleanup_checked.erroneous { tool_runner.report(cleanup_checked.error.message); tool_runner.report(work); return 1; }
+
+    def config: Configuration = Configuration {
+        compiler: resolved_compiler.value,
+        formatter: resolved_formatter.value,
+        harness: resolved_harness.value,
+        root: resolved_root.value
+    };
+    def tested: result<void> = jobs(config, work);
+
+    if tested.erroneous { tool_runner.report(tested.error.message); tool_runner.report("Evidence retained in:"); tool_runner.report(work); return 1; }
+
+    def removed: result<void> = tool_runner.remove_fixture_tree(work, 64);
+    if removed.erroneous { tool_runner.report(removed.error.message); tool_runner.report(work); return 1; }
+
+    std.println("Gloin formatter driver passed; native and JIT assertions passed; fixtures removed");
+
+    return 0;
+}

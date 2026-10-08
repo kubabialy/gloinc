@@ -6,7 +6,9 @@
 #include "support/cli_fixture.h"
 #include "support/external_runner.h"
 #include <filesystem>
+#include <fstream>
 #include <tuple>
+#include <sys/resource.h>
 #ifdef __APPLE__
 #include <dlfcn.h>
 #endif
@@ -66,7 +68,7 @@ class ContextLibraryTest : public gloin_test::CliFixture {
     }
     void copy_modules() {
         for (auto name : {"arena.gloin", "std.gloin", "strings.gloin", "status.gloin", "io.gloin",
-                          "fs.gloin", "process.gloin"})
+                          "fs.gloin", "process.gloin", "time.gloin"})
             source(read((library() / name).string()), name);
     }
     static void replace(std::string &s, const std::string &from, const std::string &to) {
@@ -168,6 +170,29 @@ TEST_F(ContextLibraryTest, FilesystemQueriesAndMutationsPreserveDefinedEffects) 
     EXPECT_FALSE(std::filesystem::exists(dst));
     EXPECT_TRUE(std::filesystem::is_directory(child));
 }
+TEST_F(ContextLibraryTest, DirectoryIterationCopiesNamesAndCloseInvalidatesAliases) {
+    const auto entries = directory + "/entries";
+    ASSERT_TRUE(std::filesystem::create_directory(entries));
+    { std::ofstream(entries + "/dir-alpha") << "a"; }
+    { std::ofstream(entries + "/dir-beta") << "b"; }
+    const auto body = "def opened: fs.DirectoryResult = fs.Directory.open(&memory," +
+                      literal(entries) + R"();
+        if opened.status != status.OK || opened.os_error != 0 { return 1; }
+        def mut cursor: fs.Directory = opened.value;
+        def mut alias: fs.Directory = cursor;
+        def one: fs.DirectoryEntryResult = cursor.next(&memory);
+        def two: fs.DirectoryEntryResult = alias.next(&memory);
+        if one.status != status.OK || two.status != status.OK || strings.equal(one.name,two.name) { return 2; }
+        def alpha: bool = strings.equal(one.name,"dir-alpha") || strings.equal(two.name,"dir-alpha");
+        def beta: bool = strings.equal(one.name,"dir-beta") || strings.equal(two.name,"dir-beta");
+        if !alpha || !beta || cursor.next(&memory).status != status.END { return 3; }
+        if alias.close().status != status.OK || cursor.is_open() { return 4; }
+        if cursor.next(&memory).status != status.CLOSED || cursor.close().status != status.CLOSED { return 5; }
+        if fs.Directory.open(&memory,"").status != status.INVALID ||
+           fs.Directory.open(&memory,"a\0b").status != status.INVALID { return 6; }
+        return 0;)";
+    expect_run(invoke({program(body)}), 0);
+}
 TEST_F(ContextLibraryTest, CliForwardsExactBytesOnlyAfterFileDelimiter) {
     const auto file = program(R"(
         if process.arg_count() != 5 { return 1; }
@@ -226,8 +251,8 @@ TEST_F(ContextLibraryTest, ArgumentEnvironmentAndCwdAllocationFailuresAreRecover
                0);
 }
 TEST_F(ContextLibraryTest, CwdUsesHostWorkingDirectoryAndReportsTooSmallBounds) {
-    auto file = program(R"(def result: process.TextResult = process.cwd(&memory,4096);
-        if result.status != status.OK || result.os_error != 0 { return 1; } std.println(result.value);
+    auto file = program(R"(def outcome: process.TextResult = process.cwd(&memory,4096);
+        if outcome.status != status.OK || outcome.os_error != 0 { return 1; } std.println(outcome.value);
         def small: process.TextResult = process.cwd(&memory,0);
         if small.status != status.TOO_LONG || small.os_error == 0 || !strings.is_empty(small.value) { return 2; } return 0;)");
     CwdGuard cwd(directory);
@@ -265,20 +290,273 @@ TEST_F(ContextLibraryTest, EmbeddingArgumentsAreInvocationOwnedAndNeverLeak) {
 TEST_F(ContextLibraryTest, PublicSignaturesAndCanonicalPrimitivePrivacyAreChecked) {
     for (const std::string body :
          {"fs.basename(1);", "fs.join(&memory,\"a\",\"b\",-1);", "fs.metadata(true);",
-          "fs.rename_replace(\"a\");", "process.arg(&memory,-1);", "process.env(&memory,1);",
-          "process.cwd(&memory,true);", "__process_arg_count();", "__fs_mkdir(\"x\");"}) {
+          "fs.symlink(1,\"x\");", "fs.read_link(&memory,\"x\",-1);",
+          "fs.symlink(\"x\",\"y\");", "fs.read_link(&memory,\"x\",10);",
+          "__fs_symlink();", "__fs_read_link();",
+          "__fs_canonical_path();", "__fs_temp_dir();", "__fs_remove_dir();", "__fs_replace_file();",
+          "fs.replace_file(1,\"old\",\"new\");", "fs.replace_file(\"path\",\"old\",\"new\");",
+          "fs.canonical_path(&memory,\"x\",-1);", "fs.temp_dir(&memory,\"x\",1,10);", "fs.remove_dir(1);",
+          "fs.canonical_path(&memory,\"x\",10);", "fs.temp_dir(&memory,\"x\",\"p\",10);", "fs.remove_dir(\"x\");", "fs.rename_replace(\"a\");", "process.arg(&memory,-1);", "process.env(&memory,1);",
+          "process.cwd(&memory,true);", "__process_arg_count();", "__fs_mkdir(\"x\");",
+          "process.start(&memory,\"/bin/echo\",false);", "__process_start();", "__process_pipe_wait();", "__process_start_options();", "__process_group_signal();",
+          "process.start_piped(&memory,\"/bin/cat\",false);",
+          "def mut options: process.Options = process.Options.defaults(); options.stack_limit_bytes = -1;",
+          "def args: [string;0] = {}; process.start(&memory,\"/bin/echo\",args[..]);"}) {
+        SCOPED_TRACE(body);
         auto file = program(body + "return 0;");
-        for (std::string mode : {"--check", "--emit-ir", "--emit-llvm", "--run"})
+        for (std::string mode : {"--check", "--emit-ir", "--emit-llvm", "--run"}) {
+            SCOPED_TRACE(mode);
             expect_error(invoke({mode, file}), 1, "error:");
+        }
     }
     const auto file =
         source("import \"@process\"; def main() -> i32 { process.probe(); return 0; }");
     for (std::string body : {"__process_arg_count(1);",
                              "def mut n: u64 = 0; def mut s: i32 = 0; __process_arg(true,&n,&s);",
                              "__fs_mkdir(\"x\");"}) {
+        SCOPED_TRACE(body);
         source("def pub probe() -> void {" + body + "}", "process.gloin");
         expect_error(invoke({"--stdlib-dir", directory, "--check", file}), 1, "error:");
     }
+}
+TEST_F(ContextLibraryTest, SymlinksRunThroughGloinIRInJitAndNativeModes) {
+    source("abc", "target");
+    const auto fixture = (std::filesystem::path(__FILE__).parent_path() /
+                          "fixtures/filesystem/symlinks.gloin").string();
+    expect_success(invoke({fixture, "--", directory}), "");
+    const auto ir = invoke({"--emit-ir", fixture});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *symbol : {"gloin_fs_symlink", "gloin_fs_read_link"}) {
+        const auto position = ir.out.find(std::string("callee = @") + symbol);
+        ASSERT_NE(position, std::string::npos) << symbol;
+        const auto start = ir.out.rfind('\n', position);
+        EXPECT_NE(ir.out.substr(start + 1, position - start).find("gloin.abi_call"), std::string::npos);
+        EXPECT_EQ(ir.out.find(std::string("llvm.call @") + symbol), std::string::npos);
+    }
+    EXPECT_NE(ir.out.find("!gloin.result<"), std::string::npos);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/symlinks " + optimization;
+        expect_success(invoke_raw({optimization, "-o", executable, fixture}), "");
+        const auto out = directory + "/symlinks.out", err = directory + "/symlinks.err";
+        const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable, directory}, std::nullopt, redirects, 10), 0);
+        EXPECT_EQ(read(out), "");
+        EXPECT_EQ(read(err), "");
+    }
+}
+TEST_F(ContextLibraryTest, ReadLinkAllocationFailureAndValidationAreRecoverable) {
+    copy_modules();
+    auto arena = read((library() / "arena.gloin").string());
+    const std::string allocation = "def bytes: *u8 = __arena_general_alloc(self.state, size, 1);";
+    ASSERT_NE(arena.find(allocation), std::string::npos);
+    replace(arena, allocation, "def bytes: *u8 = null;");
+    source(arena, "arena.gloin");
+    const auto file = program(R"(
+        def failed: result<string> = fs.read_link(&memory,"missing",10);
+        if !failed.erroneous { return 1; }
+        if !strings.equal(failed.error.message,"symlink target allocation failed") { return 2; }
+        def invalid: result<string> = fs.read_link(&memory,"",10);
+        if !invalid.erroneous { return 3; }
+        if !strings.equal(invalid.error.message,"symlink path must be nonempty and contain no NUL") { return 4; }
+        def huge: result<string> = fs.read_link(&memory,"missing",18446744073709551615);
+        if !huge.erroneous { return 5; }
+        if !strings.equal(huge.error.message,"symlink target limit is too large") { return 6; }
+        return 0;)");
+    expect_run(invoke({"--stdlib-dir", directory, file}), 0);
+}
+TEST_F(ContextLibraryTest, FilesystemWorkspaceRunsThroughGloinIRInJitAndNativeModes) {
+    const auto fixture = (std::filesystem::path(__FILE__).parent_path() /
+                          "fixtures/filesystem/workspace.gloin").string();
+    const auto canonical = std::filesystem::canonical(directory).string();
+    expect_success(invoke({fixture, "--", directory, canonical}), "");
+    const auto ir = invoke({"--emit-ir", fixture});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *symbol : {"gloin_fs_canonical_path", "gloin_fs_temp_dir", "gloin_fs_remove_dir", "gloin_fs_replace_file"}) {
+        const auto position = ir.out.find(std::string("callee = @") + symbol);
+        ASSERT_NE(position, std::string::npos) << symbol;
+        const auto start = ir.out.rfind('\n', position);
+        EXPECT_NE(ir.out.substr(start + 1, position - start).find("gloin.abi_call"), std::string::npos);
+        EXPECT_EQ(ir.out.find(std::string("llvm.call @") + symbol), std::string::npos);
+    }
+    EXPECT_NE(ir.out.find("!gloin.result<"), std::string::npos);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/workspace " + optimization;
+        expect_success(invoke_raw({optimization, "-o", executable, fixture}), "");
+        const auto out = directory + "/workspace.out", err = directory + "/workspace.err";
+        const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable, directory, canonical},
+                                          std::nullopt, redirects, 10), 0);
+        EXPECT_EQ(read(out), "");
+        EXPECT_EQ(read(err), "");
+    }
+    for (const auto &entry : std::filesystem::directory_iterator(directory))
+        EXPECT_FALSE(entry.path().filename().string().starts_with("case XXX-"));
+}
+TEST_F(ContextLibraryTest, EveryTemporaryDirectoryArenaFailurePrecedesCreation) {
+    for (unsigned failure = 1; failure <= 5; ++failure) {
+        copy_modules();
+        auto arena = read((library() / "arena.gloin").string());
+        const std::string allocation = "def bytes: *u8 = __arena_general_alloc(self.state, size, 1);";
+        ASSERT_NE(arena.find(allocation), std::string::npos);
+        ASSERT_NE(arena.find("GeneralArena {\n            state: state\n        }"), std::string::npos);
+        replace(arena, "def mut state: *u8,", "def mut state: *u8, def mut requests: u64,");
+        replace(arena, "GeneralArena {\n            state: state\n        }",
+                "GeneralArena {\n            state: state,\n            requests: 0\n        }");
+        replace(arena, allocation, "self.requests = self.requests + 1; if self.requests == " +
+                                   std::to_string(failure) + " { return null; } " + allocation);
+        source(arena, "arena.gloin");
+        const auto file = program("def made: result<string> = fs.temp_dir(&memory," +
+                                  literal(directory) + R"(,"failed-allocation",65536);
+            if !made.erroneous { return 1; }
+            if !strings.contains(made.error.message,"allocation failed") { return 2; }
+            return 0;)");
+        expect_run(invoke({"--stdlib-dir", directory, file}), 0);
+        for (const auto &entry : std::filesystem::directory_iterator(directory))
+            EXPECT_FALSE(entry.path().filename().string().starts_with("failed-allocation-"));
+    }
+}
+TEST_F(ContextLibraryTest, ChildLifecycleRunsThroughGloinIRInJitAndNativeModes) {
+    const auto fixture = (std::filesystem::path(__FILE__).parent_path() /
+                          "fixtures/process/lifecycle.gloin").string();
+    const std::string expected = " a b $(literal);* café\n";
+    expect_success(invoke({fixture}), expected);
+    auto ir = invoke({"--emit-ir", fixture});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *symbol : {"gloin_process_start", "gloin_process_wait", "gloin_process_signal"}) {
+        const auto position = ir.out.find(std::string("callee = @") + symbol);
+        ASSERT_NE(position, std::string::npos) << ir.out;
+        const auto start = ir.out.rfind('\n', position);
+        EXPECT_NE(ir.out.substr(start + 1, position - start).find("gloin.abi_call"), std::string::npos);
+        EXPECT_EQ(ir.out.find(std::string("llvm.call @") + symbol), std::string::npos);
+    }
+    EXPECT_NE(ir.out.find("!gloin.result<"), std::string::npos);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/child lifecycle " + optimization;
+        expect_success(invoke_raw({optimization, "-o", executable, fixture}), "");
+        const auto out = directory + "/child.out";
+        const auto err = directory + "/child.err";
+        const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects, 10), 0);
+        EXPECT_EQ(read(out), expected);
+        EXPECT_EQ(read(err), "");
+    }
+}
+TEST_F(ContextLibraryTest, ChildPipesCaptureBinaryOutputAndEnforceLimitsThroughGloinIR) {
+    const auto root = std::filesystem::path(__FILE__).parent_path() / "fixtures/process";
+    const auto fixture = (root / "pipes.gloin").string();
+    const auto peer = directory + "/pipe peer";
+    expect_success(invoke_raw({"-O2", "-o", peer, (root / "pipe_peer.gloin").string()}), "");
+    expect_success(invoke({fixture, "--", peer}), "");
+    auto ir = invoke({"--emit-ir", fixture});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *symbol : {"gloin_process_start_piped", "gloin_process_pipe_read",
+                              "gloin_process_pipe_write", "gloin_process_pipe_close",
+                              "gloin_process_pipe_wait"}) {
+        const auto position = ir.out.find(std::string("callee = @") + symbol);
+        ASSERT_NE(position, std::string::npos) << symbol;
+        const auto start = ir.out.rfind('\n', position);
+        EXPECT_NE(ir.out.substr(start + 1, position - start).find("gloin.abi_call"), std::string::npos);
+        EXPECT_EQ(ir.out.find(std::string("llvm.call @") + symbol), std::string::npos);
+    }
+    EXPECT_NE(ir.out.find("!gloin.result<"), std::string::npos);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/child pipes " + optimization;
+        expect_success(invoke_raw({optimization, "-o", executable, fixture}), "");
+        const auto out = directory + "/pipes.out";
+        const auto err = directory + "/pipes.err";
+        const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable, peer}, std::nullopt, redirects, 15), 0);
+        EXPECT_EQ(read(out), "");
+        EXPECT_EQ(read(err), "");
+    }
+}
+TEST_F(ContextLibraryTest, ChildOptionsAndGroupCleanupRunThroughGloinIRInEveryMode) {
+    EnvGuard environment("GLOIN_PARENT_ONLY");
+    ASSERT_EQ(setenv(environment.name.c_str(), "parent", 1), 0);
+    const auto root = std::filesystem::path(__FILE__).parent_path() / "fixtures/process";
+    const auto fixture = (root / "options.gloin").string();
+    const auto cwd = std::filesystem::canonical(directory).string();
+    const auto peer = cwd + "/options-peer";
+    expect_success(invoke_raw({"-O2", "-o", peer, (root / "options_peer.gloin").string()}), "");
+    expect_success(invoke({fixture, "--", cwd}), "");
+    auto ir = invoke({"--emit-ir", fixture});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *symbol : {"gloin_process_start_options", "gloin_process_observe", "gloin_process_group_signal"}) {
+        const auto position = ir.out.find(std::string("callee = @") + symbol);
+        ASSERT_NE(position, std::string::npos) << symbol;
+        const auto start = ir.out.rfind('\n', position);
+        EXPECT_NE(ir.out.substr(start + 1, position - start).find("gloin.abi_call"), std::string::npos);
+        EXPECT_EQ(ir.out.find(std::string("llvm.call @") + symbol), std::string::npos);
+    }
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/child options " + optimization;
+        expect_success(invoke_raw({optimization, "-o", executable, fixture}), "");
+        const auto out = directory + "/options.out";
+        const auto err = directory + "/options.err";
+        const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable, cwd}, std::nullopt, redirects, 15), 0);
+        EXPECT_EQ(read(out), "");
+        EXPECT_EQ(read(err), "");
+    }
+}
+TEST_F(ContextLibraryTest, ChildStackLimitReachesTheOsThroughGloinIRInEveryMode) {
+    struct rlimit limits {};
+    ASSERT_EQ(getrlimit(RLIMIT_STACK, &limits), 0);
+    const auto hard = std::to_string(limits.rlim_max);
+    const auto fixture = (std::filesystem::path(__FILE__).parent_path() /
+                          "fixtures/process/stack_limit.gloin").string();
+    expect_success(invoke({fixture, "--", gloin_test::process_fixture, hard}), "");
+    const auto ir = invoke({"--emit-ir", fixture});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    const auto position = ir.out.find("callee = @gloin_process_start_options");
+    ASSERT_NE(position, std::string::npos);
+    const auto start = ir.out.rfind('\n', position);
+    EXPECT_NE(ir.out.substr(start + 1, position - start).find("gloin.abi_call"), std::string::npos);
+    EXPECT_EQ(ir.out.find("llvm.call @gloin_process_start_options"), std::string::npos);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/stack limit " + optimization;
+        expect_success(invoke_raw({optimization, "-o", executable, fixture}), "");
+        const auto out = directory + "/limit.out", err = directory + "/limit.err";
+        const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable,
+            {executable, gloin_test::process_fixture, hard}, std::nullopt, redirects, 15), 0);
+        EXPECT_EQ(read(out), ""); EXPECT_EQ(read(err), "");
+    }
+    struct rlimit after {};
+    ASSERT_EQ(getrlimit(RLIMIT_STACK, &after), 0);
+    EXPECT_EQ(after.rlim_cur, limits.rlim_cur); EXPECT_EQ(after.rlim_max, limits.rlim_max);
+}
+TEST_F(ContextLibraryTest, ChildInheritsEnvironmentCwdAndBothOutputStreams) {
+    EnvGuard environment("GLOIN_CHILD_TEST");
+    ASSERT_EQ(setenv("GLOIN_CHILD_TEST", "inherited value", 1), 0);
+    const auto file = program(R"(
+        def args: [string;3] = {"-c", "printf '%s' \"$GLOIN_CHILD_TEST\"; pwd -P >&2", "fixture"};
+        def started: result<process.Child> = process.start(&memory,"/bin/sh",args[..]);
+        if started.erroneous { return 1; }
+        def mut child: process.Child = started.value;
+        def waited: result<process.ExitStatus> = child.wait();
+        if waited.erroneous { return 2; }
+        def closed: result<void> = child.close();
+        if closed.erroneous { return 3; }
+        return waited.value.code;)" );
+    CwdGuard cwd(directory);
+    auto result = invoke({file});
+    EXPECT_EQ(result.status, 0);
+    EXPECT_EQ(result.out, "inherited value");
+    EXPECT_EQ(result.err, std::filesystem::canonical(directory).string() + "\n");
+}
+TEST_F(ContextLibraryTest, ChildMetadataAllocationFailureStartsNothing) {
+    copy_modules();
+    auto arena = read((library() / "arena.gloin").string());
+    replace(arena, "return __arena_general_alloc(self.state, size, alignment);", "return null;");
+    source(arena, "arena.gloin");
+    const auto file = program(R"(
+        def args: [string;0] = {};
+        def started: result<process.Child> = process.start(&memory,"/bin/echo",args[..]);
+        if !started.erroneous { return 1; }
+        if !strings.equal(started.error.message,"child metadata allocation failed") { return 2; }
+        return 0;)" );
+    expect_run(invoke({"--stdlib-dir", directory, file}), 0);
 }
 TEST_F(ContextLibraryTest, RuntimeCollisionsAndMalformedAbisAreRejectedCorrectly) {
     expect_run(
@@ -291,6 +569,24 @@ TEST_F(ContextLibraryTest, RuntimeCollisionsAndMalformedAbisAreRejectedCorrectly
          {"llvm.func @gloin_process_arg_count() -> i32",
           "llvm.func @gloin_process_arg(i32, !llvm.ptr, !llvm.ptr) -> !llvm.ptr",
           "llvm.func @gloin_fs_metadata(!llvm.ptr, i64, !llvm.ptr, !llvm.ptr) -> i32",
+          "llvm.func @gloin_fs_symlink(!llvm.ptr, i64, !llvm.ptr, i32, !llvm.ptr) -> i32",
+          "llvm.func @gloin_fs_read_link(!llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr) -> i32",
+          "llvm.func @gloin_fs_canonical_path(!llvm.ptr, i64, !llvm.ptr, i32, !llvm.ptr, !llvm.ptr) -> i32",
+          "llvm.func @gloin_fs_temp_dir(!llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr) -> i32",
+          "llvm.func @gloin_fs_remove_dir(!llvm.ptr, i64, !llvm.ptr) -> i64",
+          "llvm.func @gloin_fs_replace_file(!llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr) -> i32",
+          "llvm.func @gloin_process_start(!llvm.ptr, i64, !llvm.ptr, i32, !llvm.ptr, !llvm.ptr) -> i32",
+          "llvm.func @gloin_process_wait(i32, i32, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32",
+          "llvm.func @gloin_process_signal(i64, i32, !llvm.ptr) -> i64",
+          "llvm.func @gloin_process_start_piped(!llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32",
+          "llvm.func @gloin_process_pipe_read(i32, !llvm.ptr, i32, !llvm.ptr, !llvm.ptr) -> i32",
+          "llvm.func @gloin_process_pipe_write(i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr) -> i32",
+          "llvm.func @gloin_process_pipe_close(i32, !llvm.ptr) -> i64",
+          "llvm.func @gloin_process_start_options(!llvm.ptr, i64) -> i32",
+          "llvm.func @gloin_process_start_options(!llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, i64, i32, i32, i32, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32",
+          "llvm.func @gloin_process_observe(i32, i32, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32",
+          "llvm.func @gloin_process_group_signal(i64, i32, !llvm.ptr) -> i64",
+          "llvm.func @gloin_process_pipe_wait(i32, i32, i32, i32, !llvm.ptr) -> i32",
           "llvm.func @gloin_fs_rename_replace(!llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, ...) -> "
           "i32"}) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(

@@ -9,6 +9,21 @@ resource use.
 functions are ordinary Gloin functions, compiled with the caller. The compiler
 does not supply their names, signatures, or bodies.
 
+`import "@net";` and `import "@http";` add nonblocking IPv4 TCP and bounded
+HTTP/1.1 head operations in the 0.1.0 candidate. Their public APIs use built-in
+`result<T>` for failures and ordinary payloads for expected readiness/EOF
+states. See [networking](../docs/networking.md) and the
+[local example](../examples/network_http.gloin).
+`@net` also provides verified client TLS, reusable PEM server configurations,
+accepted TLS sessions and readiness-driven bidirectional shutdown. See
+[server TLS, ownership and cleanup](../docs/server-tls.md).
+`@http_client` adds bounded streaming HTTP/HTTPS exchanges with overall
+deadlines, backpressure, cancellation, early upload rejection, built-in results,
+application headers, and chunked/fixed/EOF response decoding. Its synchronous
+wrapper drives the same state machine; event loops use `Exchange` and
+`net.wait_many`. See [the client guide](../docs/http-client.md). All protocol logic is
+Gloin source and follows the normal GloinIR path.
+
 To add another standard module, place its lowercase `.gloin` file here and declare public functions
 with `def pub`. The loader maps `@name` directly to `name.gloin`; names use lowercase
 ASCII letters, digits, and underscores, starting with a letter. Public structs are available as `name.Type`; their private fields stay within
@@ -30,15 +45,27 @@ allocation through `arena.GeneralArena`. The same file can export additional
 allocator types with their own storage policies. See [the arena guide](../docs/arenas.md)
 for ownership, failure behavior, and the typed allocation bridge.
 
+`import "@memory";` loads [memory.gloin](memory.gloin). It exposes fallible raw
+aligned allocation, individual release, native type layout queries, and checked
+typed placement for user-written allocators. See [raw memory](../docs/raw-memory.md).
+
+`import "@vector";` provides inline and arena vectors. The growable form now
+has `Vector<T>.empty(&memory, capacity)` so a dummy `T` value is unnecessary.
+`import "@slices";` provides generic fill, reverse, and nonoverlapping copy on
+borrowed slices. See [slices and vectors](../docs/slices-vectors.md).
+
 Native primitives are deliberately limited: `__write_stdout(value: string)` is
 available inside standard modules for exact byte output and flushing. `println`
 adds its newline in Gloin by calling `print` twice. The arena module additionally
 has private native allocation/reset/free primitives and a non-null guard.
+The memory module has private raw allocation/release primitives and compiler
+layout/placement intrinsics.
 Application source cannot invoke these primitives directly; general FFI remains
 deferred. `GeneralArena.alloc` and `try_alloc` declare explicit size/alignment
 layout hooks in the library, while application calls supply one initialized
 value. Sema validates the hooks and the compiler supplies the layout and typed
-store; this narrow bridge does not enable general generic functions.
+store. The separate `@memory` module supports generic type layout queries and
+initialized placement in raw storage.
 
 CMake copies `*.gloin` files beside the build executable under `stdlib/` and
 installs them to `share/gloinc/stdlib/`. Rebuild after changing the source library,
@@ -76,6 +103,12 @@ borrow their source bytes. `copy` returns a concrete status result.
 
 `std.gloin` now also imports `@status`; replacement directories supplying the
 shipped `std.gloin` must provide both `arena.gloin` and `status.gloin`.
+The development tree adds `std.parse_i32_checked(value) -> result<i32>` as a
+checked alternative to the existing status-returning parser. See
+[results](../docs/results.md) for required handling and static error messages.
+`strings.byte_at_checked` and `strings.slice_bytes_checked` likewise expose
+byte bounds failures as `result<u8>` and `result<string>`; successful slices
+still borrow their source bytes.
 Existing std statuses keep their names/values as aliases. Only canonical
 `@strings` can use its four private byte/descriptor/copy primitives. Public
 algorithms and allocation policy remain ordinary Gloin source.
@@ -103,17 +136,40 @@ SPEC-030d adds `import "@io";` through [io.gloin](io.gloin), depending on `@aren
 standard streams cannot be closed. All read sizes and open modes are explicit;
 partial progress, OS errors, flush/close results, native buffering, and costs are
 specified in [the I/O guide](../docs/io.md). Public code owns allocation and lifecycle
-policy. Seven private native primitives perform actual I/O and bounded diagnostic
+policy. Nine private native primitives perform actual I/O and bounded diagnostic
 lookup; an additional guarded descriptor primitive constructs returned strings.
 The native line reader is shared with unchanged legacy `std.input`.
+Direct byte read/write primitives added after 0.0.4 work on caller-owned slices
+without constructing strings; see [direct byte I/O](../docs/io.md#direct-byte-io).
 
 SPEC-030e adds [fs.gloin](fs.gloin) and [process.gloin](process.gloin). Lexical
-paths borrow bytes or copy into caller arenas; filesystem mutations use explicit
-names and preserve OS errors. Arguments are scoped per invocation, environment
-values distinguish missing/empty, and cwd is explicitly bounded. Both modules
-import `@strings`, `@arena`, and `@status`; eight private native routines and a
-process-only descriptor primitive support their public source implementations.
+paths borrow bytes or copy into caller arenas; older filesystem mutations use explicit
+names and preserve OS errors. New symlink/workspace helpers and checked file
+replacement use built-in results with static errors. `fs.replace_file` supports
+checked staged writes with ordinary Unix permission preservation; its concurrency
+and metadata limits are documented in the filesystem guide.
+Directory cursors copy each entry name into a
+caller arena and require explicit close. Arguments are scoped per invocation;
+environment values distinguish missing/empty, and cwd is explicitly bounded.
+Both modules import `@strings`, `@arena`, and `@status`; private native routines and
+module-scoped descriptor primitives support their public source implementations.
 See [every API's usage, ownership, and costs](../docs/filesystem-process.md).
+
+The unreleased 0.1.0 `@process` also supports explicit child launch, pipes,
+bounded capture, deadlines, cwd/environment options and process-group cleanup.
+`Options.stack_limit_bytes` sets only the child's soft stack limit; zero
+inherits and nonzero requires the host's original main thread on macOS.
+See the [child-process API and platform contract](../docs/child-processes.md).
+
+## Bounded JSON (`@json`, 0.1.0 candidate)
+
+[json.gloin](json.gloin) provides a pull reader over complete input, validation,
+quoted-string encoding/decoding, and a structural writer over caller-owned
+buffers. Public failures use built-in `result<T>`. Unicode scalars and surrogate
+pairs are checked; number text remains exact until explicitly converted.
+The implementation uses ordinary Gloin and GloinIR with no JSON runtime ABI.
+See the [API, ownership and limits](../docs/json.md), including duplicate-key
+behavior and the distinction between JSON events and incremental network input.
 
 ## Numerical utilities (`@math`, SPEC-030f)
 

@@ -1,0 +1,110 @@
+import "@http";
+import "@http_client";
+import "@net";
+import "@process";
+import "@arena";
+import "@status";
+import "@std";
+import "@strings";
+
+def const PORT: u16 = 8080;
+
+def run_case(path: string, tls: bool, trust_file: string) -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mut method: string    = "POST";
+    def mut body_text: string = "a\0b";
+
+    if strings.equal(path, "/head") { method = "HEAD"; body_text = ""; }
+    if strings.equal(path, "/large") {
+        def repeated: strings.StringResult = strings.repeat(&owner, "a\0b", 10000, 30000);
+        if repeated.status != status.OK { return 1; }
+
+        body_text = repeated.value;
+    }
+
+    def mut hostname: string = "localhost";
+    if strings.equal(path, "/wrong-host") { hostname = "wrong.invalid"; }
+
+    def mut timeout: i32 = 10000;
+    if strings.equal(path, "/timeout") || strings.equal(path, "/slow") { timeout = 500; }
+
+    def mut trust: string = trust_file;
+    if strings.equal(path, "/untrusted") { trust = ""; }
+
+    def endpoint: http_client.Endpoint = http_client.Endpoint {
+        address: net.Address.loopback(PORT),
+        tls: tls,
+        hostname: hostname,
+        trust_file: trust
+    };
+    def request: http_client.Request = http_client.Request {
+        method: method, host: "localhost", target: path, body: body_text
+    };
+    def fields: [http.Header; 2] = {
+        http.Header { name: "Authorization", value: "Bearer fixture" },
+        http.Header { name: "Content-Type", value: "application/octet-stream" }
+    };
+    def mut head: [u8; 2048]  = zeroed;
+    def mut body: [u8; 65536] = zeroed;
+    def received: result<http.Response> = http_client.request(
+        endpoint, request, fields[..], head[..], body[..], 1024, 4096, timeout);
+    def failure: bool = strings.starts_with(path, "/bad") ||
+        strings.equal(path, "/timeout") || strings.equal(path, "/slow") ||
+        strings.equal(path, "/wrong-host") || strings.equal(path, "/untrusted");
+
+    if received.erroneous {
+        if !failure { std.println(received.error.message); return 2; }
+        if (strings.equal(path, "/timeout") || strings.equal(path, "/slow")) &&
+            !strings.equal(received.error.message, "HTTP request timed out") { return 3; }
+
+        return 0;
+    }
+
+    if failure { return 4; }
+
+    def response: http.Response   = received.value;
+    def mut expected_body: string = "a\0b";
+    def mut expected_code: i32    = 200;
+
+    if strings.equal(path, "/large") { expected_body = body_text; }
+    if strings.equal(path, "/head") { expected_body = ""; }
+    if strings.equal(path, "/no-content") { expected_body = ""; expected_code = 204; }
+    if strings.equal(path, "/not-modified") { expected_body = ""; expected_code = 304; }
+    if strings.equal(path, "/reset") { expected_body = ""; expected_code = 205; }
+    if strings.equal(path, "/error-status") { expected_code = 429; }
+    if response.code != expected_code || !strings.equal(response.body, expected_body) { return 5; }
+
+    return 0;
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mode: process.TextResult  = process.arg(&owner, 1);
+    def trust: process.TextResult = process.arg(&owner, 2);
+
+    if mode.status != status.OK || trust.status != status.OK { return 1; }
+
+    def tls: bool = strings.equal(mode.value, "tls");
+    def cases: [string; 17] = {
+        "/fixed", "/chunked", "/large", "/close", "/head", "/no-content", "/not-modified",
+        "/reset", "/error-status", "/bad-truncated", "/bad-ambiguous", "/bad-large",
+        "/bad-chunk", "/timeout", "/slow", "/wrong-host", "/untrusted"
+    };
+    def mut count: u64 = 15;
+
+    if tls { count = 17; }
+
+    for def mut i: u64 = 0; i < count; i = i + 1 {
+        def code: i32 = run_case(cases[i], tls, trust.value);
+        if code != 0 {
+            std.println(cases[i]);
+            return code;
+        }
+    }
+
+    return 0;
+}

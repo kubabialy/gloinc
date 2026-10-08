@@ -1,0 +1,112 @@
+// Build an API payload, then read it back without an allocated object tree.
+import "@json";
+import "@std";
+import "@strings";
+
+def build_request(output: [u8]) -> result<string> {
+    def made: result<json.Writer> = json.Writer.create(output, 8);
+    if made.erroneous { return made.error; }
+
+    def mut writer: json.Writer = made.value;
+    def opened: result<void>    = writer.begin_object();
+
+    if opened.erroneous { return opened.error; }
+
+    def key: result<void> = writer.key("message");
+    if key.erroneous { return key.error; }
+
+    def message: result<void> = writer.string_value("Hello, Gloin!\nUnicode: café 🌍");
+    if message.erroneous { return message.error; }
+
+    def count_key: result<void> = writer.key("count");
+    if count_key.erroneous { return count_key.error; }
+
+    def count: result<void> = writer.number("18446744073709551615");
+    if count.erroneous { return count.error; }
+
+    def tags_key: result<void> = writer.key("tags");
+    if tags_key.erroneous { return tags_key.error; }
+
+    def tags: result<void> = writer.begin_array();
+    if tags.erroneous { return tags.error; }
+
+    def ready: result<void> = writer.boolean(true);
+    if ready.erroneous { return ready.error; }
+
+    def empty: result<void> = writer.null_value();
+    if empty.erroneous { return empty.error; }
+
+    def tags_end: result<void> = writer.end_array();
+    if tags_end.erroneous { return tags_end.error; }
+
+    def closed: result<void> = writer.end_object();
+    if closed.erroneous { return closed.error; }
+
+    def finished: result<string> = writer.finish();
+    if finished.erroneous { return finished.error; }
+
+    return finished.value;
+}
+
+def main() -> i32 {
+    def mut output: [u8; 256]   = zeroed;
+    def request: result<string> = build_request(output[..]);
+
+    if request.erroneous {
+        std.println(request.error.message);
+        return 1;
+    }
+
+    def document: string = request.value;
+
+    std.println(document);
+
+    def made: result<json.Reader> = json.Reader.create(document, 256, 8);
+    if made.erroneous { return 2; }
+
+    def mut reader: json.Reader = made.value;
+    def mut decoded: [u8; 128]  = zeroed;
+    def mut message_key: bool   = false;
+    def mut count_key: bool     = false;
+    def mut found_message: bool = false;
+    def mut found_count: bool   = false;
+    def mut complete: bool      = false;
+
+    while !complete {
+        def next: result<json.Event> = reader.next();
+        if next.erroneous {
+            std.println(next.error.message);
+            return 3;
+        }
+
+        def event: json.Event = next.value;
+
+        if event.kind == json.DONE {
+            complete = true;
+        } else if event.kind == json.KEY {
+            def name: result<string> = event.as_string(decoded[..]);
+            if name.erroneous { return 4; }
+
+            // Save the comparisons before reusing the decoded-string buffer.
+            message_key = strings.equal(name.value, "message");
+            count_key   = strings.equal(name.value, "count");
+        } else if event.kind == json.STRING && message_key {
+            def text: result<string> = event.as_string(decoded[..]);
+            if text.erroneous { return 4; }
+
+            found_message = strings.equal(text.value, "Hello, Gloin!\nUnicode: café 🌍");
+        } else if event.kind == json.NUMBER && count_key {
+            def count: result<u64> = event.as_u64();
+            if count.erroneous { return 5; }
+
+            def expected: u64 = 18446744073709551615;
+            found_count = count.value == expected;
+        }
+    }
+
+    if !found_message || !found_count { return 6; }
+
+    std.println("JSON payload and exact u64 verified");
+
+    return 0;
+}

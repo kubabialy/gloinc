@@ -16,8 +16,8 @@ def main() -> i32 {
     def text: string = strings.trim_ascii("  name = Gloin\r\n");
     def separator: strings.FindResult = strings.find(text, "=");
     if !separator.found { return 1; }
-    def key: strings.StringResult = strings.slice_bytes(text, 0, separator.offset);
-    if key.status != status.OK { return 2; }
+    def key: result<string> = strings.slice_bytes_checked(text, 0, separator.offset);
+    if key.erroneous { return 2; }
     if !strings.equal(strings.trim_ascii(key.value), "name") { return 3; }
     std.println("found name");
     return 0;
@@ -41,6 +41,9 @@ Strings contain counted bytes. `"café"` has five bytes; `"a\0b"` has three.
 UTF-8 continuation bytes, embedded NUL, and invalid UTF-8 are preserved. Indices
 and search offsets count bytes; `slice_bytes("é", 1, 1)` succeeds and returns
 one continuation byte. These APIs do not validate Unicode or change locale.
+`view_bytes([const u8]) -> string` borrows a byte slice as counted text without
+copying or validating UTF-8. Keep the slice live and unchanged while the view
+is used; this is useful for parsing a buffer filled by `net.Socket.read`.
 
 | Concrete result | Success | Failure/absence |
 | --- | --- | --- |
@@ -54,6 +57,10 @@ success. [status.gloin](../stdlib/status.gloin) defines allocation-free i32
 constants: OK=0, END=1, INVALID=2, OVERFLOW=3, IO_ERROR=4, TOO_LONG=5, NO_MEMORY=6,
 OUT_OF_RANGE=7. Existing `std` statuses remain compatible aliases of the first
 seven. Status describes the individual operation; it does not set `main`'s result.
+`byte_at_checked` and `slice_bytes_checked` expose the same bounds rules through
+the built-in `result<T>` type. Check `.erroneous` before reading `.value` or
+`.error`; see the [result guide](results.md). The older status APIs remain
+available.
 
 ## API reference and costs
 
@@ -65,11 +72,14 @@ payload storage. Costs do not include compilation or subsequent output.
 | Function | Example and behavior | Time / allocation |
 | --- | --- | --- |
 | `byte_length(text) -> u64` | `byte_length("café")` → 5 | O(1), none |
+| `view_bytes(bytes: [const u8]) -> string` | `view_bytes(buffer[0..count])` → borrowed counted text, including NUL | O(1), none |
 | `is_empty(text) -> bool` | `is_empty("")` → true; `is_empty("\0")` → false | O(1), none |
 | `equal(a, b) -> bool` | `equal("ab", "ab")` → true; compares all counted bytes | O(min(n,m)); O(1) if lengths differ; none |
 | `compare(a, b) -> i32` | `compare("a", "ab")` → -1; exactly -1/0/1, unsigned lexicographic ordering | O(min(n,m)), none |
 | `byte_at(text, index: u64) -> ByteResult` | `byte_at("abc", 1)` → OK, 98; index must be less than size | O(1), none |
+| `byte_at_checked(text, index: u64) -> result<u8>` | `byte_at_checked("abc", 1)` → 98; invalid index yields a static error | O(1), none |
 | `slice_bytes(text, start: u64, length: u64) -> StringResult` | `slice_bytes("abc", 1, 2)` → OK, borrowed `"bc"` | O(1), none |
+| `slice_bytes_checked(text, start: u64, length: u64) -> result<string>` | `slice_bytes_checked("abc", 1, 2)` → borrowed `"bc"`; invalid bounds yield a static error | O(1), none |
 | `starts_with(text, prefix) -> bool` | `starts_with("file.gloin", "file")` → true; empty prefix matches | O(m), none |
 | `ends_with(text, suffix) -> bool` | `ends_with("file.gloin", ".gloin")` → true; empty suffix matches | O(m), none |
 | `find(text, needle) -> FindResult` | `find("a=b=c", "=")` → true, 1; empty needle matches 0, even in empty text | O(1+n*m), none |

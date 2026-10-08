@@ -1,0 +1,289 @@
+// Check local href/src links and HTML fragments in a bounded documentation tree.
+import "./common";
+import "./entities";
+import "./markup";
+import "@arena";
+import "@fs";
+import "@status";
+import "@strings";
+import "@vector";
+
+def pub struct Page {
+    def pub path: string,
+    def pub mut ids: vector.Vector<string>,
+    def pub mut links: vector.Vector<string>,
+}
+
+def retain(memory: &arena.GeneralArena, values: &vector.Vector<string>, value: string) -> result<void> {
+    if values.len() >= 65536 { return error("page exceeds 65536 links or ids"); }
+
+    def owned: result<string> = common.copy(memory, value);
+    if owned.erroneous { return owned.error; }
+    if !values.push(owned.value) { return error("cannot retain page data"); }
+
+    return;
+}
+
+def pub inspect(memory: &arena.GeneralArena, path: string, text: string) -> result<Page> {
+    def created: result<markup.Reader> = markup.Reader.create(text, true);
+    if created.erroneous { return created.error; }
+
+    def mut reader: markup.Reader       = created.value;
+    def mut page: Page                  = Page { path: path, ids: vector.Vector<string>.empty(memory, 0), links: vector.Vector<string>.empty(memory, 0) };
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+
+    def mut scanning: bool = true;
+
+    while scanning {
+        scratch.reset();
+        def next: result<markup.Token> = reader.next(&scratch);
+        if next.erroneous { return next.error; }
+
+        def mut token: markup.Token = next.value;
+        if token.kind == markup.END { scanning = false; }
+        if token.kind == markup.OPEN {
+            for def mut i: i64 = 0; i < token.attributes.len(); i = i + 1 {
+                def attr: markup.Attribute = *token.attributes.get_mut(i);
+
+                if strings.equal(attr.name, "id") && strings.equal(attr.value, token.attribute("id")) {
+                    def saved: result<void> = retain(memory, &page.ids, attr.value);
+                    if saved.erroneous { return saved.error; }
+                }
+
+                if strings.equal(attr.name, "href") || strings.equal(attr.name, "src") {
+                    if strings.equal(attr.value, token.attribute(attr.name)) {
+                        def saved: result<void> = retain(memory, &page.links, attr.value);
+                        if saved.erroneous { return saved.error; }
+                    }
+                }
+            }
+        }
+    }
+
+    return page;
+}
+
+def pub unquote(memory: &arena.GeneralArena, text: string) -> result<string> {
+    def made: strings.BuilderResult = strings.StringBuilder.create(memory, strings.byte_length(text));
+    if made.status != status.OK { return error("cannot allocate URL decoder"); }
+
+    def mut out: strings.StringBuilder = made.value;
+    def mut i: u64                     = 0;
+
+    while i < strings.byte_length(text) {
+        def mut value: u8 = common.byte(text, i);
+
+        if value == 37 {
+            if strings.byte_length(text) - i < 3 { return error("truncated URL escape"); }
+
+            def high: result<u8> = common.hex(common.byte(text, i + 1));
+            if high.erroneous { return high.error; }
+
+            def low: result<u8> = common.hex(common.byte(text, i + 2));
+            if low.erroneous { return low.error; }
+
+            value = high.value * 16 + low.value;
+            i     = i + 2;
+        }
+
+        if out.append_byte(value) != status.OK { return error("cannot decode URL"); }
+
+        i = i + 1;
+    }
+
+    def copied: strings.StringResult = out.to_string(memory);
+    if copied.status != status.OK { return error("cannot retain decoded URL"); }
+    if !common.valid_text(copied.value) { return error("URL is not valid UTF-8 text"); }
+
+    return copied.value;
+}
+
+def pub external(raw: string) -> bool {
+    def text: string = strings.trim_start_ascii(raw);
+    if strings.starts_with(text, "/") { return true; }
+    if strings.is_empty(text) { return false; }
+
+    def first: u8 = common.byte(text, 0);
+    if !((first >= 65 && first <= 90) || (first >= 97 && first <= 122)) { return false; }
+
+    for def mut i: u64 = 1; i < strings.byte_length(text); i = i + 1 {
+        def c: u8 = common.byte(text, i);
+        if c == 58 { return true; }
+        if !((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 43 || c == 45 || c == 46) { return false; }
+    }
+
+    return false;
+}
+
+def pub link(memory: &arena.GeneralArena, pages: &vector.Vector<Page>, from: string, raw: string) -> result<void> {
+    if external(raw) { return; }
+
+    def text: string                 = strings.trim_start_ascii(raw);
+    def fragment: strings.FindResult = strings.find(text, "#");
+    def mut path_end: u64            = strings.byte_length(text);
+    def mut anchor: string           = "";
+
+    if fragment.found {
+        path_end = fragment.offset;
+
+        def decoded: result<string> = unquote(memory, common.part(text, path_end + 1, strings.byte_length(text)));
+        if decoded.erroneous { return decoded.error; }
+
+        anchor = decoded.value;
+    }
+
+    def query: strings.FindResult = strings.find(common.part(text, 0, path_end), "?");
+    if query.found { path_end = query.offset; }
+
+    def decoded_path: result<string> = unquote(memory, common.part(text, 0, path_end));
+    if decoded_path.erroneous { return decoded_path.error; }
+
+    def mut target: string = from;
+
+    if !strings.is_empty(decoded_path.value) {
+        def joined: result<string> = common.join(memory, fs.dirname(from).value, decoded_path.value);
+        if joined.erroneous { return joined.error; }
+
+        target = joined.value;
+    }
+
+    def resolved: result<string> = fs.canonical_path(memory, target, 65536);
+    if resolved.erroneous { return resolved.error; }
+
+    target = resolved.value;
+
+    def info: fs.MetadataResult = fs.metadata(target);
+    if info.status != status.OK { return error("cannot inspect local link"); }
+
+    if info.kind == fs.DIRECTORY {
+        def index: result<string> = common.join(memory, target, "index.html");
+        if index.erroneous { return index.error; }
+
+        def indexed: result<string> = fs.canonical_path(memory, index.value, 65536);
+        if indexed.erroneous { return indexed.error; }
+
+        target = indexed.value;
+    }
+
+    def file: fs.MetadataResult = fs.metadata(target);
+    if file.status != status.OK || file.kind != fs.FILE { return error("local link does not resolve to a file"); }
+
+    if !strings.is_empty(anchor) {
+        for def mut i: i64 = 0; i < pages.len(); i = i + 1 {
+            def page: *Page = pages.get_mut(i);
+
+            if strings.equal(page.path, target) {
+                for def mut j: i64 = 0; j < page.ids.len(); j = j + 1 {
+                    if strings.equal(*page.ids.get_mut(j), anchor) { return; }
+                }
+
+                return error("missing HTML anchor");
+            }
+        }
+    }
+
+    return;
+}
+
+def collect(memory: &arena.GeneralArena, pages: &vector.Vector<Page>, path: string, depth: u64, total: &u64) -> result<void> {
+    if depth == 0 { return error("documentation traversal exceeds 64 levels"); }
+
+    def info: fs.MetadataResult = fs.metadata(path);
+    if info.status != status.OK { return error("cannot inspect documentation entry"); }
+
+    if info.kind == fs.DIRECTORY {
+        def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+        defer owner.free();
+
+        def opened: fs.DirectoryResult = fs.Directory.open(&owner, path);
+        if opened.status != status.OK { return error("cannot open documentation directory"); }
+
+        def mut directory: fs.Directory = opened.value;
+        defer common.close_directory(&directory);
+
+        def mut scanning: bool = true;
+
+        while scanning {
+            def entry: fs.DirectoryEntryResult = directory.next(&owner);
+
+            if entry.status == status.END { scanning = false; }
+            else if entry.status != status.OK { return error("cannot read documentation directory"); }
+            else {
+                def child: result<string> = common.join(&owner, path, entry.name);
+                if child.erroneous { return child.error; }
+
+                def collected: result<void> = collect(memory, pages, child.value, depth - 1, total);
+                if collected.erroneous { return collected.error; }
+            }
+        }
+
+        if directory.close().status != status.OK { return error("cannot close documentation directory"); }
+    } else if strings.ends_with(path, ".html") && (info.kind == fs.FILE || info.kind == fs.SYMLINK) {
+        if pages.len() >= 4096 { return error("documentation exceeds 4096 HTML pages"); }
+
+        def resolved: result<string> = fs.canonical_path(memory, path, 65536);
+        if resolved.erroneous { return resolved.error; }
+
+        def canonical: string         = resolved.value;
+        def actual: fs.MetadataResult = fs.metadata(canonical);
+
+        if actual.kind != fs.FILE { return error("HTML entry does not resolve to a regular file"); }
+
+        for def mut i: i64 = 0; i < pages.len(); i = i + 1 {
+            if strings.equal(pages.get_mut(i).path, canonical) { return; }
+        }
+
+        def mut source: arena.GeneralArena = arena.GeneralArena.create();
+        defer source.free();
+
+        def read: result<string> = common.read(&source, canonical, 8388608);
+        if read.erroneous { return read.error; }
+        if strings.byte_length(read.value) > 67108864 - *total { return error("documentation exceeds 64 MiB of HTML"); }
+
+        *total = *total + strings.byte_length(read.value);
+
+        def parsed: result<Page> = inspect(memory, canonical, read.value);
+        if parsed.erroneous { common.report(path); return parsed.error; }
+        if !pages.push(parsed.value) { return error("cannot retain documentation page"); }
+    }
+
+    return;
+}
+
+def pub check(root: string) -> result<i64> {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def canonical: result<string> = fs.canonical_path(&memory, root, 65536);
+    if canonical.erroneous { return canonical.error; }
+    if fs.metadata(canonical.value).kind != fs.DIRECTORY { return error("documentation root must be a directory"); }
+
+    def mut pages: vector.Vector<Page> = vector.Vector<Page>.empty(&memory, 0);
+    def mut total: u64                 = 0;
+    def collected: result<void>        = collect(&memory, &pages, canonical.value, 64, &total);
+
+    if collected.erroneous { return collected.error; }
+    if pages.len() == 0 { return error("documentation tree contains no HTML pages"); }
+
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+
+    def mut failed: bool = false;
+
+    for def mut i: i64 = 0; i < pages.len(); i = i + 1 {
+        def page: *Page = pages.get_mut(i);
+
+        for def mut j: i64 = 0; j < page.links.len(); j = j + 1 {
+            scratch.reset();
+            def raw: string           = *page.links.get_mut(j);
+            def checked: result<void> = link(&scratch, &pages, page.path, raw);
+
+            if checked.erroneous { common.report(page.path); common.report(raw); common.report(checked.error.message); failed = true; }
+        }
+    }
+
+    if failed { return error("documentation link check failed"); }
+
+    return pages.len();
+}

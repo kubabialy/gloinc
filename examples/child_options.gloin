@@ -1,0 +1,50 @@
+// Child cwd, environment, pipes, process-group cleanup and a 2 MiB soft stack limit.
+import "@arena";
+import "@process";
+import "@std";
+import "@strings";
+import "@time";
+
+def cleanup(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def environment: [string; 1]     = {"GLOIN_GREETING=Hello from a child"};
+    def mut options: process.Options = process.Options.defaults();
+    options.cwd                 = "/";
+    options.inherit_environment = false;
+    options.environment         = environment[..];
+    options.piped               = true;
+    options.new_process_group   = true;
+    options.stack_limit_bytes   = 2097152;
+
+    // A shell runs only because we explicitly launch it. No implicit expansion.
+    def arguments: [string; 2]         = {"-c", "printf '%s\n' \"$GLOIN_GREETING\"; pwd -P"};
+    def started: result<process.Child> = process.start_with(&owner, "/bin/sh", arguments[..], options);
+
+    if started.erroneous { std.println(started.error.message); return 1; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def input: [u8; 0]         = {};
+    def mut output: [u8; 1024] = zeroed;
+    def mut errors: [u8; 1024] = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..],
+        time.Duration { nanoseconds: 5000000000 });
+
+    if captured.erroneous { std.println(captured.error.message); return 2; }
+
+    def outcome: process.Output = captured.value;
+
+    std.print(strings.view_bytes(outcome.stdout));
+
+    if !outcome.status.success() { return 3; }
+
+    return 0;
+}

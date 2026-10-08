@@ -1,0 +1,111 @@
+import "@arena";
+import "@fs";
+import "@io";
+import "@process";
+import "@status";
+import "@strings";
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def root: process.TextResult     = process.arg(&memory, 1);
+    def expected: process.TextResult = process.arg(&memory, 2);
+
+    if root.status != status.OK || expected.status != status.OK { return 1; }
+
+    def size: u64                = strings.byte_length(expected.value);
+    def resolved: result<string> = fs.canonical_path(&memory, root.value, size);
+
+    if resolved.erroneous { return 2; }
+    if !strings.equal(resolved.value, expected.value) { return 3; }
+
+    def small: result<string> = fs.canonical_path(&memory, root.value, size - 1);
+    if !small.erroneous { return 4; }
+
+    def zero: result<string> = fs.canonical_path(&memory, root.value, 0);
+    if !zero.erroneous { return 5; }
+
+    def invalid: result<string> = fs.canonical_path(&memory, "bad\0path", 4096);
+    if !invalid.erroneous { return 6; }
+
+    def huge: result<string> = fs.canonical_path(&memory, root.value, 18446744073709551615);
+    if !huge.erroneous { return 7; }
+
+    def prefix: string        = "case XXX";
+    def bound: u64            = size + 1 + strings.byte_length(prefix) + 7;
+    def first: result<string> = fs.temp_dir(&memory, root.value, prefix, bound);
+
+    if first.erroneous { return 10; }
+
+    def second: result<string> = fs.temp_dir(&memory, root.value, prefix, bound);
+    if second.erroneous { return 11; }
+    if strings.equal(first.value, second.value) || strings.byte_length(first.value) != bound { return 12; }
+
+    def short: result<string> = fs.temp_dir(&memory, root.value, prefix, bound - 1);
+    if !short.erroneous { return 13; }
+
+    def bad_prefix: result<string> = fs.temp_dir(&memory, root.value, "../escape", bound);
+    if !bad_prefix.erroneous { return 14; }
+
+    def empty_prefix: result<string> = fs.temp_dir(&memory, root.value, "", bound);
+    if !empty_prefix.erroneous { return 15; }
+
+    def nul_prefix: result<string> = fs.temp_dir(&memory, root.value, "bad\0name", bound);
+    if !nul_prefix.erroneous { return 16; }
+
+    def link: fs.PathResult = fs.join(&memory, first.value, "link", 65536);
+    if link.status != status.OK { return 20; }
+
+    def linked: result<void> = fs.symlink(second.value, link.value);
+    if linked.erroneous { return 21; }
+
+    def through: result<string> = fs.canonical_path(&memory, link.value, bound);
+    if through.erroneous { return 22; }
+    if !strings.equal(through.value, second.value) { return 23; }
+
+    def full: result<void> = fs.remove_dir(first.value);
+    if !full.erroneous { return 24; }
+
+    def not_directory: result<void> = fs.remove_dir(link.value);
+    if !not_directory.erroneous { return 25; }
+    if fs.metadata(second.value).kind != fs.DIRECTORY { return 26; }
+    if fs.remove_file(link.value).status != status.OK { return 27; }
+
+    def opened: io.FileResult = io.File.create_new(&memory, link.value);
+    if opened.status != status.OK { return 40; }
+
+    def mut file: io.File = opened.value;
+    if file.write_all("old\0text").status != status.OK { file.close(); return 41; }
+    if file.close().status != status.OK { return 42; }
+
+    def stale: result<void> = fs.replace_file(link.value, "old", "wrong");
+    if !stale.erroneous { return 43; }
+
+    def replaced: result<void> = fs.replace_file(link.value, "old\0text", "new\0text");
+    if replaced.erroneous { return 44; }
+
+    def emptied: result<void> = fs.replace_file(link.value, "new\0text", "");
+    if emptied.erroneous { return 45; }
+    if fs.metadata(link.value).size != 0 { return 46; }
+    if fs.remove_file(link.value).status != status.OK { return 47; }
+
+    def removed_first: result<void> = fs.remove_dir(first.value);
+    if removed_first.erroneous { return 28; }
+
+    def removed_second: result<void> = fs.remove_dir(second.value);
+    if removed_second.erroneous { return 29; }
+    // These are owned text copies, even after the directories have gone away.
+    if !strings.equal(resolved.value, expected.value) || !strings.equal(through.value, second.value) { return 30; }
+
+    def missing: result<string> = fs.canonical_path(&memory, first.value, bound);
+    if !missing.erroneous { return 31; }
+
+    def missing_parent: result<string> = fs.temp_dir(&memory, first.value, "missing", 65536);
+    if !missing_parent.erroneous { return 32; }
+
+    def special: result<void> = fs.remove_dir("..");
+    if !special.erroneous { return 33; }
+
+    return 0;
+}

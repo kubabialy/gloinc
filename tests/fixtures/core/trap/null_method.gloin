@@ -9,5 +9,6 @@ def struct Counter {
 
 def main() -> i32 {
     def counter: *const Counter = null;
+
     return counter.read();
 }

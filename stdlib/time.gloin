@@ -34,6 +34,7 @@ def pub struct Duration {
                 }
             };
         }
+
         return DurationResult {
             status: status.OK,
             value: Duration {
@@ -53,6 +54,7 @@ def pub struct Duration {
                 }
             };
         }
+
         return DurationResult {
             status: status.OK,
             value: Duration {
@@ -90,6 +92,7 @@ def pub struct Duration {
                 }
             };
         }
+
         return DurationResult {
             status: status.OK,
             value: Duration {
@@ -109,6 +112,7 @@ def pub struct Duration {
                 }
             };
         }
+
         return DurationResult {
             status: status.OK,
             value: Duration {
@@ -124,12 +128,13 @@ def pub struct Duration {
 // Failure has zero ticks; IO_ERROR preserves errno, OVERFLOW/INVALID have os_error=0.
 // Nanoseconds are storage units, not a guarantee of nanosecond clock resolution.
 def pub monotonic_now() -> InstantResult {
-    def mut ticks: u64 = 0;
-    def mut error: i32 = 0;
-    def code: i32 = __time_monotonic(&ticks, &error);
+    def mut ticks: u64        = 0;
+    def mut failure_code: i32 = 0;
+    def code: i32             = __time_monotonic(&ticks, &failure_code);
+
     return InstantResult {
         status: code,
-        os_error: error,
+        os_error: failure_code,
         value: Instant {
             ticks_ns: ticks
         }
@@ -148,6 +153,7 @@ def pub elapsed(start: Instant, end: Instant) -> DurationResult {
             }
         };
     }
+
     return DurationResult {
         status: status.OK,
         value: Duration {

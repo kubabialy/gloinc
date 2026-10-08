@@ -179,6 +179,23 @@ struct SliceType : public Type {
     }
 };
 
+struct ErrorType : public Type {
+    std::string to_string() const override { return "error"; }
+    bool equals(const Type &other) const override {
+        return dynamic_cast<const ErrorType *>(&other) != nullptr;
+    }
+};
+
+struct ResultType : public Type {
+    std::shared_ptr<Type> value;
+    explicit ResultType(std::shared_ptr<Type> value) : value(std::move(value)) {}
+    std::string to_string() const override { return "result<" + value->to_string() + ">"; }
+    bool equals(const Type &other) const override {
+        auto *result = dynamic_cast<const ResultType *>(&other);
+        return result && value->equals(*result->value);
+    }
+};
+
 struct DeferredType : public Type {
     std::shared_ptr<Type> value_type;
 
@@ -268,6 +285,17 @@ class Sema {
     enum class Initialization { Uninitialized, Initialized, MaybeInitialized };
     using InitializationState = std::unordered_map<SymbolId, Initialization>;
     InitializationState initialization;
+    enum class ResultProof { Unknown, Success, Error };
+    std::unordered_map<SymbolId, ResultProof> result_proof;
+    std::unordered_map<SymbolId, bool> result_handled;
+    void check_live_results_handled();
+    std::optional<std::pair<SymbolId, ResultProof>> result_condition(const Expression *condition);
+    void merge_result_flow(const std::unordered_map<SymbolId, ResultProof> &left,
+                           const std::unordered_map<SymbolId, bool> &left_handled,
+                           bool left_reaches,
+                           const std::unordered_map<SymbolId, ResultProof> &right,
+                           const std::unordered_map<SymbolId, bool> &right_handled,
+                           bool right_reaches);
     bool falls_through = true;
     unsigned loop_depth = 0;
     void check_conditional(const Expression *condition, const BlockStatement *body,
@@ -338,10 +366,15 @@ class Sema {
                       const std::vector<std::shared_ptr<Type>> &arguments, SymbolId &symbol);
     std::unordered_map<const FunctionDefinition *, bool> arena_methods;
     std::unordered_set<const FunctionDefinition *> arena_many_methods;
+    std::unordered_set<const FunctionDefinition *> arena_reserved_methods;
     void register_arena_method(const std::shared_ptr<StructType> &structure,
                                const FunctionDefinition *method,
                                const std::shared_ptr<FunctionType> &signature);
     std::shared_ptr<Type> check_arena_primitive(const CallExpression *call, ArenaPrimitive kind);
+    std::shared_ptr<Type> check_memory_primitive(const CallExpression *call, MemoryPrimitive kind);
+    std::shared_ptr<Type> check_memory_intrinsic(const CallExpression *call,
+                                                 const std::string &name,
+                                                 const std::vector<std::string> &types);
     std::shared_ptr<Type> arena_value_type_hint(const Expression *value);
     void check_methods(const StructDefinition *definition);
     std::shared_ptr<StructType> method_type_receiver(const Expression *expression);

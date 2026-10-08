@@ -129,6 +129,16 @@ TEST(NumericRuntimeTest, IntegerFormattingBoundariesAndBufferGuards) {
         EXPECT_EQ((formatted<int64_t, 21>(gloin_std_format_i64, n)), std::to_string(n));
     for (uint64_t n : {uint64_t(0), uint64_t(1), UINT64_MAX})
         EXPECT_EQ((formatted<uint64_t, 21>(gloin_std_format_u64, n)), std::to_string(n));
+    for (uint16_t n : {uint16_t(0), uint16_t(9), uint16_t(30000), uint16_t(UINT16_MAX)})
+        EXPECT_EQ((formatted<uint16_t, 6>(gloin_std_format_u16, n)), std::to_string(n));
+    for (int8_t n : {int8_t(INT8_MIN), int8_t(0), int8_t(INT8_MAX)})
+        EXPECT_EQ((formatted<int8_t, 5>(gloin_std_format_i8, n)), std::to_string(n));
+    for (int16_t n : {int16_t(INT16_MIN), int16_t(0), int16_t(INT16_MAX)})
+        EXPECT_EQ((formatted<int16_t, 7>(gloin_std_format_i16, n)), std::to_string(n));
+    for (uint8_t n : {uint8_t(0), uint8_t(UINT8_MAX)})
+        EXPECT_EQ((formatted<uint8_t, 4>(gloin_std_format_u8, n)), std::to_string(n));
+    for (uint32_t n : {uint32_t(0), UINT32_MAX})
+        EXPECT_EQ((formatted<uint32_t, 11>(gloin_std_format_u32, n)), std::to_string(n));
 }
 TEST(NumericRuntimeTest, TwentyThousandFiniteFloatBitPatternsRoundTrip) {
     uint64_t state = 0x123456789abcdef;

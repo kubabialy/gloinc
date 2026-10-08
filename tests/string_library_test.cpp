@@ -234,8 +234,8 @@ TEST_F(StringLibraryTest, BorrowedViewsAndSearchRequireNoArenaAndCopiesFailExpli
 
 TEST_F(StringLibraryTest, EmptyCopyDoesNotInspectArenaButNonemptyCopyRequiresLiveHandle) {
     expect_run(invoke({program(
-                   R"(memory.free(); def result: strings.StringResult = strings.copy(&memory, "");
-        if result.status != status.OK || !strings.is_empty(result.value) { return 1; } return 0;)")}),
+                   R"(memory.free(); def outcome: strings.StringResult = strings.copy(&memory, "");
+        if outcome.status != status.OK || !strings.is_empty(outcome.value) { return 1; } return 0;)")}),
                0);
     EXPECT_EQ(invoke({program("memory.free(); strings.copy(&memory, \"x\"); return 0;")}).status,
               -2);

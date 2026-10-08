@@ -1,0 +1,57 @@
+// Print the immediate names of a directory in host iteration order.
+// build/gloinc --jit examples/directory_walk.gloin -- .
+import "@arena";
+import "@fs";
+import "@process";
+import "@status";
+import "@std";
+
+def close_if_open(directory: &fs.Directory) -> void {
+    if directory.is_open() { directory.close(); }
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+
+    if process.arg_count() != 2 {
+        std.println("usage: directory_walk DIRECTORY");
+        return 2;
+    }
+
+    def path: process.TextResult = process.arg(&owner, 1);
+    if path.status != status.OK { return 1; }
+
+    def opened: fs.DirectoryResult = fs.Directory.open(&owner, path.value);
+    if opened.status != status.OK {
+        std.println("cannot open directory");
+        return 1;
+    }
+
+    def mut directory: fs.Directory = opened.value;
+    defer close_if_open(&directory);
+
+    def mut scanning: bool = true;
+
+    while scanning {
+        scratch.reset();
+        def entry: fs.DirectoryEntryResult = directory.next(&scratch);
+
+        if entry.status == status.END {
+            scanning = false;
+        } else if entry.status != status.OK {
+            std.println("directory read failed");
+            return 1;
+        } else {
+            std.println(entry.name);
+        }
+    }
+
+    def closed: fs.FsResult = directory.close();
+    if closed.status != status.OK { return 1; }
+
+    return 0;
+}

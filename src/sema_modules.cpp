@@ -57,7 +57,11 @@ void Sema::collect_declarations(const std::vector<std::unique_ptr<Statement>> &p
             (current_module && primitive &&
              standard_primitive_allowed(*primitive, current_module->standard_name)) ||
             (current_module && current_module->standard_name == "arena" &&
-             arena_operation(name, arena_primitive_names))) {
+             arena_operation(name, arena_primitive_names)) ||
+            (current_module && current_module->standard_name == "memory" &&
+             (memory_operation(name, memory_primitive_names) ||
+              name == "__memory_size_of" || name == "__memory_align_of" ||
+              name == "__memory_padding" || name == "__memory_place"))) {
             log_error("Duplicate or reserved generic function name '" + name + "'");
             continue;
         }

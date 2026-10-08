@@ -1,0 +1,10 @@
+def total(value: result<i32>) -> result<i32> {
+if value.erroneous { return value.error; }
+def mut n: i32 = value.value;
+def mut total: i32=0;
+while n > 0 {
+total=total + n;
+n = n - 1;
+}
+return total;
+}

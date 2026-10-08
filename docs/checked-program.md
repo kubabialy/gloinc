@@ -35,8 +35,8 @@ descriptor records storage width, integer category, and signedness. `bool` has
 its own identity. MLIR stores signed and unsigned language integers in signless
 integer types; semantic data preserves the distinction for operator selection.
 
-Sema resolves `int` to `i32` and `usize` to `u64` for the selected 64-bit Apple
-Silicon target. Target information belongs to the checked program; a different
+Sema resolves `int` to `i32` and `usize` to `u64` for the supported 64-bit
+macOS and Linux targets. Target information belongs to the checked program; a different
 pointer width is rejected instead of using the host process's `sizeof(void*)`.
 This is not a cross-compilation implementation. Unknown and deferred types,
 including undeclared names and 128-bit/custom-width/endian types, fail even in
@@ -88,7 +88,8 @@ unresolved expression becomes an `i32` fallback on this path.
 SPEC-014 validates exact call arity and canonical argument/result types before
 creating a checked program. Calls resolve a direct function name; function
 values and indirect calls are unsupported. Void calls can appear as expression
-statements only. Non-void call results can be discarded.
+statements only. Ordinary non-void call results can be discarded; built-in
+[`result<T>`](results.md) values must be bound and checked.
 
 Every non-void function must return a matching value on all structurally reachable
 paths. Void functions allow bare returns and fallthrough, which codegen turns
@@ -299,10 +300,12 @@ Codegen declares and compiles those function bodies through the same path as
 application functions. Only library calls to `__write_stdout` receive a separate
 runtime-call marker; `print` and `println` have no special compiler handling.
 Local imports and dependencies between standard files use the same graph.
+Directory and `#name` imports discover immediate source files in sorted order,
+then combine their declarations into one checked module scope while retaining
+each file's source spans and canonical relative-import base.
 Dependencies are collected before importers; qualified constants bind to folded
 values, and codegen emits each file once. Only the root defines the executable
-entry. See [module ownership and resolution](modules.md). Package imports remain
-deferred.
+entry. See [module ownership and resolution](modules.md).
 
 ## Ordinary struct layout
 
@@ -358,7 +361,8 @@ backend is rejected explicitly instead of generating duplicate self parameters.
 Sema validates a defer operand as an ordinary checked call and records each
 function's registration sites. Calls are checked at the registration point,
 including definite initialization and receiver capability. No deferred assignment
-is treated as immediate initialization. Non-void results may be discarded.
+is treated as immediate initialization. Ordinary non-void results may be
+discarded; a deferred call returning `result<T>` is rejected.
 
 [codegen_defer.cpp](../src/codegen_defer.cpp) shares argument evaluation and call
 emission with ordinary calls. A function with defer has one entry-block head

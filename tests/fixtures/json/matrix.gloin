@@ -1,0 +1,3535 @@
+// Fixed independent JSON/UTF-8 corpus; see README.md for provenance.
+import "@json"; import "@strings"; import "@std";
+
+def document_0() -> bool {
+    def bytes: [u8; 4] = {110, 117, 108, 108};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_1() -> bool {
+    def bytes: [u8; 4] = {116, 114, 117, 101};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_2() -> bool {
+    def bytes: [u8; 5] = {102, 97, 108, 115, 101};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_3() -> bool {
+    def bytes: [u8; 1] = {48};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_4() -> bool {
+    def bytes: [u8; 2] = {45, 48};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_5() -> bool {
+    def bytes: [u8; 5] = {49, 101, 52, 48, 48};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_6() -> bool {
+    def bytes: [u8; 6] = {49, 101, 45, 52, 48, 48};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_7() -> bool {
+    def bytes: [u8; 20] = {49, 56, 52, 52, 54, 55, 52, 52, 48, 55, 51, 55, 48, 57, 53, 53, 49, 54, 49, 53};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_8() -> bool {
+    def bytes: [u8; 20] = {45, 57, 50, 50, 51, 51, 55, 50, 48, 51, 54, 56, 53, 52, 55, 55, 53, 56, 48, 56};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_9() -> bool {
+    def bytes: [u8; 10] = {49, 46, 50, 51, 48, 48, 101, 43, 48, 52};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_10() -> bool {
+    def bytes: [u8; 2] = {123, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_11() -> bool {
+    def bytes: [u8; 2] = {91, 93};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_12() -> bool {
+    def bytes: [u8; 34] = {32, 91, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 123, 34, 97, 34, 58, 102, 97, 108, 115, 101, 44, 34, 97, 34, 58, 50, 125, 93, 13, 10};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_13() -> bool {
+    def bytes: [u8; 129] = {91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 48, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_14() -> bool {
+    def bytes: [u8; 2] = {34, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_15() -> bool {
+    def bytes: [u8; 2] = {34, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_16() -> bool {
+    def bytes: [u8; 31] = {34, 72, 101, 108, 108, 111, 44, 32, 99, 97, 102, 92, 117, 48, 48, 101, 57, 32, 92, 117, 100, 56, 51, 99, 92, 117, 100, 102, 48, 100, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_17() -> bool {
+    def bytes: [u8; 19] = {34, 72, 101, 108, 108, 111, 44, 32, 99, 97, 102, 195, 169, 32, 240, 159, 140, 141, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_18() -> bool {
+    def bytes: [u8; 31] = {34, 113, 117, 111, 116, 101, 32, 92, 34, 32, 115, 108, 97, 115, 104, 32, 47, 32, 98, 97, 99, 107, 115, 108, 97, 115, 104, 32, 92, 92, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_19() -> bool {
+    def bytes: [u8; 31] = {34, 113, 117, 111, 116, 101, 32, 92, 34, 32, 115, 108, 97, 115, 104, 32, 47, 32, 98, 97, 99, 107, 115, 108, 97, 115, 104, 32, 92, 92, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_20() -> bool {
+    def bytes: [u8; 10] = {34, 97, 92, 117, 48, 48, 48, 48, 98, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_21() -> bool {
+    def bytes: [u8; 10] = {34, 97, 92, 117, 48, 48, 48, 48, 98, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_22() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 48, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_23() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 48, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_24() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 48, 48, 49, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_25() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 48, 48, 49, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_26() -> bool {
+    def bytes: [u8; 4] = {34, 92, 98, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_27() -> bool {
+    def bytes: [u8; 4] = {34, 92, 98, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_28() -> bool {
+    def bytes: [u8; 4] = {34, 92, 116, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_29() -> bool {
+    def bytes: [u8; 4] = {34, 92, 116, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_30() -> bool {
+    def bytes: [u8; 4] = {34, 92, 110, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_31() -> bool {
+    def bytes: [u8; 4] = {34, 92, 110, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_32() -> bool {
+    def bytes: [u8; 4] = {34, 92, 102, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_33() -> bool {
+    def bytes: [u8; 4] = {34, 92, 102, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_34() -> bool {
+    def bytes: [u8; 4] = {34, 92, 114, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_35() -> bool {
+    def bytes: [u8; 4] = {34, 92, 114, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_36() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 48, 49, 102, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_37() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 48, 49, 102, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_38() -> bool {
+    def bytes: [u8; 3] = {34, 32, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_39() -> bool {
+    def bytes: [u8; 3] = {34, 32, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_40() -> bool {
+    def bytes: [u8; 4] = {34, 92, 34, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_41() -> bool {
+    def bytes: [u8; 4] = {34, 92, 34, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_42() -> bool {
+    def bytes: [u8; 3] = {34, 47, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_43() -> bool {
+    def bytes: [u8; 3] = {34, 47, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_44() -> bool {
+    def bytes: [u8; 4] = {34, 92, 92, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_45() -> bool {
+    def bytes: [u8; 4] = {34, 92, 92, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_46() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 48, 55, 102, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_47() -> bool {
+    def bytes: [u8; 3] = {34, 127, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_48() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 48, 56, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_49() -> bool {
+    def bytes: [u8; 4] = {34, 194, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_50() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 48, 56, 53, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_51() -> bool {
+    def bytes: [u8; 4] = {34, 194, 133, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_52() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 55, 102, 102, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_53() -> bool {
+    def bytes: [u8; 4] = {34, 223, 191, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_54() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 48, 56, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_55() -> bool {
+    def bytes: [u8; 5] = {34, 224, 160, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_56() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 50, 48, 50, 56, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_57() -> bool {
+    def bytes: [u8; 5] = {34, 226, 128, 168, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_58() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 50, 48, 50, 57, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_59() -> bool {
+    def bytes: [u8; 5] = {34, 226, 128, 169, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_60() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 100, 55, 102, 102, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_61() -> bool {
+    def bytes: [u8; 5] = {34, 237, 159, 191, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_62() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 101, 48, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_63() -> bool {
+    def bytes: [u8; 5] = {34, 238, 128, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_64() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 102, 102, 102, 102, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_65() -> bool {
+    def bytes: [u8; 5] = {34, 239, 191, 191, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_66() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 56, 48, 48, 92, 117, 100, 99, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_67() -> bool {
+    def bytes: [u8; 6] = {34, 240, 144, 128, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_68() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 56, 51, 99, 92, 117, 100, 102, 48, 100, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_69() -> bool {
+    def bytes: [u8; 6] = {34, 240, 159, 140, 141, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_70() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 98, 102, 102, 92, 117, 100, 102, 102, 102, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_71() -> bool {
+    def bytes: [u8; 6] = {34, 244, 143, 191, 191, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_72() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 57, 51, 50, 92, 117, 100, 100, 49, 52, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_73() -> bool {
+    def bytes: [u8; 6] = {34, 241, 156, 164, 148, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_74() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 56, 50, 98, 92, 117, 100, 100, 99, 55, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_75() -> bool {
+    def bytes: [u8; 6] = {34, 240, 154, 183, 135, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_76() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 98, 100, 51, 92, 117, 100, 102, 49, 101, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_77() -> bool {
+    def bytes: [u8; 6] = {34, 244, 132, 188, 158, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_78() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 57, 57, 52, 92, 117, 100, 102, 102, 55, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_79() -> bool {
+    def bytes: [u8; 6] = {34, 241, 181, 143, 183, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_80() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 57, 55, 102, 92, 117, 100, 101, 100, 56, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_81() -> bool {
+    def bytes: [u8; 6] = {34, 241, 175, 187, 152, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_82() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 97, 51, 57, 92, 117, 100, 100, 49, 51, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_83() -> bool {
+    def bytes: [u8; 6] = {34, 242, 158, 148, 147, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_84() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 56, 50, 50, 92, 117, 100, 102, 99, 57, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_85() -> bool {
+    def bytes: [u8; 6] = {34, 240, 152, 175, 137, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_86() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 56, 53, 52, 92, 117, 100, 100, 51, 98, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_87() -> bool {
+    def bytes: [u8; 6] = {34, 240, 165, 132, 187, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_88() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 56, 100, 57, 92, 117, 100, 102, 49, 99, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_89() -> bool {
+    def bytes: [u8; 6] = {34, 241, 134, 156, 156, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_90() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 57, 97, 55, 92, 117, 100, 100, 50, 51, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_91() -> bool {
+    def bytes: [u8; 6] = {34, 241, 185, 180, 163, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_92() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 98, 55, 99, 92, 117, 100, 100, 51, 54, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_93() -> bool {
+    def bytes: [u8; 6] = {34, 243, 175, 132, 182, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_94() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 56, 57, 102, 100, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_95() -> bool {
+    def bytes: [u8; 5] = {34, 232, 167, 189, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_96() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 56, 53, 102, 92, 117, 100, 100, 56, 49, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_97() -> bool {
+    def bytes: [u8; 6] = {34, 240, 167, 182, 129, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_98() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 50, 56, 52, 99, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_99() -> bool {
+    def bytes: [u8; 5] = {34, 226, 161, 140, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_100() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 98, 51, 56, 92, 117, 100, 102, 55, 97, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_101() -> bool {
+    def bytes: [u8; 6] = {34, 243, 158, 141, 186, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_102() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 57, 101, 54, 92, 117, 100, 101, 50, 49, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_103() -> bool {
+    def bytes: [u8; 6] = {34, 242, 137, 168, 161, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_104() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 57, 101, 53, 92, 117, 100, 100, 49, 56, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_105() -> bool {
+    def bytes: [u8; 6] = {34, 242, 137, 148, 152, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_106() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 57, 101, 98, 92, 117, 100, 100, 102, 54, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_107() -> bool {
+    def bytes: [u8; 6] = {34, 242, 138, 183, 182, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_108() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 97, 55, 48, 92, 117, 100, 100, 99, 57, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_109() -> bool {
+    def bytes: [u8; 6] = {34, 242, 172, 135, 137, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_110() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 97, 51, 55, 92, 117, 100, 100, 54, 54, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_111() -> bool {
+    def bytes: [u8; 6] = {34, 242, 157, 181, 166, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_112() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 57, 50, 97, 92, 117, 100, 99, 53, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_113() -> bool {
+    def bytes: [u8; 6] = {34, 241, 154, 161, 144, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_114() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 98, 100, 49, 92, 117, 100, 99, 56, 49, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_115() -> bool {
+    def bytes: [u8; 6] = {34, 244, 132, 146, 129, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_116() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 98, 98, 53, 92, 117, 100, 102, 50, 49, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_117() -> bool {
+    def bytes: [u8; 6] = {34, 243, 189, 156, 161, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_118() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 100, 57, 54, 53, 92, 117, 100, 101, 56, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_119() -> bool {
+    def bytes: [u8; 6] = {34, 241, 169, 154, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_120() -> bool {
+    def bytes: [u8; 408] = {34, 92, 117, 48, 48, 48, 48, 92, 117, 48, 48, 48, 49, 92, 98, 92, 116, 92, 110, 92, 102, 92, 114, 92, 117, 48, 48, 49, 102, 32, 92, 34, 47, 92, 92, 92, 117, 48, 48, 55, 102, 92, 117, 48, 48, 56, 48, 92, 117, 48, 48, 56, 53, 92, 117, 48, 55, 102, 102, 92, 117, 48, 56, 48, 48, 92, 117, 50, 48, 50, 56, 92, 117, 50, 48, 50, 57, 92, 117, 100, 55, 102, 102, 92, 117, 101, 48, 48, 48, 92, 117, 102, 102, 102, 102, 92, 117, 100, 56, 48, 48, 92, 117, 100, 99, 48, 48, 92, 117, 100, 56, 51, 99, 92, 117, 100, 102, 48, 100, 92, 117, 100, 98, 102, 102, 92, 117, 100, 102, 102, 102, 92, 117, 100, 57, 51, 50, 92, 117, 100, 100, 49, 52, 92, 117, 100, 56, 50, 98, 92, 117, 100, 100, 99, 55, 92, 117, 100, 98, 100, 51, 92, 117, 100, 102, 49, 101, 92, 117, 100, 57, 57, 52, 92, 117, 100, 102, 102, 55, 92, 117, 100, 57, 55, 102, 92, 117, 100, 101, 100, 56, 92, 117, 100, 97, 51, 57, 92, 117, 100, 100, 49, 51, 92, 117, 100, 56, 50, 50, 92, 117, 100, 102, 99, 57, 92, 117, 100, 56, 53, 52, 92, 117, 100, 100, 51, 98, 92, 117, 100, 56, 100, 57, 92, 117, 100, 102, 49, 99, 92, 117, 100, 57, 97, 55, 92, 117, 100, 100, 50, 51, 92, 117, 100, 98, 55, 99, 92, 117, 100, 100, 51, 54, 92, 117, 56, 57, 102, 100, 92, 117, 100, 56, 53, 102, 92, 117, 100, 100, 56, 49, 92, 117, 50, 56, 52, 99, 92, 117, 100, 98, 51, 56, 92, 117, 100, 102, 55, 97, 92, 117, 100, 57, 101, 54, 92, 117, 100, 101, 50, 49, 92, 117, 100, 57, 101, 53, 92, 117, 100, 100, 49, 56, 92, 117, 100, 57, 101, 98, 92, 117, 100, 100, 102, 54, 92, 117, 100, 97, 55, 48, 92, 117, 100, 100, 99, 57, 92, 117, 100, 97, 51, 55, 92, 117, 100, 100, 54, 54, 92, 117, 100, 57, 50, 97, 92, 117, 100, 99, 53, 48, 92, 117, 100, 98, 100, 49, 92, 117, 100, 99, 56, 49, 92, 117, 100, 98, 98, 53, 92, 117, 100, 102, 50, 49, 92, 117, 100, 57, 54, 53, 92, 117, 100, 101, 56, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_121() -> bool {
+    def bytes: [u8; 167] = {34, 92, 117, 48, 48, 48, 48, 92, 117, 48, 48, 48, 49, 92, 98, 92, 116, 92, 110, 92, 102, 92, 114, 92, 117, 48, 48, 49, 102, 32, 92, 34, 47, 92, 92, 127, 194, 128, 194, 133, 223, 191, 224, 160, 128, 226, 128, 168, 226, 128, 169, 237, 159, 191, 238, 128, 128, 239, 191, 191, 240, 144, 128, 128, 240, 159, 140, 141, 244, 143, 191, 191, 241, 156, 164, 148, 240, 154, 183, 135, 244, 132, 188, 158, 241, 181, 143, 183, 241, 175, 187, 152, 242, 158, 148, 147, 240, 152, 175, 137, 240, 165, 132, 187, 241, 134, 156, 156, 241, 185, 180, 163, 243, 175, 132, 182, 232, 167, 189, 240, 167, 182, 129, 226, 161, 140, 243, 158, 141, 186, 242, 137, 168, 161, 242, 137, 148, 152, 242, 138, 183, 182, 242, 172, 135, 137, 242, 157, 181, 166, 241, 154, 161, 144, 244, 132, 146, 129, 243, 189, 156, 161, 241, 169, 154, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_122() -> bool {
+    def bytes: [u8; 101] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 49, 55, 48, 54, 50, 56, 55, 53, 54, 51, 57, 51, 56, 56, 53, 53, 52, 51, 51, 52, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 97, 92, 117, 48, 48, 48, 48, 98, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 57, 46, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_123() -> bool {
+    def bytes: [u8; 105] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 49, 48, 57, 49, 53, 56, 57, 56, 56, 52, 51, 57, 48, 52, 49, 51, 49, 51, 51, 54, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 92, 117, 100, 57, 54, 53, 92, 117, 100, 101, 56, 48, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 56, 46, 48, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_124() -> bool {
+    def bytes: [u8; 96] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 49, 57, 53, 53, 50, 53, 56, 56, 53, 53, 51, 53, 52, 55, 54, 48, 56, 55, 55, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 194, 133, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 48, 46, 49, 50, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_125() -> bool {
+    def bytes: [u8; 98] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 49, 50, 49, 57, 55, 51, 57, 54, 55, 50, 50, 57, 50, 55, 54, 51, 57, 49, 54, 57, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 240, 152, 175, 137, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 56, 46, 55, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_126() -> bool {
+    def bytes: [u8; 95] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 49, 56, 50, 57, 51, 53, 56, 56, 51, 51, 49, 52, 48, 51, 50, 51, 54, 50, 57, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 232, 167, 189, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 51, 46, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_127() -> bool {
+    def bytes: [u8; 99] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 45, 52, 54, 56, 56, 50, 52, 53, 57, 53, 55, 50, 50, 50, 49, 55, 56, 52, 51, 49, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 240, 165, 132, 187, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 49, 46, 51, 55, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_128() -> bool {
+    def bytes: [u8; 105] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 50, 51, 52, 55, 49, 51, 52, 50, 49, 56, 57, 53, 48, 50, 57, 56, 50, 49, 56, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 92, 117, 100, 97, 55, 48, 92, 117, 100, 100, 99, 57, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 56, 46, 55, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_129() -> bool {
+    def bytes: [u8; 95] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 45, 55, 48, 48, 54, 50, 50, 54, 49, 52, 48, 51, 51, 49, 48, 50, 51, 56, 50, 57, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 92, 92, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 55, 46, 48, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_130() -> bool {
+    def bytes: [u8; 101] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 49, 49, 52, 48, 51, 57, 48, 49, 53, 49, 54, 51, 51, 55, 51, 49, 49, 56, 48, 54, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 92, 117, 48, 48, 48, 49, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 54, 46, 56, 55, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_131() -> bool {
+    def bytes: [u8; 106] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 56, 54, 51, 50, 57, 55, 49, 53, 53, 52, 53, 57, 55, 51, 49, 55, 54, 50, 55, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 92, 117, 100, 98, 98, 53, 92, 117, 100, 102, 50, 49, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 49, 46, 49, 50, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_132() -> bool {
+    def bytes: [u8; 93] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 50, 55, 51, 54, 53, 50, 54, 51, 54, 50, 57, 57, 57, 48, 52, 53, 50, 56, 57, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 32, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 48, 46, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_133() -> bool {
+    def bytes: [u8; 94] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 49, 54, 57, 48, 55, 51, 54, 54, 57, 53, 55, 52, 52, 56, 53, 52, 48, 53, 54, 48, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 47, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 55, 46, 48, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_134() -> bool {
+    def bytes: [u8; 99] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 51, 51, 57, 49, 53, 54, 50, 48, 48, 48, 48, 51, 51, 55, 55, 51, 49, 54, 57, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 92, 117, 48, 48, 49, 102, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 54, 46, 50, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_135() -> bool {
+    def bytes: [u8; 96] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 53, 54, 51, 57, 56, 51, 52, 52, 48, 57, 48, 55, 55, 48, 55, 54, 50, 56, 55, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 92, 110, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 57, 46, 54, 50, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_136() -> bool {
+    def bytes: [u8; 100] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 51, 56, 48, 51, 57, 49, 55, 57, 55, 50, 54, 57, 54, 57, 53, 49, 55, 50, 48, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 92, 117, 48, 48, 49, 102, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 57, 46, 49, 50, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_137() -> bool {
+    def bytes: [u8; 99] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 57, 52, 50, 57, 50, 50, 57, 52, 49, 57, 53, 54, 52, 49, 56, 54, 53, 55, 48, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 92, 117, 50, 48, 50, 57, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 49, 48, 46, 48, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_138() -> bool {
+    def bytes: [u8; 98] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 45, 49, 48, 57, 53, 53, 54, 50, 56, 56, 54, 50, 50, 49, 53, 52, 50, 56, 51, 48, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 226, 128, 169, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 52, 46, 51, 55, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_139() -> bool {
+    def bytes: [u8; 97] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 45, 49, 48, 50, 54, 57, 56, 48, 56, 54, 55, 54, 57, 53, 55, 56, 49, 56, 56, 56, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 32, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 49, 50, 46, 49, 50, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_140() -> bool {
+    def bytes: [u8; 98] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 49, 49, 49, 53, 56, 55, 48, 55, 54, 57, 56, 56, 57, 52, 54, 51, 49, 48, 51, 54, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 239, 191, 191, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 52, 46, 49, 50, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_141() -> bool {
+    def bytes: [u8; 93] = {123, 34, 105, 110, 116, 101, 103, 101, 114, 34, 58, 32, 53, 49, 52, 55, 52, 50, 48, 51, 57, 53, 50, 49, 53, 55, 52, 52, 49, 50, 51, 44, 32, 34, 105, 116, 101, 109, 115, 34, 58, 32, 91, 34, 127, 34, 44, 32, 116, 114, 117, 101, 44, 32, 110, 117, 108, 108, 44, 32, 53, 46, 53, 93, 44, 32, 34, 110, 101, 115, 116, 101, 100, 34, 58, 32, 123, 34, 114, 101, 97, 100, 121, 34, 58, 32, 102, 97, 108, 115, 101, 125, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return false; }
+
+    return true;
+}
+
+def document_142() -> bool {
+    def bytes: [u8; 0] = {};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_143() -> bool {
+    def bytes: [u8; 1] = {32};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_144() -> bool {
+    def bytes: [u8; 2] = {48, 49};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_145() -> bool {
+    def bytes: [u8; 3] = {45, 48, 49};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_146() -> bool {
+    def bytes: [u8; 2] = {43, 49};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_147() -> bool {
+    def bytes: [u8; 3] = {78, 97, 78};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_148() -> bool {
+    def bytes: [u8; 8] = {73, 110, 102, 105, 110, 105, 116, 121};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_149() -> bool {
+    def bytes: [u8; 9] = {45, 73, 110, 102, 105, 110, 105, 116, 121};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_150() -> bool {
+    def bytes: [u8; 2] = {46, 49};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_151() -> bool {
+    def bytes: [u8; 2] = {49, 46};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_152() -> bool {
+    def bytes: [u8; 2] = {49, 101};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_153() -> bool {
+    def bytes: [u8; 3] = {49, 101, 43};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_154() -> bool {
+    def bytes: [u8; 3] = {45, 45, 49};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_155() -> bool {
+    def bytes: [u8; 1] = {45};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_156() -> bool {
+    def bytes: [u8; 10] = {116, 114, 117, 101, 32, 102, 97, 108, 115, 101};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_157() -> bool {
+    def bytes: [u8; 5] = {110, 117, 108, 108, 120};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_158() -> bool {
+    def bytes: [u8; 3] = {91, 93, 48};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_159() -> bool {
+    def bytes: [u8; 4] = {91, 49, 44, 93};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_160() -> bool {
+    def bytes: [u8; 4] = {91, 44, 49, 93};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_161() -> bool {
+    def bytes: [u8; 5] = {91, 49, 32, 50, 93};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_162() -> bool {
+    def bytes: [u8; 6] = {123, 34, 97, 34, 58, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_163() -> bool {
+    def bytes: [u8; 7] = {123, 34, 97, 34, 44, 49, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_164() -> bool {
+    def bytes: [u8; 8] = {123, 34, 97, 34, 58, 49, 44, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_165() -> bool {
+    def bytes: [u8; 5] = {123, 49, 58, 50, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_166() -> bool {
+    def bytes: [u8; 7] = {123, 34, 97, 34, 32, 49, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_167() -> bool {
+    def bytes: [u8; 6] = {47, 42, 120, 42, 47, 48};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_168() -> bool {
+    def bytes: [u8; 2] = {91, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_169() -> bool {
+    def bytes: [u8; 2] = {123, 93};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_170() -> bool {
+    def bytes: [u8; 1] = {34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_171() -> bool {
+    def bytes: [u8; 2] = {34, 92};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_172() -> bool {
+    def bytes: [u8; 6] = {34, 92, 120, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_173() -> bool {
+    def bytes: [u8; 7] = {34, 92, 117, 48, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_174() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 90, 90, 90, 90, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_175() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 68, 56, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_176() -> bool {
+    def bytes: [u8; 8] = {34, 92, 117, 68, 67, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_177() -> bool {
+    def bytes: [u8; 14] = {34, 92, 117, 68, 56, 48, 48, 92, 117, 48, 48, 48, 48, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_178() -> bool {
+    def bytes: [u8; 9] = {34, 92, 117, 68, 56, 48, 48, 120, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_179() -> bool {
+    def bytes: [u8; 5] = {34, 97, 0, 98, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_180() -> bool {
+    def bytes: [u8; 5] = {34, 97, 10, 98, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_181() -> bool {
+    def bytes: [u8; 2] = {48, 11};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_182() -> bool {
+    def bytes: [u8; 5] = {239, 187, 191, 123, 125};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_183() -> bool {
+    def bytes: [u8; 131] = {91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 48, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_184() -> bool {
+    def bytes: [u8; 3] = {34, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_185() -> bool {
+    def bytes: [u8; 4] = {34, 192, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_186() -> bool {
+    def bytes: [u8; 4] = {34, 193, 191, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_187() -> bool {
+    def bytes: [u8; 3] = {34, 194, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_188() -> bool {
+    def bytes: [u8; 5] = {34, 224, 128, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_189() -> bool {
+    def bytes: [u8; 5] = {34, 237, 160, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_190() -> bool {
+    def bytes: [u8; 6] = {34, 240, 128, 128, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_191() -> bool {
+    def bytes: [u8; 6] = {34, 244, 144, 128, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_192() -> bool {
+    def bytes: [u8; 6] = {34, 245, 128, 128, 128, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_193() -> bool {
+    def bytes: [u8; 3] = {34, 255, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def document_194() -> bool {
+    def bytes: [u8; 5] = {34, 226, 40, 161, 34};
+
+    def text: string          = strings.view_bytes(bytes[..]);
+    def checked: result<void> = json.validate(text, 16384, 64);
+
+    if checked.erroneous { return true; }
+
+    return false;
+}
+
+def string_0() -> bool {
+    def source: [u8; 2] = {34, 34};
+
+    def expected: [u8; 0] = {};
+
+    def mut decoded: [u8; 0] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 2]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_1() -> bool {
+    def source: [u8; 31] = {34, 72, 101, 108, 108, 111, 44, 32, 99, 97, 102, 92, 117, 48, 48, 101, 57, 32, 92, 117, 100, 56, 51, 99, 92, 117, 100, 102, 48, 100, 34};
+
+    def expected: [u8; 17] = {72, 101, 108, 108, 111, 44, 32, 99, 97, 102, 195, 169, 32, 240, 159, 140, 141};
+
+    def mut decoded: [u8; 17] = zeroed;
+    def read: result<string>  = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 104]  = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_2() -> bool {
+    def source: [u8; 31] = {34, 113, 117, 111, 116, 101, 32, 92, 34, 32, 115, 108, 97, 115, 104, 32, 47, 32, 98, 97, 99, 107, 115, 108, 97, 115, 104, 32, 92, 92, 34};
+
+    def expected: [u8; 27] = {113, 117, 111, 116, 101, 32, 34, 32, 115, 108, 97, 115, 104, 32, 47, 32, 98, 97, 99, 107, 115, 108, 97, 115, 104, 32, 92};
+
+    def mut decoded: [u8; 27] = zeroed;
+    def read: result<string>  = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 164]  = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_3() -> bool {
+    def source: [u8; 10] = {34, 97, 92, 117, 48, 48, 48, 48, 98, 34};
+
+    def expected: [u8; 3] = {97, 0, 98};
+
+    def mut decoded: [u8; 3] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 20]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_4() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 48, 48, 48, 48, 34};
+
+    def expected: [u8; 1] = {0};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_5() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 48, 48, 48, 49, 34};
+
+    def expected: [u8; 1] = {1};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_6() -> bool {
+    def source: [u8; 4] = {34, 92, 98, 34};
+
+    def expected: [u8; 1] = {8};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_7() -> bool {
+    def source: [u8; 4] = {34, 92, 116, 34};
+
+    def expected: [u8; 1] = {9};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_8() -> bool {
+    def source: [u8; 4] = {34, 92, 110, 34};
+
+    def expected: [u8; 1] = {10};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_9() -> bool {
+    def source: [u8; 4] = {34, 92, 102, 34};
+
+    def expected: [u8; 1] = {12};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_10() -> bool {
+    def source: [u8; 4] = {34, 92, 114, 34};
+
+    def expected: [u8; 1] = {13};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_11() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 48, 48, 49, 102, 34};
+
+    def expected: [u8; 1] = {31};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_12() -> bool {
+    def source: [u8; 3] = {34, 32, 34};
+
+    def expected: [u8; 1] = {32};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_13() -> bool {
+    def source: [u8; 4] = {34, 92, 34, 34};
+
+    def expected: [u8; 1] = {34};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_14() -> bool {
+    def source: [u8; 3] = {34, 47, 34};
+
+    def expected: [u8; 1] = {47};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_15() -> bool {
+    def source: [u8; 4] = {34, 92, 92, 34};
+
+    def expected: [u8; 1] = {92};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_16() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 48, 48, 55, 102, 34};
+
+    def expected: [u8; 1] = {127};
+
+    def mut decoded: [u8; 1] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 8]    = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_17() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 48, 48, 56, 48, 34};
+
+    def expected: [u8; 2] = {194, 128};
+
+    def mut decoded: [u8; 2] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 14]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_18() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 48, 48, 56, 53, 34};
+
+    def expected: [u8; 2] = {194, 133};
+
+    def mut decoded: [u8; 2] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 14]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_19() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 48, 55, 102, 102, 34};
+
+    def expected: [u8; 2] = {223, 191};
+
+    def mut decoded: [u8; 2] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 14]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_20() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 48, 56, 48, 48, 34};
+
+    def expected: [u8; 3] = {224, 160, 128};
+
+    def mut decoded: [u8; 3] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 20]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_21() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 50, 48, 50, 56, 34};
+
+    def expected: [u8; 3] = {226, 128, 168};
+
+    def mut decoded: [u8; 3] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 20]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_22() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 50, 48, 50, 57, 34};
+
+    def expected: [u8; 3] = {226, 128, 169};
+
+    def mut decoded: [u8; 3] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 20]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_23() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 100, 55, 102, 102, 34};
+
+    def expected: [u8; 3] = {237, 159, 191};
+
+    def mut decoded: [u8; 3] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 20]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_24() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 101, 48, 48, 48, 34};
+
+    def expected: [u8; 3] = {238, 128, 128};
+
+    def mut decoded: [u8; 3] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 20]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_25() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 102, 102, 102, 102, 34};
+
+    def expected: [u8; 3] = {239, 191, 191};
+
+    def mut decoded: [u8; 3] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 20]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_26() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 56, 48, 48, 92, 117, 100, 99, 48, 48, 34};
+
+    def expected: [u8; 4] = {240, 144, 128, 128};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_27() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 56, 51, 99, 92, 117, 100, 102, 48, 100, 34};
+
+    def expected: [u8; 4] = {240, 159, 140, 141};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_28() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 98, 102, 102, 92, 117, 100, 102, 102, 102, 34};
+
+    def expected: [u8; 4] = {244, 143, 191, 191};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_29() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 57, 51, 50, 92, 117, 100, 100, 49, 52, 34};
+
+    def expected: [u8; 4] = {241, 156, 164, 148};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_30() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 56, 50, 98, 92, 117, 100, 100, 99, 55, 34};
+
+    def expected: [u8; 4] = {240, 154, 183, 135};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_31() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 98, 100, 51, 92, 117, 100, 102, 49, 101, 34};
+
+    def expected: [u8; 4] = {244, 132, 188, 158};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_32() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 57, 57, 52, 92, 117, 100, 102, 102, 55, 34};
+
+    def expected: [u8; 4] = {241, 181, 143, 183};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_33() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 57, 55, 102, 92, 117, 100, 101, 100, 56, 34};
+
+    def expected: [u8; 4] = {241, 175, 187, 152};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_34() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 97, 51, 57, 92, 117, 100, 100, 49, 51, 34};
+
+    def expected: [u8; 4] = {242, 158, 148, 147};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_35() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 56, 50, 50, 92, 117, 100, 102, 99, 57, 34};
+
+    def expected: [u8; 4] = {240, 152, 175, 137};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_36() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 56, 53, 52, 92, 117, 100, 100, 51, 98, 34};
+
+    def expected: [u8; 4] = {240, 165, 132, 187};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_37() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 56, 100, 57, 92, 117, 100, 102, 49, 99, 34};
+
+    def expected: [u8; 4] = {241, 134, 156, 156};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_38() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 57, 97, 55, 92, 117, 100, 100, 50, 51, 34};
+
+    def expected: [u8; 4] = {241, 185, 180, 163};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_39() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 98, 55, 99, 92, 117, 100, 100, 51, 54, 34};
+
+    def expected: [u8; 4] = {243, 175, 132, 182};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_40() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 56, 57, 102, 100, 34};
+
+    def expected: [u8; 3] = {232, 167, 189};
+
+    def mut decoded: [u8; 3] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 20]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_41() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 56, 53, 102, 92, 117, 100, 100, 56, 49, 34};
+
+    def expected: [u8; 4] = {240, 167, 182, 129};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_42() -> bool {
+    def source: [u8; 8] = {34, 92, 117, 50, 56, 52, 99, 34};
+
+    def expected: [u8; 3] = {226, 161, 140};
+
+    def mut decoded: [u8; 3] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 20]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_43() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 98, 51, 56, 92, 117, 100, 102, 55, 97, 34};
+
+    def expected: [u8; 4] = {243, 158, 141, 186};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_44() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 57, 101, 54, 92, 117, 100, 101, 50, 49, 34};
+
+    def expected: [u8; 4] = {242, 137, 168, 161};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_45() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 57, 101, 53, 92, 117, 100, 100, 49, 56, 34};
+
+    def expected: [u8; 4] = {242, 137, 148, 152};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_46() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 57, 101, 98, 92, 117, 100, 100, 102, 54, 34};
+
+    def expected: [u8; 4] = {242, 138, 183, 182};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_47() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 97, 55, 48, 92, 117, 100, 100, 99, 57, 34};
+
+    def expected: [u8; 4] = {242, 172, 135, 137};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_48() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 97, 51, 55, 92, 117, 100, 100, 54, 54, 34};
+
+    def expected: [u8; 4] = {242, 157, 181, 166};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_49() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 57, 50, 97, 92, 117, 100, 99, 53, 48, 34};
+
+    def expected: [u8; 4] = {241, 154, 161, 144};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_50() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 98, 100, 49, 92, 117, 100, 99, 56, 49, 34};
+
+    def expected: [u8; 4] = {244, 132, 146, 129};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_51() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 98, 98, 53, 92, 117, 100, 102, 50, 49, 34};
+
+    def expected: [u8; 4] = {243, 189, 156, 161};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_52() -> bool {
+    def source: [u8; 14] = {34, 92, 117, 100, 57, 54, 53, 92, 117, 100, 101, 56, 48, 34};
+
+    def expected: [u8; 4] = {241, 169, 154, 128};
+
+    def mut decoded: [u8; 4] = zeroed;
+    def read: result<string> = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 26]   = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def string_53() -> bool {
+    def source: [u8; 408] = {34, 92, 117, 48, 48, 48, 48, 92, 117, 48, 48, 48, 49, 92, 98, 92, 116, 92, 110, 92, 102, 92, 114, 92, 117, 48, 48, 49, 102, 32, 92, 34, 47, 92, 92, 92, 117, 48, 48, 55, 102, 92, 117, 48, 48, 56, 48, 92, 117, 48, 48, 56, 53, 92, 117, 48, 55, 102, 102, 92, 117, 48, 56, 48, 48, 92, 117, 50, 48, 50, 56, 92, 117, 50, 48, 50, 57, 92, 117, 100, 55, 102, 102, 92, 117, 101, 48, 48, 48, 92, 117, 102, 102, 102, 102, 92, 117, 100, 56, 48, 48, 92, 117, 100, 99, 48, 48, 92, 117, 100, 56, 51, 99, 92, 117, 100, 102, 48, 100, 92, 117, 100, 98, 102, 102, 92, 117, 100, 102, 102, 102, 92, 117, 100, 57, 51, 50, 92, 117, 100, 100, 49, 52, 92, 117, 100, 56, 50, 98, 92, 117, 100, 100, 99, 55, 92, 117, 100, 98, 100, 51, 92, 117, 100, 102, 49, 101, 92, 117, 100, 57, 57, 52, 92, 117, 100, 102, 102, 55, 92, 117, 100, 57, 55, 102, 92, 117, 100, 101, 100, 56, 92, 117, 100, 97, 51, 57, 92, 117, 100, 100, 49, 51, 92, 117, 100, 56, 50, 50, 92, 117, 100, 102, 99, 57, 92, 117, 100, 56, 53, 52, 92, 117, 100, 100, 51, 98, 92, 117, 100, 56, 100, 57, 92, 117, 100, 102, 49, 99, 92, 117, 100, 57, 97, 55, 92, 117, 100, 100, 50, 51, 92, 117, 100, 98, 55, 99, 92, 117, 100, 100, 51, 54, 92, 117, 56, 57, 102, 100, 92, 117, 100, 56, 53, 102, 92, 117, 100, 100, 56, 49, 92, 117, 50, 56, 52, 99, 92, 117, 100, 98, 51, 56, 92, 117, 100, 102, 55, 97, 92, 117, 100, 57, 101, 54, 92, 117, 100, 101, 50, 49, 92, 117, 100, 57, 101, 53, 92, 117, 100, 100, 49, 56, 92, 117, 100, 57, 101, 98, 92, 117, 100, 100, 102, 54, 92, 117, 100, 97, 55, 48, 92, 117, 100, 100, 99, 57, 92, 117, 100, 97, 51, 55, 92, 117, 100, 100, 54, 54, 92, 117, 100, 57, 50, 97, 92, 117, 100, 99, 53, 48, 92, 117, 100, 98, 100, 49, 92, 117, 100, 99, 56, 49, 92, 117, 100, 98, 98, 53, 92, 117, 100, 102, 50, 49, 92, 117, 100, 57, 54, 53, 92, 117, 100, 101, 56, 48, 34};
+
+    def expected: [u8; 143] = {0, 1, 8, 9, 10, 12, 13, 31, 32, 34, 47, 92, 127, 194, 128, 194, 133, 223, 191, 224, 160, 128, 226, 128, 168, 226, 128, 169, 237, 159, 191, 238, 128, 128, 239, 191, 191, 240, 144, 128, 128, 240, 159, 140, 141, 244, 143, 191, 191, 241, 156, 164, 148, 240, 154, 183, 135, 244, 132, 188, 158, 241, 181, 143, 183, 241, 175, 187, 152, 242, 158, 148, 147, 240, 152, 175, 137, 240, 165, 132, 187, 241, 134, 156, 156, 241, 185, 180, 163, 243, 175, 132, 182, 232, 167, 189, 240, 167, 182, 129, 226, 161, 140, 243, 158, 141, 186, 242, 137, 168, 161, 242, 137, 148, 152, 242, 138, 183, 182, 242, 172, 135, 137, 242, 157, 181, 166, 241, 154, 161, 144, 244, 132, 146, 129, 243, 189, 156, 161, 241, 169, 154, 128};
+
+    def mut decoded: [u8; 143] = zeroed;
+    def read: result<string>   = json.decode_string(strings.view_bytes(source[..]), decoded[..]);
+
+    if read.erroneous { return false; }
+    if !strings.equal(read.value, strings.view_bytes(expected[..])) { return false; }
+
+    def mut encoded: [u8; 860]  = zeroed;
+    def written: result<string> = json.encode_string(read.value, encoded[..]);
+
+    if written.erroneous { return false; }
+
+    std.println(written.value);
+
+    return true;
+}
+
+def main() -> i32 {
+    if !document_0() { std.println("document_0 failed"); return 1; }
+    if !document_1() { std.println("document_1 failed"); return 1; }
+    if !document_2() { std.println("document_2 failed"); return 1; }
+    if !document_3() { std.println("document_3 failed"); return 1; }
+    if !document_4() { std.println("document_4 failed"); return 1; }
+    if !document_5() { std.println("document_5 failed"); return 1; }
+    if !document_6() { std.println("document_6 failed"); return 1; }
+    if !document_7() { std.println("document_7 failed"); return 1; }
+    if !document_8() { std.println("document_8 failed"); return 1; }
+    if !document_9() { std.println("document_9 failed"); return 1; }
+    if !document_10() { std.println("document_10 failed"); return 1; }
+    if !document_11() { std.println("document_11 failed"); return 1; }
+    if !document_12() { std.println("document_12 failed"); return 1; }
+    if !document_13() { std.println("document_13 failed"); return 1; }
+    if !document_14() { std.println("document_14 failed"); return 1; }
+    if !document_15() { std.println("document_15 failed"); return 1; }
+    if !document_16() { std.println("document_16 failed"); return 1; }
+    if !document_17() { std.println("document_17 failed"); return 1; }
+    if !document_18() { std.println("document_18 failed"); return 1; }
+    if !document_19() { std.println("document_19 failed"); return 1; }
+    if !document_20() { std.println("document_20 failed"); return 1; }
+    if !document_21() { std.println("document_21 failed"); return 1; }
+    if !document_22() { std.println("document_22 failed"); return 1; }
+    if !document_23() { std.println("document_23 failed"); return 1; }
+    if !document_24() { std.println("document_24 failed"); return 1; }
+    if !document_25() { std.println("document_25 failed"); return 1; }
+    if !document_26() { std.println("document_26 failed"); return 1; }
+    if !document_27() { std.println("document_27 failed"); return 1; }
+    if !document_28() { std.println("document_28 failed"); return 1; }
+    if !document_29() { std.println("document_29 failed"); return 1; }
+    if !document_30() { std.println("document_30 failed"); return 1; }
+    if !document_31() { std.println("document_31 failed"); return 1; }
+    if !document_32() { std.println("document_32 failed"); return 1; }
+    if !document_33() { std.println("document_33 failed"); return 1; }
+    if !document_34() { std.println("document_34 failed"); return 1; }
+    if !document_35() { std.println("document_35 failed"); return 1; }
+    if !document_36() { std.println("document_36 failed"); return 1; }
+    if !document_37() { std.println("document_37 failed"); return 1; }
+    if !document_38() { std.println("document_38 failed"); return 1; }
+    if !document_39() { std.println("document_39 failed"); return 1; }
+    if !document_40() { std.println("document_40 failed"); return 1; }
+    if !document_41() { std.println("document_41 failed"); return 1; }
+    if !document_42() { std.println("document_42 failed"); return 1; }
+    if !document_43() { std.println("document_43 failed"); return 1; }
+    if !document_44() { std.println("document_44 failed"); return 1; }
+    if !document_45() { std.println("document_45 failed"); return 1; }
+    if !document_46() { std.println("document_46 failed"); return 1; }
+    if !document_47() { std.println("document_47 failed"); return 1; }
+    if !document_48() { std.println("document_48 failed"); return 1; }
+    if !document_49() { std.println("document_49 failed"); return 1; }
+    if !document_50() { std.println("document_50 failed"); return 1; }
+    if !document_51() { std.println("document_51 failed"); return 1; }
+    if !document_52() { std.println("document_52 failed"); return 1; }
+    if !document_53() { std.println("document_53 failed"); return 1; }
+    if !document_54() { std.println("document_54 failed"); return 1; }
+    if !document_55() { std.println("document_55 failed"); return 1; }
+    if !document_56() { std.println("document_56 failed"); return 1; }
+    if !document_57() { std.println("document_57 failed"); return 1; }
+    if !document_58() { std.println("document_58 failed"); return 1; }
+    if !document_59() { std.println("document_59 failed"); return 1; }
+    if !document_60() { std.println("document_60 failed"); return 1; }
+    if !document_61() { std.println("document_61 failed"); return 1; }
+    if !document_62() { std.println("document_62 failed"); return 1; }
+    if !document_63() { std.println("document_63 failed"); return 1; }
+    if !document_64() { std.println("document_64 failed"); return 1; }
+    if !document_65() { std.println("document_65 failed"); return 1; }
+    if !document_66() { std.println("document_66 failed"); return 1; }
+    if !document_67() { std.println("document_67 failed"); return 1; }
+    if !document_68() { std.println("document_68 failed"); return 1; }
+    if !document_69() { std.println("document_69 failed"); return 1; }
+    if !document_70() { std.println("document_70 failed"); return 1; }
+    if !document_71() { std.println("document_71 failed"); return 1; }
+    if !document_72() { std.println("document_72 failed"); return 1; }
+    if !document_73() { std.println("document_73 failed"); return 1; }
+    if !document_74() { std.println("document_74 failed"); return 1; }
+    if !document_75() { std.println("document_75 failed"); return 1; }
+    if !document_76() { std.println("document_76 failed"); return 1; }
+    if !document_77() { std.println("document_77 failed"); return 1; }
+    if !document_78() { std.println("document_78 failed"); return 1; }
+    if !document_79() { std.println("document_79 failed"); return 1; }
+    if !document_80() { std.println("document_80 failed"); return 1; }
+    if !document_81() { std.println("document_81 failed"); return 1; }
+    if !document_82() { std.println("document_82 failed"); return 1; }
+    if !document_83() { std.println("document_83 failed"); return 1; }
+    if !document_84() { std.println("document_84 failed"); return 1; }
+    if !document_85() { std.println("document_85 failed"); return 1; }
+    if !document_86() { std.println("document_86 failed"); return 1; }
+    if !document_87() { std.println("document_87 failed"); return 1; }
+    if !document_88() { std.println("document_88 failed"); return 1; }
+    if !document_89() { std.println("document_89 failed"); return 1; }
+    if !document_90() { std.println("document_90 failed"); return 1; }
+    if !document_91() { std.println("document_91 failed"); return 1; }
+    if !document_92() { std.println("document_92 failed"); return 1; }
+    if !document_93() { std.println("document_93 failed"); return 1; }
+    if !document_94() { std.println("document_94 failed"); return 1; }
+    if !document_95() { std.println("document_95 failed"); return 1; }
+    if !document_96() { std.println("document_96 failed"); return 1; }
+    if !document_97() { std.println("document_97 failed"); return 1; }
+    if !document_98() { std.println("document_98 failed"); return 1; }
+    if !document_99() { std.println("document_99 failed"); return 1; }
+    if !document_100() { std.println("document_100 failed"); return 1; }
+    if !document_101() { std.println("document_101 failed"); return 1; }
+    if !document_102() { std.println("document_102 failed"); return 1; }
+    if !document_103() { std.println("document_103 failed"); return 1; }
+    if !document_104() { std.println("document_104 failed"); return 1; }
+    if !document_105() { std.println("document_105 failed"); return 1; }
+    if !document_106() { std.println("document_106 failed"); return 1; }
+    if !document_107() { std.println("document_107 failed"); return 1; }
+    if !document_108() { std.println("document_108 failed"); return 1; }
+    if !document_109() { std.println("document_109 failed"); return 1; }
+    if !document_110() { std.println("document_110 failed"); return 1; }
+    if !document_111() { std.println("document_111 failed"); return 1; }
+    if !document_112() { std.println("document_112 failed"); return 1; }
+    if !document_113() { std.println("document_113 failed"); return 1; }
+    if !document_114() { std.println("document_114 failed"); return 1; }
+    if !document_115() { std.println("document_115 failed"); return 1; }
+    if !document_116() { std.println("document_116 failed"); return 1; }
+    if !document_117() { std.println("document_117 failed"); return 1; }
+    if !document_118() { std.println("document_118 failed"); return 1; }
+    if !document_119() { std.println("document_119 failed"); return 1; }
+    if !document_120() { std.println("document_120 failed"); return 1; }
+    if !document_121() { std.println("document_121 failed"); return 1; }
+    if !document_122() { std.println("document_122 failed"); return 1; }
+    if !document_123() { std.println("document_123 failed"); return 1; }
+    if !document_124() { std.println("document_124 failed"); return 1; }
+    if !document_125() { std.println("document_125 failed"); return 1; }
+    if !document_126() { std.println("document_126 failed"); return 1; }
+    if !document_127() { std.println("document_127 failed"); return 1; }
+    if !document_128() { std.println("document_128 failed"); return 1; }
+    if !document_129() { std.println("document_129 failed"); return 1; }
+    if !document_130() { std.println("document_130 failed"); return 1; }
+    if !document_131() { std.println("document_131 failed"); return 1; }
+    if !document_132() { std.println("document_132 failed"); return 1; }
+    if !document_133() { std.println("document_133 failed"); return 1; }
+    if !document_134() { std.println("document_134 failed"); return 1; }
+    if !document_135() { std.println("document_135 failed"); return 1; }
+    if !document_136() { std.println("document_136 failed"); return 1; }
+    if !document_137() { std.println("document_137 failed"); return 1; }
+    if !document_138() { std.println("document_138 failed"); return 1; }
+    if !document_139() { std.println("document_139 failed"); return 1; }
+    if !document_140() { std.println("document_140 failed"); return 1; }
+    if !document_141() { std.println("document_141 failed"); return 1; }
+    if !document_142() { std.println("document_142 failed"); return 1; }
+    if !document_143() { std.println("document_143 failed"); return 1; }
+    if !document_144() { std.println("document_144 failed"); return 1; }
+    if !document_145() { std.println("document_145 failed"); return 1; }
+    if !document_146() { std.println("document_146 failed"); return 1; }
+    if !document_147() { std.println("document_147 failed"); return 1; }
+    if !document_148() { std.println("document_148 failed"); return 1; }
+    if !document_149() { std.println("document_149 failed"); return 1; }
+    if !document_150() { std.println("document_150 failed"); return 1; }
+    if !document_151() { std.println("document_151 failed"); return 1; }
+    if !document_152() { std.println("document_152 failed"); return 1; }
+    if !document_153() { std.println("document_153 failed"); return 1; }
+    if !document_154() { std.println("document_154 failed"); return 1; }
+    if !document_155() { std.println("document_155 failed"); return 1; }
+    if !document_156() { std.println("document_156 failed"); return 1; }
+    if !document_157() { std.println("document_157 failed"); return 1; }
+    if !document_158() { std.println("document_158 failed"); return 1; }
+    if !document_159() { std.println("document_159 failed"); return 1; }
+    if !document_160() { std.println("document_160 failed"); return 1; }
+    if !document_161() { std.println("document_161 failed"); return 1; }
+    if !document_162() { std.println("document_162 failed"); return 1; }
+    if !document_163() { std.println("document_163 failed"); return 1; }
+    if !document_164() { std.println("document_164 failed"); return 1; }
+    if !document_165() { std.println("document_165 failed"); return 1; }
+    if !document_166() { std.println("document_166 failed"); return 1; }
+    if !document_167() { std.println("document_167 failed"); return 1; }
+    if !document_168() { std.println("document_168 failed"); return 1; }
+    if !document_169() { std.println("document_169 failed"); return 1; }
+    if !document_170() { std.println("document_170 failed"); return 1; }
+    if !document_171() { std.println("document_171 failed"); return 1; }
+    if !document_172() { std.println("document_172 failed"); return 1; }
+    if !document_173() { std.println("document_173 failed"); return 1; }
+    if !document_174() { std.println("document_174 failed"); return 1; }
+    if !document_175() { std.println("document_175 failed"); return 1; }
+    if !document_176() { std.println("document_176 failed"); return 1; }
+    if !document_177() { std.println("document_177 failed"); return 1; }
+    if !document_178() { std.println("document_178 failed"); return 1; }
+    if !document_179() { std.println("document_179 failed"); return 1; }
+    if !document_180() { std.println("document_180 failed"); return 1; }
+    if !document_181() { std.println("document_181 failed"); return 1; }
+    if !document_182() { std.println("document_182 failed"); return 1; }
+    if !document_183() { std.println("document_183 failed"); return 1; }
+    if !document_184() { std.println("document_184 failed"); return 1; }
+    if !document_185() { std.println("document_185 failed"); return 1; }
+    if !document_186() { std.println("document_186 failed"); return 1; }
+    if !document_187() { std.println("document_187 failed"); return 1; }
+    if !document_188() { std.println("document_188 failed"); return 1; }
+    if !document_189() { std.println("document_189 failed"); return 1; }
+    if !document_190() { std.println("document_190 failed"); return 1; }
+    if !document_191() { std.println("document_191 failed"); return 1; }
+    if !document_192() { std.println("document_192 failed"); return 1; }
+    if !document_193() { std.println("document_193 failed"); return 1; }
+    if !document_194() { std.println("document_194 failed"); return 1; }
+    if !string_0() { std.println("string_0 failed"); return 2; }
+    if !string_1() { std.println("string_1 failed"); return 2; }
+    if !string_2() { std.println("string_2 failed"); return 2; }
+    if !string_3() { std.println("string_3 failed"); return 2; }
+    if !string_4() { std.println("string_4 failed"); return 2; }
+    if !string_5() { std.println("string_5 failed"); return 2; }
+    if !string_6() { std.println("string_6 failed"); return 2; }
+    if !string_7() { std.println("string_7 failed"); return 2; }
+    if !string_8() { std.println("string_8 failed"); return 2; }
+    if !string_9() { std.println("string_9 failed"); return 2; }
+    if !string_10() { std.println("string_10 failed"); return 2; }
+    if !string_11() { std.println("string_11 failed"); return 2; }
+    if !string_12() { std.println("string_12 failed"); return 2; }
+    if !string_13() { std.println("string_13 failed"); return 2; }
+    if !string_14() { std.println("string_14 failed"); return 2; }
+    if !string_15() { std.println("string_15 failed"); return 2; }
+    if !string_16() { std.println("string_16 failed"); return 2; }
+    if !string_17() { std.println("string_17 failed"); return 2; }
+    if !string_18() { std.println("string_18 failed"); return 2; }
+    if !string_19() { std.println("string_19 failed"); return 2; }
+    if !string_20() { std.println("string_20 failed"); return 2; }
+    if !string_21() { std.println("string_21 failed"); return 2; }
+    if !string_22() { std.println("string_22 failed"); return 2; }
+    if !string_23() { std.println("string_23 failed"); return 2; }
+    if !string_24() { std.println("string_24 failed"); return 2; }
+    if !string_25() { std.println("string_25 failed"); return 2; }
+    if !string_26() { std.println("string_26 failed"); return 2; }
+    if !string_27() { std.println("string_27 failed"); return 2; }
+    if !string_28() { std.println("string_28 failed"); return 2; }
+    if !string_29() { std.println("string_29 failed"); return 2; }
+    if !string_30() { std.println("string_30 failed"); return 2; }
+    if !string_31() { std.println("string_31 failed"); return 2; }
+    if !string_32() { std.println("string_32 failed"); return 2; }
+    if !string_33() { std.println("string_33 failed"); return 2; }
+    if !string_34() { std.println("string_34 failed"); return 2; }
+    if !string_35() { std.println("string_35 failed"); return 2; }
+    if !string_36() { std.println("string_36 failed"); return 2; }
+    if !string_37() { std.println("string_37 failed"); return 2; }
+    if !string_38() { std.println("string_38 failed"); return 2; }
+    if !string_39() { std.println("string_39 failed"); return 2; }
+    if !string_40() { std.println("string_40 failed"); return 2; }
+    if !string_41() { std.println("string_41 failed"); return 2; }
+    if !string_42() { std.println("string_42 failed"); return 2; }
+    if !string_43() { std.println("string_43 failed"); return 2; }
+    if !string_44() { std.println("string_44 failed"); return 2; }
+    if !string_45() { std.println("string_45 failed"); return 2; }
+    if !string_46() { std.println("string_46 failed"); return 2; }
+    if !string_47() { std.println("string_47 failed"); return 2; }
+    if !string_48() { std.println("string_48 failed"); return 2; }
+    if !string_49() { std.println("string_49 failed"); return 2; }
+    if !string_50() { std.println("string_50 failed"); return 2; }
+    if !string_51() { std.println("string_51 failed"); return 2; }
+    if !string_52() { std.println("string_52 failed"); return 2; }
+    if !string_53() { std.println("string_53 failed"); return 2; }
+
+    return 0;
+}

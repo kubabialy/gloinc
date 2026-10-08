@@ -6,6 +6,12 @@
 std::optional<ValueType> Sema::value_type(const std::shared_ptr<Type> &type) const {
     if (!type)
         return std::nullopt;
+    if (dynamic_cast<const ErrorType *>(type.get()))
+        return ValueType::error();
+    if (const auto *result = dynamic_cast<const ResultType *>(type.get())) {
+        auto value = value_type(result->value);
+        return value ? std::optional<ValueType>(ValueType::result(*value)) : std::nullopt;
+    }
     if (const auto *size = dynamic_cast<const ConstSizeType *>(type.get()))
         return ValueType::size_argument(size->value);
     if (const auto *pointer = dynamic_cast<const PointerType *>(type.get())) {
@@ -210,6 +216,10 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
             auto type = resolve_annotation(field.type.get());
             if (!type)
                 continue;
+            if (dynamic_cast<ResultType *>(type.get())) {
+                log_error("Result fields are not supported until field handling is defined");
+                continue;
+            }
             structure->fields.push_back({field.name->value, type, field.is_public});
             recording->structures.at(*structure->identity)
                 .fields.push_back(
@@ -286,7 +296,8 @@ Sema::specialize_struct(const StructDefinition *definition,
         auto type = resolve_type_from_string(field.type->value);
         auto value = value_type(type);
         if (!value || dynamic_cast<VoidType *>(type.get()) ||
-            dynamic_cast<ConstSizeType *>(type.get())) {
+            dynamic_cast<ConstSizeType *>(type.get()) ||
+            dynamic_cast<ResultType *>(type.get())) {
             log_error("Unknown or invalid field type '" + field.type->value + "' in " + name);
             continue;
         }
@@ -400,6 +411,47 @@ std::shared_ptr<Type> Sema::check_struct_literal(const StructLiteral *literal) {
 std::shared_ptr<Type> Sema::check_field(const MemberAccessExpression *member) {
     auto base = check_expression(member->left.get());
     const auto *name = dynamic_cast<const Identifier *>(member->member.get());
+    if (auto result = std::dynamic_pointer_cast<ResultType>(base)) {
+        if (!name) {
+            log_error("Result member must be an identifier");
+            return nullptr;
+        }
+        const auto *binding = dynamic_cast<const Identifier *>(member->left.get());
+        auto found = binding ? recording->bindings.find(binding) : recording->bindings.end();
+        if (found == recording->bindings.end()) {
+            log_error("Bind a result before accessing its members");
+            return nullptr;
+        }
+        if (name->value == "erroneous")
+            return get_builtin_type("bool");
+        auto proof = result_proof.find(found->second);
+        if (name->value == "value") {
+            if (dynamic_cast<VoidType *>(result->value.get())) {
+                log_error("result<void> has no value member");
+                return nullptr;
+            }
+            if (proof == result_proof.end() || proof->second != ResultProof::Success) {
+                log_error("Result value requires a proven non-erroneous path");
+                return nullptr;
+            }
+            return result->value;
+        }
+        if (name->value == "error") {
+            if (proof == result_proof.end() || proof->second != ResultProof::Error) {
+                log_error("Result error requires a proven erroneous path");
+                return nullptr;
+            }
+            return std::make_shared<ErrorType>();
+        }
+        log_error("Result has only erroneous, value, and error members");
+        return nullptr;
+    }
+    if (dynamic_cast<ErrorType *>(base.get())) {
+        if (name && name->value == "message")
+            return get_builtin_type("string");
+        log_error("Error has only the message member");
+        return nullptr;
+    }
     if (std::dynamic_pointer_cast<SliceType>(base)) {
         if (name && name->value == "len")
             return get_builtin_type("u64");
@@ -463,7 +515,9 @@ std::shared_ptr<Type> Sema::expression_type_hint(const Expression *expression) {
                 return nullptr;
             }
             if (const auto *method = method_target(member);
-                method && arena_many_methods.contains(method) && call->arguments.size() == 2) {
+                method && (arena_many_methods.contains(method) ||
+                           arena_reserved_methods.contains(method)) &&
+                call->arguments.size() == 2) {
                 if (auto type = arena_value_type_hint(call->arguments.front().get()))
                     return std::make_shared<PointerType>(type, false, false);
                 return nullptr;

@@ -1,0 +1,214 @@
+import "@arena";
+import "@process";
+import "@status";
+import "@std";
+import "@strings";
+import "@time";
+
+def cleanup(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def configured(owner: &arena.GeneralArena, cwd: string, stack: u64) -> i32 {
+    def before: process.TextResult = process.cwd(owner, 4096);
+    if before.status != status.OK { return 1; }
+
+    def environment: [string; 2]     = {"GLOIN_VALUE=hello = café", "GLOIN_EMPTY="};
+    def mut options: process.Options = process.Options.defaults();
+    options.cwd                 = cwd;
+    options.environment         = environment[..];
+    options.inherit_environment = false;
+    options.piped               = true;
+    options.new_process_group   = true;
+    options.stack_limit_bytes   = stack;
+
+    def args: [string; 1]              = {"settings"};
+    def started: result<process.Child> = process.start_with(owner, "./options-peer", args[..], options);
+
+    if started.erroneous { std.println(started.error.message); return 2; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def mut alias: process.Child         = child;
+    def input: [u8; 0]                   = {};
+    def mut output: [u8; 4096]           = zeroed;
+    def mut errors: [u8; 128]            = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration { nanoseconds: 5000000000 });
+
+    if captured.erroneous { std.println(captured.error.message); return 3; }
+    if captured.value.status.code != 37 || !captured.value.status.exited { return 4; }
+    if !strings.equal(strings.view_bytes(captured.value.stdout), cwd) { return 5; }
+    if !strings.is_empty(strings.view_bytes(captured.value.stderr)) { return 6; }
+    if alias.is_open() { return 7; }
+
+    def after: process.TextResult = process.cwd(owner, 4096);
+    if after.status != status.OK || !strings.equal(after.value, before.value) { return 8; }
+
+    def parent: process.TextResult = process.env(owner, "GLOIN_PARENT_ONLY");
+    if parent.status != status.OK || !strings.equal(parent.value, "parent") { return 9; }
+
+    return 0;
+}
+
+def group_cleanup(owner: &arena.GeneralArena, cwd: string, capture: bool, stack: u64) -> i32 {
+    def mut options: process.Options = process.Options.defaults();
+    options.cwd               = cwd;
+    options.piped             = true;
+    options.new_process_group = true;
+    options.stack_limit_bytes = stack;
+
+    def args: [string; 1]              = {"descendant"};
+    def started: result<process.Child> = process.start_with(owner, "./options-peer", args[..], options);
+
+    if started.erroneous { return 10; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    // Exit observation retains the leader until close. Descendants remain alive.
+    def exited: result<process.PollOutcome> = child.wait_timeout(time.Duration { nanoseconds: 5000000000 });
+    if exited.erroneous { return 11; }
+    if !exited.value.ready || exited.value.status.code != 37 { return 12; }
+
+    def cached: result<process.ExitStatus> = child.wait();
+    if cached.erroneous { return 13; }
+    if cached.value.code != 37 { return 14; }
+
+    if capture {
+        def input: [u8; 0]                   = {};
+        def mut output: [u8; 128]            = zeroed;
+        def mut errors: [u8; 128]            = zeroed;
+        def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration { nanoseconds: 100000000 });
+
+        if !captured.erroneous { return 15; }
+        if !strings.equal(captured.error.message, "child communication timed out") { return 16; }
+        if child.is_open() { return 17; }
+    } else {
+        // SIGTERM still targets descendants after their leader has exited.
+        def terminated: result<void> = child.terminate();
+        if terminated.erroneous { return 18; }
+
+        def input: [u8; 0]                   = {};
+        def mut output: [u8; 128]            = zeroed;
+        def mut errors: [u8; 128]            = zeroed;
+        def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration { nanoseconds: 5000000000 });
+
+        if captured.erroneous { std.println(captured.error.message); return 19; }
+        if captured.value.status.code != 37 { return 20; }
+        if !strings.equal(strings.view_bytes(captured.value.stdout), "held") { return 21; }
+    }
+
+    return 0;
+}
+
+def running(owner: &arena.GeneralArena, grouped: bool, stack: u64) -> i32 {
+    def mut options: process.Options = process.Options.defaults();
+    options.new_process_group = grouped;
+    options.stack_limit_bytes = stack;
+
+    def args: [string; 1]              = {"30"};
+    def started: result<process.Child> = process.start_with(owner, "/bin/sleep", args[..], options);
+
+    if started.erroneous { return 30; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&child);
+
+    def pending: result<process.PollOutcome> = child.wait_timeout(time.Duration { nanoseconds: 0 });
+    if pending.erroneous { return 31; }
+    if pending.value.ready { return 32; }
+
+    def killed: result<void> = child.kill();
+    if killed.erroneous { return 33; }
+
+    def finished: result<process.PollOutcome> = child.wait_timeout(time.Duration { nanoseconds: 5000000000 });
+    if finished.erroneous { return 34; }
+    if !finished.value.ready || finished.value.status.exited || finished.value.status.signal <= 0 { return 35; }
+
+    def closed: result<void> = child.close();
+    if closed.erroneous { return 36; }
+    if child.is_open() { return 37; }
+
+    return 0;
+}
+
+def rejected(owner: &arena.GeneralArena, options: process.Options) -> bool {
+    def args: [string; 0]              = {};
+    def started: result<process.Child> = process.start_with(owner, "/usr/bin/true", args[..], options);
+
+    if started.erroneous { return true; }
+
+    def mut child: process.Child = started.value;
+    def closed: result<void>     = child.close();
+
+    if closed.erroneous { std.println(closed.error.message); }
+
+    return false;
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def cwd: process.TextResult = process.arg(&owner, 1);
+    if cwd.status != status.OK { return 90; }
+
+    def limits: [u64; 2] = {0, 2097152};
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def a: i32 = configured(&owner, cwd.value, limits[i]);
+        if a != 0 { return a; }
+
+        def b: i32 = group_cleanup(&owner, cwd.value, true, limits[i]);
+        if b != 0 { return b; }
+
+        def c: i32 = group_cleanup(&owner, cwd.value, false, limits[i]);
+        if c != 0 { return c; }
+
+        def d: i32 = running(&owner, true, limits[i]);
+        if d != 0 { return d; }
+
+        def e: i32 = running(&owner, false, limits[i]);
+        if e != 0 { return e; }
+    }
+
+    def mut options: process.Options = process.Options.defaults();
+    options.stack_limit_bytes = 18446744073709551615;
+
+    if !rejected(&owner, options) { return 26; }
+
+    options.stack_limit_bytes = 0;
+    options.cwd               = "bad\0cwd";
+
+    if !rejected(&owner, options) { return 22; }
+
+    options.cwd = "";
+
+    def duplicate: [string; 2] = {"KEY=one", "KEY=two"};
+    options.environment = duplicate[..];
+
+    if !rejected(&owner, options) { return 23; }
+
+    options.inherit_environment = false;
+
+    if !rejected(&owner, options) { return 24; }
+
+    def invalid: [string; 1] = {"=value"};
+    options.environment = invalid[..];
+
+    if !rejected(&owner, options) { return 25; }
+
+    def nul: [string; 1] = {"KEY=value\0"};
+    options.environment = nul[..];
+
+    if !rejected(&owner, options) { return 26; }
+
+    def no_equals: [string; 1] = {"KEY"};
+    options.environment = no_equals[..];
+
+    if !rejected(&owner, options) { return 27; }
+
+    return 0;
+}

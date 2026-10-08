@@ -18,13 +18,29 @@ arguments to run successfully.
 | `generic_methods.gloin` | Methods with their own type arguments | Version 0.0.4: `Pair<A, B>.with_third<C>` and `Pairs.create<A, B>` build heterogeneous values. See [generics](../docs/generics.md). |
 | `enums.gloin` | Payloadless enums | Version 0.0.4: named variants, equality, value copies, struct fields, and arrays. See [enums](../docs/enums.md). |
 | `slices.gloin` | Borrowed slices | Version 0.0.4: ranges, checked indexes, mutation, read-only views, and `u64` length. See [slices and vectors](../docs/slices-vectors.md). |
-| `vector.gloin` | Arena vector | Version 0.0.4: automatic growth, push, nullable access, and aligned initialized allocation. See [slices and vectors](../docs/slices-vectors.md). |
-| `fixed_vector.gloin` | Inline vector | Version 0.0.4: compile-time capacity, inline storage, checked full-capacity push, and nullable access. See [slices and vectors](../docs/slices-vectors.md). |
+| `vector.gloin` | Arena vector | Automatic growth, push, nullable access, live-element slice views, and aligned reserved storage. See [slices and vectors](../docs/slices-vectors.md). |
+| `fixed_vector.gloin` | Inline vector | Compile-time capacity, inline storage, checked full-capacity push, nullable access, and live-element slice views. See [slices and vectors](../docs/slices-vectors.md). |
+| `strip_nuls.gloin` | Binary file processing | Direct byte reads into an array, an empty growable byte vector, and direct slice writes. See [direct byte I/O](../docs/io.md#direct-byte-io). |
+| `custom_arena.gloin` | User-written bump arena | Raw aligned allocation, typed placement, exhaustion, reset, and release. See [raw memory](../docs/raw-memory.md). |
+| `result_handling.gloin` | Built-in result and error | Checked success, explicit failure forwarding, and error message access. See [results](../docs/results.md). |
+| `network_http.gloin` | Nonblocking local TCP and HTTP/1.1 | Connect, readiness, accept, partial writes, incremental bounded head parsing, and explicit `result<T>` handling. See [networking](../docs/networking.md). |
+| `http_stream.gloin` | Concurrent streaming HTTP/HTTPS | 32 exchanges through `net.wait_many`, bounded binary downloads, independent progress, and cancellation. Requires a local peer; see [the guide](../docs/http-client.md#streaming-exchanges). |
+| `http_client.gloin` | Bounded HTTP/HTTPS client | JSON POST, application headers, status/header inspection, and caller-owned response buffers. Requires a local listener; see [the guide](../docs/http-client.md). |
+| `http_echo_server.gloin` | Local HTTP fixture server | One POST /echo on loopback port 8080, bounded request head/body, a JSON acknowledgement and a 30-second deadline. Restart for each client run; see [commands](../docs/http-client.md#run-the-example-locally). |
+| `json.gloin` | Bounded JSON construction and reading | Nested request payload, escaped strings, exact `u64`, pull events, and explicit `result<T>` handling. Runs without external services; see [JSON](../docs/json.md). |
+| `directory_walk.gloin` | Directory iteration | Opens a native directory cursor, copies each entry name into a resettable scratch arena, and closes the cursor. See [filesystem helpers](../docs/filesystem-process.md#directory-iteration). |
+| `symlinks.gloin` | Symbolic links | Creates a new link, reads its target with an explicit bound, inspects metadata and unlinks it without touching the target. Uses built-in `result<T>`. Run with `TARGET NEW_LINK_PATH`; see [link semantics](../docs/filesystem-process.md#symbolic-links). |
+| `temporary_workspace.gloin` | Temporary directories | Resolves an existing parent, creates a private unique directory, writes a file, then closes/unlinks/removes before freeing path storage. Run with `EXISTING_PARENT`; see [ownership and cleanup](../docs/filesystem-process.md#canonical-paths-and-temporary-directories). |
+| `child_process.gloin` | Native child lifecycle | Explicit executable/arguments, literal shell characters, checked exit status and cleanup. See [child processes](../docs/child-processes.md). |
+| `child_capture.gloin` | Child pipes and capture | Binary stdin, bounded stdout/stderr, deadline and checked exit status. See [child processes](../docs/child-processes.md). |
+| `child_options.gloin` | Launch options and groups | Child cwd, supplied environment, bounded capture, group cleanup and a 2 MiB soft stack limit. See [child processes](../docs/child-processes.md). |
+| `tls_server.gloin` | Server TLS | Reusable PEM configuration, loopback accept, nonblocking handshake, fixed PING/PONG exchange and graceful shutdown. See [run commands and limits](../docs/server-tls.md). |
 | `pointer_offsets.gloin` | Nullable pointer offsets | Version 0.0.3: advances a `*i32` through a live fixed array. See [the rules](../docs/pointer-offsets.md). |
-| `standard_library.gloin` | Input and i32 conversions | Runnable with SPEC-030; counted lines, explicit errors, caller-owned arena strings, reset/reuse, and totals. |
+| `standard_library.gloin` | Input and i32 conversions | Counted lines, checked integer results, caller-owned arena strings, reset/reuse, and totals. |
 | `strings_lab.gloin` | Byte strings and explicit retention | Runnable with SPEC-030a; allocation-free configuration parsing, checked access, search, independent copies, and 10,000 scratch-arena resets. See [costs and usage](../docs/strings.md). |
 | `text_lab.gloin` | Traversal and bounded construction | Runnable with SPEC-030b; borrowed cursors, escaped report construction, transformations, shared builder state, scratch reuse, and an independent snapshot. See [costs and usage](../docs/text-construction.md). |
 | `module_lab.gloin`, `modules/*.gloin` | Local modules | Runnable with SPEC-029; shared nominal types, exported constants, methods, linked particles, and arena reset/reuse. |
+| `module_discovery.gloin`, `modules/calculator/*.gloin`, `packages/math/*.gloin` | Directory and package discovery | `./modules/calculator` and `#math` collect public declarations from their directories without an entry file. See [modules](../docs/modules.md). |
 | `arena_lab.gloin` | Typed arena allocation | Runnable with SPEC-028; linked particles, native layout, methods, reset/reuse, independent arenas, and deferred free. |
 
 Standard output and local/standard module dependencies are implemented. Package
@@ -63,6 +79,16 @@ return 1; conversion/allocation failures return 5/6/7. See [the API guide](../do
 This example runs in the required and installed/relocated test suites.
 
 ### Streams and files (SPEC-030d)
+
+`strip_nuls.gloin` removes NUL bytes from a binary file and creates a new
+destination. It exercises the current development tree's byte slice I/O and
+collection methods without converting file contents to strings:
+
+```sh
+./build/gloinc --jit examples/strip_nuls.gloin -- input.bin output.bin
+```
+
+The destination must not already exist. On failure it may remain partial.
 
 `io_copy.gloin` reads source/destination paths as two stdin lines and creates a
 **new** destination. It copies binary 4096-byte chunks, resets scratch storage,

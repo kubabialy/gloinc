@@ -1,0 +1,586 @@
+// Statement grouping and assignment alignment. All token text borrows source.
+import "@arena";
+import "@status";
+import "@strings";
+import "@vector";
+
+def const OTHER: i32       = 0;
+def const DECLARATION: i32 = 1;
+def const DEFINITION: i32  = 2;
+def const CONTROL: i32     = 3;
+def const RETURN: i32      = 4;
+def const DEFER: i32       = 5;
+def const ASSIGNMENT: i32  = 6;
+
+def struct Token {
+    def text: string,
+    def start: u64,
+    def end: u64,
+    def line: i64,
+    def previous: i64,
+    def mut close: i64,
+}
+
+def struct Line {
+    def start: u64,
+    def first: u64,
+    def last: u64,
+    def comment: bool,
+    def mut blank_before: bool,
+    def mut aligned: bool,
+    def mut left_end: u64,
+    def mut right_start: u64,
+    def mut width: u64,
+    def mut family: string,
+}
+
+def struct Syntax {
+    def source: string,
+    def mut tokens: vector.Vector<Token>,
+    def mut lines: vector.Vector<Line>,
+}
+
+def struct Statement {
+    def first: i64,
+    def end: i64,
+    def first_line: i64,
+    def last_line: i64,
+    def kind: i32,
+    def head: string,
+    def name: string,
+    def guard: bool,
+}
+
+def struct Summary {
+    def mut count: i64,
+    def mut last: i32,
+    def mut complex: bool,
+}
+
+def byte(source: string, position: u64) -> u8 {
+    return strings.byte_at(source, position).value;
+}
+
+def view(source: string, first: u64, end: u64) -> string {
+    return strings.slice_bytes(source, first, end - first).value;
+}
+
+def space(value: u8) -> bool {
+    return value == 32 || value == 9 || value == 13;
+}
+
+def word(value: u8) -> bool {
+    return (value >= 65 && value <= 90) || (value >= 97 && value <= 122)
+        || (value >= 48 && value <= 57) || value == 95;
+}
+
+def pair(value: string) -> bool {
+    return strings.equal(value, "->") || strings.equal(value, "==")
+        || strings.equal(value, "!=") || strings.equal(value, "<=")
+        || strings.equal(value, ">=") || strings.equal(value, "&&")
+        || strings.equal(value, "||") || strings.equal(value, "::")
+        || strings.equal(value, "+=") || strings.equal(value, "-=")
+        || strings.equal(value, "*=") || strings.equal(value, "/=");
+}
+
+def token(syntax: &const Syntax, index: i64) -> Token {
+    return *syntax.tokens.get(index);
+}
+
+def is_token(syntax: &const Syntax, index: i64, text: string) -> bool {
+    return index >= 0 && index < syntax.tokens.len()
+        && strings.equal(token(syntax, index).text, text);
+}
+
+def modifier(text: string) -> bool {
+    return strings.equal(text, "mut") || strings.equal(text, "const")
+        || strings.equal(text, "pub") || strings.equal(text, "priv")
+        || strings.equal(text, "static");
+}
+
+// Delimiter links let the grouping pass skip calls, arrays, type arguments,
+// and literals without interpreting expressions or requiring valid source.
+def scan(syntax: &Syntax) -> bool {
+    def size: u64       = strings.byte_length(syntax.source);
+    def mut cursor: u64 = 0;
+    def mut opened: i64 = -1;
+
+    while cursor < size {
+        def mut end: u64 = cursor;
+
+        while end < size && byte(syntax.source, end) != 10 { end = end + 1; }
+
+        def mut first: u64 = cursor;
+        def mut last: u64  = end;
+
+        while first < last && space(byte(syntax.source, first)) { first = first + 1; }
+        while last > first && space(byte(syntax.source, last - 1)) { last = last - 1; }
+
+        def line: i64 = syntax.lines.len();
+
+        if !syntax.lines.push(Line {
+            start: cursor,
+            first: first,
+            last: last,
+            comment: strings.starts_with(view(syntax.source, first, last), "//"),
+            blank_before: false,
+            aligned: false,
+            left_end: 0,
+            right_start: 0,
+            width: 0,
+            family: ""
+        }) { return false; }
+
+        def mut position: u64 = first;
+
+        while position < last {
+            def current: u8 = byte(syntax.source, position);
+
+            if space(current) {
+                position = position + 1;
+            } else if current == 47 && position + 1 < last && byte(syntax.source, position + 1) == 47 {
+                position = last;
+            } else {
+                def start: u64 = position;
+                position = position + 1;
+
+                if current == 34 || current == 39 {
+                    def mut quoted: bool = true;
+
+                    while quoted && position < last {
+                        def next: u8 = byte(syntax.source, position);
+                        position = position + 1;
+
+                        if next == 92 && position < last {
+                            position = position + 1;
+                        } else if next == current {
+                            quoted = false;
+                        }
+                    }
+                } else if word(current) {
+                    while position < last && word(byte(syntax.source, position)) {
+                        position = position + 1;
+                    }
+                } else if position < last && pair(view(syntax.source, start, position + 1)) {
+                    position = position + 1;
+                }
+
+                def text: string = view(syntax.source, start, position);
+                def index: i64   = syntax.tokens.len();
+
+                if !syntax.tokens.push(Token {
+                    text: text,
+                    start: start,
+                    end: position,
+                    line: line,
+                    previous: opened,
+                    close: -1
+                }) { return false; }
+
+                def mut generic: bool = false;
+
+                if strings.equal(text, "<") && index > 0 {
+                    def prior: Token = token(syntax, index - 1);
+                    generic = prior.end == start && word(byte(syntax.source, prior.end - 1));
+                }
+
+                if strings.equal(text, "{") || strings.equal(text, "(")
+                    || strings.equal(text, "[") || generic {
+                    opened = index;
+                } else if opened >= 0 {
+                    def prior: Token = token(syntax, opened);
+
+                    if (strings.equal(prior.text, "{") && strings.equal(text, "}"))
+                        || (strings.equal(prior.text, "(") && strings.equal(text, ")"))
+                        || (strings.equal(prior.text, "[") && strings.equal(text, "]"))
+                        || (strings.equal(prior.text, "<") && strings.equal(text, ">")) {
+                        syntax.tokens.get_mut(opened).close = index;
+                        opened = prior.previous;
+                    }
+                }
+            }
+        }
+
+        cursor = end;
+        if cursor < size { cursor = cursor + 1; }
+    }
+
+    return true;
+}
+
+def category(syntax: &const Syntax, first: i64, end: i64) -> i32 {
+    def head: string = token(syntax, first).text;
+
+    if strings.equal(head, "def") {
+        def mut cursor: i64 = first + 1;
+
+        while cursor < end {
+            def item: Token = token(syntax, cursor);
+            if strings.equal(item.text, "struct") || strings.equal(item.text, "enum")
+                || strings.equal(item.text, "(") { return DEFINITION; }
+            if strings.equal(item.text, "=") || strings.equal(item.text, ";")
+                || strings.equal(item.text, ",") || strings.equal(item.text, "{") {
+                return DECLARATION;
+            }
+
+            if item.close >= 0 {
+                cursor = item.close + 1;
+            } else {
+                cursor = cursor + 1;
+            }
+        }
+
+        return DECLARATION;
+    }
+
+    if strings.equal(head, "if") || strings.equal(head, "unless")
+        || strings.equal(head, "while") || strings.equal(head, "for")
+        || strings.equal(head, "{") { return CONTROL; }
+    if strings.equal(head, "return") { return RETURN; }
+    if strings.equal(head, "defer") { return DEFER; }
+
+    def mut cursor: i64 = first;
+
+    while cursor < end {
+        def item: Token = token(syntax, cursor);
+        if strings.equal(item.text, "=") { return ASSIGNMENT; }
+        if strings.equal(item.text, ";") || strings.equal(item.text, "{") { return OTHER; }
+
+        if item.close >= 0 {
+            cursor = item.close + 1;
+        } else {
+            cursor = cursor + 1;
+        }
+    }
+
+    return OTHER;
+}
+
+def empty_statement() -> Statement {
+    return Statement {
+        first: 0,
+        end: 0,
+        first_line: -1,
+        last_line: -1,
+        kind: OTHER,
+        head: "",
+        name: "",
+        guard: false
+    };
+}
+
+def mentions(syntax: &const Syntax, statement: Statement, name: string) -> bool {
+    for def mut i: i64 = statement.first; i < statement.end; i = i + 1 {
+        if is_token(syntax, i, name) { return true; }
+    }
+
+    return false;
+}
+
+def blank_before(syntax: &Syntax, first: i64, previous: i64) -> void {
+    def mut line: i64 = first;
+
+    while line > previous + 1 && syntax.lines.get(line - 1).comment { line = line - 1; }
+    if line > previous && line > 0 {
+        def prior: Line = *syntax.lines.get(line - 1);
+        if prior.first < prior.last { syntax.lines.get_mut(line).blank_before = true; }
+    }
+}
+
+def separate(syntax: &Syntax, older: Statement, previous: Statement, current: Statement,
+    fields: bool, short_return: bool) -> void {
+    if previous.first_line < 0 || current.first_line <= previous.last_line { return; }
+
+    def mut blank: bool = false;
+    def inline: bool    = current.first_line == current.last_line;
+
+    if current.kind == DEFINITION {
+        blank = true;
+    } else if fields || current.kind == DEFER {
+        return;
+    } else if current.kind == RETURN {
+        blank = !short_return;
+    } else if previous.kind == CONTROL {
+        blank = !(previous.guard && current.guard);
+
+        if previous.first_line == previous.last_line && !previous.guard && current.kind == CONTROL {
+            blank = !strings.equal(current.head, "if") && !strings.equal(current.head, "unless");
+
+            if inline && strings.equal(previous.head, "while") && strings.equal(current.head, "while") {
+                blank = false;
+            }
+        }
+    } else if previous.kind == DEFER {
+        blank = true;
+    } else if current.kind == DECLARATION {
+        def reset: bool = previous.end - previous.first >= 5
+            && is_token(syntax, previous.end - 5, ".")
+            && is_token(syntax, previous.end - 4, "reset")
+            && is_token(syntax, previous.end - 3, "(")
+            && is_token(syntax, previous.end - 2, ")");
+        blank = previous.kind != DECLARATION && !reset;
+    } else if current.kind == CONTROL {
+        if previous.kind == DECLARATION
+            && (strings.equal(current.head, "if") || strings.equal(current.head, "unless")) {
+            def group: bool = older.kind == DECLARATION && older.last_line + 1 == previous.first_line;
+            blank = !((inline || current.guard) && !group && mentions(syntax, current, previous.name));
+        } else if previous.kind != ASSIGNMENT || !inline || current.guard {
+            blank = true;
+        }
+    } else if current.kind == OTHER && previous.kind == DECLARATION {
+        blank = true;
+    }
+
+    if blank { blank_before(syntax, current.first_line, previous.last_line); }
+}
+
+def assignment(syntax: &Syntax, statement: Statement) -> void {
+    if statement.first_line != statement.last_line
+        || (statement.kind != DECLARATION && statement.kind != ASSIGNMENT) { return; }
+
+    def line: *Line = syntax.lines.get_mut(statement.first_line);
+    if token(syntax, statement.first).start != line.first { return; }
+
+    def mut cursor: i64 = statement.first;
+    def mut equal: i64  = -1;
+
+    while cursor < statement.end && equal < 0 {
+        if is_token(syntax, cursor, "=") { equal = cursor; }
+
+        cursor = cursor + 1;
+    }
+
+    if equal < 0 { return; }
+
+    def operator: Token = token(syntax, equal);
+    def mut left: u64   = operator.start;
+    def mut right: u64  = operator.end;
+
+    while left > line.first && space(byte(syntax.source, left - 1)) { left = left - 1; }
+    while right < line.last && space(byte(syntax.source, right)) { right = right + 1; }
+
+    def target: string     = view(syntax.source, line.first, left);
+    def mut family: string = "$local";
+
+    if statement.kind == DECLARATION {
+        family = "$declaration";
+    } else if strings.starts_with(target, "*") {
+        family = "*";
+    } else {
+        def dot: strings.FindResult     = strings.find(target, ".");
+        def bracket: strings.FindResult = strings.find(target, "[");
+
+        if dot.found {
+            family = strings.slice_bytes(target, 0, dot.offset + 1).value;
+        } else if bracket.found {
+            family = strings.slice_bytes(target, 0, bracket.offset + 1).value;
+        }
+    }
+
+    line.aligned     = true;
+    line.left_end    = left;
+    line.right_start = right;
+    line.width       = left - line.start;
+    line.family      = family;
+}
+
+// Parse only statement boundaries. Expressions and literal contents are opaque.
+// Recursion follows brace links; format.gloin already limits braces to 256.
+def group_scope(syntax: &Syntax, first: i64, end: i64, fields: bool, conditional: bool) -> Summary {
+    def mut summary: Summary = Summary {
+        count: 0,
+        last: OTHER,
+        complex: false
+    };
+    def mut older: Statement    = empty_statement();
+    def mut previous: Statement = empty_statement();
+    def mut cursor: i64         = first;
+
+    while cursor < end {
+        if is_token(syntax, cursor, ";") || is_token(syntax, cursor, ",") {
+            cursor = cursor + 1;
+        } else {
+            def start: i64      = cursor;
+            def head: string    = token(syntax, start).text;
+            def kind: i32       = category(syntax, start, end);
+            def mut blocks: i32 = 0;
+            def mut child: Summary = Summary {
+                count: 0,
+                last: OTHER,
+                complex: false
+            };
+            def mut scanning: bool = true;
+
+            while scanning && cursor < end {
+                def item: Token = token(syntax, cursor);
+
+                if item.close >= 0 && (strings.equal(item.text, "(")
+                        || strings.equal(item.text, "[") || strings.equal(item.text, "<")) {
+                    cursor = item.close + 1;
+                } else if item.close >= 0 && strings.equal(item.text, "{") {
+                    if kind == CONTROL || kind == DEFINITION || cursor == start {
+                        def mut child_fields: bool = false;
+
+                        for def mut i: i64 = start; i < cursor && i < start + 4; i = i + 1 {
+                            if is_token(syntax, i, "struct") || is_token(syntax, i, "enum") { child_fields = true; }
+                        }
+
+                        child = group_scope(syntax, cursor + 1, item.close, child_fields,
+                            strings.equal(head, "if") || strings.equal(head, "unless"));
+                        blocks = blocks + 1;
+                        cursor = item.close + 1;
+
+                        if cursor < end && is_token(syntax, cursor, "else") {
+                            cursor = cursor + 1;
+                        } else {
+                            if cursor < end && is_token(syntax, cursor, ";") { cursor = cursor + 1; }
+
+                            scanning = false;
+                        }
+                    } else {
+                        cursor = item.close + 1;
+                    }
+                } else if (strings.equal(item.text, ";") && !strings.equal(head, "for"))
+                    || (fields && strings.equal(item.text, ",")) {
+                    cursor   = cursor + 1;
+                    scanning = false;
+                } else {
+                    cursor = cursor + 1;
+                }
+            }
+
+            def mut name: string = "";
+
+            if kind == DECLARATION {
+                def mut index: i64 = start + 1;
+
+                while index < cursor && modifier(token(syntax, index).text) { index = index + 1; }
+                if index < cursor { name = token(syntax, index).text; }
+            }
+
+            def current: Statement = Statement {
+                first: start,
+                end: cursor,
+                first_line: token(syntax, start).line,
+                last_line: token(syntax, cursor - 1).line,
+                kind: kind,
+                head: head,
+                name: name,
+                guard: (strings.equal(head, "if") || strings.equal(head, "unless"))
+                    && blocks == 1 && child.count > 0 && child.count <= 3
+                    && child.last == RETURN && !child.complex
+            };
+
+            separate(syntax, older, previous, current, fields,
+                conditional && summary.count == 1 && previous.kind == OTHER && cursor == end);
+            assignment(syntax, current);
+            older    = previous;
+            previous = current;
+            summary.count = summary.count + 1;
+            summary.last  = kind;
+            if kind == CONTROL || kind == DEFINITION { summary.complex = true; }
+        }
+    }
+
+    return summary;
+}
+
+def align_groups(syntax: &Syntax) -> void {
+    def mut cursor: i64 = 0;
+
+    while cursor < syntax.lines.len() {
+        def first: Line = *syntax.lines.get(cursor);
+
+        if !first.aligned {
+            cursor = cursor + 1;
+        } else {
+            def mut end: i64       = cursor + 1;
+            def mut width: u64     = first.width;
+            def mut scanning: bool = true;
+
+            while scanning && end < syntax.lines.len() {
+                def line: Line = *syntax.lines.get(end);
+
+                if !line.aligned || line.blank_before || line.first - line.start != first.first - first.start
+                    || !strings.equal(line.family, first.family) {
+                    scanning = false;
+                } else {
+                    if line.width > width { width = line.width; }
+
+                    end = end + 1;
+                }
+            }
+
+            while cursor < end {
+                syntax.lines.get_mut(cursor).width = width;
+                cursor = cursor + 1;
+            }
+        }
+    }
+}
+
+def pub apply(memory: &arena.GeneralArena, source: string, capacity: u64) -> result<string> {
+    def mut syntax: Syntax = Syntax {
+        source: source,
+        tokens: vector.Vector<Token>.empty(memory, 0),
+        lines: vector.Vector<Line>.empty(memory, 0)
+    };
+    if !scan(&syntax) { return error("formatter metadata capacity exceeded"); }
+
+    group_scope(&syntax, 0, syntax.tokens.len(), false, false);
+    align_groups(&syntax);
+
+    def made: strings.BuilderResult = strings.StringBuilder.create(memory, capacity);
+    if made.status != status.OK { return error("formatter output allocation failed"); }
+
+    def mut output: strings.StringBuilder = made.value;
+    def mut newline: string               = "\n";
+
+    if strings.contains(source, "\r\n") { newline = "\r\n"; }
+
+    def mut wrote: bool         = false;
+    def mut pending_blank: bool = false;
+
+    for def mut index: i64 = 0; index < syntax.lines.len(); index = index + 1 {
+        def line: Line = *syntax.lines.get(index);
+
+        if line.first == line.last {
+            if wrote { pending_blank = true; }
+        } else {
+            if wrote && (pending_blank || line.blank_before) {
+                if output.append(newline) != status.OK { return error("formatter output too large"); }
+            }
+
+            if line.aligned {
+                if output.append(view(source, line.start, line.left_end)) != status.OK {
+                    return error("formatter output too large");
+                }
+
+                def mut padding: u64 = line.width - (line.left_end - line.start) + 1;
+
+                while padding > 0 {
+                    if output.append(" ") != status.OK { return error("formatter output too large"); }
+
+                    padding = padding - 1;
+                }
+
+                if output.append("= ") != status.OK
+                    || output.append(view(source, line.right_start, line.last)) != status.OK {
+                    return error("formatter output too large");
+                }
+            } else if output.append(view(source, line.start, line.last)) != status.OK {
+                return error("formatter output too large");
+            }
+
+            if output.append(newline) != status.OK { return error("formatter output too large"); }
+
+            wrote         = true;
+            pending_blank = false;
+        }
+    }
+
+    def formatted: strings.StringResult = output.to_string(memory);
+    if formatted.status != status.OK { return error("formatter output copy failed"); }
+
+    return formatted.value;
+}

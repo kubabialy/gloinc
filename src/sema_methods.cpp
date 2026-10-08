@@ -317,6 +317,50 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
         recording->bindings[name] = symbol;
         return std::make_shared<PointerType>(value, false, false);
     }
+    if (arena_reserved_methods.contains(method)) {
+        if (!current_module || current_module->standard_name != "vector") {
+            log_error("Arena reserved allocation is internal to @vector");
+            return nullptr;
+        }
+        if (call->arguments.size() != 2) {
+            log_error("Arena reserved allocation expects a type witness and i64 capacity");
+            return nullptr;
+        }
+        auto value = check_expression(call->arguments[0].get());
+        auto capacity = check_typed_expression(call->arguments[1].get(), get_builtin_type("i64"));
+        if (!value || !value_type(value) || !capacity ||
+            !capacity->equals(*get_builtin_type("i64")))
+            return nullptr;
+        recording->arena_reserved_allocations.insert(call);
+        recording->bindings[name] = symbol;
+        return std::make_shared<PointerType>(value, false, false);
+    }
+    if (structure->owner && structure->owner->standard_name == "arena" &&
+        structure->name == "GeneralArena" && method_name == "reserve_typed") {
+        if (!current_module || current_module->standard_name != "vector") {
+            log_error("Typed arena reservation is internal to @vector");
+            return nullptr;
+        }
+        auto bytes = std::make_shared<PointerType>(get_builtin_type("u8"), true, false);
+        if (!explicit_types || method->generic_params.size() != 1 ||
+            call->arguments.size() != 1 || signature->param_types.size() != 3 ||
+            !signature->param_types[1]->equals(*get_builtin_type("u64")) ||
+            !signature->param_types[2]->equals(*get_builtin_type("u64")) ||
+            !signature->return_type->equals(*bytes)) {
+            log_error("Typed arena reservation expects one type and i64 capacity");
+            return nullptr;
+        }
+        auto names = split_type_arguments(std::string_view(name->value).substr(
+            open + 1, name->value.size() - open - 2));
+        auto element = resolve_type_from_string(names.front());
+        auto capacity = check_typed_expression(call->arguments[0].get(), get_builtin_type("i64"));
+        if (!element || !value_type(element) || !capacity ||
+            !capacity->equals(*get_builtin_type("i64")))
+            return nullptr;
+        recording->arena_typed_reservations.insert(call);
+        recording->bindings[name] = symbol;
+        return std::make_shared<PointerType>(element, false, false);
+    }
     if (call->arguments.size() != signature->param_types.size() - offset) {
         log_error("Incorrect number of method arguments");
         return nullptr;
