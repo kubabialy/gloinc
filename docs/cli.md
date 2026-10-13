@@ -5,7 +5,7 @@ targets Apple Silicon macOS with LLVM/MLIR 21.1.6 and 64-bit Ubuntu 24.04 Linux
 with LLVM/MLIR 21.1.8.
 
 ```text
-gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] [-O0 | -O2] [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]
+gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] [-O0 | -O2] [-o PATH] [--stdlib-dir DIR] [--time-compilation] [--] FILE [-- ARG...]
 gloinc --help
 gloinc --version
 ```
@@ -53,6 +53,16 @@ Native output requires `main() -> i32`; object output requires `-o PATH`.
 Native output defaults to `-O0`. `-O2` runs LLVM's standard O2 IR pipeline
 before optimized target code generation. Optimization flags apply only to
 native object and executable output.
+The development compiler bounds optional inlining into large callers to control
+optimized build cost; see [checked arithmetic and inlining](lowering.md#checked-integer-simplification-and-overflow-unreleased-perf-005)
+for the policy and its trade-offs. Published 0.1.0 predates this limit.
+
+In the unreleased compiler, executable and JIT builds remove unreachable source
+functions through GloinIR after all source checking. This also applies at `-O0`.
+Inspection and object modes retain their functions, including symbols available
+to external object callers. Unused invalid source still produces diagnostics.
+See [executable reachability](lowering.md#executable-reachability-unreleased-perf-004).
+
 Executable output defaults to `a.out` when no output path is given. The output must differ from
 the source path. Successful emission replaces the named output atomically; source
 and link errors leave it untouched. Native programs receive their own executable
@@ -76,6 +86,25 @@ CLI, they do not use the `FILE -- ARG...` forwarding delimiter.
 # /usr/lib/llvm-21/bin/clang++ hello.o build/libgloin_runtime.a -o hello-from-object
 ./hello-from-object
 ```
+
+## Compilation measurements (unreleased)
+
+The working compiler adds `--time-compilation`; released 0.1.0 does not have
+this option. It may appear once with any compilation mode. It writes one
+`gloinc-timings: ` line followed by JSON to stderr, preserving normal stdout
+and exit status. Without the option, successful compilation stays quiet.
+
+```sh
+./build/gloinc --time-compilation -O2 -o hello examples/hello_world.gloin 2> timings.log
+./build/gloinc --time-compilation --check examples/hello_world.gloin
+```
+
+The report separates GIR generation/verification, lowering, LLVM optimization,
+object emission and linking, and includes IR counts and peak compiler memory.
+For JIT, compilation timing ends before the program starts. See
+[measurement boundaries, JSON fields and limitations](compilation-timings.md)
+before comparing reports; compilation duration excludes process startup and
+is not application execution time.
 
 ## Results and errors
 
@@ -115,7 +144,7 @@ executable. Check/inspection select module mode. LLVM inspection uses the same v
 [lowering pipeline](lowering.md) as execution. Structured compiler diagnostics
 are rendered once at the CLI boundary.
 
-All 20 `CliTest` cases launch the actual built executable with argument vectors,
+The `CliTest` cases launch the actual built executable with argument vectors,
 captured output, isolated temporary files, and bounded waits. They verify file
 results, the repository counter example, repeated/concurrent runs, all modes,
 i32 boundaries, source errors, unreadable/non-regular files, byte/UTF-8 rejection,

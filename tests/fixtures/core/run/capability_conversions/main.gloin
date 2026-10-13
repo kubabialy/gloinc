@@ -1,0 +1,81 @@
+import "./helpers";
+
+def struct View {
+    def pointer: *const i32,
+    def row: [const i32],
+}
+
+def main() -> i32 {
+    def mut value: i32        = 40;
+    def outcome: result<&i32> = helpers.borrow<i32>(&value);
+
+    if outcome.erroneous { return 1; }
+
+    // Direct extraction has the same capabilities and identity as a two-step read.
+    def direct: *const i32       = outcome.value;
+    def reference: &i32          = outcome.value;
+    def indirect: *const i32     = reference;
+    def writable: *i32           = outcome.value;
+    def readonly: &const i32     = outcome.value;
+    def mut assigned: *const i32 = null;
+    assigned = outcome.value;
+
+    if direct != indirect || assigned != direct || readonly != direct
+        || helpers.read(outcome.value) != 40 || helpers.pointer<i32>(outcome) != direct {
+        return 2;
+    }
+
+    *writable = 42;
+
+    if *direct != 42 || *readonly != 42 { return 3; }
+
+    def failure: result<&i32> = helpers.failed<i32>();
+    if !failure.erroneous { return 4; }
+
+    def absent: *const i32 = helpers.pointer<i32>(failure);
+
+    if absent != null { return 4; }
+
+    def mut values: [i32; 2]          = {20, 22};
+    def rows: [[i32]; 1]              = {values[..]};
+    def row_view: [const [i32]]       = rows[..];
+    def direct_row: [const i32]       = row_view[0];
+    def intermediate: [i32]           = row_view[0];
+    def indirect_row: [const i32]     = intermediate;
+    def from_array: [const i32]       = rows[0];
+    def mut assigned_row: [const i32] = values[..];
+    assigned_row = row_view[0];
+
+    if helpers.sum(row_view[0]) != 42 || helpers.sum(direct_row) != 42
+        || helpers.sum(indirect_row) != 42 || helpers.sum(from_array) != 42
+        || helpers.sum(assigned_row) != 42 || helpers.sum(helpers.first_row<i32>(row_view)) != 42 {
+        return 5;
+    }
+
+    // Also exercise slice loads through pointers and extraction from result<[T]>.
+    def mut slot: [i32]       = values[..];
+    def slot_pointer: &[i32]  = &slot;
+    def loaded: [const i32]   = *slot_pointer;
+    def sliced: result<[i32]> = helpers.borrow_slice<i32>(slot);
+
+    if sliced.erroneous { return 6; }
+
+    def from_result: [const i32] = sliced.value;
+    def view: View               = View {pointer: outcome.value, row: row_view[0]};
+
+    if helpers.sum(loaded) != 42 || helpers.sum(helpers.read_slot<i32>(&slot)) != 42
+        || helpers.sum(from_result) != 42 || helpers.sum(sliced.value) != 42
+        || helpers.sum(view.row) != 42 || *view.pointer != 42 {
+        return 7;
+    }
+
+    // Weakening a slice restricts writes through that view; it still borrows the buffer.
+    values[0] = 19;
+
+    if direct_row[0] != 19 || indirect_row[0] != 19 || loaded[0] != 19
+        || from_result[0] != 19 || view.row[0] != 19 {
+        return 8;
+    }
+
+    return value;
+}

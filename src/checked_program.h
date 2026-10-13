@@ -140,6 +140,8 @@ struct SemanticData {
     // Instance calls pass the receiver once, before explicit arguments.
     // true takes the address of struct storage; false passes a pointer value.
     std::unordered_map<const CallExpression *, bool> method_receivers;
+    // Bindings needing GIR storage for source borrows or fixed-array indexing.
+    // Internal element addressing does not change source mutability or alias rules.
     std::unordered_set<SymbolId> address_taken;
     std::unordered_set<const MemberAccessExpression *> indirect_members;
     std::vector<CheckedStruct> structures;

@@ -1,0 +1,119 @@
+import "@strings";
+
+def struct Cell {
+    def tag: u8,
+    def mut number: i32,
+}
+
+def struct Holder {
+    def mut bytes: [u8; 16384],
+}
+
+def next(calls: &i32) -> i32 {
+    *calls = *calls + 1;
+
+    return *calls;
+}
+
+def returned(calls: &i32) -> [i32; 3] {
+    return {next(calls); 3};
+}
+
+def by_value(values: [i32; 3], original: &[i32; 3]) -> bool {
+    (*original)[0] = 99;
+
+    return values[0] == 7 && values[2] == 7;
+}
+
+def fill_byte(value: u8, index: u64) -> u8 {
+    def values: [u8; 16384] = {value; 16384};
+
+    return values[index];
+}
+
+def fill_nested(value: u8, index: u64) -> u8 {
+    def values: [[u8; 128]; 128] = {{value; 128}; 128};
+
+    return values[index / 128][index % 128];
+}
+
+def main() -> i32 {
+    if fill_byte(173, 0) != 173 || fill_byte(173, 16383) != 173 { return 1; }
+    if fill_nested(241, 127) != 241 || fill_nested(241, 16383) != 241 { return 2; }
+
+    def mut calls: i32       = 0;
+    def mut values: [i32; 3] = {next(&calls); 3};
+
+    if calls != 1 || values[0] != 1 || values[2] != 1 { return 3; }
+
+    def nested: [[i32; 4]; 3] = {{next(&calls); 4}; 3};
+    if calls != 2 || nested[0][3] != 2 || nested[2][0] != 2 { return 4; }
+
+    // Empty arrays still evaluate their seed once, including nested repeats.
+    def empty: [i32; 0]            = {next(&calls); 0};
+    def empty_rows: [[i32; 0]; 3]  = {{next(&calls); 0}; 3};
+    def empty_outer: [[i32; 3]; 0] = {{next(&calls); 3}; 0};
+
+    if calls != 5 { return 5; }
+
+    // Capture the old element before any assignment writes the destination.
+    values = {values[2] + 6; 3};
+
+    if !by_value(values, &values) || values[0] != 99 || values[2] != 7 { return 6; }
+
+    def mut copy: [i32; 3] = values;
+    copy[2] = 50;
+
+    if values[2] != 7 { return 7; }
+
+    def made: [i32; 3] = returned(&calls);
+    if calls != 6 || made[0] != 6 || made[2] != 6 { return 8; }
+
+    // Each loop iteration evaluates its initializer again.
+    for def mut i: i32 = 0; i < 3; i = i + 1 {
+        def row: [i32; 2] = {next(&calls); 2};
+        if row[0] != i + 7 || row[1] != row[0] { return 9; }
+    }
+
+    if calls != 9 { return 10; }
+
+    // These require typed stores, not a fill with the low byte of a value.
+    def wide: [i32; 3]               = {16909060; 3};
+    def floats: [f64; 3]             = {1.25; 3};
+    def flags: [bool; 3]             = {true; 3};
+    def mut number: i32              = 17;
+    def pointers: [*i32; 3]          = {&number; 3};
+    def references: [&i32; 3]        = {&number; 3};
+    def nulls: [*i32; 3]             = {null; 3};
+    def texts: [string; 3]           = {"hello"; 3};
+    def zero_texts: [[string; 3]; 2] = zeroed;
+
+    def fraction: f64 = 1.25;
+    def nothing: *i32 = null;
+
+    if wide[2] != 16909060 || floats[1] != fraction || !flags[2] { return 11; }
+    if *pointers[1] != 17 || *references[2] != 17 || nulls[0] != nothing { return 12; }
+    if !strings.equal(texts[2], "hello") || !strings.equal(zero_texts[1][2], "") { return 13; }
+
+    def mut cells: [Cell; 3] = {Cell { tag: 7, number: 12345 }; 3};
+    cells[0].number = 3;
+
+    def tag: u8 = 7;
+    if cells[1].number != 12345 || cells[2].tag != tag { return 14; }
+
+    // An array-valued seed is a snapshot, including when its source is mutated.
+    def mut seed: [i32; 2]      = {3, 4};
+    def mut rows: [[i32; 2]; 3] = {seed; 3};
+    seed[0] = 50;
+    rows[0][1] = 60;
+
+    if rows[1][0] != 3 || rows[2][1] != 4 { return 15; }
+
+    def mut holder: Holder = Holder { bytes: zeroed };
+    holder.bytes = {67; 16384};
+
+    def byte: u8 = 67;
+    if holder.bytes[0] != byte || holder.bytes[16383] != byte { return 16; }
+
+    return 42;
+}

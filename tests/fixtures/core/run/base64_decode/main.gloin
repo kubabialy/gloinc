@@ -1,0 +1,127 @@
+import "@strings";
+import "./codec";
+
+def copy(text: string, output: [u8]) -> u64 {
+    def length: u64 = strings.byte_length(text);
+
+    for def mut i: u64 = 0; i < length; i = i + 1 { output[i] = strings.byte_at(text, i).value; }
+
+    return length;
+}
+
+def main() -> i32 {
+    def alphabet: string     = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    def mut table: [u8; 256] = {255; 256};
+    def mut number: u8       = 0;
+
+    for def mut i: u64 = 0; i < 64; i = i + 1 {
+        table[strings.byte_at(alphabet, i).value] = number;
+        number = number + 1;
+    }
+
+    def plain: [string; 9] = {"", "f", "fo", "foo", "foob", "fooba", "foobar", "f", "fo"};
+    // The last two cases intentionally retain acceptance of nonzero unused bits.
+    def encoded: [string; 9] = {"", "Zg==", "Zm8=", "Zm9v", "Zm9vYg==", "Zm9vYmE=", "Zm9vYmFy", "Zh==", "Zm9="};
+    def mut source: [u8; 32] = zeroed;
+    def mut output: [u8; 32] = {201; 32};
+
+    for def mut test: u64 = 0; test < 9; test = test + 1 {
+        def length: u64 = copy(encoded[test], source[..]);
+        def needed: u64 = strings.byte_length(plain[test]);
+        // An exact slice, surrounded by sentinels, catches off-by-one writes.
+        def decoded: result<u64> = codec.decode(source[..length], output[1..needed + 1], table[..]);
+        if decoded.erroneous { return 1; }
+        if decoded.value != needed { return 2; }
+        if !strings.equal(strings.view_bytes(output[1..needed + 1]), plain[test]) { return 3; }
+
+        def sentinel: u8 = 201;
+        if output[0] != sentinel || output[needed + 1] != sentinel { return 4; }
+
+        if needed > 0 {
+            for def mut i: u64 = 0; i < 32; i = i + 1 { output[i] = 201; }
+
+            def short: result<u64> = codec.decode(source[..length], output[..needed - 1], table[..]);
+            if !short.erroneous { return 5; }
+            if output[needed - 1] != sentinel { return 5; }
+        }
+
+        // Reset sentinels between cases, including prefixes written on failure.
+        for def mut i: u64 = 0; i < 32; i = i + 1 { output[i] = 201; }
+    }
+
+    def binary: [u8; 6]             = {0, 255, 128, 254, 127, 1};
+    def binary_length: u64          = copy("AP+A/n8B", source[..]);
+    def binary_decoded: result<u64> = codec.decode(source[..binary_length], output[..6], table[..]);
+
+    if binary_decoded.erroneous { return 12; }
+    if !strings.equal(strings.view_bytes(output[..6]), strings.view_bytes(binary[..])) { return 13; }
+
+    def malformed: [string; 20] = {"A", "AA", "AAA", "AAAAA", "=AAA", "A=AA", "AA=A", "A===", "====", "AA==AAAA", "AAA=AAAA", "AAAA====", "!!!!", "AA!A", "AAA!", "AAAAAAA!", "AA A", "AA\nA", "AA-A", "AA_A"};
+
+    for def mut test: u64 = 0; test < 20; test = test + 1 {
+        def length: u64          = copy(malformed[test], source[..]);
+        def decoded: result<u64> = codec.decode(source[..length], output[..], table[..]);
+
+        if !decoded.erroneous { return 6; }
+    }
+
+    // All byte values round-trip through a separately expressed one-byte
+    // encoder. The u8 loop stops before its checked increment would overflow.
+    def mut byte: u8                   = 0;
+    def mut alphabet_storage: [u8; 64] = zeroed;
+
+    copy(alphabet, alphabet_storage[..]);
+
+    def alphabet_bytes: [const u8] = alphabet_storage[..];
+
+    for def mut test: u64 = 0; test < 256; test = test + 1 {
+        source[0] = alphabet_bytes[byte / 4];
+        source[1] = alphabet_bytes[(byte % 4) * 16];
+        source[2] = 61;
+        source[3] = 61;
+
+        def decoded: result<u64> = codec.decode(source[..4], output[..1], table[..]);
+        if decoded.erroneous { return 7; }
+
+        def one: u64 = 1;
+        if decoded.value != one || output[0] != byte { return 8; }
+
+        if test < 255 { byte = byte + 1; }
+    }
+
+    // Every non-alphabet byte (including high-bit bytes) must fail in every
+    // position of a complete group; '=' is valid only in the padded tail.
+    byte = 0;
+
+    for def mut test: u64 = 0; test < 256; test = test + 1 {
+        def invalid: u8 = 255;
+
+        if table[test] == invalid {
+            for def mut position: u64 = 0; position < 4; position = position + 1 {
+                for def mut i: u64 = 0; i < 8; i = i + 1 { source[i] = 65; }
+
+                source[position] = byte;
+
+                def decoded: result<u64> = codec.decode(source[..8], output[..6], table[..]);
+                if !decoded.erroneous { return 9; }
+            }
+        }
+
+        if test < 255 { byte = byte + 1; }
+    }
+
+    source[0] = 65;
+    source[1] = 65;
+    source[2] = 65;
+    source[3] = 65;
+
+    def short_table: result<u64> = codec.decode(source[..4], output[..3], table[..255]);
+    if !short_table.erroneous { return 10; }
+
+    table[65] = 64;
+
+    def invalid_table: result<u64> = codec.decode(source[..4], output[..3], table[..]);
+    if !invalid_table.erroneous { return 11; }
+
+    return 42;
+}

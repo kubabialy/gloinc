@@ -97,10 +97,13 @@ CI checks macOS and Linux, installed and relocated packages, and macOS
 sanitizers. The full test suite retains four documented unsupported async/spawn
 failures; `check-core` is the required passing gate.
 
-## Roadmap and contributing
+## Development and contributing
 
-The [0.2.0 draft](docs/release-0.2.0-draft.md) prioritizes switch and match.
-Endianness, packed layout, threads and async are under discussion. The
+The [0.2.0 development record](docs/release-0.2.0-draft.md) covers switch and match,
+standard-library migration to `result<T>`, and compiler validation fixes.
+Endianness, packed structs, threads and async are outside this release. The
+[compiler validation record](docs/compiler-validation.md) documents correctness
+and performance issues found while testing larger programs. The
 [wiki specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec)
 includes future designs; use the release guide for implemented behavior.
 

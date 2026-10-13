@@ -264,7 +264,7 @@ each passed 961/965; the four failures are the documented async/spawn cases.
 The subsequent integer formatting family and `set_reuse_address` follow-up
 passed macOS 918/918 core cases and installed/relocated 479/479 package cases.
 Ubuntu ARM64 passed focused compiler/runtime checks, installed/relocated
-479/479 package cases, and the sibling HTTP server verifier in JIT and native
+479/479 package cases, and an HTTP server verification program in JIT and native
 modes. Hosted x86_64 CI must rerun on this follow-up before publication.
 
 Further networking work adds multi-socket readiness waits, write-side shutdown,
@@ -325,9 +325,9 @@ The [guide](http-client.md) and development/0.1.0 HTML document scheduling,
 ownership, partial-output failures, retained arena allocations, and the exact
 HTTP subset. The [32-exchange example](../examples/http_stream.gloin) uses 192 KiB
 of application buffers for 31 large binary downloads and one stalled connection.
-The sibling `gloin_examples/http_stream` project includes a concurrent Gloin
-HTTP server and client. Both use readiness loops and reusable buffers; the
-server has explicit 32-connection batch limits. Server-side TLS remains pending.
+The milestone also verified a concurrent Gloin HTTP server/client pair using
+readiness loops and reusable buffers with a 32-connection batch limit.
+Server-side TLS remained pending at this point.
 Unknown-length uploads, pooling, concurrent servers, and WebSockets remain
 separate work. This milestone does not publish 0.1.0.
 
@@ -339,11 +339,12 @@ Validation for this milestone passed:
   compilers and examples in JIT/native modes.
 - All 40 example sources and the complete client-guide program type-check;
   repository formatting, diff whitespace, and seven HTML pages' links pass.
-- The sibling Gloin server/client pair passes JIT and `-O2` native execution
+- The Gloin server/client verification pair passed JIT and `-O2` native execution
   on macOS and Ubuntu ARM64, including repeated native batches and rejected
-  requests. Both source files pass `gloinfmt`; the Python server was removed
-  from the sibling project. The compiler's independent HTTP/HTTPS test peers
-  remain, and both platforms pass their 32-exchange fixture.
+  requests. Both source files passed `gloinfmt`. Both platforms also passed the
+  compiler's independent 32-exchange HTTP/HTTPS fixture. The current
+  [Gloin HTTP acceptance runner](../tests/http/README.md) retains that coverage
+  in the repository.
 
 Early validation hit host sleep and the former ten-second Linux compiler
 subprocess limit. The networking compiler fixture now has a bounded 60-second

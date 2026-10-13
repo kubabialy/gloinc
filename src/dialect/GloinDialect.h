@@ -25,6 +25,9 @@
 namespace gloin {
 // Check that a source value has the stated LLVM-compatible storage layout.
 bool matchesSourceStorage(mlir::Type source, mlir::Type storage);
+// Permit identity or loss of outer pointer/slice capabilities only. Nested
+// pointee/element types retain their exact source identity.
+bool canWeakenSourceValue(mlir::Type actual, mlir::Type requested);
 }
 
 #endif // GLOIN_DIALECT_H

@@ -264,7 +264,8 @@ provides bounded construction and reading of complete buffered payloads.
 
 Framing follows the supported subset of
 [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and response semantics in
-[RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html). The separate
-`gloin_examples/http_server` example still handles sequential clients. The
-[networking milestones](networking-roadmap.md) track concurrent servers,
+[RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html). The
+[HTTP acceptance peer](../tests/http/README.md) handles bounded concurrent
+connections; a reusable HTTP server library is not yet available. The
+[networking milestones](networking-roadmap.md) track server APIs,
 asynchronous DNS, IPv6, HTTPS services, and WebSockets.

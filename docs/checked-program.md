@@ -145,7 +145,12 @@ and typed arithmetic operands. Typed operands determine the common operand type;
 they are never implicitly widened or narrowed. Literal-only arithmetic receives
 its enclosing numeric context. Unconstrained integers/floats default to i32/f32.
 Integer and floating spellings retain separate categories. The first release
-rejects numeric casts and conversions between already typed values.
+rejects implicit conversions between already typed values and numeric cast
+syntax. Explicit named standard-library conversion functions are checked
+against their declared signatures. The private exact i32-to-i64 primitive is
+selected through the checked standard-call table and emits
+[`gloin.exact_int_widen`](lowering.md#exact-integer-widening-unreleased-perf-008),
+a typed output store and status `OK`; no function-name heuristic bypasses sema.
 
 [numeric.cpp](../src/numeric.cpp) validates complete spellings and ranges before
 constructing resolved values. Integer magnitudes cover all of u64. A minus
@@ -179,11 +184,27 @@ signed integer/float types, logical operators require bool, and comparisons
 produce bool. Unsupported categories/operators and nested assignment expressions
 fail before codegen, including through the AST API.
 
-[codegen_operators.cpp](../src/codegen_operators.cpp) selects signed/unsigned
-integer operations and native floating operations from semantic types. Integer
-addition/subtraction/multiplication use double-width intermediate values and a
-truncate/extend comparison to detect overflow. These internal widths do not add
-128-bit language types. Division/remainder guard zero divisors and signed
+[codegen_operators.cpp](../src/codegen_operators.cpp) emits checked GloinIR
+integer and floating operations with their semantic types and signedness.
+In the development compiler after 0.1.0, GIR preparation simplifies proven-safe
+integer constants and identities, preserving operand effects and traps.
+After layout resolution, a separate GIR analysis promotes eligible locals to
+SSA and uses dominating unsigned comparisons to prove some arithmetic and bounds
+checks unnecessary. Escaping addresses and fresh memory loads do not inherit
+facts from earlier snapshots; unproven checks remain. See the
+[range-proof contract](lowering.md#bounds-and-unsigned-range-proofs-unreleased-perf-006).
+Small counted slice loops can additionally use a GIR entry predicate to choose
+between a copy with proven bounds and the original checked loop. Failure of
+that predicate selects the original loop rather than trapping before its
+earlier effects. The narrow induction proof and code-size limits are described
+in [counted slice loop versioning](lowering.md#counted-slice-loop-versioning-unreleased-perf-007).
+Floating-point operations remain ordered, separately rounded and checked for
+non-finite results in both copies.
+Remaining integer addition/subtraction/multiplication lower to source-width
+LLVM overflow intrinsics and a guarded trap. Published 0.1.0 uses double-width
+intermediates with truncate/extend comparisons instead; both enforce the same
+checked arithmetic. See [the lowering contract](lowering.md#checked-integer-simplification-and-overflow-unreleased-perf-005).
+Division/remainder guard zero divisors and signed
 minimum with -1 before executing. Negation checks signed overflow. Floating
 operations have no fast-math flags; finite bounds checks reject non-finite
 results, and division checks either sign of zero. Subnormals and arithmetic

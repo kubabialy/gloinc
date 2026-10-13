@@ -2,6 +2,16 @@
 #include "stdlib_lowering.h"
 
 mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::ValueRange arguments) {
+    if (kind == StandardPrimitive::I32ToI64) {
+        // Sema selected the private primitive and checked i32 plus writable &i64.
+        // Retain the out-parameter/status contract, but make the exact conversion
+        // visible to GIR and LLVM instead of hiding it behind the runtime ABI.
+        auto widened = builder.create<gloin::ExactIntegerWidenOp>(
+            location(), builder.getI64Type(), arguments[0], builder.getBoolAttr(true));
+        store_value(widened, arguments[1], ValueType(CoreType::I64));
+        return builder.create<gloin::ConstantOp>(
+            location(), builder.getI32Type(), builder.getI32IntegerAttr(0));
+    }
     if (kind == StandardPrimitive::StringStore || kind == StandardPrimitive::StringWrite) {
         auto null = builder.create<mlir::LLVM::ZeroOp>(location(), arguments[0].getType());
         auto nonnull = builder.create<mlir::LLVM::ICmpOp>(location(), mlir::LLVM::ICmpPredicate::ne,

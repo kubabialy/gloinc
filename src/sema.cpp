@@ -376,7 +376,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
                 log_error("Entry point must be a function main() -> i32");
             else
                 recording->entry_point = entry->id;
-        } else if (recording->mode == CompilationMode::Executable) {
+        } else if (recording->mode != CompilationMode::Module) {
             DiagnosticScope location(current_span,
                                      program.empty() ? SourceSpan{} : program.front()->span);
             log_error("Executable requires an entry point main() -> i32");
@@ -1001,8 +1001,11 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         }
         auto subscript = check_expression(index->index.get(), CoreType::U64);
         auto core = subscript ? resolve_core_type(subscript->to_string()) : std::nullopt;
-        if (core && core_type_info(*core).is_integer)
+        if (core && core_type_info(*core).is_integer) {
+            if (array)
+                require_indexed_storage(index->left.get());
             return array ? array->element : slice->element;
+        }
         if (subscript)
             log_error("Array or slice index must be an integer");
         return nullptr;

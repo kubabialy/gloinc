@@ -1,8 +1,8 @@
 # Borrowed slices and vectors
 
-Slices and vectors first shipped in 0.0.4. The vector slice views, reserved
-storage, collection methods, and `@slices` helpers below are additions in the
-current development tree.
+Slices and vectors first shipped in 0.0.4. Gloin 0.1.0 includes the vector slice
+views, reserved storage, collection methods, and `@slices` helpers below.
+Subsequent compiler fixes are identified explicitly.
 Build `gloinc` and run the
 [slice](../examples/slices.gloin), [inline vector](../examples/fixed_vector.gloin),
 and [arena vector](../examples/vector.gloin) examples.
@@ -47,6 +47,27 @@ weakened to `[const T]`. Making the **slice binding** immutable only prevents
 replacing its descriptor; it does not remove write access to its elements.
 `[const T]` removes that access. The compiler checks these capabilities when
 assigning through an index.
+
+Weakening applies to the outer slice only. A `[const [i32]]` view prevents
+replacing its row descriptors, while each loaded `[i32]` row still permits
+writes to its own elements. You can explicitly restrict a loaded row:
+
+```gloin
+def main() -> i32 {
+    def mut values: [i32; 2] = {20, 22};
+    def rows: [[i32]; 1]     = {values[..]};
+    def view: [const [i32]]  = rows[..];
+    def row: [const i32]     = view[0];
+
+    return row[0] + row[1];
+}
+```
+
+The `row` descriptor still borrows `values`; it does not copy or freeze the
+buffer. Nested element types do not convert implicitly: `[[i32]]` cannot become
+`[[const i32]]`. The direct row load above is fixed after 0.1.0
+([PERF-009](compiler-validation.md)); published 0.1.0 needs an intermediate
+`[i32]` binding before assigning to `[const i32]`.
 
 Slice storage follows the existing manual pointer lifetime rules. Do not keep
 a slice after its array goes out of scope or after its arena is reset or freed.

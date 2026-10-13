@@ -110,6 +110,65 @@ TEST_F(NumericLibraryTest, AllFifteenNamedConversionsExecuteWithTheirDeclaredTyp
         return 0;)")}),
                0);
 }
+TEST_F(NumericLibraryTest, ExactWideningUsesGIRAndPreservesStatusAcrossExecutionModes) {
+    const auto file = source(R"(
+        import "@std";
+        import "@status";
+        def main() -> i32 {
+            // Parsing keeps inputs dynamic even when LLVM inlines the wrapper.
+            def inputs: [string; 6] = {"-2147483648", "-42", "-1", "0", "1", "2147483647"};
+            def expected: [i64; 6] = {-2147483648, -42, -1, 0, 1, 2147483647};
+            for def mut i: u64 = 0; i < 6; i = i + 1 {
+                def parsed: std.IntResult = std.parse_i32(inputs[i]);
+                if parsed.status != status.OK { return 1; }
+                def wide: std.I64Result = std.i64_from_i32(parsed.value);
+                if wide.status != status.OK || wide.value != expected[i] { return 2; }
+                def narrow: std.IntResult = std.i32_from_i64(wide.value);
+                if narrow.status != status.OK || narrow.value != parsed.value { return 3; }
+            }
+            def overflow: std.IntResult = std.i32_from_i64(2147483648);
+            if overflow.status != status.OVERFLOW || overflow.value != 0 { return 4; }
+            if std.f64_from_i64_exact(9007199254740993).status != status.INEXACT { return 5; }
+            if std.f64_from_i64_rounded(9007199254740993).value != 9007199254740992.0 { return 6; }
+            return 0;
+        }
+    )");
+    auto high = invoke({"--emit-ir", file});
+    ASSERT_EQ(high.status, 0) << high.err;
+    EXPECT_NE(high.out.find("gloin.exact_int_widen"), std::string::npos);
+    EXPECT_EQ(high.out.find("gloin_std_i64_from_i32"), std::string::npos);
+    auto low = invoke({"--emit-llvm", file});
+    ASSERT_EQ(low.status, 0) << low.err;
+    EXPECT_NE(low.out.find("llvm.sext"), std::string::npos);
+    EXPECT_EQ(low.out.find("gloin_std_i64_from_i32"), std::string::npos);
+    EXPECT_NE(low.out.find("gloin_std_i32_from_i64"), std::string::npos);
+    EXPECT_NE(low.out.find("gloin_std_f64_from_i64"), std::string::npos);
+    expect_run(invoke({"--jit", file}), 0);
+    for (const std::string mode : {"-O0", "-O2"}) {
+        SCOPED_TRACE(mode);
+        const auto executable = directory + "/widen" + mode;
+        auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 0);
+    }
+}
+
+TEST_F(NumericLibraryTest, ExactWideningHonorsPrimitiveIdentityAndForwardedOutput) {
+    source(R"(def pub convert(value: i32, output: &i64) -> i32 {
+        return __std_i64_from_i32(value, output);
+    })", "std.gloin");
+    const auto file = source(R"(import "@std";
+        def i64_from_i32(value: i32) -> i64 { return 99; }
+        def gloin_std_i64_from_i32() -> i32 { return 42; }
+        def main() -> i32 {
+            def mut output: i64 = 77;
+            if std.convert(-2147483648, &output) != 0 || output != -2147483648 { return 1; }
+            if i64_from_i32(1) != 99 { return 2; }
+            return gloin_std_i64_from_i32();
+        })");
+    expect_run(invoke({"--stdlib-dir", directory, file}), 42);
+}
+
 TEST_F(NumericLibraryTest, ConversionFailuresAndExplicitRoundingChoices) {
     expect_run(invoke({program(R"(
         if std.i32_from_i64(2147483648).status != status.OVERFLOW || std.u64_from_i64(-1).status != status.OVERFLOW || std.i64_from_u64(18446744073709551615).status != status.OVERFLOW { return 1; }
@@ -174,6 +233,9 @@ TEST_F(NumericLibraryTest, NamedConversionsDoNotEnableImplicitCastsAndSignatures
 TEST_F(NumericLibraryTest, PrivateNumericPrimitivesValidateReferencesAndModuleIdentity) {
     const auto file = source("import \"@std\"; def main() -> i32 { std.probe(); return 0; }");
     for (std::string body : {"def mut v: f32 = 0.0; __std_parse_f64(\"1\",&v);",
+                             "def v: i64 = 0; __std_i64_from_i32(1,&v);",
+                             "def mut v: i32 = 0; __std_i64_from_i32(1,&v);",
+                             "__std_i64_from_i32(1,null);",
                              "def v: f64 = 0.0; __std_parse_f64(\"1\",&v);",
                              "def mut v: bool = false; __std_parse_bool(\"true\",&v);",
                              "def mut v: i64 = 0; __std_i64_from_f64(1.0,&v);",

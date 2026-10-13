@@ -41,6 +41,33 @@ std::shared_ptr<Type> Sema::check_typed_expression(const Expression *expression,
     return actual;
 }
 
+void Sema::require_indexed_storage(const Expression *expression) {
+    if (!recording)
+        return;
+    // The expression is already checked. Plan storage without rechecking its
+    // effects or treating a read as a source-level borrow. Immutable bindings
+    // need one slot at initialization, not a fresh aggregate copy at every read.
+    if (const auto *identifier = dynamic_cast<const Identifier *>(expression)) {
+        auto binding = recording->bindings.find(identifier);
+        if (binding == recording->bindings.end())
+            return;
+        const auto &symbol = recording->symbols.at(binding->second);
+        if (symbol.kind == SymbolKind::Variable || symbol.kind == SymbolKind::Parameter)
+            recording->address_taken.insert(symbol.id);
+    } else if (const auto *index = dynamic_cast<const IndexExpression *>(expression)) {
+        // Slice elements already have storage in their borrowed buffer.
+        if (recording->types.at(index->left.get()).is_array())
+            require_indexed_storage(index->left.get());
+    } else if (const auto *member = dynamic_cast<const MemberAccessExpression *>(expression)) {
+        // Only ordinary by-value struct fields extend the path to a binding.
+        // Pointer members already have storage; result payloads and constants
+        // remain values, and returned temporaries retain expression-local stores.
+        if (recording->field_indices.contains(member) &&
+            !recording->indirect_members.contains(member))
+            require_indexed_storage(member->left.get());
+    }
+}
+
 Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
     auto type = check_expression(expression);
     if (!type || dynamic_cast<FunctionType *>(type.get()))

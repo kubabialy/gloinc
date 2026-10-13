@@ -130,9 +130,11 @@ add_library(gloin_backend STATIC
     src/codegen_arena.cpp
     src/codegen_memory.cpp
     src/compiler.cpp
+    src/compilation_timings.cpp
     src/module_loader.cpp
     src/target_layout.cpp
     src/lowering.cpp
+    src/gir_range_proofs.cpp
     src/dialect/GloinDialect.cpp
     src/jit_runner.cpp
     src/native_output.cpp
@@ -339,8 +341,16 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         set(GLOIN_COMPILER_TEST_TIMEOUT 30)
     endif()
     set(GLOIN_SIGNATURE_MATRIX_TEST "ContextLibraryTest.PublicSignaturesAndCanonicalPrimitivePrivacyAreChecked")
-    gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}"
+    set(GLOIN_ARITHMETIC_MATRIX_TEST "CliTest.NativeCheckedIntegerBoundariesAtEveryWidthAndOptimizationLevel")
+    gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}:${GLOIN_ARITHMETIC_MATRIX_TEST}"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
+    # This matrix launches 584 native programs, including intentional signals.
+    # With Linux signal handling this took 219 seconds on the validation VM;
+    # a busy macOS host also exceeded the ordinary 30-second test timeout. Keep
+    # each launch's 10-second deadline and allow the aggregate matrix to finish.
+    set(GLOIN_ARITHMETIC_MATRIX_TIMEOUT 360)
+    gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_ARITHMETIC_MATRIX_TEST}"
+        PROPERTIES TIMEOUT ${GLOIN_ARITHMETIC_MATRIX_TIMEOUT})
     # This matrix launches 143 compiler processes. Instrumented startup alone
     # took 120 seconds locally; keep headroom for the four-worker sanitizer gate.
     set(GLOIN_SIGNATURE_MATRIX_TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})

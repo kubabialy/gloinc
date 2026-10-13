@@ -236,6 +236,24 @@ TEST(OperatorsTest, SignedMinimumNegationAndDivisionOverflowTrap) {
     }
 }
 
+TEST(OperatorsTest, IntegerSimplificationPreservesOperandTraps) {
+    for (const auto &info : core_types) {
+        if (!info.is_integer) continue;
+        const std::string type(info.name);
+        for (const std::string expression : {"(value + 1) * 0", "0 * (value + 1)",
+                                              "(value + 1) % 1"})
+            traps("def calculate(value: " + type + ") -> " + type + " { return " + expression +
+                  "; } def main() -> i32 { calculate(" + integer_max(info) + "); return 42; }");
+        // Statically known failures must also survive the GIR folding pass.
+        traps("def main() -> i32 { def value: " + type + " = " + integer_max(info) +
+              "; (value + 1) * 0; return 42; }");
+        traps("def main() -> i32 { def value: " + type + " = 0; 0 / value; return 42; }");
+        if (info.is_signed)
+            traps("def main() -> i32 { def value: " + type + " = " + integer_min(info) +
+                  "; value % -1; return 42; }");
+    }
+}
+
 TEST(OperatorsTest, ZeroDivisorsTrapForEveryNumericType) {
     for (const auto &info : core_types) {
         if (info.id == CoreType::Void || info.id == CoreType::Bool || info.id == CoreType::String)

@@ -1,4 +1,5 @@
 #include "jit_runner.h"
+#include "compilation_timings.h"
 #include "arena_lowering.h"
 #include "arena_runtime.h"
 #include "memory_runtime.h"
@@ -156,16 +157,18 @@ std::string add_entry_adapter(mlir::ModuleOp module, mlir::LLVM::LLVMFuncOp main
 }
 } // namespace
 
-ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::string> &arguments, const GloinClockSource *clock) {
+ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::string> &arguments,
+                              const GloinClockSource *clock, CompilationTimings *timings) {
     auto diagnostics = std::make_shared<Diagnostics>();
     auto failure = [&]() -> ExecutionResult {
         return {std::nullopt, diagnostics, diagnostics->all().back().stage};
     };
     auto lowered = lower_to_llvm(module ? mlir::OwningOpRef<mlir::ModuleOp>(module.clone())
                                         : mlir::OwningOpRef<mlir::ModuleOp>{},
-                                 *diagnostics);
+                                 *diagnostics, {}, timings, CompilationMode::Executable);
     if (!lowered)
         return failure();
+    CompilationTimings::Stage preparation(timings, "jit_preparation");
     auto main = validate_entry(*lowered, *diagnostics);
     if (!main)
         return failure();
@@ -352,11 +355,18 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::str
     }
     int32_t value = 0;
     void *entry_arguments[] = {&value};
-    if (auto error = (*engine)->invokePacked(entry, entry_arguments)) {
+    // Resolve the packed entry before calling it so lazy object emission and
+    // linking are compilation work; program execution never enters its timer.
+    auto packed_entry = (*engine)->lookupPacked(entry);
+    if (!packed_entry) {
         execution_error(*diagnostics, main.getLoc(),
-                        "Cannot invoke JIT entry: " + llvm::toString(std::move(error)));
+                        "Cannot invoke JIT entry: " + llvm::toString(packed_entry.takeError()));
         return failure();
     }
+    preparation.stop();
+    if (timings)
+        timings->finish(true);
+    (*packed_entry)(entry_arguments);
     if (diagnostics->has_errors())
         return failure();
     if (llvm::outs().has_error()) {

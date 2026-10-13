@@ -5,6 +5,11 @@ SPEC-018 lowering pipeline. The caller retains its module and MLIR context;
 the JIT lowers an owned clone and releases the clone and execution engine before
 returning. Both high-level and already-lowered compiler output are accepted.
 
+For checked GIR, the unreleased runner removes source functions unreachable from
+`main` on that owned clone before lowering. The original module is preserved.
+Arbitrary unmarked MLIR and already-lowered input retain their functions and
+existing ABI validation. See [the reachability contract](lowering.md#executable-reachability-unreleased-perf-004).
+
 ```cpp
 auto compiled = compile_source(text, filename, context, CompilationMode::Executable);
 if (!compiled.success()) {
@@ -48,11 +53,18 @@ Native target/assembly-printer registration runs once. Builtin and LLVM dialect
 translation interfaces are registered in the caller's context. The translated
 LLVM module passes LLVM verification before native code generation. The existing shared LLVM/MLIR linkage remains unchanged.
 
-A compiler-generated adapter calls `main`; MLIR's `invokePacked` interface writes
-its result into an actual `int32_t` slot. There is no unchecked cast of a native
+A compiler-generated adapter calls `main`; the typed packed entry returned by
+MLIR's `lookupPacked` writes its result into an actual `int32_t` slot. There is no unchecked cast of a native
 function address. Both adapter and future packed-wrapper names are checked for
 collisions. User functions such as `_mlir_main` remain valid, and imported IR
 cannot hijack invocation by defining the adapter's preferred name.
+
+The working compiler can collect [compilation timings](compilation-timings.md).
+It resolves the packed entry before freezing the collector, so lazy compilation
+is included and program execution is excluded. The CLI emits that frozen report
+after the program returns; application exit status is separate from compilation
+success. Released 0.1.0 invokes the same packed ABI through `invokePacked` and
+has no timing option.
 
 Runs use fresh engines. Tests repeat the same borrowed module and use test-only
 LLVM globals to prove no engine state survives into the next run. Separate

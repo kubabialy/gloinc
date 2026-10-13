@@ -94,7 +94,9 @@ gloin::StructDefinitionOp struct_definition(mlir::Operation *operation,
   return module.lookupSymbol<gloin::StructDefinitionOp>(nominal.getName());
 }
 
-bool can_weaken_source_value(mlir::Type actual, mlir::Type requested) {
+} // namespace
+
+bool gloin::canWeakenSourceValue(mlir::Type actual, mlir::Type requested) {
   if (actual == requested)
     return true;
   auto from = mlir::dyn_cast<gloin::GloinPointerType>(actual);
@@ -108,7 +110,6 @@ bool can_weaken_source_value(mlir::Type actual, mlir::Type requested) {
   return from_slice && to_slice && from_slice.getElement() == to_slice.getElement() &&
          (!from_slice.getReadOnly() || to_slice.getReadOnly());
 }
-} // namespace
 
 bool gloin::matchesSourceStorage(mlir::Type source, mlir::Type storage) {
   return matches_storage(source, storage);
@@ -132,7 +133,7 @@ mlir::LogicalResult FromLayoutOp::verify() {
   if (!matches_storage(getSourceValue().getType(), getValue().getType()))
     return emitOpError("requires a source result matching the input layout");
   if (auto bridge = getValue().getDefiningOp<gloin::ToLayoutOp>();
-      bridge && !can_weaken_source_value(bridge.getSourceValue().getType(),
+      bridge && !canWeakenSourceValue(bridge.getSourceValue().getType(),
                                          getSourceValue().getType()))
     return emitOpError("cannot retype a known source value through its layout: ")
            << bridge.getSourceValue().getType() << " as " << getSourceValue().getType();
@@ -285,6 +286,19 @@ mlir::LogicalResult EnumCompareOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult ExactIntegerWidenOp::verify() {
+  auto input = mlir::dyn_cast<mlir::IntegerType>(getInput().getType());
+  auto output = mlir::dyn_cast<mlir::IntegerType>(getResult().getType());
+  auto supported = [](mlir::IntegerType type) {
+    return type && type.isSignless() &&
+           (type.getWidth() == 8 || type.getWidth() == 16 ||
+            type.getWidth() == 32 || type.getWidth() == 64);
+  };
+  if (!supported(input) || !supported(output) || input.getWidth() >= output.getWidth())
+    return emitOpError("requires supported signless integer types and a strictly wider result");
+  return mlir::success();
+}
+
 mlir::LogicalResult CheckedIntegerBinaryOp::verify() {
   auto type = mlir::dyn_cast<mlir::IntegerType>(getLhs().getType());
   if (!type || type != getRhs().getType() || type != getResult().getType() ||
@@ -360,6 +374,27 @@ mlir::LogicalResult RepeatArrayOp::verify() {
       getElement().getType() != (typed ? source.getElement() : array.getElementType()))
     return emitOpError("requires one matching element and a fixed-array result");
   return mlir::success();
+}
+
+mlir::LogicalResult ArrayFillOp::verify() {
+  auto pointer = mlir::dyn_cast<gloin::GloinPointerType>(getAddress().getType());
+  bool typed = pointer && pointer.getPointee() == getSourceType() &&
+               !pointer.getNullable() && !pointer.getReadOnly() &&
+               getElement().getType() == getElementSourceType();
+  bool layout = mlir::isa<mlir::LLVM::LLVMPointerType>(getAddress().getType()) &&
+                getElement().getType() == getElementType();
+  if ((!typed && !layout) || !matches_storage(getSourceType(), getLayoutType()) ||
+      !matches_storage(getElementSourceType(), getElementType()))
+    return emitOpError("requires writable array storage and a matching captured element");
+  auto source = getSourceType();
+  auto storage = getLayoutType();
+  while (auto array = mlir::dyn_cast<gloin::GloinArrayType>(source)) {
+    source = array.getElement();
+    storage = mlir::cast<mlir::LLVM::LLVMArrayType>(storage).getElementType();
+    if (source == getElementSourceType() && storage == getElementType())
+      return mlir::success();
+  }
+  return emitOpError("requires an exact element type at a nested array boundary");
 }
 
 mlir::LogicalResult StructLiteralOp::verify() {
@@ -682,7 +717,7 @@ mlir::LogicalResult FieldAddressOp::verify() {
     auto expected =
         mlir::cast<mlir::TypeAttr>(definition.getFieldSourceTypes()[getIndex()])
             .getValue();
-    if (!can_weaken_source_value(expected, getFieldSourceType()))
+    if (!canWeakenSourceValue(expected, getFieldSourceType()))
       return emitOpError("disagrees with its nominal struct definition: field ")
              << getIndex() << " of " << getSourceType() << " is " << expected
              << ", but the address uses " << getFieldSourceType();
@@ -705,7 +740,7 @@ mlir::LogicalResult ExtractFieldOp::verify() {
   if (typed) {
     auto definition = struct_definition(getOperation(), getSourceType());
     if (!definition || getLayoutType() != definition.getLayoutType() ||
-        !can_weaken_source_value(
+        !canWeakenSourceValue(
             mlir::cast<mlir::TypeAttr>(definition.getFieldSourceTypes()[getIndex()])
                 .getValue(),
             getFieldSourceType()))

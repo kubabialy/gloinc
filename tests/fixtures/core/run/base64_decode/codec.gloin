@@ -1,0 +1,79 @@
+// Scalar benchmark codec. Source, destination and table must not overlap.
+// The table contains 0..63 for alphabet bytes and 255 for invalid bytes.
+// Like the original benchmark, unused bits in the padded tail are accepted.
+// Errors can leave a decoded prefix in output; they never write past output.
+def pub decode(source: [const u8], output: [u8], table: [const u8]) -> result<u64> {
+    def four: u64    = 4;
+    def zero: u64    = 0;
+    def three: u64   = 3;
+    def entries: u64 = 256;
+
+    if source.len % four != zero { return error("invalid base64 length"); }
+    if table.len < entries { return error("short base64 table"); }
+    if source.len == zero { return zero; }
+
+    def mut input: [const u8] = source;
+    def mut destination: [u8] = output;
+
+    // Leave the last group for padding handling. Each iteration validates its
+    // complete source/destination group before the individual accesses.
+    while input.len > four {
+        if destination.len < three { return error("short base64 output"); }
+
+        def a: u8 = table[input[0]];
+        def b: u8 = table[input[1]];
+        def c: u8 = table[input[2]];
+        def d: u8 = table[input[3]];
+
+        if a >= 64 { return error("invalid base64 character"); }
+        if b >= 64 { return error("invalid base64 character"); }
+        if c >= 64 { return error("invalid base64 character"); }
+        if d >= 64 { return error("invalid base64 character"); }
+
+        destination[0] = a * 4 + b / 16;
+        destination[1] = (b % 16) * 16 + c / 4;
+        destination[2] = (c % 4) * 64 + d;
+        input       = input[4..];
+        destination = destination[3..];
+    }
+
+    // The explicit length guard is also useful independently of the loop's
+    // modulo invariant, which the initial GIR proof pass does not infer.
+    if input.len != four { return error("invalid base64 tail"); }
+
+    def a: u8      = table[input[0]];
+    def b: u8      = table[input[1]];
+    def third: u8  = input[2];
+    def fourth: u8 = input[3];
+
+    if a >= 64 { return error("invalid base64 character"); }
+    if b >= 64 { return error("invalid base64 character"); }
+
+    def mut count: u64 = 3;
+    if fourth == 61 { count = 2; }
+    if third == 61 {
+        if fourth != 61 { return error("invalid base64 padding"); }
+
+        count = 1;
+    }
+
+    if destination.len < count { return error("short base64 output"); }
+
+    destination[0] = a * 4 + b / 16;
+
+    if count > 1 {
+        def c: u8 = table[third];
+        if c >= 64 { return error("invalid base64 character"); }
+
+        destination[1] = (b % 16) * 16 + c / 4;
+
+        if count > 2 {
+            def d: u8 = table[fourth];
+            if d >= 64 { return error("invalid base64 character"); }
+
+            destination[2] = (c % 4) * 64 + d;
+        }
+    }
+
+    return output.len - destination.len + count;
+}

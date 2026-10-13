@@ -4,12 +4,11 @@ The 0.1.0 release provides nonblocking IPv4 TCP, a verified nonblocking TLS
 client, bounded multi-socket readiness waits, and a Gloin HTTP/HTTPS client
 with streaming fixed-length, chunked, and clean-EOF response decoding,
 backpressure, cancellation, and per-exchange deadlines. The
-`gloin_examples/http_server` example remains sequential; the sibling
-`http_stream/server.gloin` demonstrates concurrent, bounded HTTP fixture
-connections. A reusable HTTP server library and a full real-time client remain
-unimplemented. [Server-side TLS and explicit graceful shutdown](server-tls.md)
-are now available, and the TLS driver runs in Gloin. Migrating the two HTTP/HTTPS
-test drivers remains part of the [0.1.0 tooling gate](tooling-roadmap.md).
+[HTTP acceptance peer](../tests/http/README.md) exercises concurrent, bounded
+HTTP/HTTPS connections. A reusable HTTP server library and a full real-time
+client remain unimplemented.
+[Server-side TLS and explicit graceful shutdown](server-tls.md) are available;
+the TLS and HTTP/HTTPS acceptance drivers are written in Gloin.
 Slack is one demanding
 integration example for the general APIs below. The steps are capability gates,
 not claims that these features already work.

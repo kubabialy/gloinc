@@ -9,8 +9,9 @@ response values: the application decides what they mean.
 `http_client.Exchange` advances one nonblocking exchange at a time. Drive many
 exchanges through `net.wait_many`, supply upload chunks, and consume download
 chunks from reusable buffers. `http_client.request` is the synchronous,
-whole-response convenience wrapper over that same state machine. A separate
-Gloin server demonstrates concurrent readiness handling in the sibling example.
+whole-response convenience wrapper over that same state machine. The
+[Gloin acceptance peer](../tests/http/README.md) exercises concurrent readiness
+handling over HTTP and HTTPS.
 
 ## Sending a request
 
@@ -161,13 +162,20 @@ Application-specific duplicate-field handling remains the caller's decision.
 
 ## Streaming exchanges
 
-The complete [32-connection example](../examples/http_stream.gloin) shows the
-scheduler and incremental binary-body validation. It is also available with a
-standalone Gloin HTTP server in the sibling `gloin_examples/http_stream`
-directory. Run `gloinc --jit server.gloin` there, then `gloinc --jit main.gloin`
-in another terminal. Both programs use `net.wait_many`. The example server
-serves batches of 32 connections and bounded fixed/chunked responses; it has no
-server-side TLS. The independent HTTPS test peers remain in the compiler tests.
+The [32-connection example](../examples/http_stream.gloin) shows scheduling and
+incremental binary-body validation. It expects a fixture service that sends
+131,076-byte repetitions of `Gloin\0` from `/fixed` and `/chunked`, and stalls
+`/stall` until the client cancels it. The repository's
+[HTTP acceptance runner](../tests/http/README.md) starts that service on an
+available loopback port and executes the example in JIT, native `-O0` and `-O2`
+over HTTP and HTTPS:
+
+```sh
+cmake --build build --target gloin_http_tests
+ctest --test-dir build -R '^HttpStreamSmoke\.' --output-on-failure
+```
+
+Both the peer and client use `net.wait_many` with bounded reusable buffers.
 There is no implicit event loop, thread, task, callback, or background cleanup.
 All fallible operations use built-in `result<T>`.
 

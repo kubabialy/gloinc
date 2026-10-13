@@ -15,13 +15,16 @@ struct CompilationResult {
 };
 
 enum class CompilationOutput { HighLevel, LLVM };
+class CompilationTimings;
 
 // Stops after the first failed stage. Both output forms are verified; LLVM uses
 // the shared lowering pipeline. JitRunner and the CLI consume this shared pipeline.
-// Module mode permits helper-only source. Use Executable before running main.
+// Module mode permits helper-only source. Executable lowering prunes unreachable
+// checked functions; Object retains them and still requires a main entry point.
 CompilationResult compile_source(std::string text, std::string filename, mlir::MLIRContext &context,
                                  CompilationMode mode = CompilationMode::Module,
                                  CompilationOutput output = CompilationOutput::HighLevel,
-                                 std::string standard_library_directory = {});
+                                 std::string standard_library_directory = {},
+                                 CompilationTimings *timings = nullptr);
 
 #endif

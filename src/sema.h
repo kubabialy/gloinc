@@ -392,6 +392,7 @@ class Sema {
     std::shared_ptr<PointerType> expected_pointer;
     std::shared_ptr<ArrayType> expected_array;
     Place check_place(const Expression *expression, bool take_address = false);
+    void require_indexed_storage(const Expression *expression);
     std::shared_ptr<Type> check_pointer_unary(const PrefixExpression *expression);
     std::shared_ptr<Type> check_indirect_assignment(const AssignmentExpression *assignment);
     std::shared_ptr<Type> check_typed_expression(const Expression *expression,

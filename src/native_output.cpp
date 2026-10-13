@@ -1,8 +1,10 @@
 #include "native_output.h"
+#include "compilation_timings.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/Analysis/InlineAdvisor.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -18,6 +20,29 @@
 #include <unistd.h>
 
 namespace {
+// Avoid creating huge straight-line dependency chains by repeatedly inlining
+// into an already large caller. LLVM's ordinary profitability model still
+// decides below the budget; mandatory inlining is handled by InlineAdvisor.
+class BoundedInlineAdvisor : public llvm::InlineAdvisor {
+    llvm::DefaultInlineAdvisor fallback;
+    std::unique_ptr<llvm::InlineAdvice> getAdviceImpl(llvm::CallBase &call) override {
+        if (call.getCaller()->getInstructionCount() >= 2048)
+            return std::make_unique<llvm::InlineAdvice>(this, call, getCallerORE(call), false);
+        return fallback.getAdvice(call);
+    }
+public:
+    BoundedInlineAdvisor(llvm::Module &module, llvm::FunctionAnalysisManager &functions,
+                         llvm::InlineParams parameters, llvm::InlineContext context)
+        : InlineAdvisor(module, functions, context),
+          fallback(module, functions, parameters, context) {}
+};
+
+llvm::InlineAdvisor *bounded_inliner(llvm::Module &module,
+                                    llvm::FunctionAnalysisManager &functions,
+                                    llvm::InlineParams parameters, llvm::InlineContext context) {
+    return new BoundedInlineAdvisor(module, functions, parameters, context);
+}
+
 void error(Diagnostics &diagnostics, const std::string &message) {
     diagnostics.error(DiagnosticStage::Execution, {}, message);
 }
@@ -78,12 +103,13 @@ bool temporary(const std::string &output, llvm::SmallString<256> &path, Diagnost
 
 bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput kind,
                  NativeOptimization optimization, const std::string &compiler_path,
-                 Diagnostics &diagnostics) {
+                 Diagnostics &diagnostics, CompilationTimings *timings) {
 #if !((defined(__APPLE__) && defined(__aarch64__)) || \
       (defined(__linux__) && (defined(__aarch64__) || defined(__x86_64__))))
     error(diagnostics, "Native output requires Apple Silicon macOS or 64-bit Linux");
     return false;
 #else
+    CompilationTimings::Stage target_setup(timings, "native_target_setup");
     if (llvm::InitializeNativeTarget() || llvm::InitializeNativeTargetAsmPrinter()) {
         error(diagnostics, "Cannot initialize native target");
         return false;
@@ -106,6 +132,8 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
         error(diagnostics, llvm::toString(machine.takeError()));
         return false;
     }
+    target_setup.stop();
+    CompilationTimings::Stage translation(timings, "llvm_translation");
     auto &mlir_context = *module.getContext();
     mlir::registerBuiltinDialectTranslation(mlir_context);
     mlir::registerLLVMDialectTranslation(mlir_context);
@@ -125,12 +153,17 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
         error(diagnostics, "Invalid native LLVM IR: " + verification);
         return false;
     }
+    translation.stop();
+    if (timings)
+        timings->snapshot("llvm_ir", *translated);
     if (optimization == NativeOptimization::O2) {
+        CompilationTimings::Stage optimization_time(timings, "llvm_optimization");
         llvm::LoopAnalysisManager loops;
         llvm::FunctionAnalysisManager functions;
         llvm::CGSCCAnalysisManager call_graphs;
         llvm::ModuleAnalysisManager modules;
         llvm::PassBuilder pass_builder(machine->get());
+        modules.registerPass([] { return llvm::PluginInlineAdvisorAnalysis(bounded_inliner); });
         pass_builder.registerModuleAnalyses(modules);
         pass_builder.registerCGSCCAnalyses(call_graphs);
         pass_builder.registerFunctionAnalyses(functions);
@@ -145,6 +178,9 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
             return false;
         }
     }
+    if (timings)
+        timings->snapshot("optimized_llvm_ir", *translated);
+    CompilationTimings::Stage emission(timings, "object_emission");
     llvm::SmallString<256> object_path;
     const std::string object_output = kind == NativeOutput::Object ? output : output + ".o";
     if (!temporary(object_output, object_path, diagnostics))
@@ -176,6 +212,8 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
         }
         return true;
     }
+    emission.stop();
+    CompilationTimings::Stage linking(timings, "linking");
     llvm::SmallString<256> executable_path;
     if (!temporary(output, executable_path, diagnostics))
         return false;

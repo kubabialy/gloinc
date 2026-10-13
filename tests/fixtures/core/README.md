@@ -16,6 +16,9 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 
 | Contract | Source fixtures |
 | --- | --- |
+| Base64 decoding: exact/short buffers, malformed alphabet/padding, binary values, JIT and native `-O0`/`-O2` | [program](run/base64_decode/main.gloin), [scalar codec](run/base64_decode/codec.gloin) |
+| Repeated array initialization: captured values, nested/empty arrays, copies and aliases, JIT and native `-O0`/`-O2` | [repeated arrays](run/repeated_arrays.gloin) |
+| Result payload and row-slice capability weakening across generic modules; alias identity in JIT and native `-O0`/`-O2` | [program](run/capability_conversions/main.gloin), [generic helpers](run/capability_conversions/helpers.gloin) |
 | Complete normative examples and forward calls | [minimal](run/minimal.gloin), [forward_call](run/forward_call.gloin), [control_flow](run/control_flow.gloin) |
 | Decimal, hex, binary, and leading-zero decimal values | [bases](run/bases.gloin) |
 | Signed integer widths, boundary literals, calls, arithmetic/comparison operators, negation, truncating division, signed remainder | [i8](run/scalar_i8.gloin), [i16](run/scalar_i16.gloin), [i32](run/scalar_i32.gloin), [i64](run/scalar_i64.gloin) |

@@ -1,6 +1,8 @@
 #include "codegen.h"
 #include "compiler.h"
 #include "jit_runner.h"
+#include "compilation_timings.h"
+#include "llvm/Support/JSON.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -84,6 +86,54 @@ TEST(JitRunnerTest, SmokeTest) {
     auto result = JitRunner::run(module.get());
     ASSERT_TRUE(result.success());
     EXPECT_EQ(*result.value, 42);
+}
+
+TEST(JitRunnerTest, CompilationTimingsFreezeBeforeProgramExecution) {
+    CompilationTimings timings;
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        import "@time";
+        import "@status";
+        def main() -> i32 {
+            def now: time.InstantResult = time.monotonic_now();
+            if now.status != status.OK { return 1; }
+            return 42;
+        }
+    )", "timed.gloin", context, CompilationMode::Executable,
+        CompilationOutput::HighLevel, {}, &timings);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+
+    struct State {
+        CompilationTimings &timings;
+        std::string report;
+        unsigned calls = 0;
+    } state{timings, {}};
+    const GloinClockSource clock{
+        [](void *data, uint64_t *nanoseconds, int32_t *os_error) -> int32_t {
+            auto &state = *static_cast<State *>(data);
+            ++state.calls;
+            // This callback runs from inside the Gloin program. The report
+            // must already be final, without a sleep or a timing threshold.
+            llvm::raw_string_ostream out(state.report);
+            state.timings.print(out, "jit", "none", "test", "test");
+            *nanoseconds = 42;
+            *os_error = 0;
+            return 0;
+        }, &state};
+    expect_value(JitRunner::run(*compiled.module, {}, &clock, &timings), 42);
+    ASSERT_EQ(state.calls, 1u);
+    auto parsed = llvm::json::parse(llvm::StringRef(state.report).drop_front(
+        llvm::StringRef("gloinc-timings: ").size()));
+    ASSERT_TRUE(static_cast<bool>(parsed)) << llvm::toString(parsed.takeError());
+    auto *report = parsed->getAsObject();
+    ASSERT_NE(report, nullptr);
+    EXPECT_EQ(report->getBoolean("compilation_succeeded"), true);
+    EXPECT_GT(report->getInteger("total_ns").value_or(0), 0);
+    std::string after;
+    llvm::raw_string_ostream out(after);
+    timings.finish(false);
+    timings.print(out, "jit", "none", "test", "test");
+    EXPECT_EQ(after, state.report);
 }
 
 TEST(JitRunnerTest, ExecutesCallsBranchesAndLoops) {

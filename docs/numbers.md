@@ -142,6 +142,12 @@ floating. The rounding environment is the core runtime's default nearest/ties-ev
 | `std.f32_from_f64_exact(1.25)` | `F32Result` | `OK/1.25`; precision loss gives `INEXACT`, with range rules below |
 | `std.f32_from_f64_rounded(1.25)` | `F32Result` | `OK/1.25`; nearest/ties-even, with range rules below |
 
+Unreleased compiler change (PERF-008): `std.i64_from_i32` now lowers through an
+exact GloinIR widening operation to a sign extension, with no conversion runtime
+call. Its status remains `OK` for every i32 input, including `-2147483648`; its
+concrete `I64Result` API is unchanged. The other conversions keep their existing
+checks. See [the lowering contract](lowering.md#exact-integer-widening-unreleased-perf-008).
+
 Result type names in the table are in `std`. For float-to-integer conversion, range
 checking uses the truncated candidate before testing fractional loss. For example,
 `u64_from_f64_trunc(-0.5)` succeeds with zero, `u64_from_f64_exact(-0.5)` gives

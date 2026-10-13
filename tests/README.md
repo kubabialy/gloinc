@@ -181,9 +181,9 @@ hosted matrix. It preserves initial timeouts, the macOS exiting-process cleanup
 race, the early-413 peer correction and laptop sleep interruptions. All checks
 still run; the macOS workflow has a 60-minute overall budget.
 
-Earlier networking validation also checked the sibling streaming example's
-Gloin client and concurrent Gloin server in JIT and `-O2` on macOS and Ubuntu
-ARM64, including repeated batches, rejected requests and `gloinfmt`.
+The [HTTP acceptance runner](http/README.md) verifies the streaming example
+against a concurrent Gloin peer in JIT, native `-O0` and `-O2`, over HTTP and
+HTTPS. It checks response bytes, rejected requests and connection cleanup.
 
 ## Development features after 0.0.4
 

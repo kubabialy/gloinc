@@ -1,7 +1,7 @@
 # Results and errors (development tree)
 
-`result<T>` and `error` are built-in lowercase types. They are newer than the
-0.0.4 release and its versioned HTML guide. Use a result when a function can
+`result<T>` and `error` are built-in lowercase types available in 0.1.0.
+Use a result when a function can
 return either a value or an error. `result<void>` reports success without a value.
 `result<error>` is invalid.
 Both words are reserved in this development compiler. Source written for 0.0.4
@@ -71,6 +71,44 @@ accessed. The inactive storage is zeroed and has no language-level value. The
 compiler rejects unproven member access before lowering. Lowered extraction
 also checks the tag and traps if malformed hand-built IR tries to read the
 inactive variant.
+
+## Pointer and slice payload conversions
+
+After proving success, a payload can use the ordinary outer capability
+conversions: `&T` can become `*T`, either can become read-only, and `[T]` can
+become `[const T]`. For example:
+
+```gloin
+def borrow(value: &i32) -> result<&i32> {
+    return value;
+}
+
+def main() -> i32 {
+    def mut value: i32        = 42;
+    def outcome: result<&i32> = borrow(&value);
+
+    if outcome.erroneous { return 1; }
+
+    def pointer: *const i32 = outcome.value;
+
+    return *pointer;
+}
+```
+
+The pointer still refers to `value`; converting a slice likewise preserves its
+buffer and length. Conversions do not extend lifetimes, add ownership or make
+the backing storage immutable through other writable aliases. They cannot
+restore write access, make a nullable pointer non-null, change nested pointee or
+element types, or bypass the result's success check. The result itself retains
+its original payload type; this is a conversion of the extracted value.
+
+Direct payload conversions are fixed in the working compiler after 0.1.0
+([PERF-009](compiler-validation.md)). Published 0.1.0 requires an intermediate
+binding of the exact payload type for the affected cases, followed by a separate
+conversion. The [acceptance example](../tests/fixtures/core/run/capability_conversions/main.gloin)
+covers both spellings, generic modules and slice payloads.
+
+## Standard library results
 
 Existing standard library functions that return `ReadResult`, `FsResult`, or
 other status structs keep their documented API for now. Those types are

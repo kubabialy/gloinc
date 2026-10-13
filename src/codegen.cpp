@@ -550,17 +550,7 @@ mlir::Value CodeGen::gen_expression(const Expression *expr, bool allow_void) {
         auto layout = checked_type(expr);
         auto source_type_value = source_type(checked_data->types.at(expr));
         if (value && value.getType() != layout && value.getType() != source_type_value) {
-            auto from = mlir::dyn_cast<gloin::GloinPointerType>(value.getType());
-            auto to = mlir::dyn_cast<gloin::GloinPointerType>(source_type_value);
-            bool weaken = from && to && from.getPointee() == to.getPointee() &&
-                          (!from.getNullable() || to.getNullable()) &&
-                          (!from.getReadOnly() || to.getReadOnly());
-            auto from_slice = mlir::dyn_cast<gloin::GloinSliceType>(value.getType());
-            auto to_slice = mlir::dyn_cast<gloin::GloinSliceType>(source_type_value);
-            weaken |= from_slice && to_slice &&
-                      from_slice.getElement() == to_slice.getElement() &&
-                      (!from_slice.getReadOnly() || to_slice.getReadOnly());
-            if (weaken)
+            if (gloin::canWeakenSourceValue(value.getType(), source_type_value))
                 value = builder.create<gloin::ToLayoutOp>(location(), layout, value);
         }
         if ((value && value.getType() != layout && value.getType() != source_type_value) ||
@@ -731,10 +721,14 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                 if (name == "erroneous")
                     return builder.create<gloin::ResultIsErrorOp>(location(),
                                                                    builder.getI1Type(), outcome);
-                if (name == "value")
+                if (name == "value") {
+                    // Extract the declared payload before the expression boundary
+                    // applies any contextual pointer/slice capability weakening.
+                    const auto &payload = *base->second.result_value;
                     return builder.create<gloin::ResultValueOp>(
-                        location(), source_type(checked_data->types.at(expr)), outcome,
-                        mlir::TypeAttr::get(checked_type(expr)));
+                        location(), source_type(payload), outcome,
+                        mlir::TypeAttr::get(lower_type(payload)));
+                }
                 if (name == "error")
                     return builder.create<gloin::ResultErrorOp>(
                         location(), source_type(checked_data->types.at(expr)), outcome,
@@ -1766,16 +1760,11 @@ mlir::Value CodeGen::load_value(mlir::Type type, mlir::Value address,
                     bridge.getSourceValue().getType())) {
                 auto stored = address_type.getPointee();
                 if (stored != pointee) {
-                    auto actual = mlir::dyn_cast<gloin::GloinPointerType>(stored);
-                    auto expected = mlir::dyn_cast<gloin::GloinPointerType>(pointee);
-                    if (!actual || !expected ||
-                        actual.getPointee() != expected.getPointee() ||
-                        (actual.getNullable() && !expected.getNullable()) ||
-                        (actual.getReadOnly() && !expected.getReadOnly()))
+                    if (!gloin::canWeakenSourceValue(stored, pointee))
                         fail("Checked load cannot change the stored value's source type");
-                    // A pointer value may lose its outer write or non-null
-                    // capability when read in a context expecting a weaker one.
-                    // Keep the storage operation typed as the actual slot.
+                    // Keep the load typed as the actual slot. The expression
+                    // boundary weakens the loaded pointer/slice value through
+                    // a verified GIR bridge, without retyping its storage.
                     pointee = stored;
                 }
             }

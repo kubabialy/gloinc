@@ -1,5 +1,6 @@
 // Thirty-two simultaneous downloads. /stall is cancelled once the other 31
-// finish. Start ../gloin_examples/http_stream/server.gloin first.
+// finish. Run against the repository's HTTP acceptance peer; tests/http/README.md
+// documents the runner, which starts the peer and supplies its loopback port.
 import "@arena";
 import "@http";
 import "@http_client";

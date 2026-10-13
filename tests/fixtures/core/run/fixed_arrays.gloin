@@ -3,6 +3,10 @@ def struct Cell {
     def mut value: i32,
 }
 
+def struct Table {
+    def rows: [[i32; 2]; 2],
+}
+
 def copy(values: [i32; 2]) -> [i32; 2] {
     return values;
 }
@@ -31,6 +35,23 @@ def increment(value: &i32) -> void {
     *value = *value + 1;
 }
 
+// A by-value parameter must retain its own snapshot when an alias changes the caller.
+def copied_before_mutation(values: [i32; 2], original: &[i32; 2]) -> i32 {
+    (*original)[0] = 99;
+
+    return values[0] + values[1];
+}
+
+def read_table(table: Table) -> i32 {
+    return table.rows[0][0] + table.rows[1][1];
+}
+
+def fresh_values(calls: &i32) -> [i32; 2] {
+    *calls = *calls + 1;
+
+    return {*calls, *calls + 1};
+}
+
 def main() -> i32 {
     def original: [i32; 2]    = {1, 2};
     def view: &const [i32; 2] = &original;
@@ -55,6 +76,36 @@ def main() -> i32 {
         || cells[0].value + cells[1].value != 42
         || addressed[0] != 2 {
         return 1;
+    }
+
+    def mut source: [i32; 2] = {20, 22};
+    def snapshot: [i32; 2]   = source;
+    def parameter_sum: i32   = copied_before_mutation(source, &source);
+
+    if parameter_sum != 42 || snapshot[0] != 20 || source[0] != 99 {
+        return 2;
+    }
+
+    def table: Table = Table {rows: {{20, 1}, {2, 22}}};
+
+    if table.rows[0][0] + table.rows[1][1] != 42 || read_table(table) != 42 {
+        return 3;
+    }
+
+    // The same declaration executes afresh on every loop iteration.
+    def mut total: i32 = 0;
+
+    for def mut i: i32 = 0; i < 3; i = i + 1 {
+        def values: [i32; 2] = {i, i + 1};
+        total = total + values[0] + values[1];
+    }
+
+    // Returned temporaries are still evaluated once per expression, in source order.
+    def mut fresh_calls: i32 = 0;
+    def fresh_sum: i32       = fresh_values(&fresh_calls)[0] + fresh_values(&fresh_calls)[1];
+
+    if total != 9 || fresh_sum != 4 || fresh_calls != 2 {
+        return 4;
     }
 
     return changed[0] + changed[1];

@@ -74,6 +74,18 @@ def AssertOp : Gloin_Op<"assert"> {
     let arguments = (ins I1:$condition);
 }
 
+def ExactIntegerWidenOp : Gloin_Op<"exact_int_widen", [Pure]> {
+    let summary = "Widen an integer exactly with explicit source signedness";
+    let description = [{
+      Extend a supported integer to a strictly wider supported integer. Signed
+      sources use sign extension; unsigned sources use zero extension. This
+      cannot fail and does not introduce implicit source-language conversions.
+    }];
+    let arguments = (ins AnyType:$input, BoolAttr:$is_signed);
+    let results = (outs AnyType:$result);
+    let hasVerifier = 1;
+}
+
 def CheckedIntegerBinaryOp : Gloin_Op<"checked_int_binary"> {
     let summary = "Integer arithmetic with Gloin overflow and division checks";
     let arguments = (ins AnyType:$lhs, AnyType:$rhs, StrAttr:$kind,
@@ -112,11 +124,25 @@ def ArrayLiteralOp : Gloin_Op<"array_literal", [Pure]> {
     let hasVerifier = 1;
 }
 
-def RepeatArrayOp : Gloin_Op<"repeat_array"> {
+def RepeatArrayOp : Gloin_Op<"repeat_array", [Pure]> {
     let summary = "Construct a fixed array by repeating one checked value";
     let arguments = (ins AnyType:$element, TypeAttr:$source_type,
                      TypeAttr:$layout_type);
     let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def ArrayFillOp : Gloin_Op<"array_fill"> {
+    let summary = "Fill writable fixed-array storage with one captured element value";
+    let description = [{
+      Repeat the captured element across one or more complete nested array
+      dimensions. The element's source type identifies the stopping depth.
+      This writes existing storage; it neither evaluates the initializer nor
+      changes array value-copy semantics. Zero-length dimensions write nothing.
+    }];
+    let arguments = (ins AnyType:$address, AnyType:$element,
+                     TypeAttr:$source_type, TypeAttr:$layout_type,
+                     TypeAttr:$element_source_type, TypeAttr:$element_type);
     let hasVerifier = 1;
 }
 

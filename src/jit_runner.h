@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+class CompilationTimings;
 
 struct ExecutionResult {
     std::optional<int32_t> value;
@@ -27,7 +28,8 @@ class JitRunner {
     // selects the OS clock; invocation scopes restore the prior host provider.
     static ExecutionResult run(mlir::ModuleOp module,
                                const std::vector<std::string> &arguments = {},
-                               const GloinClockSource *clock = nullptr);
+                               const GloinClockSource *clock = nullptr,
+                               CompilationTimings *timings = nullptr);
 };
 
 #endif // JIT_RUNNER_H

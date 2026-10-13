@@ -92,3 +92,29 @@ the declared length and can be a decimal literal or a bound compile-time size
 parameter. This supports arbitrary copyable `T`, including types without a
 zero value. See the [slice/vector guide](slices-vectors.md) for
 borrowed views and both vector forms.
+
+The initializer is evaluated once even when `N` is zero. For example,
+`{next_value(); 0}` still calls `next_value`, and an arithmetic trap
+during evaluation is not suppressed by the empty result. Nested repetition
+such as `{{next_value(); 8}; 16}` evaluates the call once, producing 16 equal
+rows. Declaring such an array inside a loop evaluates its initializer again
+on each executed iteration. Elements are copies of the captured value;
+pointer/reference elements copy the address and keep referring to the same
+object.
+
+### Compilation cost after 0.1.0
+
+The working compiler stores repeated initializers through a verified GIR
+`array_fill` operation. Byte arrays and uniform nested byte repeats use a bulk
+fill directly into their destination. Other element types use typed stores;
+for example, repeating the `i32` value `16909060` does not repeat its low byte.
+This removes the temporary whole-array copy that made large repeated byte
+initializers very expensive to compile in 0.1.0. `zeroed` keeps its existing
+initialization path, including the empty string's null pointer/zero length.
+
+These changes do not alter array storage, copying or initialization rules.
+Passing and returning large arrays by value, repeating an existing large
+array value, or placing an array in another constructed aggregate can still
+carry aggregate ABI/copying costs. See the
+[GIR implementation notes](lowering.md) and
+[PERF-003 measurements](compiler-validation.md) for the exact measured scope.

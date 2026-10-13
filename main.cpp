@@ -1,10 +1,12 @@
 #include "compiler.h"
+#include "compilation_timings.h"
 #include "jit_runner.h"
 #include "native_output.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/ScopeExit.h"
 #include <iostream>
 #include <optional>
 #include <string>
@@ -15,7 +17,7 @@ enum class Mode { Run, Check, EmitIR, EmitLLVM, EmitObject, EmitExecutable };
 constexpr std::string_view usage =
     "Usage: gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | "
     "--emit-exe] "
-    "[-O0 | -O2] [-o PATH] [--stdlib-dir DIR] [--] FILE [-- ARG...]\n"
+    "[-O0 | -O2] [-o PATH] [--stdlib-dir DIR] [--time-compilation] [--] FILE [-- ARG...]\n"
     "       gloinc --help\n"
     "       gloinc --version\n";
 
@@ -48,11 +50,12 @@ int main(int argc, char *argv[]) {
                    "  --check      Compile and verify without execution; main is optional.\n"
                    "  --emit-ir    Print verified high-level MLIR without execution.\n"
                    "  --emit-llvm  Print verified LLVM-dialect MLIR without execution.\n"
-                   "  --emit-object  Write a native macOS arm64 object file.\n"
-                   "  --emit-exe     Link a standalone macOS arm64 executable (default).\n"
+                   "  --emit-object  Write a native object file.\n"
+                   "  --emit-exe     Link a standalone native executable (default).\n"
                    "  -O0, -O2      Native optimization level (default: -O0).\n"
                    "  -o PATH        Set native output path (default: a.out for executables).\n"
                    "  --stdlib-dir DIR  Load standard module files from DIR.\n"
+                   "  --time-compilation  Report compiler stage timings and IR counts as JSON on stderr.\n"
                    "  --           Before FILE: end compiler options; after FILE: forward program "
                    "arguments.\n"
                    "  -h, --help   Show this help.\n"
@@ -80,6 +83,7 @@ int main(int argc, char *argv[]) {
     std::optional<std::string> output_path;
     NativeOptimization optimization = NativeOptimization::O0;
     bool has_optimization = false;
+    bool time_compilation = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view argument = argv[i];
         if (filename && argument == "--") {
@@ -93,6 +97,12 @@ int main(int argc, char *argv[]) {
             continue;
         }
         if (options && argument.starts_with('-')) {
+            if (argument == "--time-compilation") {
+                if (time_compilation)
+                    return usage_error("--time-compilation may appear only once");
+                time_compilation = true;
+                continue;
+            }
             if (argument == "--stdlib-dir") {
                 if (library_directory || i + 1 == argc || std::string_view(argv[i + 1]).empty())
                     return usage_error(
@@ -159,6 +169,21 @@ int main(int argc, char *argv[]) {
         return usage_error("program arguments require run mode");
     program_arguments.insert(program_arguments.begin(), *filename);
 
+    std::optional<CompilationTimings> timing_storage;
+    if (time_compilation)
+        timing_storage.emplace();
+    auto *timings = timing_storage ? &*timing_storage : nullptr;
+    const auto report_timings = llvm::make_scope_exit([&] {
+        if (!timings)
+            return;
+        timings->finish(false);
+        const char *modes[] = {"jit", "check", "gir", "llvm_dialect", "object", "executable"};
+        timings->print(llvm::errs(), modes[static_cast<unsigned>(mode)],
+                       native ? (optimization == NativeOptimization::O2 ? "O2" : "O0")
+                              : "none",
+                       GLOIN_VERSION, GLOIN_LLVM_VERSION);
+    });
+    CompilationTimings::Stage reading(timings, "input_setup");
     llvm::sys::fs::file_status status;
     if (const auto error = llvm::sys::fs::status(*filename, status)) {
         std::cerr << "gloinc: error: cannot read '" << *filename << "': " << error.message()
@@ -187,34 +212,46 @@ int main(int argc, char *argv[]) {
         library_directory = directory.str().str();
     }
     mlir::MLIRContext context;
+    reading.stop();
     auto compiled = compile_source(
         (*buffer)->getBuffer().str(), *filename, context,
+        mode == Mode::EmitObject ? CompilationMode::Object :
         mode == Mode::Run || native ? CompilationMode::Executable : CompilationMode::Module,
         mode == Mode::EmitLLVM || native ? CompilationOutput::LLVM : CompilationOutput::HighLevel,
-        *library_directory);
+        *library_directory, timings);
     if (!compiled.success()) {
         compiled.diagnostics->render(std::cerr);
         return 1;
     }
-    if (mode == Mode::Check)
+    if (mode == Mode::Check) {
+        if (timings)
+            timings->finish(true);
         return 0;
+    }
     if (mode == Mode::EmitIR || mode == Mode::EmitLLVM) {
+        CompilationTimings::Stage printing(timings, "ir_output");
         compiled.module->print(llvm::outs(), mlir::OpPrintingFlags().enableDebugInfo());
         llvm::outs() << '\n';
-        return finish_output();
+        const auto result = finish_output();
+        printing.stop();
+        if (timings)
+            timings->finish(result == 0);
+        return result;
     }
     if (native) {
         auto executable =
             llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main));
         if (!emit_native(*compiled.module, *output_path,
                          mode == Mode::EmitObject ? NativeOutput::Object : NativeOutput::Executable,
-                         optimization, executable, *compiled.diagnostics)) {
+                         optimization, executable, *compiled.diagnostics, timings)) {
             compiled.diagnostics->render(std::cerr);
             return 1;
         }
+        if (timings)
+            timings->finish(true);
         return 0;
     }
-    auto executed = JitRunner::run(*compiled.module, program_arguments);
+    auto executed = JitRunner::run(*compiled.module, program_arguments, nullptr, timings);
     if (!executed.success()) {
         executed.diagnostics->render(std::cerr);
         return 1;

@@ -1,137 +1,131 @@
-# Gloin 0.2.0 draft
+# Gloin 0.2.0 development record
 
-Status: scope discussion after the 0.1.0 release. Switch and match are the
-priority; their syntax and semantics await design decisions. The remaining
-items below are candidates, not an agreed release commitment. The compiler
-version and latest published documentation remain 0.1.0 while this is a draft.
+0.2.0 covers switch and match, migration of the remaining standard-library
+error returns to built-in `result<T>`, and compiler fixes found while checking
+larger and more complex programs. The release is in development. The published
+compiler and versioned language guide remain at 0.1.0.
 
 The [0.1.0 release notes](release-notes-0.1.0.md) and
-[validation record](next-release-draft.md) describe the starting point.
+[validation record](next-release-draft.md) describe the released baseline.
 
-## Priority: switch and match
+## Scope and status
 
-The current compiler reserves both keywords but rejects both constructs in
-the supported compilation path. Enums currently have named variants without
-payloads; pattern matching and exhaustiveness checking are unimplemented.
+| Area | Status |
+| --- | --- |
+| Compiler correctness and performance fixes | PERF-001–009 implemented and verified in the development tree; measurements and limits are in the [compiler validation record](compiler-validation.md). |
+| `switch` and `match` | In scope. Syntax and semantic rules are not yet agreed; the checked compiler still rejects both constructs. |
+| Standard-library `result<T>` migration | In scope. Remaining public status/value error wrappers, including `fs.FsResult`, are to be replaced. API signatures and preservation of error details need to be specified. |
+| Endianness, packed structs and bit fields | Outside 0.2.0. |
+| Threads and language-level async/spawn | Outside 0.2.0. Existing nonblocking I/O and explicit readiness polling remain available. |
+
+macOS and Linux remain the supported platforms. Windows support is not planned.
+
+## Switch and match
+
+Both keywords are reserved. Enums currently contain named variants without
+payloads; pattern matching and exhaustiveness checking are not implemented.
 See [enums](enums.md) and [the parser contract](parser.md).
 
-Design the two constructs together before implementing either. A useful
-division to evaluate is value dispatch for `switch` and pattern-based
-inspection for `match`. This is a proposal for their roles, not a syntax
-decision. No historical syntax example establishes the final contract.
+The language design still needs to define:
 
-### Decisions to settle
+- Statement and expression forms, arm syntax and supported subject types.
+- Literal, enum and result patterns; grouped cases, ranges and guards.
+- Exhaustiveness, defaults, duplicate/overlapping cases and unreachable arms.
+- Fallthrough, arm scopes, return paths and definite initialization.
+- Payload bindings, copying/borrowing and mutation of the matched value.
+- Whether `break`, `continue` or enum payloads belong to this implementation.
 
-| Area | Design questions |
+The subject must be evaluated once. Result matching must preserve the existing
+success/error distinction: a value is accessible only on a proven success path,
+and mutation cannot leave an obsolete proof valid. `result<void>` also needs a
+matching rule. These requirements do not establish syntax for either construct.
+
+The agreed rules belong in the
+[language specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec).
+Implementation includes semantic diagnostics, verified GloinIR operations and
+lowering, formatter support, runnable examples and language documentation.
+
+## Standard-library result migration
+
+The library currently mixes built-in `result<T>` with older structs carrying
+`status`, `value`, `os_error` or progress fields. The latter can be read without
+the compiler proving that the operation succeeded. 0.2.0 replaces public
+fallible status/value returns with the language's checked result mechanism.
+
+The migration covers the remaining wrappers in these modules:
+
+| Module | Current examples |
 | --- | --- |
-| Role and syntax | What does each construct add? Are they statements, expressions, or both? How are arms and their bodies written? |
-| Accepted inputs | Which integer, boolean, enum and string values can be switched on? Which patterns can be matched? Are ranges, grouped alternatives and guards in the first milestone? |
-| Coverage | When must coverage be exhaustive? How are defaults, duplicate cases, overlapping patterns and unreachable arms handled? Do guards contribute to coverage? |
-| Control flow | Is fallthrough prohibited? How do arm-local bindings, return paths and definite initialization join after dispatch? |
-| Payloads | Can the first match milestone operate on existing payloadless enums and built-in results, or should payload enums arrive with it? |
-| Binding and mutation | Do patterns copy values or borrow them? What can be mutated, and how long do bindings and any success/error proofs remain valid? |
+| `@fs` | `FsResult`, `PathResult`, `MetadataResult`, `DirectoryResult`, `DirectoryEntryResult` |
+| `@io` | `IoResult`, `FileResult`, `ReadResult`, `ByteReadResult`, `WriteResult`, `MessageResult` |
+| `@process` | `TextResult` |
+| `@strings` | `ByteResult`, `StringResult`, `SplitCursorResult`, `BuilderResult` |
+| `@std` | Parsing, formatting, input and numeric-conversion result structs |
+| `@math` | Checked integer and floating-point result structs |
+| `@time`, `@random` | `InstantResult`, `DurationResult`, random `U64Result` |
 
-`result<T>` already requires explicit handling. If matching results is added,
-it must preserve that obligation: a success arm may expose only the success
-payload, an error arm only the error, and a proof must not survive mutation
-that invalidates it. `result<void>` needs an explicit rule too. General enum
-payloads must not silently change the established result contract.
+Operations with no success payload use `result<void>`; operations returning a
+value use `result<T>`. Records that describe successful outcomes remain ordinary
+payload types. A status field is not automatically an error: EOF, iteration end,
+would-block states and child exit status have their own meaning.
 
-`break` and `continue` are also currently rejected. Decide their scope alongside
-switch and loop interactions if they are included; they are not automatically
-part of this milestone. A switch without fallthrough need not require a
-trailing break in every arm.
+Several existing contracts need explicit treatment before changing signatures:
 
-### Implementation and acceptance
+- **Error details.** Filesystem and I/O callers can inspect native `os_error`
+  codes and library status categories. The current built-in error interface
+  exposes static messages, with no source-location or debug payload. The
+  migration must define how callers retain access to the details they need;
+  replacing everything with a generic message would lose information.
+- **Partial progress.** Reads and writes can report bytes transferred before a
+  failure. The replacement API must represent that progress without allowing
+  access to an invalid success payload.
+- **Expected end states.** EOF, missing entries and iteration completion need
+  documented outcome rules, distinct from transport or filesystem failure.
+- **Infallible operations.** Exact i32-to-i64 widening always succeeds today.
+  Its final return signature needs a decision rather than mechanically retaining
+  an always-successful wrapper.
+- **Ownership.** Existing arena, borrowed-buffer, handle-alias and cleanup rules
+  continue to apply to successful values and failure paths.
 
-- Record the approved language rules in the wiki, then implement the checked
-  parser, semantic analysis and diagnostics against those rules.
-- Evaluate the subject once. Verify arm evaluation order, single-arm execution,
-  exhaustiveness, binding scopes, result handling and definite initialization.
-- Preserve language-specific type, variant and dispatch semantics in GloinIR
-  until a dedicated lowering pass chooses the appropriate MLIR control flow.
-  Specify and test dialect invariants; do not lower directly from the AST to
-  LLVM and lose the source contract.
-- Exercise nested dispatch, return/defer behavior, boundary values, rejected
-  cases, generic use and module visibility in JIT and native `-O0`/`-O2` modes
-  on macOS and Linux. Inspect both GloinIR and lowered output.
-- Teach the accepted syntax with complete examples, formatter support and
-  diagnostics. Update suitable standard-library dispatch code after the
-  language behavior is verified.
+This changes source APIs. Each migrated function needs an old/new signature and
+behavior entry, with repository examples, tools, compiler/runtime tests and the
+development guide updated together. The versioned 0.1.0 documentation retains
+its original API descriptions. Native runtime status codes may remain internal;
+the public Gloin boundary must construct results through the checked compiler
+and GloinIR path.
 
-Payload enums can be a separate milestone if the first match design does not
-require them. Their representation, construction, active-payload access,
-copying and initialization rules need their own explicit decisions.
+No migration is implemented by this scope entry. Current signatures are listed
+in the [filesystem/process](filesystem-process.md), [I/O](io.md),
+[strings](strings.md), [numbers](numbers.md) and [result](results.md) guides.
 
-## Recommended follow-up: endianness and packed layout
+## Compiler validation, 2026-10-08–12
 
-This is the recommended next implementation area after switch/match, subject
-to choosing the final 0.2.0 scope. It addresses binary files and protocol work
-with fewer new runtime policies than a scheduler and shared-memory concurrency.
+Larger program checks exposed unnecessary fixed-array copies, stalled repeated
+array builds, excessive lowering/optimization work and valid capability
+conversions rejected by the compiler. The resulting fixes retain the language's
+arithmetic, bounds, null and result-access checks.
 
-Separate the contracts before choosing syntax:
+Completed work includes compilation-stage reporting, reuse of array storage,
+compact repeated-array fills, executable/JIT reachability, checked arithmetic
+lowering, GIR range proofs, counted slice loop versioning, exact integer widening
+and corrected source-type conversions. The
+[compiler validation record](compiler-validation.md) documents the failures,
+changes, measurements, unsuccessful attempts and remaining limits. These are
+investigations of specific programs, not general performance guarantees.
 
-1. **Byte order:** distinguish numerical values from their byte representation.
-   Decide whether explicit endian storage types are needed in addition to
-   bounded byte-buffer read/write operations. Define conversions and supported
-   widths without requiring packed structs first.
-2. **Struct layout:** distinguish removing byte padding from assigning individual
-   bit fields. Decide size, alignment, field offsets, array stride, nesting and
-   whether any foreign-function layout is guaranteed.
-3. **Bit fields:** define bit numbering independently of byte order, signed
-   extraction, writes, out-of-range values, overlapping fields and reserved bits.
-4. **Access:** define unaligned reads/writes and whether an unaligned or partial
-   field can have an ordinary typed pointer. Carry the actual alignment and
-   storage semantics through GloinIR and its lowering.
+At the end of this work the macOS core suite passed 1,028 tests. The final
+widening change also passed 83 focused Linux tests and 83 ASan/UBSan tests.
+Earlier entries record their own validation batches. This is development
+validation; it is not a completed 0.2.0 package or release audit.
 
-There are legacy packed/endian parser and IR fragments, but checked programs
-reject packed structs. Review these against the new design before reuse.
-Do not treat their presence as implemented support or an approved spelling.
+## Release validation still required
 
-Acceptance should use independent expected byte sequences, round trips in both
-byte orders, malformed/bounded input and explicit size/alignment checks on both
-supported platforms. Packed storage does not establish a performance win;
-measure representative parsing and serialization after correctness is fixed.
+The feature work needs positive and negative source cases, GIR verification,
+JIT and native `-O0`/`-O2` checks on macOS and Linux, and formatter/documentation
+coverage. Result migration also needs error-detail, end-state, partial-progress
+and cleanup tests for each affected API.
 
-## Separate design tracks: threads and async
-
-Neither is committed to 0.2.0 yet. Design them separately, with explicit
-interaction rules if both are eventually supported.
-
-| Track | Decisions required before implementation |
-| --- | --- |
-| Threads and shared memory | Launch/join ownership, argument and result transfer, stack/arena lifetimes, shared mutable aliases, synchronization, atomics and memory ordering, data-race rules, thread-local context and shutdown. |
-| Async I/O and tasks | Scheduling and progress, suspension points, task and buffer lifetimes, readiness integration, blocking calls, deadlines, cancellation, failure propagation, defer execution and task cleanup. |
-
-The existing [streaming HTTP client](http-client.md) already permits concurrent
-exchanges driven through readiness polling. Language-level async can build on
-that contract; it still needs explicit treatment of blocking operations such
-as the current hostname resolver. Async does not by itself decide whether
-tasks execute on multiple threads.
-
-Manual memory management makes both designs consequential: an arena cannot be
-freed while another thread or suspended task still uses it, and existing
-alias-aware handles do not establish thread safety. Audit the runtime and
-standard library before allowing values to cross a thread boundary. Document
-scheduling nondeterminism and use controlled synchronization and independent
-expectations in tests.
-
-The four documented unsupported async/spawn tests remain visible until the
-corresponding behavior works through the checked compiler, GloinIR, lowering
-and runtime. A release without concurrency must continue to reject it clearly.
-
-## Proposed order and release gate
-
-1. Agree the roles, syntax and semantic rules for switch and match.
-2. Implement and document their accepted scope through GloinIR.
-3. Decide whether 0.2.0 also includes endian operations and a bounded packed
-   layout milestone; do not make full async a prerequisite for this release.
-4. Develop the thread and async designs independently before committing their
-   implementation to a release.
-
-For every accepted feature, require positive and negative compiler cases,
-GloinIR verification, JIT/native behavior, formatter support, runnable examples
-and thorough documentation. Preserve macOS and Linux acceptance, package
-relocation and sanitizer checks, with accurate reporting of deferred features.
-Publish a numbered 0.2.0 guide only once its feature boundary is settled; keep
-the 0.1.0 guide and release validation record intact.
+The final release audit includes the full core suite, sanitizer checks, installed
+and relocated packages, runnable examples and documentation links. A numbered
+0.2.0 guide and release notes will describe the implemented scope. The four
+unsupported async/spawn tests remain documented exclusions from this release.

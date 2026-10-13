@@ -53,22 +53,126 @@ class CoreAcceptanceTest : public gloin_test::CliFixture {
 
 TEST_F(CoreAcceptanceTest, RunMinimal) { runs("run/minimal.gloin", "42"); }
 
+TEST_F(CoreAcceptanceTest, RunBase64DecoderWithExactBuffersAndMalformedInputs) {
+    expect_success(invoke({"--check", fixture("run/base64_decode/codec.gloin")}), "");
+    runs("run/base64_decode/main.gloin", "42");
+    const auto executable = directory + "/base64-decoder";
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(optimization);
+        expect_success(invoke_raw({optimization, "-o", executable,
+                                  fixture("run/base64_decode/main.gloin")}), "");
+        std::string message;
+        bool launch_failed = false;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt,
+                                            {}, 10, 0, &message, &launch_failed), 42) << message;
+        EXPECT_FALSE(launch_failed) << message;
+    }
+}
+
 TEST_F(CoreAcceptanceTest, RunFixedArrays) {
     runs("run/fixed_arrays.gloin", "42");
     const auto executable = directory + "/fixed-arrays";
-    expect_success(invoke_raw({"-o", executable, fixture("run/fixed_arrays.gloin")}), "");
     const auto out = directory + "/fixed-arrays.stdout";
     const auto err = directory + "/fixed-arrays.stderr";
     const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
-    std::string message;
-    bool launch_failed = false;
-    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
-                                                10, 0, &message, &launch_failed);
-    EXPECT_FALSE(launch_failed) << message;
-    EXPECT_EQ(code, 42) << message << read(err);
-    EXPECT_TRUE(read(out).empty());
-    EXPECT_TRUE(read(err).empty());
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(optimization);
+        expect_success(invoke_raw({optimization, "-o", executable,
+                                  fixture("run/fixed_arrays.gloin")}), "");
+        std::string message;
+        bool launch_failed = false;
+        const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt,
+                                                    redirects, 10, 0, &message, &launch_failed);
+        EXPECT_FALSE(launch_failed) << message;
+        EXPECT_EQ(code, 42) << message << read(err);
+        EXPECT_TRUE(read(out).empty());
+        EXPECT_TRUE(read(err).empty());
+    }
 }
+TEST_F(CoreAcceptanceTest, RunCapabilityConversionsAcrossGenericModules) {
+    expect_success(invoke({"--check", fixture("run/capability_conversions/helpers.gloin")}), "");
+    const auto file = fixture("run/capability_conversions/main.gloin");
+    runs("run/capability_conversions/main.gloin", "42");
+    const auto executable = directory + "/capability-conversions";
+    const auto out = directory + "/capability-conversions.stdout";
+    const auto err = directory + "/capability-conversions.stderr";
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(optimization);
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        std::string message;
+        bool launch_failed = false;
+        const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt,
+                                                    redirects, 10, 0, &message, &launch_failed);
+        EXPECT_FALSE(launch_failed) << message;
+        EXPECT_EQ(code, 42) << message << read(err);
+        EXPECT_TRUE(read(out).empty());
+        EXPECT_TRUE(read(err).empty());
+    }
+}
+
+TEST_F(CoreAcceptanceTest, CapabilityConversionsRejectStrengtheningAndUnprovenResults) {
+    const std::string helpers = R"(
+        def borrow(value: &i32) -> result<&i32> { return value; }
+        def readonly(value: &const i32) -> result<&const i32> { return value; }
+        def nullable(value: *i32) -> result<*i32> { return value; }
+        def nested(value: &&i32) -> result<&&i32> { return value; }
+        def view(value: [const i32]) -> result<[const i32]> { return value; }
+    )";
+    for (const auto &[body, diagnostic] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"def r: result<&i32> = borrow(&value); def p: *i32 = r.value;",
+              "Result value requires a proven non-erroneous path"},
+             {"def r: result<&i32> = borrow(&value); if r.erroneous { "
+                  "def p: *const i32 = r.value; }",
+              "Result value requires a proven non-erroneous path"},
+             {"def r: result<&const i32> = readonly(&value); if r.erroneous { return 1; } "
+                  "def p: *i32 = r.value;",
+              "Type mismatch in variable declaration"},
+             {"def r: result<*i32> = nullable(&value); if r.erroneous { return 1; } "
+                  "def p: &i32 = r.value;",
+              "Type mismatch in variable declaration"},
+             {"def r: result<[const i32]> = view(data[..]); if r.erroneous { return 1; } "
+                  "def row: [i32] = r.value;",
+              "Type mismatch in variable declaration"},
+             {"def rows: [[const i32]; 1] = {data[..]}; def row: [i32] = rows[0];",
+              "Type mismatch in variable declaration"},
+             {"def rows: [[i32]; 1] = {data[..]}; def row: [const i32] = rows[0]; row[0] = 0;",
+              "Cannot write"},
+             {"def pointers: [&i32; 1] = {&value}; def rows: [[&i32]; 1] = {pointers[..]}; "
+                  "def row: [*i32] = rows[0];",
+              "Type mismatch in variable declaration"},
+             {"def mut p: &i32 = &value; def r: result<&&i32> = nested(&p); "
+                  "if r.erroneous { return 1; } def q: &*i32 = r.value;",
+              "Type mismatch in variable declaration"}}) {
+        SCOPED_TRACE(body);
+        auto file = source(helpers + "def main() -> i32 { def mut value: i32 = 42; "
+                           "def mut data: [i32; 1] = {42}; " + body + " return 0; }");
+        expect_error(invoke({"--check", file}), 1, diagnostic);
+    }
+}
+
+TEST_F(CoreAcceptanceTest, GenericModuleCannotStrengthenResultPayloadCapabilities) {
+    source(R"(
+        def pub unsafe_pointer<T>(value: result<&const T>) -> *T {
+            if value.erroneous { return null; }
+            return value.value;
+        }
+    )", "invalid_helpers.gloin");
+    const auto file = source(R"(
+        import "./invalid_helpers";
+        def borrow(value: &const i32) -> result<&const i32> { return value; }
+        def main() -> i32 {
+            def value: i32 = 42;
+            def outcome: result<&const i32> = borrow(&value);
+            if outcome.erroneous { return 1; }
+            def pointer: *i32 = invalid_helpers.unsafe_pointer<i32>(outcome);
+            return *pointer;
+        }
+    )");
+    expect_error(invoke({"--check", file}), 1, "Return type mismatch");
+}
+
 TEST_F(CoreAcceptanceTest, RunBorrowedSlices) {
     auto file = source(R"(
         def sum(view: [const i32]) -> i32 {
@@ -370,6 +474,41 @@ TEST_F(CoreAcceptanceTest, RepeatedArrayChecksCount) {
     expect_error(invoke({"--check", invalid}), 1,
                  "Repeated-array count must equal the declared length");
 }
+
+TEST_F(CoreAcceptanceTest, RepeatedArraysPreserveCapturedValuesAndEmptyEvaluation) {
+    const auto file = fixture("run/repeated_arrays.gloin");
+    expect_success(invoke({"--check", file}), "");
+    expect_run(invoke({file}), 42);
+    const auto executable = directory + "/repeated-arrays";
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(optimization);
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        std::string message;
+        bool failed = false;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt,
+                                            {}, 10, 0, &message, &failed), 42) << message;
+        EXPECT_FALSE(failed);
+    }
+}
+
+TEST_F(CoreAcceptanceTest, EmptyRepeatsStillEvaluateTrappingInitializers) {
+    for (const std::string initializer : {"{1 / divisor; 0}", "{{1 / divisor; 2}; 0}"}) {
+        const auto type = initializer.starts_with("{{") ? "[[i32; 2]; 0]" : "[i32; 0]";
+        const auto file = source("def fail(divisor: i32) -> void { def empty: " +
+            std::string(type) + " = " + initializer + "; } "
+            "def main() -> i32 { fail(0); return 0; }");
+        EXPECT_LT(invoke({file}).status, 0);
+        for (const auto *optimization : {"-O0", "-O2"}) {
+            const auto executable = directory + "/empty-repeat-trap";
+            expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+            std::string message;
+            bool failed = false;
+            EXPECT_LT(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt,
+                                                {}, 10, 0, &message, &failed), 0);
+            EXPECT_FALSE(failed) << message;
+        }
+    }
+}
 TEST_F(CoreAcceptanceTest, InlineVectorZeroCapacity) {
     auto file = source(R"(
         import "@vector";
@@ -529,6 +668,32 @@ TEST_F(CoreAcceptanceTest, TrapFixedArrayNegative) {
 }
 TEST_F(CoreAcceptanceTest, TrapFixedArrayEmptyIndex) {
     traps("trap/fixed_array_empty_index.gloin");
+}
+
+TEST_F(CoreAcceptanceTest, FixedArrayBoundsTrapInNativeBuilds) {
+    const auto executable = directory + "/array-bounds";
+    const auto out = directory + "/array-bounds.stdout";
+    const auto err = directory + "/array-bounds.stderr";
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+    for (const auto *name : {"trap/fixed_array_bounds.gloin",
+                             "trap/fixed_array_negative.gloin",
+                             "trap/fixed_array_empty_index.gloin"}) {
+        SCOPED_TRACE(name);
+        for (const auto *optimization : {"-O0", "-O2"}) {
+            SCOPED_TRACE(optimization);
+            expect_success(invoke_raw({optimization, "-o", executable, fixture(name)}), "");
+            std::string message;
+            bool launch_failed = false;
+            const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt,
+                                                        redirects, 10, 0, &message, &launch_failed);
+            EXPECT_FALSE(launch_failed) << message;
+            EXPECT_LT(code, 0) << message;
+            EXPECT_TRUE(message.find("Trace") != std::string::npos ||
+                        message.find("Illegal instruction") != std::string::npos) << message;
+            EXPECT_TRUE(read(out).empty());
+            EXPECT_TRUE(read(err).empty());
+        }
+    }
 }
 
 TEST_F(CoreAcceptanceTest, RunArena) { runs("run/arena.gloin", "42"); }

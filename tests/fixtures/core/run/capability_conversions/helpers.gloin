@@ -1,0 +1,34 @@
+def pub borrow<T>(value: &T) -> result<&T> {
+    return value;
+}
+
+def pub borrow_slice<T>(value: [T]) -> result<[T]> {
+    return value;
+}
+
+def pub failed<T>() -> result<&T> {
+    return error("no pointer");
+}
+
+// The result still needs a success proof inside this generic module function.
+def pub pointer<T>(outcome: result<&T>) -> *const T {
+    if outcome.erroneous { return null; }
+
+    return outcome.value;
+}
+
+def pub first_row<T>(rows: [const [T]]) -> [const T] {
+    return rows[0];
+}
+
+def pub read_slot<T>(slot: &[T]) -> [const T] {
+    return *slot;
+}
+
+def pub read(pointer: *const i32) -> i32 {
+    return *pointer;
+}
+
+def pub sum(row: [const i32]) -> i32 {
+    return row[0] + row[1];
+}
