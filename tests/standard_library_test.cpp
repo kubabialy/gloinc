@@ -28,50 +28,51 @@ class StandardLibraryTest : public gloin_test::CliFixture {
 
 TEST_F(StandardLibraryTest, DocumentedPromptInputParseAndFormat) {
     auto file = program(R"(std.print("number: ");
-        def line: std.InputResult = std.input(&memory, 32);
-        if line.status != std.OK { return 1; }
-        def parsed: std.IntResult = std.to_int(line.value);
-        if parsed.status != std.OK { return 2; }
-        std.println(std.to_string(&memory, parsed.value + 1)); return 42;)");
+def line: result<std.InputLine> = std.input(&memory,32);
+if line.erroneous { return 1; } if line.value.end { return 1; }
+def parsed: result<i32> = std.to_int(line.value.value);
+if parsed.erroneous { return 2; }
+def text: result<string> = std.to_string(&memory,parsed.value+1);
+if text.erroneous { return 3; }
+std.println(text.value); return 42;
+)");
     expect_run(invoke({file}, source("41\r\n", "stdin")), 42, "number: 42\n");
     expect_success(invoke({"--check", file}, source("ignored", "stdin")), "");
 }
 TEST_F(StandardLibraryTest, IntegerParsingHandlesSignsBoundsAndLeadingZeroes) {
-    auto file = program(R"(
-        def min: std.IntResult = std.to_int("-2147483648");
-        def max: std.IntResult = std.to_int("+2147483647");
-        def zero: std.IntResult = std.to_int("-000");
-        def decimal: std.IntResult = std.to_int("00042");
-        if min.status != std.OK || min.value != -2147483648 || max.status != std.OK
-            || max.value != 2147483647 || zero.status != std.OK || zero.value != 0
-            || decimal.status != std.OK || decimal.value != 42 { return 1; }
-        return 0;)");
+    auto file =
+        program(R"(def min: result<i32> = std.to_int("-2147483648"); if min.erroneous { return 1; }
+def max: result<i32> = std.to_int("+2147483647"); if max.erroneous { return 1; }
+def zero: result<i32> = std.to_int("-000"); if zero.erroneous { return 1; }
+def decimal: result<i32> = std.to_int("00042"); if decimal.erroneous { return 1; }
+if min.value != -2147483648 || max.value != 2147483647 || zero.value != 0 || decimal.value != 42 { return 2; }
+return 0;
+)");
     expect_run(invoke({file}), 0);
 }
-TEST_F(StandardLibraryTest, InvalidAndOverflowResultsAreExplicitAndZeroValued) {
-    auto file = program(R"(
-        def empty: std.IntResult = std.to_int("");
-        def whitespace: std.IntResult = std.to_int(" 12");
-        def nul: std.IntResult = std.to_int("12\0");
-        def unicode: std.IntResult = std.to_int("１２");
-        def high: std.IntResult = std.to_int("2147483648");
-        def low: std.IntResult = std.to_int("-2147483649");
-        def junk: std.IntResult = std.to_int("999999999999999x");
-        if empty.status != std.INVALID || whitespace.status != std.INVALID
-            || nul.status != std.INVALID || unicode.status != std.INVALID
-            || high.status != std.OVERFLOW || low.status != std.OVERFLOW
-            || junk.status != std.INVALID { return 1; }
-        if empty.value != 0 || whitespace.value != 0 || nul.value != 0
-            || unicode.value != 0 || high.value != 0 || low.value != 0 || junk.value != 0 { return 2; }
-        return 0;)");
+TEST_F(StandardLibraryTest, InvalidAndOverflowResultsPreserveCodesWithoutReadablePayloads) {
+    auto file = program(
+        R"(def texts: [string;7] = {"", " 12", "12\0", "１２", "2147483648", "-2147483649", "999999999999999x"};
+def codes: [i32;7] = {std.INVALID,std.INVALID,std.INVALID,std.INVALID,std.OVERFLOW,std.OVERFLOW,std.INVALID};
+for def mut i: u64 = 0; i < 7; i = i + 1 {
+    def r: result<i32> = std.to_int(texts[i]);
+    if !r.erroneous { return 1; }
+    if r.error.code != codes[i] || r.error.os_error != 0 { return 2; }
+}
+return 0;
+)");
     expect_run(invoke({file}), 0);
 }
 TEST_F(StandardLibraryTest, FormattingIsExactAndDoesNotPrintImplicitly) {
-    auto file = program(R"(def ignored: string = std.to_string(&memory, 99);
-        std.println(std.to_string(&memory, -2147483648));
-        std.println(std.to_string(&memory, 2147483647));
-        std.println(std.to_string(&memory, 0));
-        std.println(std.to_string(&memory, -42)); return 17;)");
+    auto file = program(
+        R"(def ignored: result<string> = std.to_string(&memory,99); if ignored.erroneous { return 1; }
+def values: [i32;4] = {-2147483648,2147483647,0,-42};
+for def mut i: u64 = 0; i < 4; i = i + 1 {
+    def text: result<string> = std.to_string(&memory,values[i]);
+    if text.erroneous { return 2; } std.println(text.value);
+}
+return 17;
+)");
     expect_run(invoke({file}), 17, "-2147483648\n2147483647\n0\n-42\n");
 }
 TEST_F(StandardLibraryTest, NoImplicitNumericFormattingOrWrongArgumentTypes) {
@@ -86,82 +87,105 @@ TEST_F(StandardLibraryTest, NoImplicitNumericFormattingOrWrongArgumentTypes) {
         rejects(body);
 }
 TEST_F(StandardLibraryTest, InputHandlesCrLfEmptyLinesFinalLineAndRepeatedEof) {
-    auto file = program(R"(
-        for def mut i: i32 = 0; i < 3; i = i + 1 {
-            def line: std.InputResult = std.input(&memory, 8);
-            if line.status != std.OK { return 1; }
-            std.print("["); std.print(line.value); std.println("]");
-        }
-        for def mut i: i32 = 0; i < 2; i = i + 1 {
-            def line: std.InputResult = std.input(&memory, 8);
-            if line.status != std.END { return 2; } std.print(line.value);
-        } return 0;)");
+    auto file = program(R"(for def mut i: i32 = 0; i < 3; i = i + 1 {
+    def line: result<std.InputLine> = std.input(&memory,8);
+    if line.erroneous { return 1; } if line.value.end { return 1; }
+    std.print("["); std.print(line.value.value); std.println("]");
+}
+for def mut i: i32 = 0; i < 2; i = i + 1 {
+    def line: result<std.InputLine> = std.input(&memory,8);
+    if line.erroneous { return 2; } if !line.value.end { return 2; }
+    std.print(line.value.value);
+}
+return 0;
+)");
     expect_run(invoke({file}, source("a\r\n\nlast", "stdin")), 0, "[a]\n[]\n[last]\n");
 }
 TEST_F(StandardLibraryTest, InputPreservesCountedBytesIncludingNulAndNonUtf8) {
-    auto file = program(R"(def line: std.InputResult = std.input(&memory, 100);
-        if line.status != std.OK { return 1; } std.print(line.value); return 0;)");
+    auto file = program(R"(def line: result<std.InputLine> = std.input(&memory,100);
+if line.erroneous { return 1; } if line.value.end { return 1; }
+std.print(line.value.value); return 0;
+)");
     const std::string bytes = std::string("a\0b", 3) + " café λ " + char(0xff);
     expect_run(invoke({file}, source(bytes + "\n", "stdin")), 0, bytes);
 }
 TEST_F(StandardLibraryTest, ZeroLimitAcceptsEmptyLinesAndDrainsNonemptyLines) {
-    auto file = program(R"(
-        def a: std.InputResult = std.input(&memory, 0);
-        def b: std.InputResult = std.input(&memory, 0);
-        def c: std.InputResult = std.input(&memory, 0);
-        def d: std.InputResult = std.input(&memory, 0);
-        if a.status != std.OK || b.status != std.OK || c.status != std.TOO_LONG
-            || d.status != std.END { return 1; }
-        std.print(a.value); std.print(b.value); std.print(c.value); std.print(d.value);
-        return 0;)");
+    auto file =
+        program(R"(def a: result<std.InputLine> = std.input(&memory,0); if a.erroneous { return 1; }
+if a.value.end { return 1; } std.print(a.value.value);
+def b: result<std.InputLine> = std.input(&memory,0); if b.erroneous { return 2; }
+if b.value.end { return 2; } std.print(b.value.value);
+def c: result<std.InputLine> = std.input(&memory,0); if !c.erroneous { return 3; }
+if c.error.code != std.TOO_LONG || c.error.os_error != 0 { return 3; }
+def d: result<std.InputLine> = std.input(&memory,0); if d.erroneous { return 4; }
+if !d.value.end { return 4; } std.print(d.value.value);
+return 0;
+)");
     expect_run(invoke({file}, source("\n\r\nabc", "stdin")), 0);
 }
 TEST_F(StandardLibraryTest, OversizedLineDoesNotPoisonTheNextRead) {
-    auto file = program(R"(def first: std.InputResult = std.input(&memory, 3);
-        if first.status != std.TOO_LONG { return 1; }
-        std.print(first.value);
-        def next: std.InputResult = std.input(&memory, 3);
-        if next.status != std.OK { return 2; } std.println(next.value); return 0;)");
+    auto file = program(R"(def first: result<std.InputLine> = std.input(&memory,3);
+if !first.erroneous { return 1; }
+if first.error.code != std.TOO_LONG { return 1; }
+def next: result<std.InputLine> = std.input(&memory,3);
+if next.erroneous { return 2; } if next.value.end { return 2; }
+std.println(next.value.value); return 0;
+)");
     expect_run(invoke({file}, source(std::string(100000, 'x') + "\r\nabc\r\n", "stdin")), 0,
                "abc\n");
 }
-TEST_F(StandardLibraryTest, ImpossibleAllocationReturnsStatusWithoutConsumingInput) {
-    auto file = program(R"(def bad: std.InputResult = std.input(&memory, 18446744073709551615);
-        if bad.status != std.NO_MEMORY { return 1; } std.print(bad.value);
-        def good: std.InputResult = std.input(&memory, 3);
-        if good.status != std.OK { return 2; } std.println(good.value); return 0;)");
+TEST_F(StandardLibraryTest, ImpossibleAllocationReturnsErrorWithoutConsumingInput) {
+    auto file = program(R"(def bad: result<std.InputLine> = std.input(&memory,18446744073709551615);
+if !bad.erroneous { return 1; }
+if bad.error.code != std.NO_MEMORY { return 1; }
+def good: result<std.InputLine> = std.input(&memory,3);
+if good.erroneous { return 2; } if good.value.end { return 2; }
+std.println(good.value.value); return 0;
+)");
     expect_run(invoke({file}, source("yes\n", "stdin")), 0, "yes\n");
 }
-TEST_F(StandardLibraryTest, InputIoErrorIsRecoverableStatus) {
+TEST_F(StandardLibraryTest, InputIoErrorIsRecoverableWithoutClaimingNativeErrno) {
     const auto folder = directory + "/unreadable-stream";
     std::filesystem::create_directory(folder);
-    auto file = program(R"(def line: std.InputResult = std.input(&memory, 16);
-        if line.status != std.IO_ERROR { return 1; } std.print(line.value); return 0;)");
+    auto file = program(R"(def line: result<std.InputLine> = std.input(&memory,16);
+if !line.erroneous { return 1; }
+if line.error.code != std.IO_ERROR || line.error.os_error != 0 { return 1; }
+return 0;
+)");
     expect_run(invoke({file}, folder), 0);
 }
 TEST_F(StandardLibraryTest, StringsSurviveGrowthAndIndependentArenaReset) {
-    auto file = program(R"(def first: string = std.to_string(&memory, -2147483648);
-        def mut other: arena.GeneralArena = arena.GeneralArena.create(); defer other.free();
-        for def mut i: i32 = 0; i < 10000; i = i + 1 {
-            def text: string = std.to_string(&memory, i);
-            def parsed: std.IntResult = std.to_int(text);
-            if parsed.status != std.OK || parsed.value != i { return 1; }
-            def transient: string = std.to_string(&other, i); other.reset();
-        }
-        std.println(first);
-        memory.reset();
-        def fresh: string = std.to_string(&memory, 42); std.println(fresh); return 0;)");
+    auto file = program(R"(def first_result: result<string> = std.to_string(&memory,-2147483648);
+if first_result.erroneous { return 1; }
+def first: string = first_result.value;
+def mut other: arena.GeneralArena = arena.GeneralArena.create(); defer other.free();
+for def mut i: i32 = 0; i < 10000; i = i + 1 {
+    def text: result<string> = std.to_string(&memory,i); if text.erroneous { return 2; }
+    def parsed: result<i32> = std.to_int(text.value); if parsed.erroneous { return 3; }
+    if parsed.value != i { return 3; }
+    def transient: result<string> = std.to_string(&other,i); if transient.erroneous { return 4; }
+    other.reset();
+}
+std.println(first); memory.reset();
+def fresh: result<string> = std.to_string(&memory,42); if fresh.erroneous { return 5; }
+std.println(fresh.value); return 0;
+)");
     expect_run(invoke({file}), 0, "-2147483648\n42\n");
 }
 TEST_F(StandardLibraryTest, DeferCapturesAllocatedStringsBeforeCleanupAndFree) {
     auto file = program(R"(for def mut i: i32 = 1; i < 4; i = i + 1 {
-        defer std.println(std.to_string(&memory, i));
-    } return 42;)");
+    def text: result<string> = std.to_string(&memory,i); if text.erroneous { return 1; }
+    defer std.println(text.value);
+}
+return 42;
+)");
     expect_run(invoke({file}), 42, "3\n2\n1\n");
 }
 TEST_F(StandardLibraryTest, ClearedArenaTrapsOnFormattingInputAndByteAllocation) {
-    for (const std::string call : {"std.to_string(&memory, 42);", "std.input(&memory, 16);",
-                                   "memory.alloc_bytes(1);", "memory.try_alloc_bytes(1);"}) {
+    for (const std::string call :
+         {"def r: result<string> = std.to_string(&memory, 42); if r.erroneous { return 1; }",
+          "def r: result<std.InputLine> = std.input(&memory, 16); if r.erroneous { return 1; }",
+          "memory.alloc_bytes(1);", "memory.try_alloc_bytes(1);"}) {
         auto result = invoke({program("memory.free(); " + call + " return 0;")});
         EXPECT_EQ(result.status, -2) << result.err;
         EXPECT_TRUE(result.out.empty());
@@ -225,9 +249,13 @@ TEST_F(StandardLibraryTest, LibraryDefinitionsRemainOrdinaryReplaceableSource) {
         42);
 }
 TEST_F(StandardLibraryTest, ExternalLlvmExecutionLoadsActualStandardRuntime) {
-    auto ir = invoke({"--emit-llvm", program(R"(def text: string = std.to_string(&memory, 42);
-        def value: std.IntResult = std.to_int(text);
-        if value.status != std.OK { return 1; } return value.value;)")});
+    auto ir = invoke(
+        {"--emit-llvm",
+         program(
+             R"(def text: result<string> = std.to_string(&memory,42); if text.erroneous { return 1; }
+def value: result<i32> = std.to_int(text.value); if value.erroneous { return 1; }
+return value.value;
+)")});
     ASSERT_EQ(ir.status, 0) << ir.err;
     const char *runtime = std::getenv("GLOIN_TEST_ARENA_RUNTIME");
     gloin_test::ToolCommand runner{
@@ -265,7 +293,7 @@ TEST_F(StandardLibraryTest, PackagedExampleChecksOutputAndConversionErrors) {
     expect_run(invoke({example}, source("oops\n", "stdin")), 3,
                prompt + "conversion error: invalid signed decimal i32\n");
     expect_run(invoke({example}, source(std::string(129, '1') + "\n", "stdin")), 2,
-               prompt + "input error: 5\n");
+               prompt + "input error: input line exceeds byte limit\n");
 }
 TEST_F(StandardLibraryTest, WrongNativePrimitiveArgumentsFailBeforeCodegen) {
     for (const std::string body : {"__std_parse_i32(42);", "__std_format_i32(42, null, null);",
@@ -293,13 +321,15 @@ TEST_F(StandardLibraryTest, AllocationFailureHasDefinedInputAndFormattingPolicie
         def pub try_alloc_bytes(self: &GeneralArena, size: u64) -> *u8 { return null; }
     })",
            "arena.gloin");
-    auto file = program(R"(def outcome: std.InputResult = std.input(&memory, 10);
-        if outcome.status != std.NO_MEMORY { return 1; } std.print(outcome.value); return 0;)");
+    auto file = program(
+        R"(def outcome: result<std.InputLine> = std.input(&memory, 10); if !outcome.erroneous { return 1; } if outcome.error.code != std.NO_MEMORY { return 1; } return 0;)");
     expect_run(invoke({"--stdlib-dir", directory, file}), 0);
     expect_run(invoke({"--stdlib-dir", directory, gloin_test::standard_example}), 2,
-               "Enter decimal i32 values, one per line; EOF finishes:\ninput error: 6\n");
-    file = program("std.to_string(&memory, 42); return 0;");
-    EXPECT_EQ(invoke({"--stdlib-dir", directory, file}).status, -2);
+               "Enter decimal i32 values, one per line; EOF finishes:\ninput error: cannot "
+               "allocate input buffer\n");
+    file = program("def r: result<string> = std.to_string(&memory, 42); if !r.erroneous { return "
+                   "1; } if r.error.code != std.NO_MEMORY { return 2; } return 0;");
+    expect_run(invoke({"--stdlib-dir", directory, file}), 0);
 }
 
 TEST_F(StandardLibraryTest, NativeStringViewAllowsNullOnlyWhenEmpty) {
@@ -310,4 +340,60 @@ TEST_F(StandardLibraryTest, NativeStringViewAllowsNullOnlyWhenEmpty) {
     auto result = invoke({"--stdlib-dir", directory, file});
     EXPECT_EQ(result.status, -2);
     EXPECT_TRUE(result.out.empty());
+}
+
+TEST_F(StandardLibraryTest, ResultsRequireHandlingAndInputPayloadNeedsSuccess) {
+    for (const std::string body :
+         {"std.input(&memory,8);", "std.to_int(\"42\");", "std.to_string(&memory,42);",
+          "def r: result<std.InputLine> = std.input(&memory,8); def line: std.InputLine = r.value;",
+          "def r: result<std.InputLine> = std.input(&memory,8); if r.erroneous { "
+          "std.print(r.value.value); }",
+          "def r: result<string> = std.to_string(&memory,42); if r.erroneous { return 1; } "
+          "std.print(r.error.message);",
+          "def r: std.InputResult = std.input(&memory,8);",
+          "def r: std.IntResult = std.to_int(\"42\");"})
+        rejects(body + " return 0;");
+}
+
+TEST_F(StandardLibraryTest, InputEndAndAliasesUseGloinIRInJitAndNativeModes) {
+    const auto file = program(R"(
+        def impossible: result<std.InputLine> = std.input(&memory,18446744073709551615);
+        if !impossible.erroneous { return 1; }
+        if impossible.error.code != std.NO_MEMORY || impossible.error.os_error != 0
+            || !strings.equal(impossible.error.message,"input buffer size is not representable") { return 2; }
+        def first: result<std.InputLine> = std.input(&memory,8);
+        if first.erroneous { return 3; }
+        if first.value.end || !strings.is_empty(first.value.value) { return 4; }
+        def second: result<std.InputLine> = std.input(&memory,8);
+        if second.erroneous { return 5; }
+        if second.value.end || !strings.equal(second.value.value,"42\0") { return 6; }
+        for def mut i: i32 = 0; i < 2; i = i + 1 {
+            def ended: result<std.InputLine> = std.input(&memory,8);
+            if ended.erroneous { return 7; }
+            if !ended.value.end || !strings.is_empty(ended.value.value) { return 8; }
+        }
+        def parsed: result<i32> = std.parse_i32_checked("2147483648");
+        if !parsed.erroneous { return 9; }
+        if parsed.error.code != std.OVERFLOW || parsed.error.os_error != 0
+            || !strings.equal(parsed.error.message,"signed decimal i32 is out of range") { return 10; }
+        def text: result<string> = std.to_string(&memory,42);
+        if text.erroneous { return 11; }
+        if !strings.equal(text.value,"42") { return 12; }
+        return 42;
+    )",
+                              "import \"@strings\";");
+    const auto input = source(std::string("\n42\0", 4), "stdin");
+    const auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *operation :
+         {"gloin.result_success", "gloin.result_failure", "gloin.struct_literal"})
+        EXPECT_NE(ir.out.find(operation), std::string::npos) << operation;
+    expect_run(invoke({file}, input), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/std-input-results";
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        const std::optional<llvm::StringRef> redirects[] = {input, std::nullopt, std::nullopt};
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects, 10),
+                  42);
+    }
 }

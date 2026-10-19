@@ -113,3 +113,123 @@ void CodeGen::gen_for(const ForStatement *statement) {
     builder.setInsertionPointToStart(exit_block);
     leave_scope();
 }
+
+mlir::ArrayAttr CodeGen::case_keys(const std::vector<const CasePattern *> &patterns) {
+    llvm::SmallVector<mlir::Attribute> keys;
+    for (auto *pattern : patterns) {
+        if (pattern->kind == CaseKind::Default) {
+            keys.push_back(builder.getUnitAttr());
+            continue;
+        }
+        const auto &value = checked_data->case_values.at(pattern);
+        if (auto *text = std::get_if<std::string>(&value.value))
+            keys.push_back(builder.getStringAttr(*text));
+        else if (auto *flag = std::get_if<bool>(&value.value))
+            keys.push_back(builder.getBoolAttr(*flag));
+        else {
+            const auto &integer = std::get<llvm::APInt>(value.value);
+            keys.push_back(
+                builder.getIntegerAttr(builder.getIntegerType(integer.getBitWidth()), integer));
+        }
+    }
+    return builder.getArrayAttr(keys);
+}
+
+void CodeGen::gen_switch(const SwitchStatement *statement) {
+    if (!checked_data)
+        fail("switch requires checked semantic analysis");
+    auto subject = gen_expression(statement->subject.get());
+    auto *region = builder.getBlock()->getParent();
+    llvm::SmallVector<mlir::Block *> blocks;
+    std::vector<const CasePattern *> patterns;
+    for (const auto &arm : statement->arms) {
+        patterns.push_back(&arm.pattern);
+        auto *block = new mlir::Block();
+        region->push_back(block);
+        blocks.push_back(block);
+    }
+    auto *merge = new mlir::Block();
+    auto *fallback = new mlir::Block();
+    region->push_back(fallback);
+    region->push_back(merge);
+    blocks.push_back(fallback);
+    mlir::OperationState state(location(), gloin::SwitchOp::getOperationName());
+    state.addOperands(subject);
+    state.addAttribute("keys", case_keys(patterns));
+    state.addAttribute("source_type", mlir::TypeAttr::get(subject.getType()));
+    state.addAttribute("domain_size",
+                       builder.getI64IntegerAttr(checked_data->selection_domains.at(statement)));
+    state.addSuccessors(blocks);
+    builder.create(state);
+    bool reaches = false;
+    for (size_t i = 0; i < statement->arms.size(); ++i) {
+        builder.setInsertionPointToStart(blocks[i]);
+        gen_statement(statement->arms[i].body.get());
+        reaches |= branch_if_open(merge);
+    }
+    builder.setInsertionPointToStart(fallback);
+    if (checked_data->exhaustive_selections.contains(statement)) {
+        builder.create<mlir::LLVM::Trap>(location());
+        builder.create<mlir::LLVM::UnreachableOp>(location());
+    } else
+        reaches |= branch_if_open(merge);
+    if (reaches)
+        builder.setInsertionPointToStart(merge);
+    else {
+        merge->erase();
+        builder.clearInsertionPoint();
+    }
+}
+
+mlir::Value CodeGen::gen_match(const MatchExpression *expression) {
+    if (!checked_data)
+        fail("match requires checked semantic analysis");
+    auto subject = gen_expression(expression->subject.get());
+    auto output = checked_data->types.at(expression);
+    std::vector<const CasePattern *> patterns;
+    for (const auto &arm : expression->arms)
+        patterns.push_back(&arm.pattern);
+    mlir::OperationState state(location(), gloin::MatchOp::getOperationName());
+    state.addOperands(subject);
+    state.addTypes(source_type(output));
+    state.addAttribute("keys", case_keys(patterns));
+    state.addAttribute("source_type", mlir::TypeAttr::get(subject.getType()));
+    state.addAttribute("domain_size",
+                       builder.getI64IntegerAttr(checked_data->selection_domains.at(expression)));
+    state.addAttribute("value_type", mlir::TypeAttr::get(source_type(output)));
+    state.addAttribute("layout_type", mlir::TypeAttr::get(lower_type(output)));
+    for (size_t i = 0; i < expression->arms.size(); ++i)
+        state.addRegion();
+    auto matching = mlir::cast<gloin::MatchOp>(builder.create(state));
+    auto after = builder.saveInsertionPoint();
+    for (size_t i = 0; i < expression->arms.size(); ++i) {
+        const auto &arm = expression->arms[i];
+        auto &region = matching->getRegion(i);
+        region.push_back(new mlir::Block());
+        builder.setInsertionPointToStart(&region.front());
+        enter_scope();
+        if (arm.pattern.binding) {
+            auto id = checked_binding(arm.pattern.binding.get());
+            const auto &type = checked_data->symbols.at(id).type;
+            mlir::Value payload;
+            if (arm.pattern.kind == CaseKind::Success)
+                payload = builder.create<gloin::ResultValueOp>(
+                    location(), source_type(type), subject, mlir::TypeAttr::get(lower_type(type)));
+            else
+                payload = builder.create<gloin::ResultErrorOp>(
+                    location(), source_type(type), subject, mlir::TypeAttr::get(lower_type(type)));
+            auto layout = builder.create<gloin::ToLayoutOp>(location(), lower_type(type), payload);
+            if (checked_data->address_taken.contains(id)) {
+                auto storage = create_entry_alloca(lower_type(type), type);
+                store_value(layout, storage, type);
+                declare_binding(arm.pattern.binding.get(), storage, true, lower_type(type), "");
+            } else
+                declare_binding(arm.pattern.binding.get(), payload, false, lower_type(type), "");
+        }
+        auto value = gen_expression(arm.value.get());
+        builder.create<gloin::MatchYieldOp>(location(), value);
+        leave_scope();
+    }
+    builder.restoreInsertionPoint(after);
+    return matching.getValue();
+}

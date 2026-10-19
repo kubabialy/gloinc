@@ -37,11 +37,11 @@ def failed(code: i32, line: u64) -> ConfigResult {
 // Required keys: label (1..128 non-NUL bytes), seed (u64), samples (1..1,000,000).
 // Unknown/duplicate keys, extra '=', NUL, malformed numbers and missing keys are errors.
 def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
-    def opened: io.FileResult = io.File.open_read(owner, path);
-    if opened.status != status.OK { return failed(opened.status, 0); }
+    def opened: result<io.File> = io.File.open_read(owner, path);
+    if opened.erroneous { return failed(opened.error.code, 0); }
 
     def mut file: io.File = opened.value;
-    defer file.close();
+    defer close_file(&file);
 
     def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
     defer scratch.free();
@@ -57,31 +57,32 @@ def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
 
     while reading {
         scratch.reset();
-        def line: io.ReadResult = file.read_line(&scratch, 1024);
+        def mut line: io.ReadState    = io.ReadState.empty();
+        def line_result: result<void> = file.read_line(&scratch, 1024, &line);
 
-        if line.status == status.END {
+        if line_result.erroneous { return failed(line_result.error.code, line_number + 1); }
+
+        if line.end {
             reading = false;
         } else {
             if line_number == 1000000 { return failed(status.TOO_LONG, line_number + 1); }
 
             line_number = line_number + 1;
 
-            if line.status != status.OK { return failed(line.status, line_number); }
-
             def text: string = strings.trim_ascii(line.value);
             if strings.contains(text, "\0") { return failed(status.INVALID, line_number); }
 
             if !strings.is_empty(text) && !strings.starts_with(text, "#") {
-                def split: strings.SplitCursorResult = strings.SplitCursor.create(text, "=");
-                if split.status != status.OK { return failed(split.status, line_number); }
+                def split: result<strings.SplitCursor> = strings.SplitCursor.create(text, "=");
+                if split.erroneous { return failed(split.error.code, line_number); }
 
-                def mut fields: strings.SplitCursor  = split.value;
-                def key_part: strings.StringResult   = fields.next();
-                def value_part: strings.StringResult = fields.next();
+                def mut fields: strings.SplitCursor = split.value;
+                def key_part: strings.TextItem      = fields.next();
+                def value_part: strings.TextItem    = fields.next();
 
-                if key_part.status != status.OK
-                    || value_part.status != status.OK
-                    || fields.next().status != status.END {
+                if key_part.end
+                    || value_part.end
+                    || !fields.next().end {
                     return failed(status.INVALID, line_number);
                 }
 
@@ -93,15 +94,16 @@ def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
                         return failed(status.INVALID, line_number);
                     }
 
-                    def saved: strings.StringResult = strings.copy(owner, value);
-                    if saved.status != status.OK { return failed(saved.status, line_number); }
+                    def saved: result<string> = strings.copy(owner, value);
+                    if saved.erroneous { return failed(saved.error.code, line_number); }
 
                     label      = saved.value;
                     have_label = true;
                 } else {
                     if strings.equal(key, "seed") {
-                        def number: std.U64Result = std.parse_u64(value);
-                        if have_seed || number.status != status.OK {
+                        def number: result<u64> = std.parse_u64(value);
+                        if number.erroneous { return failed(status.INVALID, line_number); }
+                        if have_seed {
                             return failed(status.INVALID, line_number);
                         }
 
@@ -109,9 +111,9 @@ def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
                         have_seed = true;
                     } else {
                         if strings.equal(key, "samples") {
-                            def number: std.U64Result = std.parse_u64(value);
+                            def number: result<u64> = std.parse_u64(value);
+                            if number.erroneous { return failed(status.INVALID, line_number); }
                             if have_samples
-                                || number.status != status.OK
                                 || number.value == 0
                                 || number.value > 1000000 {
                                 return failed(status.INVALID, line_number);
@@ -131,7 +133,7 @@ def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
     if !have_label || !have_seed || !have_samples {
         return failed(status.INVALID, line_number + 1);
     }
-    if file.close().status != status.OK { return failed(status.IO_ERROR, 0); }
+    if !io_succeeded(file.close()) { return failed(status.IO_ERROR, 0); }
 
     return ConfigResult {
         status: status.OK,
@@ -146,22 +148,24 @@ def pub load(owner: &arena.GeneralArena, path: string) -> ConfigResult {
 
 // O(log line) formatting in a short-lived arena; diagnostic failure still returns input error 2.
 def diagnostic(line: u64) -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def mut errors: io.Stream    = io.stderr();
-    def number: std.FormatResult = std.format_u64(&memory, line);
+    def mut errors: io.Stream  = io.stderr();
+    def number: result<string> = std.format_u64(&memory, line);
 
-    errors.write_all("config: invalid input or I/O failure at line ");
+    report_io_failure(errors.write_all("config: invalid input or I/O failure at line ", &io_progress));
 
-    if number.status == status.OK {
-        errors.write_all(number.value);
+    if !number.erroneous {
+        report_io_failure(errors.write_all(number.value, &io_progress));
     } else {
-        errors.write_all("?");
+        report_io_failure(errors.write_all("?", &io_progress));
     }
 
-    errors.write_line("");
-    errors.flush();
+    report_io_failure(errors.write_line("", &io_progress));
+    report_io_failure(errors.flush());
 
     return 2;
 }
@@ -169,34 +173,41 @@ def diagnostic(line: u64) -> i32 {
 // Example: execute("simulation.conf"). Prints canonical values. 0 success, 2 input, 3 output/format error.
 // O(input bytes); two bounded arenas plus file/stdio storage. Defers close before owner destruction.
 def pub execute(path: string) -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
     def parsed: ConfigResult = load(&owner, path);
     if parsed.status != status.OK { return diagnostic(parsed.line); }
 
-    def copy: Config              = parsed.value; // Intentional value copy: label aliases the still-live owner.
-    def seed: std.FormatResult    = std.format_u64(&owner, copy.seed);
-    def samples: std.FormatResult = std.format_u64(&owner, copy.samples);
-    def mut out: io.Stream        = io.stdout();
+    def copy: Config         = parsed.value; // Intentional value copy: label aliases the still-live owner.
+    def seed: result<string> = std.format_u64(&owner, copy.seed);
 
-    if seed.status != status.OK || samples.status != status.OK { return 3; }
-    if out.write_all("label=").status != status.OK || out.write_line(copy.label).status != status.OK
-        || out.write_all("seed=").status != status.OK || out.write_line(seed.value).status != status.OK
-        || out.write_all("samples=").status != status.OK || out.write_line(samples.value).status != status.OK {
+    if seed.erroneous { return 3; }
+
+    def samples: result<string> = std.format_u64(&owner, copy.samples);
+    def mut out: io.Stream      = io.stdout();
+
+    if samples.erroneous { return 3; }
+    if !io_succeeded(out.write_all("label=", &io_progress)) || !io_succeeded(out.write_line(copy.label, &io_progress))
+        || !io_succeeded(out.write_all("seed=", &io_progress)) || !io_succeeded(out.write_line(seed.value, &io_progress))
+        || !io_succeeded(out.write_all("samples=", &io_progress)) || !io_succeeded(out.write_line(samples.value, &io_progress)) {
         return 3;
     }
-    if out.flush().status != status.OK { return 3; }
+    if !io_succeeded(out.flush()) { return 3; }
 
     return 0;
 }
 
 def main() -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     if process.arg_count() != 2 {
         def mut errors: io.Stream = io.stderr();
 
-        errors.write_line("usage: config_reader FILE");
-        errors.flush();
+        report_io_failure(errors.write_line("usage: config_reader FILE", &io_progress));
+        report_io_failure(errors.flush());
 
         return 2;
     }
@@ -204,8 +215,28 @@ def main() -> i32 {
     def mut arguments: arena.GeneralArena = arena.GeneralArena.create();
     defer arguments.free();
 
-    def path: process.TextResult = process.arg(&arguments, 1);
-    if path.status != status.OK { return diagnostic(0); }
+    def path: result<string> = process.arg(&arguments, 1);
+    if path.erroneous { return diagnostic(0); }
 
     return execute(path.value);
+}
+
+// The owner must remain live until deferred cleanup has run.
+def close_file(file: &io.File) -> void {
+    if file.is_open() {
+        def closed: result<void> = file.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// Report cleanup/diagnostic failures without recursively writing to a failed stream.
+def report_io_failure(outcome: result<void>) -> void {
+    if outcome.erroneous { std.println(outcome.error.message); }
 }

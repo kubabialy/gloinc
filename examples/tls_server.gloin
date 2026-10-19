@@ -31,12 +31,14 @@ def close_config(config: &net.TlsServerConfig) -> void {
 
 // One deadline covers accept, handshake, request, response and TLS shutdown.
 def within(start: time.Instant) -> bool {
-    def now: time.InstantResult = time.monotonic_now();
-    if now.status != status.OK { return false; }
+    def now: result<time.Instant> = time.monotonic_now();
+    if now.erroneous { return false; }
 
-    def elapsed: time.DurationResult = time.elapsed(start, now.value);
+    def elapsed: result<time.Duration> = time.elapsed(start, now.value);
 
-    return elapsed.status == status.OK && elapsed.value.nanoseconds < 30000000000;
+    if elapsed.erroneous { return false; }
+
+    return elapsed.value.nanoseconds < 30000000000;
 }
 
 def wait_ready(socket: &net.Socket, event: i32, start: time.Instant) -> bool {
@@ -76,8 +78,8 @@ def serve(owner: &arena.GeneralArena, certificate: string, key: string) -> resul
 
     std.println(port.value);
 
-    def clock: time.InstantResult = time.monotonic_now();
-    if clock.status != status.OK { return error("cannot read server clock"); }
+    def clock: result<time.Instant> = time.monotonic_now();
+    if clock.erroneous { return error("cannot read server clock"); }
 
     def start: time.Instant = clock.value;
 
@@ -179,10 +181,12 @@ def main() -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
-    def certificate: process.TextResult = process.arg(&owner, 1);
-    def key: process.TextResult         = process.arg(&owner, 2);
+    def certificate: result<string> = process.arg(&owner, 1);
+    if certificate.erroneous { return 2; }
 
-    if certificate.status != status.OK || key.status != status.OK { return 2; }
+    def key: result<string> = process.arg(&owner, 2);
+
+    if key.erroneous { return 2; }
 
     def served: result<void> = serve(&owner, certificate.value, key.value);
     if served.erroneous { std.println(served.error.message); return 1; }

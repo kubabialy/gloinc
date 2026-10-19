@@ -512,6 +512,8 @@ void CodeGen::gen_statement(const Statement *stmt) {
         }
         leave_scope();
 
+    } else if (auto *selection = dynamic_cast<const SwitchStatement *>(stmt)) {
+        gen_switch(selection);
     } else if (auto *if_stmt = dynamic_cast<const IfStatement *>(stmt)) {
         gen_branch(if_stmt->condition.get(), if_stmt->consequence.get(),
                    if_stmt->alternative.get());
@@ -579,6 +581,8 @@ mlir::Value CodeGen::gen_layout_expression(const Expression *expr, bool allow_vo
 }
 
 mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
+    if (auto *matching = dynamic_cast<const MatchExpression *>(expr))
+        return gen_match(matching);
     if (checked_data) {
         auto literal = checked_data->literals.find(expr);
         if (literal != checked_data->literals.end())
@@ -736,9 +740,16 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             }
             if (auto base = checked_data->types.find(member_access->left.get());
                 base != checked_data->types.end() && base->second.is_error()) {
+                auto error = gen_expression(member_access->left.get());
+                auto name = static_cast<const Identifier *>(member_access->member.get())->value;
+                if (name == "code")
+                    return builder.create<gloin::ErrorCodeOp>(location(), builder.getI32Type(),
+                                                              error);
+                if (name == "os_error")
+                    return builder.create<gloin::ErrorOsErrorOp>(location(), builder.getI32Type(),
+                                                                 error);
                 return builder.create<gloin::ErrorMessageOp>(
-                    location(), source_type(checked_data->types.at(expr)),
-                    gen_expression(member_access->left.get()),
+                    location(), source_type(checked_data->types.at(expr)), error,
                     mlir::TypeAttr::get(checked_type(expr)));
             }
             if (auto variant = checked_data->enum_variants.find(member_access);
@@ -923,8 +934,14 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
         if (checked_data && checked_data->error_constructors.contains(call)) {
             auto message = gen_expression(call->arguments.front().get());
+            auto code = call->arguments.size() == 3
+                            ? gen_expression(call->arguments[1].get())
+                            : emit_constant(ConstantValue{CoreType::I32, llvm::APInt(32, 0)});
+            auto os_error = call->arguments.size() == 3
+                                ? gen_expression(call->arguments[2].get())
+                                : emit_constant(ConstantValue{CoreType::I32, llvm::APInt(32, 0)});
             return builder.create<gloin::ErrorLiteralOp>(
-                location(), source_type(checked_data->types.at(expr)), message,
+                location(), source_type(checked_data->types.at(expr)), message, code, os_error,
                 mlir::TypeAttr::get(checked_type(expr)));
         }
         if (checked_data)
@@ -1626,7 +1643,8 @@ mlir::Type CodeGen::lower_type(ValueType value_type) {
         return mlir::LLVM::LLVMStructType::getLiteral(
             &context, {mlir::LLVM::LLVMPointerType::get(&context), builder.getI64Type()}, false);
     if (value_type.is_error())
-        return string_type();
+        return mlir::LLVM::LLVMStructType::getLiteral(
+            &context, {string_type(), builder.getI32Type(), builder.getI32Type()}, false);
     if (value_type.is_result()) {
         llvm::SmallVector<mlir::Type> fields{builder.getI1Type()};
         if (*value_type.result_value != ValueType(CoreType::Void))
@@ -1726,6 +1744,8 @@ mlir::Value CodeGen::create_entry_alloca(mlir::Type type,
     if (!block)
         fail("Cannot allocate a local without an active function");
     auto function = llvm::dyn_cast<mlir::func::FuncOp>(block->getParentOp());
+    if (!function)
+        function = block->getParentOp()->getParentOfType<mlir::func::FuncOp>();
     if (!function)
         fail("Cannot allocate a local outside a function");
 

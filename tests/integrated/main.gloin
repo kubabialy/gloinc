@@ -11,49 +11,53 @@ import "@strings";
 import "@time";
 
 def write_repeated(path: string, header: string, row: string, count: u64) -> result<void> {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def opened: io.FileResult = io.File.create_new(&memory, path);
-    if opened.status != status.OK { return error("cannot create stress fixture"); }
+    def opened: result<io.File> = io.File.create_new(&memory, path);
+    if opened.erroneous { return error("cannot create stress fixture"); }
 
     def mut file: io.File = opened.value;
     defer common.close_file(&file);
 
-    if file.write_all(header).status != status.OK { return error("cannot write stress header"); }
+    if !io_succeeded(file.write_all(header, &io_progress)) { return error("cannot write stress header"); }
 
     // One reusable 1024-row block, bounded independently of the number of records.
-    def block: strings.StringResult = strings.repeat(&memory, row, 1024, 32768);
-    if block.status != status.OK { return error("cannot allocate stress write block"); }
+    def block: result<string> = strings.repeat(&memory, row, 1024, 32768);
+    if block.erroneous { return error("cannot allocate stress write block"); }
 
     def text: string       = block.value;
     def mut remaining: u64 = count;
 
     while remaining >= 1024 {
-        if file.write_all(text).status != status.OK { return error("cannot write stress block"); }
+        if !io_succeeded(file.write_all(text, &io_progress)) { return error("cannot write stress block"); }
 
         remaining = remaining - 1024;
     }
 
-    def tail: string = strings.slice_bytes(text, 0, remaining * strings.byte_length(row)).value;
-    if file.write_all(tail).status != status.OK { return error("cannot write stress tail"); }
-    if file.close().status != status.OK { return error("cannot close stress fixture"); }
+    def tail: string = slice_or_empty(text, 0, remaining * strings.byte_length(row));
+    if !io_succeeded(file.write_all(tail, &io_progress)) { return error("cannot write stress tail"); }
+    if !io_succeeded(file.close()) { return error("cannot close stress fixture"); }
 
     return;
 }
 
 def append(path: string, text: string) -> result<void> {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def opened: io.FileResult = io.File.open_append(&memory, path);
-    if opened.status != status.OK { return error("cannot open stress fixture for append"); }
+    def opened: result<io.File> = io.File.open_append(&memory, path);
+    if opened.erroneous { return error("cannot open stress fixture for append"); }
 
     def mut file: io.File = opened.value;
     defer common.close_file(&file);
 
-    if file.write_all(text).status != status.OK { return error("cannot append stress record"); }
-    if file.close().status != status.OK { return error("cannot close stress fixture append"); }
+    if !io_succeeded(file.write_all(text, &io_progress)) { return error("cannot append stress record"); }
+    if !io_succeeded(file.close()) { return error("cannot close stress fixture append"); }
 
     return;
 }
@@ -63,10 +67,11 @@ def captured(memory: &arena.GeneralArena, work: string, label: string, compiler:
         time.Duration { nanoseconds: 60000000000 }, 2097152);
     if done.erroneous { return done.error; }
 
-    def out_name: strings.StringResult = strings.concat(memory, label, ".out", 256);
-    def err_name: strings.StringResult = strings.concat(memory, label, ".err", 256);
+    def out_name: result<string> = strings.concat(memory, label, ".out", 256);
+    if out_name.erroneous { return error("cannot form stress capture name"); }
 
-    if out_name.status != status.OK || err_name.status != status.OK { return error("cannot form stress capture name"); }
+    def err_name: result<string> = strings.concat(memory, label, ".err", 256);
+    if err_name.erroneous { return error("cannot form stress capture name"); }
 
     def out_path: result<string> = common.join(memory, work, out_name.value);
     if out_path.erroneous { return out_path.error; }
@@ -153,7 +158,10 @@ def statistics(memory: &arena.GeneralArena, compiler: string, examples: string, 
     def rejected: result<string> = captured(memory, work, "statistics-overflow", compiler, excess_args[..], 2);
 
     if rejected.erroneous { return rejected.error; }
-    if fs.metadata(absent.value).status != status.NOT_FOUND { return error("over-limit statistics created output or its absence could not be verified"); }
+
+    def info: result<fs.Metadata> = fs.metadata(absent.value);
+    if !info.erroneous { return error("over-limit statistics created output"); }
+    if info.error.code != status.NOT_FOUND { return info.error; }
 
     std.println("PASS: statistics at 1,000,000 records; 1,000,001 rejected before output creation");
 
@@ -180,7 +188,7 @@ def simulation(memory: &arena.GeneralArena, compiler: string, examples: string, 
     }
 
     for def mut i: u64 = start; i < size - 1; i = i + 1 {
-        def byte: u8 = strings.byte_at(text, i).value;
+        def byte: u8 = byte_or_zero(text, i);
         if byte < 48 || byte > 57 { return error("simulation elapsed time must be nonempty decimal digits"); }
     }
 
@@ -211,8 +219,8 @@ def main() -> i32 {
     def mut args: [string; 3] = zeroed;
 
     for def mut i: u64 = 0; i < 3; i = i + 1 {
-        def argument: process.TextResult = process.arg(&memory, i + 1);
-        if argument.status != status.OK { return 2; }
+        def argument: result<string> = process.arg(&memory, i + 1);
+        if argument.erroneous { return 2; }
 
         def canonical: result<string> = fs.canonical_path(&memory, argument.value, 65536);
         if canonical.erroneous { common.report(canonical.error.message); return 2; }
@@ -220,7 +228,12 @@ def main() -> i32 {
         args[i] = canonical.value;
     }
 
-    if fs.metadata(args[1]).kind != fs.DIRECTORY || fs.metadata(args[2]).kind != fs.DIRECTORY {
+    def examples_info: result<fs.Metadata> = fs.metadata(args[1]);
+    if examples_info.erroneous { common.report(examples_info.error.message); return 2; }
+
+    def parent_info: result<fs.Metadata> = fs.metadata(args[2]);
+    if parent_info.erroneous { common.report(parent_info.error.message); return 2; }
+    if examples_info.value.kind != fs.DIRECTORY || parent_info.value.kind != fs.DIRECTORY {
         common.report("examples and temporary parent must be directories"); return 2;
     }
 
@@ -238,4 +251,29 @@ def main() -> i32 {
     std.println("All programs compile and run with a 2 MiB soft stack limit; fixtures removed.");
 
     return 0;
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
 }

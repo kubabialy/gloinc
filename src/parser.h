@@ -74,6 +74,9 @@ class GloinParser {
     std::unique_ptr<ReturnStatement> parse_return_statement_impl();
     std::unique_ptr<BlockStatement> parse_block_statement_impl();
     std::unique_ptr<IfStatement> parse_if_statement_impl();
+    CasePattern parse_case_pattern(bool matching);
+    std::unique_ptr<SwitchStatement> parse_switch();
+    std::unique_ptr<MatchExpression> parse_match();
     std::unique_ptr<WhileStatement> parse_while_statement_impl();
     std::unique_ptr<DeferStatement> parse_defer_statement_impl();
     std::unique_ptr<ExpressionStatement> parse_expression_statement_impl();

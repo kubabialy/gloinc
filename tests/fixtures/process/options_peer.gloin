@@ -8,8 +8,8 @@ def main() -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
-    def mode: process.TextResult = process.arg(&owner, 1);
-    if mode.status != status.OK { return 80; }
+    def mode: result<string> = process.arg(&owner, 1);
+    if mode.erroneous { return 80; }
 
     if strings.equal(mode.value, "descendant") {
         def args: [string; 1]              = {"30"};
@@ -24,13 +24,19 @@ def main() -> i32 {
         return 37;
     }
 
-    def cwd: process.TextResult    = process.cwd(&owner, 4096);
-    def value: process.TextResult  = process.env(&owner, "GLOIN_VALUE");
-    def empty: process.TextResult  = process.env(&owner, "GLOIN_EMPTY");
-    def absent: process.TextResult = process.env(&owner, "GLOIN_PARENT_ONLY");
+    def cwd: result<string> = process.cwd(&owner, 4096);
+    if cwd.erroneous { return 82; }
 
-    if cwd.status != status.OK || value.status != status.OK || empty.status != status.OK { return 82; }
-    if absent.status != status.NOT_FOUND { return 83; }
+    def value: result<string> = process.env(&owner, "GLOIN_VALUE");
+    if value.erroneous { return 82; }
+
+    def empty: result<string> = process.env(&owner, "GLOIN_EMPTY");
+    if empty.erroneous { return 82; }
+
+    def absent: result<string> = process.env(&owner, "GLOIN_PARENT_ONLY");
+
+    if !absent.erroneous { return 83; }
+    if absent.error.code != status.NOT_FOUND { return 83; }
     if !strings.equal(value.value, "hello = café") || !strings.is_empty(empty.value) { return 84; }
 
     std.print(cwd.value);

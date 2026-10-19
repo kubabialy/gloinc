@@ -25,7 +25,7 @@ stages. It is not yet a uniform GloinIR module.
 Some checked language constructs still bypass the custom Gloin dialect.
 Generic function, arithmetic, and control-flow mechanisms may use MLIR's
 standard `func`, `arith`, and `cf` dialects. Gloin-specific behavior needs a
-Gloin operation while its semantics are still visible. The development
+Gloin operation while its semantics are still visible. The 0.2.0
 compiler now emits these checked Gloin operations:
 
 | Operation | Source behavior retained | Lowering |
@@ -46,7 +46,7 @@ compiler now emits these checked Gloin operations:
 | `gloin.struct_literal` | Exact named fields in source evaluation order | LLVM struct construction at checked field indices |
 | `gloin.zeroed_array` | Contextual recursive zero initialization | LLVM zero aggregate |
 | `gloin.string_literal` | Checked string literal backed by static bytes and an exact byte length | LLVM string struct construction |
-| `gloin.error_literal`, `gloin.error_message` | Construct an error from a static message and read that message | Static string layout and field extraction |
+| `gloin.error_literal`, `gloin.error_message`, `gloin.error_code`, `gloin.error_os_error` | Construct an error from a static message and two i32 diagnostic codes; read its immutable fields | Error aggregate with string/i32/i32 fields, constructed and extracted after the source-type boundary |
 | `gloin.result_success`, `gloin.result_failure` | Construct exactly one active result variant, including `result<void>` | Tag and initialized value/error storage |
 | `gloin.result_is_error` | Inspect the active result variant | Read the tag |
 | `gloin.result_value`, `gloin.result_error` | Extract the semantically proven active variant | Runtime tag guard, then payload extraction |
@@ -150,8 +150,8 @@ Assignments and parameters still copy array values; slices still borrow their
 backing storage. Calls returning temporary arrays still evaluate at their source
 position, once per expression, and materialize there when indexed. Slice and
 pointer accesses already refer to storage. Bounds checks remain GIR operations
-and may disappear only when LLVM proves the access valid. This improvement is
-in the working compiler after 0.1.0; published 0.1.0 binaries still have the
+and may disappear when GIR or LLVM proves the access valid. This improvement is
+in 0.2.0; published 0.1.0 binaries still have the
 repeated-copy issue described in [PERF-002](compiler-validation.md).
 
 Stored repeated initializers have a separate GIR preparation pass before source
@@ -175,7 +175,7 @@ Byte fills become LLVM memset without an intermediate array-valued load/store.
 Other elements use typed stores with their actual element stride, preserving
 wider numeric values, floats, booleans, references, strings and struct fields.
 Empty dimensions emit no writes; nested empty repeats still evaluate the seed.
-This is the unreleased [PERF-003 fix](compiler-validation.md). It addresses
+This is the 0.2.0 [PERF-003 fix](compiler-validation.md). It addresses
 stored repeated values and nested repeat chains. General by-value array
 arguments/returns, array-valued seeds and arrays embedded in constructed
 aggregates still use the existing aggregate representation and can incur its
@@ -240,7 +240,9 @@ have typed GloinIR representation and verification.
 9. Final memref conversion to LLVM.
 10. Reconcile unrealized conversion casts.
 
-### Checked integer simplification and overflow (unreleased, PERF-005)
+<a id="checked-integer-simplification-and-overflow-unreleased-perf-005"></a>
+
+### Checked integer simplification and overflow (0.2.0, PERF-005)
 
 Integer arithmetic enters lowering as `gloin.checked_int_binary`, including its
 signedness. Before source layouts are substituted, GIR preparation folds an
@@ -282,14 +284,16 @@ evaluation semantics. Retaining a call can forgo further specialization or
 constant propagation; the threshold is an initial compiler policy, not a
 language guarantee or a promise of faster execution for every program.
 
-### Exact integer widening (unreleased, PERF-008)
+<a id="exact-integer-widening-unreleased-perf-008"></a>
+
+### Exact integer widening (0.2.0, PERF-008)
 
 Sema resolves the private `@std` primitive `__std_i64_from_i32` through the
 checked standard-call table and requires an `i32` plus a writable `&i64` output.
 Codegen emits `gloin.exact_int_widen`, a source-typed `gloin.store`, and status
-zero (`OK`). The public `std.i64_from_i32` wrapper retains its concrete
-`std.I64Result { status, value }` API. This legacy result struct is distinct
-from the language's built-in `result<T>`; this change does not migrate that API.
+zero (`OK`). Following the 0.2.0 standard-library migration, the public
+`std.i64_from_i32` wrapper returns plain i64; exact widening cannot fail. Its
+internal primitive still writes the output and returns zero for ABI compatibility.
 User functions with similar names are ordinary calls, and replacement standard
 libraries retain their own wrapper bodies.
 
@@ -310,7 +314,9 @@ of previously emitted IR. Narrowing, sign-changing and floating/rounded
 conversions keep their runtime status and payload rules. No implicit casts or
 arithmetic, bounds or null-check relaxations are introduced.
 
-### Bounds and unsigned range proofs (unreleased, PERF-006)
+<a id="bounds-and-unsigned-range-proofs-unreleased-perf-006"></a>
+
+### Bounds and unsigned range proofs (0.2.0, PERF-006)
 
 After resolving source layouts, while operations still carry GIR semantics,
 the compiler runs MLIR memory-slot promotion on integer and slice-descriptor
@@ -356,7 +362,9 @@ further checks under `-O2`. Reduced pre-LLVM guards do not by themselves imply
 faster machine code; the [performance record](compiler-validation.md) separates
 compiler changes from the Base64 loop restructuring.
 
-### Counted slice loop versioning (unreleased, PERF-007)
+<a id="counted-slice-loop-versioning-unreleased-perf-007"></a>
+
+### Counted slice loop versioning (0.2.0, PERF-007)
 
 After the range analysis, GIR can create two copies of a small counted loop.
 An entry predicate compares the loop limit with the lengths of the exact SSA
@@ -366,7 +374,7 @@ the original checked loop. **A failed entry predicate does not trap.** Earlier
 iterations, calls, writes and arithmetic failures still happen in source order;
 an empty or negative-count loop does not start accessing elements.
 
-The current recognition is deliberately narrow: a promoted `i64` or `u64`
+The unit-stride recognition is deliberately narrow: a promoted `i64` or `u64`
 counter starts at zero, the header tests `i < limit`, a single straight-line
 body increments by exactly one, and its slice accesses use `i` directly.
 The limit and descriptors must dominate the entry. The header has only its
@@ -387,15 +395,203 @@ lowering. It increases code size and adds an entry branch; a short loop is not
 guaranteed to get faster.
 
 **Floating-point semantics are unchanged.** Products are rounded separately,
-sums retain their source order, and each operation still checks for a finite
-result. There is no reassociation, fused multiply-add permission or fast-math
-flag. In the measured LLVM 21 matrix kernel, these remaining trap exits still
+sums retain their source order, and non-finite products or sums still trap.
+The adjacent-operation rule below can let one sum check cover both failures;
+the loop-versioning proof itself does not remove floating checks. There is no
+reassociation, fused multiply-add permission or fast-math flag. In the measured
+LLVM 21 matrix kernel, these remaining trap exits still
 prevent vectorization: the fast loop uses scalar multiply and scalar add. See
 the [PERF-007 record](compiler-validation.md) for controlled timings and LLVM
 remarks, including C experiments that deliberately omit checks and therefore
 do not implement the same safety contract.
 
-### Executable reachability (unreleased, PERF-004)
+### Adjacent floating checks (2026-10-19)
+
+After range proofs and loop versioning, `combine_gloin_float_checks` examines
+verified GIR before general core lowering. It accepts exactly an `f32` or `f64`
+`gloin.checked_float_binary` multiplication immediately followed in the same
+block by a checked addition of the same type. The product must have exactly one
+use, as either operand of that addition. Both operands of the addition are
+already computed; no other operation may appear between the pair. The rule
+also applies inside a checked fallback when the same conditions hold there.
+
+A non-finite product necessarily produces a non-finite sum under ordinary IEEE
+addition, regardless of the other addend. The rewrite therefore lowers the
+product to `arith.mulf` and retains `gloin.checked_float_binary` for the sum.
+The sum remains effectful and must check for a finite result even if its value
+is discarded. Multiplication and addition retain separate rounding and their
+original locations. No fast-math flags, FMA contraction or reassociation are
+introduced. The check stays before the next operation, including the next loop
+iteration's reads and effects.
+
+The lowering API also accepts mixed GIR/LLVM modules. An LLVM `poison` value in
+the other addend must not hide a product failure that originally occurred before
+that addend was used. The rewrite applies `llvm.freeze` to the other addend;
+this preserves every concrete floating value and prevents poison propagation
+from removing the mandatory trap. This follows LLVM's
+[freeze semantics](https://llvm.org/docs/LangRef.html#freeze-instruction).
+It neither initializes source storage nor makes an invalid source read safe.
+
+This proof is structural and consumed immediately during rewriting; there is
+no textual attribute that requests unchecked multiplication. Intervening loads,
+stores, calls, assertions, other arithmetic, constants and unknown operations
+all block the rule. So do block boundaries, conditional consumers and additional
+uses of the product. It makes no claim about pointer validity, allocation
+lifetime, aliasing or a complete loop's effects. The separate
+[local reduction proof](#local-floating-reductions-2026-10-19) below supplies
+those additional facts for a bounded set of loops.
+
+Current finite-result failures use the same fatal trap without reporting which
+arithmetic operation failed. The rule preserves this behavior. Adding distinct
+failure diagnostics requires retaining the first failed operation before this
+transformation can be used under that richer contract. Structural tests cover
+both widths and operand positions, refusal cases and unused results. Runtime
+tests preserve rounding and observable failure order in JIT, native O0 and O2;
+mixed-IR tests retain the product trap after LLVM O2 even with poison/undef in
+the other addend. Measurements are in the
+[validation journal](compiler-validation.md#adjacent-floating-checks--2026-10-19).
+
+### Local floating reductions (2026-10-19)
+
+`version_gloin_float_reductions` runs after local slot promotion and ordinary
+range analysis, before general slice-loop versioning. It recognizes an ordered
+dot product over storage whose initialization and lifetime GIR can establish.
+It creates a fast copy with one final `gloin.require_finite` and retains the
+original checked loop as a fallback. Both copies are excluded from further
+slice-loop cloning. The adjacent-check rule still applies to the fallback.
+
+#### Arithmetic and control flow
+
+The accumulator must be an unescaped local `f32` or `f64` slot initialized to
+zero. The body loads it, multiplies two input elements, adds the product to the
+accumulator in either operand position, and writes the sum back to that slot.
+The product has one use in the addition; the addition has one use in the update.
+Other writes to the accumulator may only initialize it to zero outside the body,
+and a zero initialization must dominate loop entry. A private accumulator store
+is unobservable because no address or intermediate value escapes.
+
+The counter is an SSA `i64` or `u64` starting at zero, tested with `i < n` and
+incremented by one. The body is straight-line and returns to the header. No
+counter, header result or body SSA result may escape these blocks. This proves
+termination and counter safety for reached iterations, including maximum limits.
+The bound must dominate entry or be a slice length read from a dominating
+descriptor. The recognizer limits the body to 48 operations.
+
+For this recurrence, a non-finite product makes the sum non-finite, and subsequent
+additions cannot make it finite again. A finite final sum therefore implies
+finite products and intermediate sums. The fast copy uses separately rounded
+`arith.mulf` and `arith.addf`, preserving operand order and introducing no
+fast-math or contraction flags. Each input value is frozen at the mixed GIR/LLVM
+boundary so a later poison/undef operand cannot suppress an earlier failure.
+Freezing does not establish that a memory read is valid.
+
+`gloin.require_finite` is an effectful, resultless operation accepting only `f32`
+or `f64`. It traps on infinity or NaN, including when the reduction result is
+unused. It executes on the fast exit before the continuation can observe the
+accumulator. The zero-iteration fast path checks the already finite zero;
+negative signed limits select the original loop and perform no element reads.
+Current arithmetic failures have one fatal-trap behavior. Distinct diagnostic
+identities or source locations for the first failure would require additional
+handling before using this transformation under that richer contract.
+
+#### Storage and effect proof
+
+Each input address must be an indexed fixed array or a slice derived from a fixed
+array. GIR traces it back to a matching `gloin.stack_alloc`, with a dominating
+whole-value store or `gloin.array_fill`. Nested array elements and slice subranges
+are accepted when their checked construction already dominates entry. Provenance
+traversal is bounded to eight levels.
+The complete nested extent must fit a signed 64-bit byte count, and the local
+allocation must use the ordinary native address space. An array type alone does
+not authorize wrapped size or address calculations.
+Explicit mixed-IR layouts with different pointer/index widths or floating
+allocation strides are rejected. A function containing LLVM stack restoration
+is also rejected, since that operation can end local lifetimes without using
+the allocations' addresses.
+
+The proof follows every derived address and descriptor use, up to 256 values.
+Only recognized loads, stores, array fills, array/slice element addresses,
+array-to-slice construction, subranges and length reads are accepted. Passing an
+address or descriptor to a call, storing it elsewhere, or using it through an
+unknown operation rejects the proof. This ensures the allocation remains local
+and live. The two inputs may overlap: the reduction performs no writes to them.
+Read-only slice types alone do not establish storage validity or prevent aliases.
+
+Inside the body, only the two proven input reads, private accumulator read/write,
+recognized arithmetic/counter operations, constants and backedge are allowed.
+Calls, external stores, volatile/atomic or unknown reads, assertions, unrelated
+arithmetic checks, conditional exits and unknown operations prevent deferral.
+Consequently finishing the loop after an arithmetic failure cannot introduce
+another observable effect, memory fault or language failure.
+
+An unsigned entry comparison requires `n` to fit every input's fixed capacity or
+slice length. It does not read the elements or multiply the bound by an element
+size. A failed predicate selects the original checked loop rather than trapping
+at entry. Original reads, partial progress and failure ordering are retained.
+The static storage proof and this runtime range predicate are both required.
+
+#### Current scope
+
+Local initialized fixed arrays, nested array rows and their borrowed subranges
+can qualify. Arbitrary slice parameters, arena/vector buffers, raw pointers,
+escaped storage and missing or conditional initialization do not qualify.
+There is no new source annotation, slice ABI, runtime allocation registry or
+interprocedural lifetime assumption. Textual attributes cannot assert a proof.
+This is a local optimization, not a general source-language lifetime checker.
+
+Removing the inner finite exits allows LLVM to vectorize eligible products while
+keeping additions in source order on ARM64. Target cost models still decide
+whether to vectorize. A fast copy, final check and fallback increase code size;
+small loops are not guaranteed to improve. The
+[validation journal](compiler-validation.md#local-floating-reductions--2026-10-19)
+records correctness and measurements separately from the generic borrowed-slice
+benchmark, whose storage remains unproven.
+
+### Strided groups and live tail counters (2026-10-18)
+
+GIR also recognizes unsigned `u64` loops with the shape `i = 0; i + S <= n;
+i += S`, where `S` is a positive constant. Secondary counters start at zero
+and advance by a positive constant `P` on every backedge. A slice access at
+`j + offset` is eligible when `0 <= offset < P`. Up to four chained constant
+additions may form the offset. For a three-byte input/four-byte output codec,
+this includes `output[j]` through `output[j + 3]` with `i += 3; j += 4`.
+
+The entry predicate computes `groups = n / S` and requires both:
+
+- `groups <= slice.len / P` for each candidate descriptor/counter stride.
+- `groups <= (u64_max - S) / S`, so the final header test's `i + S` is also
+  representable after all complete groups have run.
+
+Division by known positive constants avoids overflowing a capacity calculation.
+In iteration `k < groups`, `j = k * P`, so `j + offset < groups * P <= slice.len`;
+the backedge's next `j` is representable as well. Only these bounds, offset
+additions, matching counter increments and the primary header addition receive
+new proofs. Other arithmetic and accesses retain their checks. A failed
+predicate still selects the original loop, including cases where its first
+few writes succeed before a bounds or arithmetic trap. It never traps early.
+
+The header has at most eight GIR operations: its arithmetic/comparison/branch,
+constants and, optionally, the limit slice's length. That slice descriptor or
+the scalar limit must dominate the entry. The single straight-line body has
+at most 128 operations and at most four distinct descriptor/stride constraints.
+Regions, body stack allocations, nonzero starts, variable or signed strides,
+and escaped/reloaded induction variables are outside this proof. Candidate
+slice descriptors must dominate entry; elements may alias other slices, and
+memory operations and calls keep their order. Unsupported accesses in an
+otherwise eligible loop remain checked.
+
+Header SSA arguments used after the loop are merged at its shared exit. This
+preserves both counters for a padded tail and any other promoted loop state.
+The exit must have the original header as its sole predecessor and dominate
+all those external uses; operation results escaping the two loop blocks remain
+unsupported. The tail keeps its checks. This extension adds one guarded copy
+per recognized loop and does not promote constant lookup tables or change
+floating-point rules. The [validation record](compiler-validation.md) records
+correctness checks and the measured encoder result.
+
+<a id="executable-reachability-unreleased-perf-004"></a>
+
+### Executable reachability (0.2.0, PERF-004)
 
 After complete source checking, GIR generation, verification and initial legality
 checking, executable lowering treats `main` as the source entry root. The pass
@@ -457,6 +653,38 @@ parse/verify the serialized LLVM module and `mlir-runner` to execute it. It no
 longer maintains a separate conversion pipeline. Low-level subprocess harness
 tests retain `run_external_mlir` for already-lowered IR and controlled fake tools.
 
+## Native target configuration (2026-10-18)
+
+Native objects and executables use host CPU/features with LLVM's ordinary AoT
+target defaults. The native emitter creates its target machine with `JIT=false`
+and default `TargetOptions`; Linux retains explicit PIC relocation for normal
+PIE linking. Both native `-O0` and `-O2` use this configuration. JIT execution
+continues to use its own target setup.
+
+Previously, native emission also called
+`JITTargetMachineBuilder::createTargetMachine`. That API passes `JIT=true` to
+LLVM, which defaults to the large code model on the supported AArch64 and
+x86-64 targets. Known function calls could therefore become address
+materialization followed by an indirect call. The large model accommodates
+JIT allocations whose addresses can be far apart; linked native output uses
+the platform's ordinary code model and linker relocations instead. See the
+[LLVM builder](https://github.com/llvm/llvm-project/blob/llvmorg-21.1.6/llvm/lib/ExecutionEngine/Orc/JITTargetMachineBuilder.cpp#L35-L51)
+and [AArch64 target defaults](https://github.com/llvm/llvm-project/blob/llvmorg-21.1.6/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp#L305-L327).
+
+Source operations still pass through checked GloinIR and shared LLVM-dialect
+lowering. This change is after that boundary: a direct `func.call`/`llvm.call`
+already identifies its callee. It changes native instruction selection and
+addressing, without removing language checks or changing function signatures.
+It does not force genuinely indirect source calls to become direct.
+
+The native code model now has ordinary target address-range constraints;
+there is no user-selectable large-model mode. Direct call relocations may use
+linker stubs or branch islands where the target/linker supports them. The CLI
+regression checks direct external runtime-call relocations in emitted objects
+at both optimization levels and executes recursive code in JIT and native
+modes. Measurements and validation are recorded in
+[the compiler validation journal](compiler-validation.md#native-call-generation--2026-10-18).
+
 ## Ownership and errors
 
 `verify_module` borrows its module. `lower_to_llvm` consumes an
@@ -491,3 +719,19 @@ arithmetic trap tests. SPEC-019 adds [JIT translation registration, validated
 invocation, and separate execution failure/results](jit.md). [The file CLI](cli.md)
 uses these APIs. [SPEC-021's source fixtures](../tests/fixtures/core/README.md) check
 core acceptance; the [0.1.0 release guide](release-0.1.0.md) covers installation and packaging.
+
+## Switch and match (SPEC-017a)
+
+Checked dispatch remains in `gloin.switch` and `gloin.match`, with source-typed
+subjects and a verified constant key table. Match owns one lazy region per arm,
+ending in `gloin.match_yield`. Its output retains the checked source type until
+signature lowering. Match effects include reads of borrowed string storage as
+well as the effects of its arms; an SSA string descriptor does not make its
+backing bytes immutable.
+
+Selection lowering builds conditional branches and typed value joins. Result
+patterns test the error tag and extract payloads through existing GloinIR result
+operations. String comparisons first check length and then read bounded bytes,
+including embedded NULs. Unmatched integer/string matches are impossible after
+checking because default is required; an impossible unmatched finite tag traps.
+There is no specialized jump-table or string-lookup optimization in this pass.

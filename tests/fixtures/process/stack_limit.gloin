@@ -13,10 +13,12 @@ def main() -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def peer: process.TextResult = process.arg(&memory, 1);
-    def hard: process.TextResult = process.arg(&memory, 2);
+    def peer: result<string> = process.arg(&memory, 1);
+    if peer.erroneous { return 1; }
 
-    if peer.status != status.OK || hard.status != status.OK { return 1; }
+    def hard: result<string> = process.arg(&memory, 2);
+
+    if hard.erroneous { return 1; }
 
     def args: [string; 5]            = {"limits", "2097152", hard.value, "-1", "1"};
     def mut options: process.Options = process.Options.defaults();

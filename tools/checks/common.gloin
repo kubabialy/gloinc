@@ -1,46 +1,59 @@
 // Private helpers for repository checkers; all retained text is arena owned.
+import "@std";
 import "@arena";
 import "@fs";
 import "@io";
 import "@status";
 import "@strings";
 
-def pub byte(text: string, offset: u64) -> u8 { return strings.byte_at(text, offset).value; }
+def pub byte(text: string, offset: u64) -> u8 { return byte_or_zero(text, offset); }
 
-def pub part(text: string, start: u64, end: u64) -> string { return strings.slice_bytes(text, start, end - start).value; }
+def pub part(text: string, start: u64, end: u64) -> string { return slice_or_empty(text, start, end - start); }
 
 def pub space(value: u8) -> bool { return value == 32 || value == 9 || value == 10 || value == 13; }
 
-def pub report(message: string) -> void { def mut out: io.Stream = io.stderr(); out.write_line(message); }
+def pub report(message: string) -> void {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+    def mut out: io.Stream             = io.stderr();
 
-def pub close_file(file: &io.File) -> void { if file.is_open() { file.close(); } }
+    report_io_failure(out.write_line(message, &io_progress));
+}
 
-def pub close_directory(directory: &fs.Directory) -> void { if directory.is_open() { directory.close(); } }
+def pub close_file(file: &io.File) -> void { if file.is_open() { report_io_failure(file.close()); } }
+
+def pub close_directory(directory: &fs.Directory) -> void {
+    if directory.is_open() {
+        def closed: result<void> = directory.close();
+        if closed.erroneous { report(closed.error.message); }
+    }
+}
 
 def pub copy(memory: &arena.GeneralArena, text: string) -> result<string> {
-    def copied: strings.StringResult = strings.copy(memory, text);
-    if copied.status != status.OK { return error("cannot copy checker text"); }
+    def copied: result<string> = strings.copy(memory, text);
+    if copied.erroneous { return error("cannot copy checker text"); }
 
     return copied.value;
 }
 
 def pub read(memory: &arena.GeneralArena, path: string, bound: u64) -> result<string> {
-    def opened: io.FileResult = io.File.open_read(memory, path);
-    if opened.status != status.OK { return error("cannot open checker input"); }
+    def opened: result<io.File> = io.File.open_read(memory, path);
+    if opened.erroneous { return error("cannot open checker input"); }
 
     def mut file: io.File = opened.value;
     defer close_file(&file);
 
-    def read: io.ReadResult = file.read_all(memory, bound);
-    if read.status != status.OK { return error("cannot read checker input within its byte limit"); }
-    if file.close().status != status.OK { return error("cannot close checker input"); }
+    def mut read: io.ReadState    = io.ReadState.empty();
+    def read_result: result<void> = file.read_all(memory, bound, &read);
+
+    if read_result.erroneous { return error("cannot read checker input within its byte limit"); }
+    if !io_succeeded(file.close()) { return error("cannot close checker input"); }
 
     return read.value;
 }
 
 def pub join(memory: &arena.GeneralArena, left: string, right: string) -> result<string> {
-    def path: fs.PathResult = fs.join(memory, left, right, 65536);
-    if path.status != status.OK { return error("checker path exceeds 65536 bytes or cannot be allocated"); }
+    def path: result<string> = fs.join(memory, left, right, 65536);
+    if path.erroneous { return path.error; }
 
     return path.value;
 }
@@ -110,19 +123,56 @@ def pub valid_text(text: string) -> bool {
 def pub scalar(out: &strings.StringBuilder, value: u64) -> bool {
     if value > 1114111 || (value >= 55296 && value <= 57343) || value == 65534 || value == 65535
         || (value < 32 && value != 9 && value != 10 && value != 13) { return false; }
-    if value < 128 { return out.append_byte(narrow(value)) == status.OK; }
+    if value < 128 { return append_succeeded(out.append_byte(narrow(value))); }
     if value < 2048 {
-        return out.append_byte(192 + narrow(value / 64)) == status.OK
-            && out.append_byte(128 + narrow(value % 64)) == status.OK;
+        return append_succeeded(out.append_byte(192 + narrow(value / 64)))
+            && append_succeeded(out.append_byte(128 + narrow(value % 64)));
     }
     if value < 65536 {
-        return out.append_byte(224 + narrow(value / 4096)) == status.OK
-            && out.append_byte(128 + narrow((value / 64) % 64)) == status.OK
-            && out.append_byte(128 + narrow(value % 64)) == status.OK;
+        return append_succeeded(out.append_byte(224 + narrow(value / 4096)))
+            && append_succeeded(out.append_byte(128 + narrow((value / 64) % 64)))
+            && append_succeeded(out.append_byte(128 + narrow(value % 64)));
     }
 
-    return out.append_byte(240 + narrow(value / 262144)) == status.OK
-        && out.append_byte(128 + narrow((value / 4096) % 64)) == status.OK
-        && out.append_byte(128 + narrow((value / 64) % 64)) == status.OK
-        && out.append_byte(128 + narrow(value % 64)) == status.OK;
+    return append_succeeded(out.append_byte(240 + narrow(value / 262144)))
+        && append_succeeded(out.append_byte(128 + narrow((value / 4096) % 64)))
+        && append_succeeded(out.append_byte(128 + narrow((value / 64) % 64)))
+        && append_succeeded(out.append_byte(128 + narrow(value % 64)));
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// Report cleanup/diagnostic failures without recursively writing to a failed stream.
+def report_io_failure(outcome: result<void>) -> void {
+    if outcome.erroneous { std.println(outcome.error.message); }
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
+}
+
+// Keep append chains short-circuiting while explicitly handling every result.
+def append_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
 }

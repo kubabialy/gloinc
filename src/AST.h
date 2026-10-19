@@ -292,6 +292,55 @@ struct VariableDeclaration : public Statement {
     }
 };
 
+enum class CaseKind { Value, Success, Error, Default };
+
+struct CasePattern {
+    SourceSpan span;
+    CaseKind kind = CaseKind::Value;
+    std::unique_ptr<Expression> value;
+    std::unique_ptr<Identifier> binding;
+    std::string to_string() const {
+        if (kind == CaseKind::Default)
+            return "default";
+        if (kind == CaseKind::Value)
+            return "case " + value->to_string();
+        return std::string(kind == CaseKind::Success ? "case value(" : "case error(") +
+               (binding ? binding->value : "") + ")";
+    }
+};
+
+struct SwitchArm {
+    CasePattern pattern;
+    std::unique_ptr<BlockStatement> body;
+};
+
+struct SwitchStatement : public Statement {
+    std::unique_ptr<Expression> subject;
+    std::vector<SwitchArm> arms;
+    std::string to_string() const override {
+        std::string text = "switch " + subject->to_string() + " { ";
+        for (const auto &arm : arms)
+            text += arm.pattern.to_string() + " " + arm.body->to_string() + " ";
+        return text + "}";
+    }
+};
+
+struct MatchArm {
+    CasePattern pattern;
+    std::unique_ptr<Expression> value;
+};
+
+struct MatchExpression : public Expression {
+    std::unique_ptr<Expression> subject;
+    std::vector<MatchArm> arms;
+    std::string to_string() const override {
+        std::string text = "match " + subject->to_string() + " { ";
+        for (const auto &arm : arms)
+            text += arm.pattern.to_string() + " => " + arm.value->to_string() + "; ";
+        return text + "}";
+    }
+};
+
 struct IfStatement : public Statement {
     std::unique_ptr<Expression> condition;
     std::unique_ptr<BlockStatement> consequence;

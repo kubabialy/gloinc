@@ -1,14 +1,14 @@
 #include "codegen.h"
+#include "compilation_timings.h"
 #include "compiler.h"
 #include "jit_runner.h"
-#include "compilation_timings.h"
-#include "llvm/Support/JSON.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 #include "gtest/gtest.h"
 #include <csignal>
@@ -95,12 +95,13 @@ TEST(JitRunnerTest, CompilationTimingsFreezeBeforeProgramExecution) {
         import "@time";
         import "@status";
         def main() -> i32 {
-            def now: time.InstantResult = time.monotonic_now();
-            if now.status != status.OK { return 1; }
+            def now: result<time.Instant> = time.monotonic_now();
+            if now.erroneous { return 1; }
             return 42;
         }
-    )", "timed.gloin", context, CompilationMode::Executable,
-        CompilationOutput::HighLevel, {}, &timings);
+    )",
+                                   "timed.gloin", context, CompilationMode::Executable,
+                                   CompilationOutput::HighLevel, {}, &timings);
     ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
 
     struct State {
@@ -119,11 +120,12 @@ TEST(JitRunnerTest, CompilationTimingsFreezeBeforeProgramExecution) {
             *nanoseconds = 42;
             *os_error = 0;
             return 0;
-        }, &state};
+        },
+        &state};
     expect_value(JitRunner::run(*compiled.module, {}, &clock, &timings), 42);
     ASSERT_EQ(state.calls, 1u);
-    auto parsed = llvm::json::parse(llvm::StringRef(state.report).drop_front(
-        llvm::StringRef("gloinc-timings: ").size()));
+    auto parsed = llvm::json::parse(
+        llvm::StringRef(state.report).drop_front(llvm::StringRef("gloinc-timings: ").size()));
     ASSERT_TRUE(static_cast<bool>(parsed)) << llvm::toString(parsed.takeError());
     auto *report = parsed->getAsObject();
     ASSERT_NE(report, nullptr);

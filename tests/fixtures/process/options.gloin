@@ -11,8 +11,8 @@ def cleanup(child: &process.Child) -> void {
 }
 
 def configured(owner: &arena.GeneralArena, cwd: string, stack: u64) -> i32 {
-    def before: process.TextResult = process.cwd(owner, 4096);
-    if before.status != status.OK { return 1; }
+    def before: result<string> = process.cwd(owner, 4096);
+    if before.erroneous { return 1; }
 
     def environment: [string; 2]     = {"GLOIN_VALUE=hello = café", "GLOIN_EMPTY="};
     def mut options: process.Options = process.Options.defaults();
@@ -43,11 +43,13 @@ def configured(owner: &arena.GeneralArena, cwd: string, stack: u64) -> i32 {
     if !strings.is_empty(strings.view_bytes(captured.value.stderr)) { return 6; }
     if alias.is_open() { return 7; }
 
-    def after: process.TextResult = process.cwd(owner, 4096);
-    if after.status != status.OK || !strings.equal(after.value, before.value) { return 8; }
+    def after: result<string> = process.cwd(owner, 4096);
+    if after.erroneous { return 8; }
+    if !strings.equal(after.value, before.value) { return 8; }
 
-    def parent: process.TextResult = process.env(owner, "GLOIN_PARENT_ONLY");
-    if parent.status != status.OK || !strings.equal(parent.value, "parent") { return 9; }
+    def parent: result<string> = process.env(owner, "GLOIN_PARENT_ONLY");
+    if parent.erroneous { return 9; }
+    if !strings.equal(parent.value, "parent") { return 9; }
 
     return 0;
 }
@@ -152,8 +154,8 @@ def main() -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
-    def cwd: process.TextResult = process.arg(&owner, 1);
-    if cwd.status != status.OK { return 90; }
+    def cwd: result<string> = process.arg(&owner, 1);
+    if cwd.erroneous { return 90; }
 
     def limits: [u64; 2] = {0, 2097152};
 

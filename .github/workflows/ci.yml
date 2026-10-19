@@ -12,7 +12,9 @@ jobs:
   linux:
     name: Ubuntu 24.04 x86_64 / LLVM 21.1.8
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Fresh build, both package matrices, and serial/parallel complete audits.
+    # Individual CTest and child-process deadlines remain separately bounded.
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
@@ -98,7 +100,7 @@ jobs:
     name: macOS 15 arm64 / LLVM 21.1.6
     runs-on: macos-15
     # Three builds, package matrices, sanitizers, and both full-suite audits.
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
@@ -202,7 +204,7 @@ jobs:
           cp build-ci/core.xml ci-reports/core.xml
           {
             echo '## Executable core acceptance'
-            echo 'All required scalar-core suites passed from a fresh Release build.'
+            echo 'All required supported-language suites passed from a fresh Release build.'
             echo 'This result is separate from the unfiltered suite and its deferred-feature failures.'
           } >> "$GITHUB_STEP_SUMMARY"
 

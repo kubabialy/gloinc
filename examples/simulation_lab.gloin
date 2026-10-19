@@ -10,25 +10,35 @@ import "@io";
 import "@status";
 
 def report_error(message: string) -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut errors: io.Stream = io.stderr();
 
-    errors.write_line(message);
-    errors.flush();
+    report_io_failure(errors.write_line(message, &io_progress));
+    report_io_failure(errors.flush());
 
     return 2;
 }
 
 // O(decimal bytes), explicit arena-backed formatting; allocation/I/O failure is checked.
 def integer(out: &io.Stream, scratch: &arena.GeneralArena, label: string, value: u64) -> bool {
-    def text: std.FormatResult = std.format_u64(scratch, value);
+    def mut io_progress: io.WriteState = io.WriteState.empty();
 
-    return text.status == status.OK && out.write_all(label).status == status.OK && out.write_line(text.value).status == status.OK;
+    def text: result<string> = std.format_u64(scratch, value);
+
+    if text.erroneous { return false; }
+
+    return io_succeeded(out.write_all(label, &io_progress)) && io_succeeded(out.write_line(text.value, &io_progress));
 }
 
 def decimal(out: &io.Stream, scratch: &arena.GeneralArena, label: string, value: f64) -> bool {
-    def text: std.FormatResult = std.format_f64_fixed(scratch, value, 6);
+    def mut io_progress: io.WriteState = io.WriteState.empty();
 
-    return text.status == status.OK && out.write_all(label).status == status.OK && out.write_line(text.value).status == status.OK;
+    def text: result<string> = std.format_f64_fixed(scratch, value, 6);
+
+    if text.erroneous { return false; }
+
+    return io_succeeded(out.write_all(label, &io_progress)) && io_succeeded(out.write_line(text.value, &io_progress));
 }
 
 // Explicit seed/count entry for embedding or local-module composition. Same bounds and output as CLI.
@@ -39,12 +49,14 @@ def pub simulate(seed: u64, samples: u64) -> i32 {
 
     if samples == 0 || samples > 1000000 { return report_error("samples must be in 1..1000000"); }
 
-    def mut rng: random.SplitMix64 = random.SplitMix64.seeded(seed);
-    def mut inside: u64            = 0;
-    def mut dice_sum: u64          = 0;
-    def start: time.InstantResult  = time.monotonic_now();
+    def mut rng: random.SplitMix64  = random.SplitMix64.seeded(seed);
+    def mut inside: u64             = 0;
+    def mut dice_sum: u64           = 0;
+    def start: result<time.Instant> = time.monotonic_now();
 
-    if start.status != status.OK { return report_error("clock read failed"); }
+    if start.erroneous { return report_error("clock read failed"); }
+
+    def started: time.Instant = start.value;
 
     for def mut i: u64 = 0; i < samples; i = i + 1 {
         def x: f64 = rng.unit_f64();
@@ -52,29 +64,29 @@ def pub simulate(seed: u64, samples: u64) -> i32 {
 
         if x*x + y*y <= 1.0 { inside = inside + 1; }
 
-        def die: random.U64Result = rng.below(6);
-        if die.status != status.OK { return report_error("random bound failed"); }
+        def die: result<u64> = rng.below(6);
+        if die.erroneous { return report_error(die.error.message); }
 
         dice_sum = dice_sum + die.value + 1;
     }
 
-    def end: time.InstantResult = time.monotonic_now();
-    if end.status != status.OK { return report_error("clock read failed"); }
+    def end: result<time.Instant> = time.monotonic_now();
+    if end.erroneous { return report_error("clock read failed"); }
 
-    def elapsed: time.DurationResult = time.elapsed(start.value, end.value);
-    if elapsed.status != status.OK { return report_error("clock moved backwards"); }
+    def elapsed: result<time.Duration> = time.elapsed(started, end.value);
+    if elapsed.erroneous { return report_error("clock moved backwards"); }
 
-    def count: std.F64Result = std.f64_from_u64_exact(samples);
-    def hits: std.F64Result  = std.f64_from_u64_exact(inside);
+    def count: result<f64> = std.f64_from_u64_exact(samples);
+    if count.erroneous { return report_error("count conversion failed"); }
 
-    if count.status != status.OK || hits.status != status.OK {
-        return report_error("count conversion failed");
-    }
+    def hits: result<f64> = std.f64_from_u64_exact(inside);
 
-    def estimate: f64              = 4.0 * hits.value / count.value;
-    def difference: math.F64Result = math.abs_f64(estimate - math.PI_F64);
+    if hits.erroneous { return report_error("count conversion failed"); }
 
-    if difference.status != status.OK { return report_error("estimate failed"); }
+    def estimate: f64           = 4.0 * hits.value / count.value;
+    def difference: result<f64> = math.abs_f64(estimate - math.PI_F64);
+
+    if difference.erroneous { return report_error(difference.error.message); }
 
     def mut out: io.Stream = io.stdout();
     if !integer(&out, &scratch, "seed=", seed) || !integer(&out, &scratch, "samples=", samples)
@@ -83,7 +95,7 @@ def pub simulate(seed: u64, samples: u64) -> i32 {
         || !integer(&out, &scratch, "elapsed_ns=", elapsed.value.nanoseconds) {
         return 3;
     }
-    if out.flush().status != status.OK { return 3; }
+    if !io_succeeded(out.flush()) { return 3; }
 
     return 0;
 }
@@ -100,23 +112,39 @@ def main() -> i32 {
     }
 
     if process.arg_count() == 3 {
-        def first: process.TextResult  = process.arg(&scratch, 1);
-        def second: process.TextResult = process.arg(&scratch, 2);
-
-        if first.status != status.OK || second.status != status.OK {
+        def first: result<string> = process.arg(&scratch, 1);
+        if first.erroneous {
             return report_error("cannot read arguments");
         }
 
-        def parsed_seed: std.U64Result    = std.parse_u64(first.value);
-        def parsed_samples: std.U64Result = std.parse_u64(second.value);
+        def second: result<string> = process.arg(&scratch, 2);
 
-        if parsed_seed.status != status.OK || parsed_samples.status != status.OK {
-            return report_error("invalid seed or sample count");
+        if second.erroneous {
+            return report_error("cannot read arguments");
         }
+
+        def parsed_seed: result<u64> = std.parse_u64(first.value);
+        if parsed_seed.erroneous { return report_error("invalid seed or sample count"); }
+
+        def parsed_samples: result<u64> = std.parse_u64(second.value);
+
+        if parsed_samples.erroneous { return report_error("invalid seed or sample count"); }
 
         seed    = parsed_seed.value;
         samples = parsed_samples.value;
     }
 
     return simulate(seed, samples);
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// Report cleanup/diagnostic failures without recursively writing to a failed stream.
+def report_io_failure(outcome: result<void>) -> void {
+    if outcome.erroneous { std.println(outcome.error.message); }
 }

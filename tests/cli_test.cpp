@@ -6,6 +6,7 @@
 #include "mlir/Parser/Parser.h"
 #include "support/cli_fixture.h"
 #include <future>
+#include <set>
 
 namespace {
 class CliTest : public gloin_test::CliFixture {
@@ -242,7 +243,7 @@ TEST_F(CliTest, HelpAndVersionAreStandaloneSuccessfulCommands) {
             EXPECT_NE(result.out.find(word), std::string::npos);
     }
     for (const std::string option : {"--version", "-V"})
-        expect_success(invoke({option}), "gloinc 0.1.0 (LLVM/MLIR " LLVM_VERSION_STRING ")\n");
+        expect_success(invoke({option}), "gloinc 0.2.0 (LLVM/MLIR " LLVM_VERSION_STRING ")\n");
 }
 
 TEST_F(CliTest, NativeExecutableRunsWithoutJitAndReceivesArguments) {
@@ -297,6 +298,58 @@ TEST_F(CliTest, OptimizedNativeOutputPreservesCheckedArrayBounds) {
     EXPECT_FALSE(launch_failed);
     expect_error(invoke_raw({"-O2", "--jit", valid}), 2, "require native output");
     expect_error(invoke_raw({"-O2", "-O0", valid}), 2, "exactly one optimization");
+}
+
+TEST_F(CliTest, NativeObjectsUseDirectCallRelocationsAndPreserveRecursion) {
+    const auto file = source(R"(
+        import "@std";
+        def fib(n: i32) -> i32 {
+            if n < 2 { return n; }
+            return fib(n - 1) + fib(n - 2);
+        }
+        def main() -> i32 {
+            std.println("native calls");
+            return fib(9);
+        }
+    )");
+    expect_run(invoke_raw({"--jit", file}), 34, "native calls\n");
+    for (const std::string optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(optimization);
+        const auto output = directory + "/calls.o";
+        expect_success(invoke_raw({optimization, "--emit-object", "-o", output, file}), "");
+        auto object = llvm::object::ObjectFile::createObjectFile(output);
+        ASSERT_TRUE(static_cast<bool>(object)) << llvm::toString(object.takeError());
+        std::set<std::string> direct_calls;
+        for (const auto &section : object->getBinary()->sections()) {
+            for (const auto &relocation : section.relocations()) {
+                llvm::SmallString<32> type;
+                relocation.getTypeName(type);
+                if (type != "ARM64_RELOC_BRANCH26" && type != "R_AARCH64_CALL26" &&
+                    type != "R_X86_64_PLT32")
+                    continue;
+                const auto symbol = relocation.getSymbol();
+                if (symbol == object->getBinary()->symbol_end()) continue;
+                auto name = symbol->getName();
+                ASSERT_TRUE(static_cast<bool>(name)) << llvm::toString(name.takeError());
+                name->consume_front("_"); // Mach-O symbol prefix.
+                direct_calls.insert(name->str());
+            }
+        }
+        // These external calls cannot be inlined. Large-model JIT emission
+        // instead materializes their addresses and calls through registers.
+        EXPECT_TRUE(direct_calls.contains("gloin_process_arguments_push"));
+        EXPECT_TRUE(direct_calls.contains("gloin_process_arguments_pop"));
+
+        const auto executable = directory + "/calls";
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        const auto out = directory + "/calls.out";
+        const auto err = directory + "/calls.err";
+        const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt,
+                                            redirects, 10), 34);
+        EXPECT_EQ(read(out), "native calls\n");
+        EXPECT_TRUE(read(err).empty());
+    }
 }
 
 TEST_F(CliTest, NativeCheckedIntegerBoundariesAtEveryWidthAndOptimizationLevel) {
@@ -755,6 +808,199 @@ TEST_F(CliTest, RuntimeTrapsCannotMasqueradeAsProgramResults) {
     }
 }
 
+TEST_F(CliTest, GIRAdjacentFloatChecksPreserveRoundingDiscardedFailuresAndEffects) {
+    const auto file = source(R"(
+        import "@process";
+        import "@std";
+        def calculate32(a: f32, b: f32, total: f32) -> f32 { return total + a * b; }
+        def calculate64(a: f64, b: f64, total: f64) -> f64 { return total + a * b; }
+        def discarded32(a: f32, b: f32, total: f32) -> void { total + a * b; }
+        def discarded64(a: f64, b: f64, total: f64) -> void { total + a * b; }
+        def observe(value: f64) -> f64 { std.print("effect;"); return value; }
+        def intervening_call(a: f64, b: f64, total: f64) -> f64 {
+            return a * b + observe(total);
+        }
+        def inverse(a: f64, b: f64) -> f64 { return 1.0 / (a * b); }
+        def conditional(a: f64, b: f64, skip: bool) -> f64 {
+            def product: f64 = a * b;
+            if skip { return 0.0; }
+            return 1.0 + product;
+        }
+        def main() -> i32 {
+            def mode: u64 = process.arg_count();
+            if mode == 1 {
+                // Contracting either expression into FMA changes its zero result.
+                if calculate32(1.00000011920928955078125, 1.00000011920928955078125,
+                               -1.0000002384185791015625) != 0.0 { return 1; }
+                if calculate64(1.0000000000000002, 1.0000000000000002,
+                               -1.0000000000000004) != 0.0 { return 2; }
+                if calculate32(3.0, 2.0, 1.0) != 7.0 { return 3; }
+                if calculate64(3.0, 2.0, 1.0) != 7.0 { return 4; }
+                discarded32(1.0, 2.0, 3.0);
+                discarded64(1.0, 2.0, 3.0);
+            }
+            if mode == 2 { discarded32(3e38, 2.0, 0.0); }
+            if mode == 3 { discarded64(1e308, 2.0, 0.0); }
+            if mode == 4 { discarded32(3e38, 1.0, 3e38); }
+            if mode == 5 { discarded64(1e308, 1.0, 1e308); }
+            if mode == 6 { intervening_call(1e308, 2.0, 0.0); }
+            if mode == 7 { inverse(1e308, 2.0); }
+            if mode == 8 { conditional(1e308, 2.0, true); }
+            if mode == 9 {
+                if intervening_call(2.0, 3.0, 1.0) != 7.0 { return 5; }
+            }
+            std.print("ok;");
+            return 42;
+        }
+    )");
+    const auto executable = directory + "/float-checks";
+    const auto output = directory + "/native.out";
+    const auto errors = directory + "/native.err";
+    for (const std::string mode : {"--run", "-O0", "-O2"}) {
+        SCOPED_TRACE(mode);
+        if (mode != "--run") {
+            auto built = invoke_raw({mode, "-o", executable, file});
+            ASSERT_EQ(built.status, 0) << built.err << built.message;
+        }
+        for (unsigned count = 1; count <= 9; ++count) {
+            SCOPED_TRACE(count);
+            gloin_test::ProcessResult result{};
+            if (mode == "--run") {
+                std::vector<std::string> arguments{"--run", file, "--"};
+                for (unsigned i = 1; i < count; ++i) arguments.push_back("case");
+                result = invoke_raw(arguments);
+            } else {
+                std::vector<llvm::StringRef> arguments{executable};
+                for (unsigned i = 1; i < count; ++i) arguments.push_back("case");
+                const std::optional<llvm::StringRef> redirects[] = {llvm::StringRef(""), output, errors};
+                ASSERT_FALSE(llvm::sys::fs::remove(output));
+                ASSERT_FALSE(llvm::sys::fs::remove(errors));
+                result.status = llvm::sys::ExecuteAndWait(executable, arguments, std::nullopt,
+                    redirects, 10, 0, &result.message, &result.launch_failed);
+                result.out = read(output);
+                result.err = read(errors);
+            }
+            ASSERT_FALSE(result.launch_failed) << result.message;
+            if (count == 1 || count == 9) {
+                EXPECT_EQ(result.status, 42) << result.err << result.message;
+                EXPECT_EQ(result.out, count == 1 ? "ok;" : "effect;ok;");
+            } else {
+                EXPECT_LT(result.status, 0) << result.err << result.message;
+                EXPECT_TRUE(result.out.empty()) << result.out;
+                EXPECT_EQ(result.message.find("timed out"), std::string::npos);
+                EXPECT_TRUE(result.message.find("Trace") != std::string::npos ||
+                            result.message.find("Illegal instruction") != std::string::npos) << result.message;
+            }
+            EXPECT_TRUE(result.err.empty()) << result.err;
+        }
+    }
+}
+
+TEST_F(CliTest, GIRLocalReductionsPreserveRoundingFailuresEmptyLoopsAndAliases) {
+    const auto file = source(R"(
+        import "@process";
+        import "@std";
+        def dot64(x: f64, y: f64, z: f64, w: f64, n: i64) -> f64 {
+            def a: [f64; 3] = {x, z, 1.0};
+            def b: [f64; 3] = {y, w, 1.0};
+            def mut total: f64 = 0.0;
+            for def mut i: i64 = 0; i < n; i = i + 1 { total = total + a[i] * b[i]; }
+            return total;
+        }
+        def dot32(x: f32, y: f32, z: f32, w: f32, n: i64) -> f32 {
+            def a: [f32; 3] = {x, z, 1.0};
+            def b: [f32; 3] = {y, w, 1.0};
+            def p: [const f32] = a[..];
+            def r: [const f32] = b[..];
+            def mut total: f32 = 0.0;
+            for def mut i: i64 = 0; i < n; i = i + 1 { total = total + p[i] * r[i]; }
+            return total;
+        }
+        def overlap(n: u64) -> f64 {
+            def a: [f64; 4] = {1.0, 2.0, 3.0, 4.0};
+            def p: [const f64] = a[..3];
+            def tail: [const f64] = a[..];
+            def r: [const f64] = tail[1..];
+            def mut total: f64 = 0.0;
+            for def mut i: u64 = 0; i < n; i = i + 1 { total = total + p[i] * r[i]; }
+            return total;
+        }
+        def effects() -> void {
+            def a: [f64; 2] = {1.0, 1e308};
+            def b: [f64; 2] = {2.0, 2.0};
+            def mut total: f64 = 0.0;
+            for def mut i: i64 = 0; i < 2; i = i + 1 {
+                std.print("load;");
+                total = total + a[i] * b[i];
+                std.print("ok;");
+            }
+        }
+        def main() -> i32 {
+            def mode: u64 = process.arg_count();
+            if mode == 1 {
+                if dot64(-1.0000000000000004, 1.0, 1.0000000000000002, 1.0000000000000002, 2) != 0.0 { return 1; }
+                if dot32(-1.0000002384185791015625, 1.0, 1.00000011920928955078125, 1.00000011920928955078125, 2) != 0.0 { return 2; }
+                if dot64(1.0, 2.0, 3.0, 4.0, 3) != 15.0 { return 3; }
+                if dot32(1.0, 2.0, 3.0, 4.0, 3) != 15.0 { return 4; }
+                if overlap(3) != 20.0 { return 5; }
+                if overlap(0) != 0.0 { return 6; }
+                if dot64(1e308, 2.0, 1.0, 1.0, 0) != 0.0 { return 7; }
+                if dot32(3e38, 2.0, 1.0, 1.0, -1) != 0.0 { return 8; }
+            }
+            if mode == 2 { dot64(1e308, 2.0, 1.0, 1.0, 3); }
+            if mode == 3 { dot64(1e308, 1.0, 1e308, 1.0, 3); }
+            if mode == 4 { dot32(3e38, 2.0, 1.0, 1.0, 3); }
+            if mode == 5 { dot32(3e38, 1.0, 3e38, 1.0, 3); }
+            if mode == 6 { dot64(1.0, 1.0, 1.0, 1.0, 4); }
+            if mode == 7 { overlap(4); }
+            if mode == 8 { effects(); }
+            std.print("done;");
+            return 42;
+        }
+    )");
+    const auto executable = directory + "/reductions";
+    const auto output = directory + "/native.out";
+    const auto errors = directory + "/native.err";
+    for (const std::string mode : {"--run", "-O0", "-O2"}) {
+        SCOPED_TRACE(mode);
+        if (mode != "--run") {
+            auto built = invoke_raw({mode, "-o", executable, file});
+            ASSERT_EQ(built.status, 0) << built.err << built.message;
+        }
+        for (unsigned count = 1; count <= 8; ++count) {
+            SCOPED_TRACE(count);
+            gloin_test::ProcessResult result{};
+            if (mode == "--run") {
+                std::vector<std::string> arguments{"--run", file, "--"};
+                for (unsigned i = 1; i < count; ++i) arguments.push_back("case");
+                result = invoke_raw(arguments);
+            } else {
+                std::vector<llvm::StringRef> arguments{executable};
+                for (unsigned i = 1; i < count; ++i) arguments.push_back("case");
+                const std::optional<llvm::StringRef> redirects[] = {llvm::StringRef(""), output, errors};
+                ASSERT_FALSE(llvm::sys::fs::remove(output));
+                ASSERT_FALSE(llvm::sys::fs::remove(errors));
+                result.status = llvm::sys::ExecuteAndWait(executable, arguments, std::nullopt,
+                    redirects, 10, 0, &result.message, &result.launch_failed);
+                result.out = read(output);
+                result.err = read(errors);
+            }
+            ASSERT_FALSE(result.launch_failed) << result.message;
+            if (count == 1) {
+                EXPECT_EQ(result.status, 42) << result.err << result.message;
+                EXPECT_EQ(result.out, "done;");
+            } else {
+                EXPECT_LT(result.status, 0) << result.err << result.message;
+                EXPECT_EQ(result.out, count == 8 ? "load;ok;load;" : "");
+                EXPECT_EQ(result.message.find("timed out"), std::string::npos);
+                EXPECT_TRUE(result.message.find("Trace") != std::string::npos ||
+                            result.message.find("Illegal instruction") != std::string::npos) << result.message;
+            }
+            EXPECT_TRUE(result.err.empty()) << result.err;
+        }
+    }
+}
+
 TEST_F(CliTest, GIRVersionedLoopsPreserveBoundsTrapOrderAndOrderedFloatResults) {
     const auto file = source(R"(
         import "@process";
@@ -848,6 +1094,191 @@ TEST_F(CliTest, GIRVersionedLoopsPreserveBoundsTrapOrderAndOrderedFloatResults) 
             ASSERT_FALSE(result.launch_failed) << result.message;
             EXPECT_EQ(result.out, traces[count - 1]);
             if (count == 1 || count == 5 || count == 6 || count == 9 || count == 10)
+                EXPECT_EQ(result.status, 42) << result.err << result.message;
+            else {
+                EXPECT_LT(result.status, 0) << result.err << result.message;
+                EXPECT_EQ(result.message.find("timed out"), std::string::npos);
+                EXPECT_TRUE(result.message.find("Trace") != std::string::npos ||
+                            result.message.find("Illegal instruction") != std::string::npos) << result.message;
+            }
+        }
+    }
+}
+
+TEST_F(CliTest, GIRStridedLoopsPreserveBytesTailsAndOverlappingSlices) {
+    const auto file = source(R"(
+        def expand(input: [const u8], output: [u8]) -> u64 {
+            def mut i: u64 = 0;
+            def mut j: u64 = 0;
+            while i + 3 <= input.len {
+                def a: u8 = input[i];
+                def b: u8 = input[i + 1];
+                def c: u8 = input[i + 2];
+                output[j] = a;
+                output[j + 1] = b;
+                output[j + 1 + 1] = c;
+                output[j + 3] = 77;
+                i = i + 3;
+                j = j + 4;
+            }
+            while i < input.len {
+                output[j] = input[i];
+                i = i + 1;
+                j = j + 1;
+            }
+            return j;
+        }
+        def main() -> i32 {
+            def input: [u8; 20] = {0, 255, 128, 254, 127, 1, 2, 3, 4, 5,
+                                   6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+            def mut output: [u8; 32] = {201; 32};
+            def marker: u8 = 77;
+            def sentinel: u8 = 201;
+            for def mut n: u64 = 0; n <= 20; n = n + 1 {
+                def needed: u64 = n + n / 3;
+                for def mut spare: u64 = 0; spare < 2; spare = spare + 1 {
+                    for def mut k: u64 = 0; k < 32; k = k + 1 { output[k] = sentinel; }
+                    if expand(input[..n], output[1..needed + spare + 1]) != needed { return 1; }
+                    def groups: u64 = n / 3;
+                    for def mut k: u64 = 0; k < groups * 4; k = k + 1 {
+                        if k % 4 == 3 {
+                            if output[k + 1] != marker { return 2; }
+                        } else {
+                            if output[k + 1] != input[(k / 4) * 3 + k % 4] { return 3; }
+                        }
+                    }
+                    for def mut k: u64 = 0; k < n % 3; k = k + 1 {
+                        if output[groups * 4 + k + 1] != input[groups * 3 + k] { return 4; }
+                    }
+                    if output[0] != sentinel || output[needed + 1] != sentinel { return 5; }
+                }
+            }
+            // The first group's fourth store changes the next group's input.
+            // Versioning must not assume that source and destination are disjoint.
+            def mut shared: [u8; 8] = {1, 2, 3, 4, 5, 6, 7, 8};
+            def expected: [u8; 8] = {1, 2, 3, 77, 77, 5, 6, 77};
+            if expand(shared[..6], shared[..]) != 8 { return 6; }
+            for def mut k: u64 = 0; k < 8; k = k + 1 {
+                if shared[k] != expected[k] { return 7; }
+            }
+            return 42;
+        }
+    )");
+    expect_run(invoke_raw({"--run", file}), 42);
+    const auto executable = directory + "/strided-bytes";
+    for (const std::string mode : {"-O0", "-O2"}) {
+        SCOPED_TRACE(mode);
+        expect_success(invoke_raw({mode, "-o", executable, file}), "");
+        std::string error;
+        bool failed = false;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {},
+                                           10, 0, &error, &failed), 42) << error;
+        EXPECT_FALSE(failed) << error;
+    }
+}
+
+TEST_F(CliTest, GIRStridedLoopsPreserveShortBufferAndOverflowTrapOrder) {
+    const auto file = source(R"(
+        import "@process";
+        import "@std";
+        def pack(output: [u8], n: u64, value: u8) -> u64 {
+            def mut i: u64 = 0;
+            def mut j: u64 = 0;
+            while i + 3 <= n {
+                std.print("begin;");
+                def byte: u8 = value + 1;
+                std.print("sum;");
+                output[j] = byte; std.print("0;");
+                output[j + 1] = byte; std.print("1;");
+                output[j + 2] = byte; std.print("2;");
+                output[j + 3] = byte; std.print("3;");
+                i = i + 3;
+                j = j + 4;
+            }
+            std.print("end;");
+            return i + j;
+        }
+        def final_test(output: [u8], n: u64) -> void {
+            def mut i: u64 = 0;
+            def mut j: u64 = 0;
+            // One iteration fits; the next header's i+S overflows.
+            while i + 9223372036854775808 <= n {
+                std.print("begin;");
+                output[j] = 1;
+                std.print("write;");
+                i = i + 9223372036854775808;
+                j = j + 1;
+            }
+            std.print("end;");
+        }
+        def secondary(output: [u8], n: u64) -> void {
+            def mut i: u64 = 0;
+            def mut j: u64 = 0;
+            while i + 1 <= n {
+                std.print("begin;");
+                output[j] = 1;
+                std.print("write;");
+                i = i + 1;
+                j = j + 18446744073709551615;
+            }
+        }
+        def main() -> i32 {
+            def mode: u64 = process.arg_count();
+            def mut output: [u8; 8] = zeroed;
+            if mode <= 9 {
+                if pack(output[..mode - 1], 6, 1) == 14 { return 42; }
+            }
+            if mode == 10 { if pack(output[..0], 0, 1) == 0 { return 42; } }
+            if mode == 11 { if pack(output[..0], 2, 1) == 0 { return 42; } }
+            if mode == 12 { if pack(output[..4], 3, 1) == 7 { return 42; } }
+            if mode == 13 { pack(output[..0], 6, 255); }
+            if mode == 14 { pack(output[..], 6, 255); }
+            if mode == 15 { final_test(output[..], 9223372036854775808); }
+            if mode == 16 { final_test(output[..0], 9223372036854775808); }
+            if mode == 17 { secondary(output[..], 1); return 42; }
+            if mode == 18 { secondary(output[..], 2); }
+            if mode == 19 { pack(output[..], 18446744073709551615, 1); }
+            return 1;
+        }
+    )");
+    const auto executable = directory + "/strided-traps";
+    const auto output = directory + "/native.out";
+    const auto errors = directory + "/native.err";
+    std::vector<std::string> traces;
+    const std::string group = "begin;sum;0;1;2;3;";
+    for (unsigned capacity = 0; capacity < 8; ++capacity) {
+        std::string trace = capacity >= 4 ? group : "";
+        trace += "begin;sum;";
+        for (unsigned k = 0; k < capacity % 4; ++k) trace += std::to_string(k) + ";";
+        traces.push_back(trace);
+    }
+    traces.insert(traces.end(), {group + group + "end;", "end;", "end;", group + "end;",
+        "begin;", "begin;", "begin;write;", "begin;", "begin;write;",
+        "begin;write;begin;", group + group + "begin;sum;"});
+    for (const std::string mode : {"--run", "-O0", "-O2"}) {
+        SCOPED_TRACE(mode);
+        if (mode != "--run") expect_success(invoke_raw({mode, "-o", executable, file}), "");
+        for (unsigned count = 1; count <= traces.size(); ++count) {
+            SCOPED_TRACE(count);
+            gloin_test::ProcessResult result{};
+            if (mode == "--run") {
+                std::vector<std::string> arguments{"--run", file, "--"};
+                for (unsigned i = 1; i < count; ++i) arguments.push_back("case");
+                result = invoke_raw(arguments);
+            } else {
+                std::vector<llvm::StringRef> arguments{executable};
+                for (unsigned i = 1; i < count; ++i) arguments.push_back("case");
+                const std::optional<llvm::StringRef> redirects[] = {llvm::StringRef(""), output, errors};
+                ASSERT_FALSE(llvm::sys::fs::remove(output));
+                ASSERT_FALSE(llvm::sys::fs::remove(errors));
+                result.status = llvm::sys::ExecuteAndWait(executable, arguments, std::nullopt,
+                    redirects, 10, 0, &result.message, &result.launch_failed);
+                result.out = read(output);
+                result.err = read(errors);
+            }
+            ASSERT_FALSE(result.launch_failed) << result.message;
+            EXPECT_EQ(result.out, traces[count - 1]);
+            if (count == 9 || count == 10 || count == 11 || count == 12 || count == 17)
                 EXPECT_EQ(result.status, 42) << result.err << result.message;
             else {
                 EXPECT_LT(result.status, 0) << result.err << result.message;

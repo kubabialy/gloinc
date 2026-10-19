@@ -1,30 +1,15 @@
 // Concrete finite numerical utilities. See docs/math.md for domains and accuracy.
 import "@status";
 
-// Every checked failure has value +0 (integer zero); successful signed zero is preserved.
-def pub struct I32Result {
-    def pub status: i32,
-    def pub value: i32,
-}
-
-def pub struct I64Result {
-    def pub status: i32,
-    def pub value: i64,
-}
-
-def pub struct U64Result {
-    def pub status: i32,
-    def pub value: u64,
-}
-
-def pub struct F32Result {
-    def pub status: i32,
-    def pub value: f32,
-}
-
-def pub struct F64Result {
-    def pub status: i32,
-    def pub value: f64,
+// Native status codes stay private. Public failures use the language's error
+// payload; there is no readable dummy numeric value on the failure path.
+def native_failure(code: i32) -> error {
+    return match code {
+        case status.INVALID => error("math domain error");
+        case status.OVERFLOW => error("math result overflow");
+        case status.UNDERFLOW => error("math result underflow");
+        default => error("math runtime failure");
+    };
 }
 
 // Nearest f32 constants; scalar loads, no allocation; angles are radians.
@@ -46,32 +31,20 @@ def pub max_i32(a: i32, b: i32) -> i32 {
     if b > a { return b; } return a;
 }
 
-// Example: math.clamp_i32(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
+// Example: math.clamp_i32(value, low, high). Inclusive bounds; Error if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
-def pub clamp_i32(value: i32, low: i32, high: i32) -> I32Result {
+def pub clamp_i32(value: i32, low: i32, high: i32) -> result<i32> {
     if low > high {
-        return I32Result {
-            status: status.INVALID,
-            value: 0
-        };
+        return error("math clamp bounds are reversed");
     }
     if value < low {
-        return I32Result {
-            status: status.OK,
-            value: low
-        };
+        return low;
     }
     if value > high {
-        return I32Result {
-            status: status.OK,
-            value: high
-        };
+        return high;
     }
 
-    return I32Result {
-        status: status.OK,
-        value: value
-    };
+    return value;
 }
 
 // Example: math.min_i64(2, 3) selects the minimum.
@@ -86,32 +59,20 @@ def pub max_i64(a: i64, b: i64) -> i64 {
     if b > a { return b; } return a;
 }
 
-// Example: math.clamp_i64(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
+// Example: math.clamp_i64(value, low, high). Inclusive bounds; Error if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
-def pub clamp_i64(value: i64, low: i64, high: i64) -> I64Result {
+def pub clamp_i64(value: i64, low: i64, high: i64) -> result<i64> {
     if low > high {
-        return I64Result {
-            status: status.INVALID,
-            value: 0
-        };
+        return error("math clamp bounds are reversed");
     }
     if value < low {
-        return I64Result {
-            status: status.OK,
-            value: low
-        };
+        return low;
     }
     if value > high {
-        return I64Result {
-            status: status.OK,
-            value: high
-        };
+        return high;
     }
 
-    return I64Result {
-        status: status.OK,
-        value: value
-    };
+    return value;
 }
 
 // Example: math.min_u64(2, 3) selects the minimum.
@@ -126,32 +87,20 @@ def pub max_u64(a: u64, b: u64) -> u64 {
     if b > a { return b; } return a;
 }
 
-// Example: math.clamp_u64(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
+// Example: math.clamp_u64(value, low, high). Inclusive bounds; Error if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
-def pub clamp_u64(value: u64, low: u64, high: u64) -> U64Result {
+def pub clamp_u64(value: u64, low: u64, high: u64) -> result<u64> {
     if low > high {
-        return U64Result {
-            status: status.INVALID,
-            value: 0
-        };
+        return error("math clamp bounds are reversed");
     }
     if value < low {
-        return U64Result {
-            status: status.OK,
-            value: low
-        };
+        return low;
     }
     if value > high {
-        return U64Result {
-            status: status.OK,
-            value: high
-        };
+        return high;
     }
 
-    return U64Result {
-        status: status.OK,
-        value: value
-    };
+    return value;
 }
 
 // Example: math.min_f32(2.0, 3.0) selects the minimum.
@@ -166,32 +115,20 @@ def pub max_f32(a: f32, b: f32) -> f32 {
     if b > a { return b; } return a;
 }
 
-// Example: math.clamp_f32(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
+// Example: math.clamp_f32(value, low, high). Inclusive bounds; Error if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
-def pub clamp_f32(value: f32, low: f32, high: f32) -> F32Result {
+def pub clamp_f32(value: f32, low: f32, high: f32) -> result<f32> {
     if low > high {
-        return F32Result {
-            status: status.INVALID,
-            value: 0.0
-        };
+        return error("math clamp bounds are reversed");
     }
     if value < low {
-        return F32Result {
-            status: status.OK,
-            value: low
-        };
+        return low;
     }
     if value > high {
-        return F32Result {
-            status: status.OK,
-            value: high
-        };
+        return high;
     }
 
-    return F32Result {
-        status: status.OK,
-        value: value
-    };
+    return value;
 }
 
 // Example: math.min_f64(2.0, 3.0) selects the minimum.
@@ -206,494 +143,434 @@ def pub max_f64(a: f64, b: f64) -> f64 {
     if b > a { return b; } return a;
 }
 
-// Example: math.clamp_f64(value, low, high). Inclusive bounds; INVALID/+0 if low > high.
+// Example: math.clamp_f64(value, low, high). Inclusive bounds; Error if low > high.
 // O(1), no allocation. In-range values keep their sign, including zero; no implicit conversion.
-def pub clamp_f64(value: f64, low: f64, high: f64) -> F64Result {
+def pub clamp_f64(value: f64, low: f64, high: f64) -> result<f64> {
     if low > high {
-        return F64Result {
-            status: status.INVALID,
-            value: 0.0
-        };
+        return error("math clamp bounds are reversed");
     }
     if value < low {
-        return F64Result {
-            status: status.OK,
-            value: low
-        };
+        return low;
     }
     if value > high {
-        return F64Result {
-            status: status.OK,
-            value: high
-        };
+        return high;
     }
 
-    return F64Result {
-        status: status.OK,
-        value: value
-    };
+    return value;
 }
 
-// Example: math.abs_i32(-42) -> OK/42. Minimum signed value -> OVERFLOW/0, never negate it.
+// Example: math.abs_i32(-42) -> success/42. Minimum signed value returns an overflow error; never negate it.
 // O(1), no allocation; all other inputs succeed.
-def pub abs_i32(value: i32) -> I32Result {
+def pub abs_i32(value: i32) -> result<i32> {
     if value == -2147483648 {
-        return I32Result {
-            status: status.OVERFLOW,
-            value: 0
-        };
+        return error("math absolute value overflow");
     }
     if value < 0 {
-        return I32Result {
-            status: status.OK,
-            value: -value
-        };
+        return -value;
     }
 
-    return I32Result {
-        status: status.OK,
-        value: value
-    };
+    return value;
 }
 
-// Example: math.abs_i64(-42) -> OK/42. Minimum signed value -> OVERFLOW/0, never negate it.
+// Example: math.abs_i64(-42) -> success/42. Minimum signed value returns an overflow error; never negate it.
 // O(1), no allocation; all other inputs succeed.
-def pub abs_i64(value: i64) -> I64Result {
+def pub abs_i64(value: i64) -> result<i64> {
     if value == -9223372036854775808 {
-        return I64Result {
-            status: status.OVERFLOW,
-            value: 0
-        };
+        return error("math absolute value overflow");
     }
     if value < 0 {
-        return I64Result {
-            status: status.OK,
-            value: -value
-        };
+        return -value;
     }
 
-    return I64Result {
-        status: status.OK,
-        value: value
-    };
+    return value;
 }
 
-// Example: math.abs_f32(-2.0) -> OK/2; -0 becomes +0.
+// Example: math.abs_f32(-2.0) -> success/2; -0 becomes +0.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub abs_f32(value: f32) -> F32Result {
+def pub abs_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(0, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.floor_f32(-1.25) -> OK/-2; toward negative infinity.
+// Example: math.floor_f32(-1.25) -> success/-2; toward negative infinity.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub floor_f32(value: f32) -> F32Result {
+def pub floor_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(1, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.ceil_f32(-1.25) -> OK/-1; toward positive infinity.
+// Example: math.ceil_f32(-1.25) -> success/-1; toward positive infinity.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub ceil_f32(value: f32) -> F32Result {
+def pub ceil_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(2, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.trunc_f32(-1.75) -> OK/-1; toward zero.
+// Example: math.trunc_f32(-1.75) -> success/-1; toward zero.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub trunc_f32(value: f32) -> F32Result {
+def pub trunc_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(3, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.round_f32(-2.5) -> OK/-3; nearest, ties AWAY from zero.
+// Example: math.round_f32(-2.5) -> success/-3; nearest, ties AWAY from zero.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub round_f32(value: f32) -> F32Result {
+def pub round_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(4, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.sqrt_f32(4.0) -> OK/2; negative input INVALID, sqrt(-0) is -0.
+// Example: math.sqrt_f32(4.0) -> success/2; negative input errors, sqrt(-0) is -0.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub sqrt_f32(value: f32) -> F32Result {
+def pub sqrt_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(5, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.exp_f32(0.0) -> OK/1; overflow OVERFLOW, nonzero rounded to zero UNDERFLOW.
+// Example: math.exp_f32(0.0) -> success/1; overflow and nonzero rounded to zero return distinct errors.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub exp_f32(value: f32) -> F32Result {
+def pub exp_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(6, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.log_f32(1.0) -> OK/+0; natural logarithm, input <= 0 INVALID.
+// Example: math.log_f32(1.0) -> success/+0; natural logarithm, input <= 0 errors.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub log_f32(value: f32) -> F32Result {
+def pub log_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(7, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.log10_f32(100.0) -> OK/2; base ten, input <= 0 INVALID.
+// Example: math.log10_f32(100.0) -> success/2; base ten, input <= 0 errors.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub log10_f32(value: f32) -> F32Result {
+def pub log10_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(8, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.sin_f32(0.0) -> OK/+0; radians, preserves input signed zero.
+// Example: math.sin_f32(0.0) -> success/+0; radians, preserves input signed zero.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub sin_f32(value: f32) -> F32Result {
+def pub sin_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(9, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.cos_f32(0.0) -> OK/1; radians.
+// Example: math.cos_f32(0.0) -> success/1; radians.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub cos_f32(value: f32) -> F32Result {
+def pub cos_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(10, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.tan_f32(0.0) -> OK/+0; radians; rounded pi/2 is not an exact pole.
+// Example: math.tan_f32(0.0) -> success/+0; radians; rounded pi/2 is not an exact pole.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub tan_f32(value: f32) -> F32Result {
+def pub tan_f32(value: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_unary_f32(11, value, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.pow_f32(2.0, 3.0) -> OK/8; 0**0=1, zero to negative power INVALID; negative base needs integral exponent.
+// Example: math.pow_f32(2.0, 3.0) -> success/8; 0**0=1, zero to negative power errors; negative base needs integral exponent.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub pow_f32(base: f32, exponent: f32) -> F32Result {
+def pub pow_f32(base: f32, exponent: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_binary_f32(0, base, exponent, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.atan2_f32(1.0, 0.0) -> OK/pi/2; arguments (y,x), radians; signed-zero axes/origin choose quadrant.
+// Example: math.atan2_f32(1.0, 0.0) -> success/pi/2; arguments (y,x), radians; signed-zero axes/origin choose quadrant.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub atan2_f32(y: f32, x: f32) -> F32Result {
+def pub atan2_f32(y: f32, x: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_binary_f32(1, y, x, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.hypot_f32(3.0, 4.0) -> OK/5; scaled host hypot avoids intermediate squared overflow; zeros give +0.
+// Example: math.hypot_f32(3.0, 4.0) -> success/5; scaled host hypot avoids intermediate squared overflow; zeros give +0.
 // No allocation/retained storage; fixed dispatch plus host f32 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f32.
-def pub hypot_f32(x: f32, y: f32) -> F32Result {
+def pub hypot_f32(x: f32, y: f32) -> result<f32> {
     def mut outcome: f32 = 0.0;
     def code: i32        = __math_binary_f32(2, x, y, &outcome);
 
-    return F32Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.abs_f64(-2.0) -> OK/2; -0 becomes +0.
+// Example: math.abs_f64(-2.0) -> success/2; -0 becomes +0.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub abs_f64(value: f64) -> F64Result {
+def pub abs_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(0, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.floor_f64(-1.25) -> OK/-2; toward negative infinity.
+// Example: math.floor_f64(-1.25) -> success/-2; toward negative infinity.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub floor_f64(value: f64) -> F64Result {
+def pub floor_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(1, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.ceil_f64(-1.25) -> OK/-1; toward positive infinity.
+// Example: math.ceil_f64(-1.25) -> success/-1; toward positive infinity.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub ceil_f64(value: f64) -> F64Result {
+def pub ceil_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(2, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.trunc_f64(-1.75) -> OK/-1; toward zero.
+// Example: math.trunc_f64(-1.75) -> success/-1; toward zero.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub trunc_f64(value: f64) -> F64Result {
+def pub trunc_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(3, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.round_f64(-2.5) -> OK/-3; nearest, ties AWAY from zero.
+// Example: math.round_f64(-2.5) -> success/-3; nearest, ties AWAY from zero.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub round_f64(value: f64) -> F64Result {
+def pub round_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(4, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.sqrt_f64(4.0) -> OK/2; negative input INVALID, sqrt(-0) is -0.
+// Example: math.sqrt_f64(4.0) -> success/2; negative input errors, sqrt(-0) is -0.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub sqrt_f64(value: f64) -> F64Result {
+def pub sqrt_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(5, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.exp_f64(0.0) -> OK/1; overflow OVERFLOW, nonzero rounded to zero UNDERFLOW.
+// Example: math.exp_f64(0.0) -> success/1; overflow and nonzero rounded to zero return distinct errors.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub exp_f64(value: f64) -> F64Result {
+def pub exp_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(6, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.log_f64(1.0) -> OK/+0; natural logarithm, input <= 0 INVALID.
+// Example: math.log_f64(1.0) -> success/+0; natural logarithm, input <= 0 errors.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub log_f64(value: f64) -> F64Result {
+def pub log_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(7, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.log10_f64(100.0) -> OK/2; base ten, input <= 0 INVALID.
+// Example: math.log10_f64(100.0) -> success/2; base ten, input <= 0 errors.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub log10_f64(value: f64) -> F64Result {
+def pub log10_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(8, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.sin_f64(0.0) -> OK/+0; radians, preserves input signed zero.
+// Example: math.sin_f64(0.0) -> success/+0; radians, preserves input signed zero.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub sin_f64(value: f64) -> F64Result {
+def pub sin_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(9, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.cos_f64(0.0) -> OK/1; radians.
+// Example: math.cos_f64(0.0) -> success/1; radians.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub cos_f64(value: f64) -> F64Result {
+def pub cos_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(10, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.tan_f64(0.0) -> OK/+0; radians; rounded pi/2 is not an exact pole.
+// Example: math.tan_f64(0.0) -> success/+0; radians; rounded pi/2 is not an exact pole.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub tan_f64(value: f64) -> F64Result {
+def pub tan_f64(value: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_unary_f64(11, value, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.pow_f64(2.0, 3.0) -> OK/8; 0**0=1, zero to negative power INVALID; negative base needs integral exponent.
+// Example: math.pow_f64(2.0, 3.0) -> success/8; 0**0=1, zero to negative power errors; negative base needs integral exponent.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub pow_f64(base: f64, exponent: f64) -> F64Result {
+def pub pow_f64(base: f64, exponent: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_binary_f64(0, base, exponent, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.atan2_f64(1.0, 0.0) -> OK/pi/2; arguments (y,x), radians; signed-zero axes/origin choose quadrant.
+// Example: math.atan2_f64(1.0, 0.0) -> success/pi/2; arguments (y,x), radians; signed-zero axes/origin choose quadrant.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub atan2_f64(y: f64, x: f64) -> F64Result {
+def pub atan2_f64(y: f64, x: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_binary_f64(1, y, x, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }
 
-// Example: math.hypot_f64(3.0, 4.0) -> OK/5; scaled host hypot avoids intermediate squared overflow; zeros give +0.
+// Example: math.hypot_f64(3.0, 4.0) -> success/5; scaled host hypot avoids intermediate squared overflow; zeros give +0.
 // No allocation/retained storage; fixed dispatch plus host f64 libm cost (not a latency/ULP promise).
-// Finite inputs only. INVALID/domain, OVERFLOW/range, UNDERFLOW/nonzero rounded to zero -> +0.
+// Finite inputs only. Domain, overflow and nonzero-rounded-to-zero failures return errors.
 // Nonzero subnormals succeed; other signed zeros follow docs/math.md. Rounding returns f64.
-def pub hypot_f64(x: f64, y: f64) -> F64Result {
+def pub hypot_f64(x: f64, y: f64) -> result<f64> {
     def mut outcome: f64 = 0.0;
     def code: i32        = __math_binary_f64(2, x, y, &outcome);
 
-    return F64Result {
-        status: code,
-        value: outcome
-    };
+    if code != status.OK { return native_failure(code); }
+
+    return outcome;
 }

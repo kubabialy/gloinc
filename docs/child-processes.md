@@ -578,7 +578,7 @@ provided. Process groups cover ordinary descendants; escaped descendants and
 full process-tree containment remain outside this API's contract. The remaining
 tooling work is tracked in the [0.1.0 roadmap](tooling-roadmap.md).
 
-Errors currently contain static messages, consistent with the built-in `error`
-contract. The native ABI records OS error codes, but these public result APIs do
-not yet expose them. Signal numbers are host values. This API manages OS
+Errors currently contain static messages. The native ABI records OS error
+codes, but these public result APIs do not yet expose them: in development,
+`.code` and `.os_error` remain zero (unspecified). Signal numbers are host values. This API manages OS
 processes and does not enable Gloin's deferred async/spawn language features.

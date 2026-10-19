@@ -1,4 +1,4 @@
-# Compilation timings (unreleased)
+# Compilation timings (0.2.0)
 
 The working compiler adds `--time-compilation` for PERF-001. It observes the
 existing checked source → GloinIR → LLVM dialect → LLVM IR pipeline. It does
@@ -37,7 +37,7 @@ invocation count. Only entered stages appear, including a stage that fails.
 | `lowering` | Legality checks, pass setup, GIR preparation, local SSA promotion, range proofs and counted slice loop versioning, GloinIR and standard-dialect conversion passes, their enabled verifiers and final LLVM-dialect verification. |
 | `native_target_setup` | Host target detection and target-machine creation. |
 | `llvm_translation` | LLVM translation registration, translation, target/layout setup, native entry adapter and initial LLVM verification. |
-| `llvm_optimization` | Native `-O2` analysis/pipeline setup, O2 passes with the development compiler's inlining growth limit, and final LLVM verification. Absent for `-O0`. |
+| `llvm_optimization` | Native `-O2` analysis/pipeline setup, O2 passes with the compiler's inlining growth limit, and final LLVM verification. Absent for `-O0`. |
 | `object_emission` | Temporary file creation, target code generation, object writes/close; also the final rename for object-only output. Code generation itself uses the requested optimization level. |
 | `linking` | Runtime path resolution, linker launch/wait and final executable rename. |
 | `ir_output` | Printing/flushing inspection output, including source locations. |

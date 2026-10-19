@@ -12,8 +12,17 @@ class TextLibraryTest : public gloin_test::CliFixture {
     std::string program(const std::string &body) {
         return source(
             "import \"@strings\"; import \"@status\"; import \"@arena\"; import \"@std\"; "
-            "def ok(r: strings.StringResult, text: string) -> bool { "
-            "return r.status == status.OK && strings.equal(r.value, text); } "
+            R"(def ok(r: result<string>, text: string) -> bool {
+                if r.erroneous { return false; }
+                return strings.equal(r.value, text);
+            }
+            def item_ok(r: strings.TextItem, text: string) -> bool {
+                return !r.end && strings.equal(r.value, text);
+            }
+            def void_code(r: result<void>) -> i32 {
+                if r.erroneous { return r.error.code; }
+                return status.OK;
+            })"
             "def main() -> i32 { def mut memory: arena.GeneralArena = "
             "arena.GeneralArena.create(); defer memory.free(); " +
             body + " }");
@@ -102,24 +111,24 @@ TEST_F(TextLibraryTest, SplitMatchesIndependentOracleIncludingEmptyAndBinaryToke
              {std::string("a\0b\0", 4), std::string("\0", 1)},
              {"abc", "z"}}) {
         auto name = std::to_string(test++);
-        body += "def made" + name + ": strings.SplitCursorResult = strings.SplitCursor.create(" +
+        body += "def made" + name + ": result<strings.SplitCursor> = strings.SplitCursor.create(" +
                 quoted(input) + ", " + quoted(delimiter) + ");";
-        body += "if made" + name + ".status != status.OK { return 1; } def mut c" + name +
+        body += "if made" + name + ".erroneous { return 1; } def mut c" + name +
                 ": strings.SplitCursor = made" + name + ".value;";
         size_t position = 0;
         for (;;) {
             auto end = input.find(delimiter, position);
             const auto expected =
                 input.substr(position, end == std::string::npos ? end : end - position);
-            body += "if !ok(c" + name + ".next(), " + quoted(expected) + ") { return 2; }";
+            body += "if !item_ok(c" + name + ".next(), " + quoted(expected) + ") { return 2; }";
             if (end == std::string::npos)
                 break;
             position = end + delimiter.size();
         }
-        body += "def end" + name + ": strings.StringResult = c" + name + ".next(); def again" +
-                name + ": strings.StringResult = c" + name + ".next();";
-        body += "if end" + name + ".status != status.END || again" + name +
-                ".status != status.END || !strings.is_empty(end" + name + ".value) { return 3; }";
+        body += "def end" + name + ": strings.TextItem = c" + name + ".next(); def again" + name +
+                ": strings.TextItem = c" + name + ".next();";
+        body += "if !end" + name + ".end || !again" + name + ".end || !strings.is_empty(end" +
+                name + ".value) { return 3; }";
     }
     expect_run(invoke({program(body + "return 0;")}), 0);
 }
@@ -140,31 +149,30 @@ TEST_F(TextLibraryTest, LineBoundariesCrLfStandaloneCrAndFinalLine) {
         body += "def mut c" + name + ": strings.LineCursor = strings.LineCursor.create(" +
                 quoted(input) + ");";
         for (const auto &line : lines)
-            body += "if !ok(c" + name + ".next(), " + quoted(line) + ") { return 1; }";
-        body += "def end" + name + ": strings.StringResult = c" + name + ".next(); def again" +
-                name + ": strings.StringResult = c" + name + ".next();";
-        body += "if end" + name + ".status != status.END || again" + name +
-                ".status != status.END || !strings.is_empty(end" + name + ".value) { return 2; }";
+            body += "if !item_ok(c" + name + ".next(), " + quoted(line) + ") { return 1; }";
+        body += "def end" + name + ": strings.TextItem = c" + name + ".next(); def again" + name +
+                ": strings.TextItem = c" + name + ".next();";
+        body += "if !end" + name + ".end || !again" + name + ".end || !strings.is_empty(end" +
+                name + ".value) { return 2; }";
     }
     expect_run(invoke({program(body + "return 0;")}), 0);
 }
 
 TEST_F(TextLibraryTest, CursorCopiesAdvanceIndependentlyAndEmptyDelimiterIsInvalid) {
     expect_run(invoke({program(R"(
-        def bad: strings.SplitCursorResult = strings.SplitCursor.create("abc", "");
-        if bad.status != status.INVALID { return 1; }
-        def mut invalid: strings.SplitCursor = bad.value;
-        def invalid_step: strings.StringResult = invalid.next();
-        if invalid_step.status != status.INVALID || !strings.is_empty(invalid_step.value) { return 2; }
-        def made: strings.SplitCursorResult = strings.SplitCursor.create("a,b,c", ",");
+        def bad: result<strings.SplitCursor> = strings.SplitCursor.create("abc", "");
+        if !bad.erroneous { return 97; }
+        if bad.error.code != status.INVALID { return 1; }
+        def made: result<strings.SplitCursor> = strings.SplitCursor.create("a,b,c", ",");
+        if made.erroneous { return 97; }
         def mut a: strings.SplitCursor = made.value;
-        if !ok(a.next(), "a") { return 3; }
+        if !item_ok(a.next(), "a") { return 3; }
         def mut b: strings.SplitCursor = a;
-        if !ok(a.next(), "b") || !ok(a.next(), "c") || !ok(b.next(), "b") { return 4; }
+        if !item_ok(a.next(), "b") || !item_ok(a.next(), "c") || !item_ok(b.next(), "b") { return 4; }
         def mut first: strings.LineCursor = strings.LineCursor.create("x\ny");
-        def saved: strings.StringResult = first.next();
+        def saved: strings.TextItem = first.next();
         def mut second: strings.LineCursor = first;
-        if !ok(first.next(), "y") || !ok(second.next(), "y") || !ok(saved, "x") { return 5; }
+        if !item_ok(first.next(), "y") || !item_ok(second.next(), "y") || !item_ok(saved, "x") { return 5; }
         return 0;)")}),
                0);
 }
@@ -173,12 +181,15 @@ TEST_F(TextLibraryTest, ConcatAndRepeatCheckLimitsAndOverflowBeforeAllocation) {
     expect_run(invoke({program(R"(
         if !ok(strings.concat(&memory, "a\0", "b", 3), "a\0b")
             || !ok(strings.repeat(&memory, "ab", 3, 6), "ababab") { return 1; }
-        def huge: strings.StringResult = strings.repeat(&memory, "x", 18446744073709551615, 18446744073709551615);
-        if huge.status != status.NO_MEMORY || !strings.is_empty(huge.value) { return 2; }
+        def huge: result<string> = strings.repeat(&memory, "x", 18446744073709551615, 18446744073709551615);
+        if !huge.erroneous { return 97; }
+        if huge.error.code != status.NO_MEMORY || huge.error.os_error != 0 { return 2; }
         memory.free(); // Prove limit/empty paths do not even inspect arena state.
-        def a: strings.StringResult = strings.concat(&memory, "a", "bc", 2);
-        def b: strings.StringResult = strings.repeat(&memory, "ab", 18446744073709551615, 18446744073709551615);
-        if a.status != status.TOO_LONG || b.status != status.TOO_LONG || !strings.is_empty(a.value) || !strings.is_empty(b.value) { return 3; }
+        def a: result<string> = strings.concat(&memory, "a", "bc", 2);
+        if !a.erroneous { return 97; }
+        def b: result<string> = strings.repeat(&memory, "ab", 18446744073709551615, 18446744073709551615);
+        if !b.erroneous { return 97; }
+        if a.error.code != status.TOO_LONG || b.error.code != status.TOO_LONG || a.error.os_error != 0 || b.error.os_error != 0 { return 3; }
         if !ok(strings.concat(&memory, "", "", 0), "")
             || !ok(strings.repeat(&memory, "", 18446744073709551615, 0), "")
             || !ok(strings.repeat(&memory, "abc", 0, 0), "") { return 4; }
@@ -206,15 +217,17 @@ TEST_F(TextLibraryTest, ReplacementMatchesIndependentOracleAndUsesFinalSize) {
         body += "if !ok(strings.replace_all(&memory, " + args + std::to_string(expected.size()) +
                 "), " + quoted(expected) + ") { return 1; }";
         if (!expected.empty()) {
-            body += "def bad" + name + ": strings.StringResult = strings.replace_all(&memory, " +
-                    args + std::to_string(expected.size() - 1) + ");";
-            body += "if bad" + name + ".status != status.TOO_LONG || !strings.is_empty(bad" + name +
-                    ".value) { return 2; }";
+            body += "def bad" + name + ": result<string> = strings.replace_all(&memory, " + args +
+                    std::to_string(expected.size() - 1) + ");";
+            body += "if !bad" + name + ".erroneous { return 2; } if bad" + name +
+                    ".error.code != status.TOO_LONG || bad" + name +
+                    ".error.os_error != 0 { return 2; }";
         }
     }
     body +=
-        R"(memory.free(); def bad: strings.StringResult = strings.replace_all(&memory, "x", "", "z", 0);
-        if bad.status != status.INVALID { return 3; }
+        R"(memory.free(); def bad: result<string> = strings.replace_all(&memory, "x", "", "z", 0);
+        if !bad.erroneous { return 97; }
+        if bad.error.code != status.INVALID { return 3; }
         if !ok(strings.replace_all(&memory, "aaaa", "a", "", 0), "") { return 4; } return 0;)";
     expect_run(invoke({program(body)}), 0);
 }
@@ -227,15 +240,23 @@ TEST_F(TextLibraryTest, AsciiCaseTransformsAllByteValuesWithoutUnicodeOrNulChang
         upper += char(i >= 97 && i <= 122 ? i - 32 : i);
     }
     const auto file = program(R"(
-        def a: std.InputResult = std.input(&memory, 256);
-        def b: std.InputResult = std.input(&memory, 256);
-        if a.status != status.OK || b.status != status.OK { return 1; }
-        def prefix: strings.StringResult = strings.concat(&memory, a.value, "\n", 256);
-        def all: strings.StringResult = strings.concat(&memory, prefix.value, b.value, 256);
-        if all.status != status.OK || strings.byte_length(all.value) != 256 { return 2; }
-        def low: strings.StringResult = strings.lower_ascii(&memory, all.value, 256);
-        def high: strings.StringResult = strings.upper_ascii(&memory, all.value, 256);
-        if low.status != status.OK || high.status != status.OK { return 3; }
+        def a_result: result<std.InputLine> = std.input(&memory, 256);
+        if a_result.erroneous { return 97; }
+        def a: std.InputLine = a_result.value;
+        def b_result: result<std.InputLine> = std.input(&memory, 256);
+        if b_result.erroneous { return 97; }
+        def b: std.InputLine = b_result.value;
+        if a.end || b.end { return 1; }
+        def prefix: result<string> = strings.concat(&memory, a.value, "\n", 256);
+        if prefix.erroneous { return 97; }
+        def all: result<string> = strings.concat(&memory, prefix.value, b.value, 256);
+        if all.erroneous { return 97; }
+        if all.erroneous || strings.byte_length(all.value) != 256 { return 2; }
+        def low: result<string> = strings.lower_ascii(&memory, all.value, 256);
+        if low.erroneous { return 97; }
+        def high: result<string> = strings.upper_ascii(&memory, all.value, 256);
+        if high.erroneous { return 97; }
+        if low.erroneous || high.erroneous { return 3; }
         std.print(low.value); std.print(high.value); return 0;)");
     expect_run(invoke(
                    {
@@ -248,18 +269,26 @@ TEST_F(TextLibraryTest, AsciiCaseTransformsAllByteValuesWithoutUnicodeOrNulChang
 TEST_F(TextLibraryTest, TransformCopiesSurviveSourceResetAndCaseLimitIsPreflighted) {
     expect_run(invoke({program(R"(
         def mut origin: arena.GeneralArena = arena.GeneralArena.create();
-        def original: strings.StringResult = strings.copy(&origin, "Abc");
-        def a: strings.StringResult = strings.concat(&memory, original.value, "", 3);
-        def b: strings.StringResult = strings.repeat(&memory, original.value, 1, 3);
-        def c: strings.StringResult = strings.replace_all(&memory, original.value, "z", "x", 3);
-        def d: strings.StringResult = strings.lower_ascii(&memory, original.value, 3);
-        def e: strings.StringResult = strings.upper_ascii(&memory, original.value, 3);
-        origin.reset(); strings.copy(&origin, "xxx"); origin.free();
+        def original: result<string> = strings.copy(&origin, "Abc");
+        if original.erroneous { return 97; }
+        def a: result<string> = strings.concat(&memory, original.value, "", 3);
+        if a.erroneous { return 97; }
+        def b: result<string> = strings.repeat(&memory, original.value, 1, 3);
+        if b.erroneous { return 97; }
+        def c: result<string> = strings.replace_all(&memory, original.value, "z", "x", 3);
+        if c.erroneous { return 97; }
+        def d: result<string> = strings.lower_ascii(&memory, original.value, 3);
+        if d.erroneous { return 97; }
+        def e: result<string> = strings.upper_ascii(&memory, original.value, 3);
+        if e.erroneous { return 97; }
+        origin.reset(); if !ok(strings.copy(&origin, "xxx"), "xxx") { return 97; } origin.free();
         if !ok(a,"Abc") || !ok(b,"Abc") || !ok(c,"Abc") || !ok(d,"abc") || !ok(e,"ABC") { return 1; }
         memory.free();
-        def low: strings.StringResult = strings.lower_ascii(&memory, "ABC", 2);
-        def high: strings.StringResult = strings.upper_ascii(&memory, "abc", 2);
-        if low.status != status.TOO_LONG || high.status != status.TOO_LONG { return 2; }
+        def low: result<string> = strings.lower_ascii(&memory, "ABC", 2);
+        if !low.erroneous { return 97; }
+        def high: result<string> = strings.upper_ascii(&memory, "abc", 2);
+        if !high.erroneous { return 97; }
+        if low.error.code != status.TOO_LONG || high.error.code != status.TOO_LONG { return 2; }
         if !ok(strings.lower_ascii(&memory,"",0),"") || !ok(strings.upper_ascii(&memory,"",0),"") { return 3; }
         return 0;)")}),
                0);
@@ -267,18 +296,21 @@ TEST_F(TextLibraryTest, TransformCopiesSurviveSourceResetAndCaseLimitIsPreflight
 
 TEST_F(TextLibraryTest, BuilderAliasesShareLengthAndFailedAppendIsAtomic) {
     expect_run(invoke({program(R"(
-        def made: strings.BuilderResult = strings.StringBuilder.create(&memory, 4);
-        if made.status != status.OK { return 1; }
+        def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory, 4);
+        if made.erroneous { return 97; }
+        if made.erroneous { return 1; }
         def mut a: strings.StringBuilder = made.value; def mut b: strings.StringBuilder = a;
-        if a.append("ab") != status.OK || b.byte_length() != 2 || b.append_byte(0) != status.OK { return 2; }
-        if a.append("XY") != status.TOO_LONG || b.byte_length() != 3 || !ok(a.to_string(&memory),"ab\0") { return 3; }
-        if b.append_byte(255) != status.OK || a.byte_length() != 4 || a.capacity() != 4 { return 4; }
-        if a.append_byte(1) != status.TOO_LONG || a.append("") != status.OK { return 5; }
-        def saved: strings.StringResult = a.to_string(&memory);
-        def last: strings.ByteResult = strings.byte_at(saved.value,3);
-        if saved.status != status.OK || last.value != 255 { return 6; }
+        if void_code(a.append("ab")) != status.OK || b.byte_length() != 2 || void_code(b.append_byte(0)) != status.OK { return 2; }
+        if void_code(a.append("XY")) != status.TOO_LONG || b.byte_length() != 3 || !ok(a.to_string(&memory),"ab\0") { return 3; }
+        if void_code(b.append_byte(255)) != status.OK || a.byte_length() != 4 || a.capacity() != 4 { return 4; }
+        if void_code(a.append_byte(1)) != status.TOO_LONG || void_code(a.append("")) != status.OK { return 5; }
+        def saved: result<string> = a.to_string(&memory);
+        if saved.erroneous { return 97; }
+        def last: result<u8> = strings.byte_at(saved.value,3);
+        if last.erroneous { return 97; }
+        if saved.erroneous || last.value != 255 { return 6; }
         b.clear();
-        if a.byte_length() != 0 || a.capacity() != 4 || a.append("new") != status.OK { return 7; }
+        if a.byte_length() != 0 || a.capacity() != 4 || void_code(a.append("new")) != status.OK { return 7; }
         if strings.byte_length(saved.value) != 4 || !ok(b.to_string(&memory),"new") { return 8; }
         def view: &const strings.StringBuilder = &a;
         if view.byte_length() != 3 || view.capacity() != 4 { return 9; } return 0;)")}),
@@ -287,70 +319,81 @@ TEST_F(TextLibraryTest, BuilderAliasesShareLengthAndFailedAppendIsAtomic) {
 
 TEST_F(TextLibraryTest, ZeroCapacityBuilderAndSnapshotLifetime) {
     expect_run(invoke({program(R"(
-        def zero: strings.BuilderResult = strings.StringBuilder.create(&memory,0);
-        if zero.status != status.OK { return 1; }
+        def zero: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,0);
+        if zero.erroneous { return 97; }
+        if zero.erroneous { return 1; }
         def mut empty: strings.StringBuilder = zero.value;
-        if empty.append("") != status.OK || empty.append_byte(0) != status.TOO_LONG || empty.append("x") != status.TOO_LONG { return 2; }
+        if void_code(empty.append("")) != status.OK || void_code(empty.append_byte(0)) != status.TOO_LONG || void_code(empty.append("x")) != status.TOO_LONG { return 2; }
         empty.clear(); if !ok(empty.to_string(&memory),"") || empty.capacity() != 0 { return 3; }
         def mut storage: arena.GeneralArena = arena.GeneralArena.create();
-        def made: strings.BuilderResult = strings.StringBuilder.create(&storage,8);
-        if made.status != status.OK { return 4; }
+        def made: result<strings.StringBuilder> = strings.StringBuilder.create(&storage,8);
+        if made.erroneous { return 97; }
+        if made.erroneous { return 4; }
         def mut b: strings.StringBuilder = made.value;
-        if b.append("keep") != status.OK { return 5; }
-        def saved: strings.StringResult = b.to_string(&memory);
-        storage.reset(); strings.copy(&storage,"overwrite"); storage.free();
+        if void_code(b.append("keep")) != status.OK { return 5; }
+        def saved: result<string> = b.to_string(&memory);
+        if saved.erroneous { return 97; }
+        storage.reset(); if !ok(strings.copy(&storage,"overwrite"), "overwrite") { return 97; } storage.free();
         if !ok(saved,"keep") { return 6; } return 0;)")}),
                0);
 }
 
-TEST_F(TextLibraryTest, BuilderReportsBothAllocationFailuresAndInvalidHandleTraps) {
+TEST_F(TextLibraryTest, BuilderReportsBothAllocationFailuresAndRejectsUncheckedHandle) {
     for (unsigned allocation : {1u, 2u}) {
         fail_allocation(allocation);
-        auto file =
-            program(R"(def made: strings.BuilderResult = strings.StringBuilder.create(&memory,8);
-            if made.status != status.NO_MEMORY { return 1; } return 0;)");
+        auto file = program(
+            R"(def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8);
+        if !made.erroneous { return 97; }
+            if made.error.code != status.NO_MEMORY { return 1; } return 0;)");
         expect_run(invoke({"--stdlib-dir", directory, file}), 0);
-        file = program(R"(def made: strings.BuilderResult = strings.StringBuilder.create(&memory,8);
+        file = program(
+            R"(def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8);
             def mut invalid: strings.StringBuilder = made.value; invalid.clear(); return 0;)");
-        EXPECT_EQ(invoke({"--stdlib-dir", directory, file}).status, -2);
+        expect_error(invoke({"--stdlib-dir", directory, file}), 1, "proven non-erroneous path");
     }
     expect_run(
         invoke({program(
-            R"(def made: strings.BuilderResult = strings.StringBuilder.create(&memory,18446744073709551615);
-        if made.status != status.NO_MEMORY { return 1; } memory.reset();
-        def good: strings.BuilderResult = strings.StringBuilder.create(&memory,1);
-        if good.status != status.OK { return 2; } return 0;)")}),
+            R"(def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,18446744073709551615);
+        if !made.erroneous { return 97; }
+        if made.error.code != status.NO_MEMORY { return 1; } memory.reset();
+        def good: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,1);
+        if good.erroneous { return 97; }
+        if good.erroneous { return 2; } return 0;)")}),
         0);
 }
 
 TEST_F(TextLibraryTest, AppendClearAndCursorsAllocateNothingSnapshotFailurePreservesBuilder) {
     fail_allocation(3);
     auto file = program(R"(
-        def made: strings.BuilderResult = strings.StringBuilder.create(&memory,8);
-        if made.status != status.OK { return 1; }
+        def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8);
+        if made.erroneous { return 97; }
+        if made.erroneous { return 1; }
         def mut b: strings.StringBuilder = made.value;
-        def parts: strings.SplitCursorResult = strings.SplitCursor.create("a,b",",");
+        def parts: result<strings.SplitCursor> = strings.SplitCursor.create("a,b",",");
+        if parts.erroneous { return 97; }
         def mut c: strings.SplitCursor = parts.value;
         def mut lines: strings.LineCursor = strings.LineCursor.create("x\n");
-        if !ok(c.next(),"a") || !ok(lines.next(),"x") { return 2; }
+        if !item_ok(c.next(),"a") || !item_ok(lines.next(),"x") { return 2; }
         for def mut i: i32 = 0; i < 10000; i = i + 1 {
-            b.clear(); if b.append("abc") != status.OK || b.append_byte(0) != status.OK { return 3; }
+            b.clear(); if void_code(b.append("abc")) != status.OK || void_code(b.append_byte(0)) != status.OK { return 3; }
         }
-        def failed: strings.StringResult = b.to_string(&memory);
-        if failed.status != status.NO_MEMORY || !strings.is_empty(failed.value) || b.byte_length() != 4 { return 4; }
+        def failed: result<string> = b.to_string(&memory);
+        if !failed.erroneous { return 97; }
+        if failed.error.code != status.NO_MEMORY || failed.error.os_error != 0 || b.byte_length() != 4 { return 4; }
         if !ok(b.to_string(&memory),"abc\0") { return 5; } return 0;)");
     expect_run(invoke({"--stdlib-dir", directory, file}), 0);
 }
 
-TEST_F(TextLibraryTest, TransformAllocationFailuresHaveEmptyResults) {
+TEST_F(TextLibraryTest, TransformAllocationFailuresPreserveDiagnosticCodes) {
     for (const std::string call :
          {"strings.concat(&memory,\"a\",\"b\",2)", "strings.repeat(&memory,\"x\",3,3)",
           "strings.replace_all(&memory,\"abc\",\"b\",\"X\",3)",
           "strings.lower_ascii(&memory,\"ABC\",3)", "strings.upper_ascii(&memory,\"abc\",3)"}) {
         fail_allocation(1);
-        auto file = program("def outcome: strings.StringResult = " + call +
-                            "; if outcome.status != status.NO_MEMORY || "
-                            "!strings.is_empty(outcome.value) { return 1; } return 0;");
+        auto file = program("def outcome: result<string> = " + call +
+                            "; if !outcome.erroneous { return 1; } "
+                            "if outcome.error.code != status.NO_MEMORY || outcome.error.os_error "
+                            "!= 0 { return 1; } return 0;");
         expect_run(invoke({"--stdlib-dir", directory, file}), 0);
     }
 }
@@ -361,11 +404,14 @@ TEST_F(TextLibraryTest, MutabilityPrivacyAndArgumentTypesAreEnforced) {
           "strings.upper_ascii(&memory,42,8);", "strings.SplitCursor.create(\"a\",1);",
           "def c: strings.LineCursor = strings.LineCursor.create(\"a\"); c.next();",
           "def c: strings.LineCursor = strings.LineCursor.create(\"a\"); c.offset;",
-          "def made: strings.BuilderResult = strings.StringBuilder.create(&memory,8); def b: "
+          "def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8); def "
+          "b: "
           "strings.StringBuilder = made.value; b.append(\"a\");",
-          "def made: strings.BuilderResult = strings.StringBuilder.create(&memory,8); def mut b: "
+          "def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8); def "
+          "mut b: "
           "strings.StringBuilder = made.value; b.state;",
-          "def made: strings.BuilderResult = strings.StringBuilder.create(&memory,8); def mut b: "
+          "def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8); def "
+          "mut b: "
           "strings.StringBuilder = made.value; b.append_byte(256);"}) {
         auto file = program(body + "return 0;");
         for (const std::string mode : {"--check", "--emit-ir", "--emit-llvm", "--run"})
@@ -415,11 +461,13 @@ TEST_F(TextLibraryTest, PrivateWriteBoundsAndNullGuardsTrapBeforeAccess) {
 
 TEST_F(TextLibraryTest, BuilderAndTransformsExecuteWithExternalRuntime) {
     auto ir = invoke({"--emit-llvm", program(R"(
-        def made: strings.BuilderResult = strings.StringBuilder.create(&memory,16);
-        if made.status != status.OK { return 1; }
+        def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,16);
+        if made.erroneous { return 97; }
+        if made.erroneous { return 1; }
         def mut builder: strings.StringBuilder = made.value;
-        def text: strings.StringResult = strings.replace_all(&memory,"a b"," ","_",3);
-        if text.status != status.OK || builder.append(text.value) != status.OK || builder.append_byte(0) != status.OK { return 2; }
+        def text: result<string> = strings.replace_all(&memory,"a b"," ","_",3);
+        if text.erroneous { return 97; }
+        if text.erroneous || void_code(builder.append(text.value)) != status.OK || void_code(builder.append_byte(0)) != status.OK { return 2; }
         if !ok(builder.to_string(&memory),"a_b\0") { return 3; } return 42;)")});
     ASSERT_EQ(ir.status, 0) << ir.err;
     const char *runtime = std::getenv("GLOIN_TEST_ARENA_RUNTIME");
@@ -469,4 +517,77 @@ TEST_F(TextLibraryTest, PackagedReportExampleAndGuideProgramsRunAsWritten) {
         ++blocks;
     }
     EXPECT_EQ(blocks, 2u);
+}
+
+TEST_F(TextLibraryTest, ConstructorsProtectInvariantsAndAppendResultsMustBeHandled) {
+    for (const std::string body :
+         {"def r: result<strings.SplitCursor> = strings.SplitCursor.create(\"x\",\"\"); "
+          "if r.erroneous { def mut cursor: strings.SplitCursor = r.value; cursor.next(); }",
+          "def cursor: strings.SplitCursor = strings.SplitCursor { "
+          "text: \"x\", delimiter: \"\", offset: 0, done: false };",
+          "def cursors: [strings.SplitCursor; 1] = zeroed;",
+          "def r: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,4); "
+          "if r.erroneous { return 1; } def mut b: strings.StringBuilder = r.value; "
+          "b.append(\"a\");",
+          "def r: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,4); "
+          "if r.erroneous { return 1; } def mut b: strings.StringBuilder = r.value; "
+          "b.append_byte(0);",
+          "def r: strings.SplitCursorResult = strings.SplitCursor.create(\"x\",\",\");",
+          "def r: strings.BuilderResult = strings.StringBuilder.create(&memory,4);"}) {
+        const auto file = program(body + " return 0;");
+        for (const auto *mode : {"--check", "--emit-ir", "--emit-llvm", "--jit"})
+            expect_error(invoke({mode, file}), 1, "error:");
+    }
+}
+
+TEST_F(TextLibraryTest, CursorEndAndAtomicAppendOutcomesExecuteInNativeModes) {
+    const auto file = program(R"(
+        def invalid: result<strings.SplitCursor> = strings.SplitCursor.create("a", "");
+        if !invalid.erroneous { return 1; }
+        if invalid.error.code != status.INVALID || invalid.error.os_error != 0
+            || !strings.equal(invalid.error.message, "split delimiter must not be empty") { return 2; }
+        def made: result<strings.SplitCursor> = strings.SplitCursor.create(",,", ",");
+        if made.erroneous { return 3; }
+        def mut cursor: strings.SplitCursor = made.value;
+        if !item_ok(cursor.next(), "") || !item_ok(cursor.next(), "")
+            || !item_ok(cursor.next(), "") { return 4; }
+        def end: strings.TextItem = cursor.next();
+        if !end.end || !strings.is_empty(end.value) || !cursor.next().end { return 5; }
+        def mut lines: strings.LineCursor = strings.LineCursor.create("\nlast\r");
+        if !item_ok(lines.next(), "") || !item_ok(lines.next(), "last\r")
+            || !lines.next().end || !lines.next().end { return 6; }
+        def builder: result<strings.StringBuilder> = strings.StringBuilder.create(&memory, 3);
+        if builder.erroneous { return 7; }
+        def mut a: strings.StringBuilder = builder.value;
+        def mut alias: strings.StringBuilder = a;
+        if void_code(a.append("a\0")) != status.OK { return 8; }
+        def failed: result<void> = alias.append("XY");
+        if !failed.erroneous { return 9; }
+        if failed.error.code != status.TOO_LONG || failed.error.os_error != 0
+            || !strings.equal(failed.error.message, "string builder capacity exceeded") { return 10; }
+        if alias.byte_length() != 2 || !ok(a.to_string(&memory), "a\0") { return 11; }
+        if void_code(alias.append_byte(98)) != status.OK || void_code(a.append("")) != status.OK { return 12; }
+        if !ok(a.to_string(&memory), "a\0b") { return 13; }
+        def copied: result<string> = a.to_string(&memory);
+        if copied.erroneous { return 14; }
+        alias.clear();
+        if a.byte_length() != 0 || !strings.equal(copied.value, "a\0b") { return 15; }
+        return 42;
+    )");
+    const auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *operation :
+         {"gloin.result_failure", "gloin.result_success", "gloin.struct_literal"})
+        EXPECT_NE(ir.out.find(operation), std::string::npos) << operation;
+    expect_run(invoke({file}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/text-results";
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        std::string message;
+        bool failed = false;
+        const auto code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10,
+                                                    0, &message, &failed);
+        EXPECT_FALSE(failed) << message;
+        EXPECT_EQ(code, 42) << message;
+    }
 }

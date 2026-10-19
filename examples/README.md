@@ -1,5 +1,8 @@
 # Language examples
 
+These sources match the 0.2.0 and its built-in result APIs. With a
+published 0.1.0 compiler, use the examples bundled in that release or its tag.
+
 `core_counter.gloin` is a runnable core example, tested through the actual CLI.
 After building, run `./build/gloinc --jit examples/core_counter.gloin`: it exits 42
 without printing. It uses a helper call, mutation, a for-loop, and unless.
@@ -16,6 +19,7 @@ arguments to run successfully.
 | `generic_structs.gloin` | Generic structs, methods, and `zeroed` arrays | Version 0.0.4: returns 42 using static and instance methods, nested and multi-parameter generic structs, and a 100×100 zeroed array. See [generic structs](../docs/generics.md). |
 | `generic_functions.gloin` | Generic functions | Version 0.0.4: explicit type arguments, recursive specialization, and generic struct values. See [generics](../docs/generics.md). |
 | `generic_methods.gloin` | Methods with their own type arguments | Version 0.0.4: `Pair<A, B>.with_third<C>` and `Pairs.create<A, B>` build heterogeneous values. See [generics](../docs/generics.md). |
+| `switch_match.gloin` | Switch statements and exhaustive match expressions | Added in 0.2.0: string and enum dispatch, result bindings and fallback handling. Prints `PONG` and exits zero. See [the guide](../docs/switch-match.md). |
 | `enums.gloin` | Payloadless enums | Version 0.0.4: named variants, equality, value copies, struct fields, and arrays. See [enums](../docs/enums.md). |
 | `slices.gloin` | Borrowed slices | Version 0.0.4: ranges, checked indexes, mutation, read-only views, and `u64` length. See [slices and vectors](../docs/slices-vectors.md). |
 | `vector.gloin` | Arena vector | Automatic growth, push, nullable access, live-element slice views, and aligned reserved storage. See [slices and vectors](../docs/slices-vectors.md). |

@@ -1,13 +1,7 @@
 // Reproducible simulation randomness, not cryptography. See docs/time-random.md.
-import "@status";
 import "@std";
 
 def pub const SPLITMIX64_VERSION: i32 = 1;
-
-def pub struct U64Result {
-    def pub status: i32,
-    def pub value: u64,
-}
 
 // Value state: copies advance independently. No heap owner or global seed.
 def pub struct SplitMix64 {
@@ -28,15 +22,12 @@ def pub struct SplitMix64 {
         return __random_splitmix64(&self.state);
     }
 
-    // Example: rng.below(6) -> OK/value in [0,6). Bound zero -> INVALID/0 WITHOUT advancing state.
+    // Example: rng.below(6) -> success/value in [0,6). Bound zero errors WITHOUT advancing state.
     // No allocation; expected <2 draws with uniform words, no imposed retry cap.
     // Rejects the incomplete low interval before modulo; bound 1 still consumes one draw.
-    def pub below(self: &SplitMix64, bound: u64) -> U64Result {
+    def pub below(self: &SplitMix64, bound: u64) -> result<u64> {
         if bound == 0 {
-            return U64Result {
-                status: status.INVALID,
-                value: 0
-            };
+            return error("random bound must be greater than zero");
         }
 
         // (2^64 - bound) % bound, computed without overflow in ordinary checked arithmetic.
@@ -47,10 +38,7 @@ def pub struct SplitMix64 {
             value = self.next_u64();
         }
 
-        return U64Result {
-            status: status.OK,
-            value: value % bound
-        };
+        return value % bound;
     }
 
     // Example: rng.unit_f64() -> one of 2^53 equally spaced values in [0,1), never 1.
@@ -59,7 +47,8 @@ def pub struct SplitMix64 {
     def pub unit_f64(self: &SplitMix64) -> f64 {
         def mantissa: u64 = self.next_u64() / 2048;
 
-        return std.f64_from_u64_exact(mantissa).value / 9007199254740992.0;
+        // Every 53-bit mantissa is exactly representable, even through rounded conversion.
+        return std.f64_from_u64_rounded(mantissa) / 9007199254740992.0;
     }
 
 }

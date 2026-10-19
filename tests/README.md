@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1034 tests**:
+The current source definitions and CTest discovery contain **1125 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -20,10 +20,11 @@ The current source definitions and CTest discovery contain **1034 tests**:
 | VariablesTest | 17 |
 | NumericTest | 12 |
 | FunctionsTest | 12 |
-| OperatorsTest | 16 |
+| OperatorsTest | 17 |
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
-| LoweringTest | 47 |
+| SelectionTest | 7 |
+| LoweringTest | 82 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -32,7 +33,7 @@ The current source definitions and CTest discovery contain **1034 tests**:
 | CodeGenSpecTest | 2 |
 | CodeGenGenericsTest | 4 |
 | CheckedGenericsTest | 13 |
-| ResultTest | 8 |
+| ResultTest | 11 |
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
 | ArenaTest | 21 |
@@ -40,15 +41,15 @@ The current source definitions and CTest discovery contain **1034 tests**:
 | AsyncTest | 2 |
 | ArrayStringTest | 4 |
 | UnlessTest | 1 |
-| JitRunnerTest | 16 |
-| CliTest | 20 |
+| JitRunnerTest | 17 |
+| CliTest | 35 |
 | StandardModuleTest | 17 |
-| StandardLibraryTest | 24 |
-| StringLibraryTest | 18 |
-| TextLibraryTest | 17 |
-| NumericLibraryTest | 12 |
+| StandardLibraryTest | 26 |
+| StringLibraryTest | 20 |
+| TextLibraryTest | 19 |
+| NumericLibraryTest | 16 |
 | NumericRuntimeTest | 16 |
-| IoLibraryTest | 16 |
+| IoLibraryTest | 18 |
 | IoRuntimeTest | 14 |
 | NetworkLibraryTest | 10 |
 | NetRuntimeTest | 3 |
@@ -60,11 +61,11 @@ The current source definitions and CTest discovery contain **1034 tests**:
 | GloinFormatterSmoke | 1 |
 | GloinToolingSmoke | 2 |
 | GloinIntegratedStress | 1 |
-| ContextLibraryTest | 25 |
+| ContextLibraryTest | 30 |
 | ContextRuntimeTest | 40 |
-| MathLibraryTest | 12 |
+| MathLibraryTest | 14 |
 | MathRuntimeTest | 12 |
-| TimeRandomLibraryTest | 15 |
+| TimeRandomLibraryTest | 18 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -74,7 +75,7 @@ The current source definitions and CTest discovery contain **1034 tests**:
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 171 |
+| CoreAcceptanceTest | 178 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -92,6 +93,34 @@ modules (SPEC-029). The CLI also exercises `core_counter.gloin`, `hello_world.gl
 `strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, `statistics_tool.gloin`, `network_http.gloin`, `http_client.gloin`, `http_stream.gloin`, `json.gloin`, and `module_discovery.gloin`. The `.gloin` files under `examples/` pass `gloinc --check` on macOS and Ubuntu ARM64.
 
 ## Running and inspecting tests
+
+Adjacent GIR floating-check regressions cover f32/f64 multiplication followed by
+addition, both operand positions, discarded sums and separate rounding. Lowering
+tests reject intervening operations, escaping products and conditional consumers;
+mixed GIR/LLVM poison or undef cannot suppress the product trap after LLVM O2.
+CLI cases check successful values and observable failure order in JIT, native
+`-O0` and `-O2`. The [lowering guide](../docs/lowering.md#adjacent-floating-checks-2026-10-19)
+documents the proof and its limits.
+
+Local floating reductions have separate structural and execution tests. Both
+widths retain a mandatory exit check and the original checked fallback; source
+cases cover fixed arrays, borrowed views, empty loops, overlapping subranges,
+separate rounding, discarded overflow and observable effect order. Refusal cases
+cover unknown/escaped storage, missing/late/conditional initialization, escaping
+SSA values, other failures and conditional exits. Optimized mixed GIR/LLVM
+regressions require an unconditional trap after early overflow even when later
+elements are poison or undef. See the
+[local reduction proof](../docs/lowering.md#local-floating-reductions-2026-10-19).
+
+Strided GIR loop versioning has lowering checks for the guarded fast/fallback
+copies, checked floating arithmetic and SSA joins for counters used by the tail.
+Rejected patterns include nonzero/escaped counters, variable or signed strides,
+mismatched backedges, offsets outside a group and loaded descriptors. CLI cases
+run in JIT, native `-O0` and `-O2`: zero through twenty input bytes, exact/spare
+capacity, sentinels, overlapping slices, every short capacity across two groups,
+unrelated overflow, a final header addition that overflows and huge strides or
+limits. Observable traces verify that a failed entry predicate selects the
+original sequence of writes and traps.
 
 Child-process checks cover literal/empty arguments, normal and signaled exits,
 poll/wait caching, alias invalidation, cleanup, inherited cwd/environment/streams,
@@ -159,6 +188,11 @@ VM/CI load; instrumented Debug cases can perform many compiler invocations
 within one test. The filesystem/process signature matrix launches 143 compiler
 processes and has a 300-second aggregate limit in sanitizer builds only. Its
 isolated instrumented run took 119.9 seconds during release validation.
+The 584-program native arithmetic matrix has a 360-second aggregate limit.
+On Linux, it, the integer-simplification trap matrix and the GIR CLI matrices
+run alone: concurrent crash-report collection can exceed their deadlines.
+This changes scheduling, not signals, assertions or timeouts; other tests
+still run in parallel.
 Individual compiler invocations allow ten seconds normally or 30 seconds under
 sanitizers. The HTTP compiler/API
 fixtures allow 60 seconds per compiler invocation and 150 seconds per CTest
@@ -179,7 +213,12 @@ The [validation record](../docs/next-release-draft.md#current-local-validation)
 distinguishes complete local audits, subsequent focused checks and the complete
 hosted matrix. It preserves initial timeouts, the macOS exiting-process cleanup
 race, the early-413 peer correction and laptop sleep interruptions. All checks
-still run; the macOS workflow has a 60-minute overall budget.
+still run. The expanded 0.2.0 workflows have a 90-minute overall budget for
+fresh builds, package matrices and full-suite audits; individual test and
+child-process deadlines are unchanged.
+
+Those counts describe 0.1.0. Current 0.2.0 results are recorded in the
+[release guide](../docs/release-0.2.0.md#verification-boundary).
 
 The [HTTP acceptance runner](http/README.md) verifies the streaming example
 against a concurrent Gloin peer in JIT, native `-O0` and `-O2`, over HTTP and
@@ -187,10 +226,16 @@ HTTPS. It checks response bytes, rejected requests and connection cleanup.
 
 ## Development features after 0.0.4
 
-Eight `ResultTest` cases check success and failure returns, explicit forwarding,
+Eleven `ResultTest` cases check success and failure returns, explicit forwarding,
 required `.erroneous` proofs including early returns, invalid construction and
-storage, `result<void>`, static error messages, source-typed struct/array/string
-payloads, JIT and native output, and checked `@std`/`@strings` APIs. Raw memory
+storage, `result<void>`, static error messages, immutable i32 diagnostic codes,
+code preservation through copying/forwarding/matching, constructor evaluation
+order, source-typed struct/array/string
+payloads, numeric literal context at every scalar width, JIT and native output,
+and checked `@std`/`@strings` APIs. GloinIR verification rejects malformed error
+layouts and premature storage access. Filesystem mutation tests preserve errno
+and library categories, reject invalid paths before mutation, and verify close
+alias invalidation. Raw memory
 and custom arena acceptance cases check allocation, alignment, typed placement,
 release, and rejected unsafe arguments. Direct byte-slice I/O and vector live
 views/collection methods run through compiler, runtime, and packaged examples.
@@ -262,13 +307,22 @@ and installed/relocated package checks. See [the guide](../docs/integrated-examp
 
 ## Timing and seeded randomness (SPEC-030g)
 
-Fifteen `TimeRandomLibraryTest` cases cover duration overflow/units, backwards
+Eighteen `TimeRandomLibraryTest` cases cover duration overflow/units, backwards
 ticks, exact PRNG vectors, independent copies, invalid bounds without advancement,
 forced rejection, both unit-float endpoints, and the one-word float mapping.
 They verify JIT clock binding/restoration, failure normalization, module privacy,
 replaceable source modules, malformed native ABIs, and external LLVM execution.
 Both guide programs and the packaged simulation execute verbatim; an injected
 clock checks the complete simulation's elapsed report exactly.
+Bounded sampling's built-in result rejects ignored and unproven access, retains
+GloinIR result operations, and executes success/error matches in JIT and native
+`-O0`/`-O2` modes without changing the versioned draw sequence.
+Timing results additionally reject discarded/unproven/inactive payload access
+and old wrapper names. Boundary arithmetic, zero/full-range instants, matches
+and forwarding run through GloinIR, JIT and native output. Injected clocks check
+exact error messages, category/errno preservation through copies and forwarding,
+EIO fallback, invalid callback normalization, repeated invocation isolation and
+backwards/equal ticks; the checks use no sleeps or timing thresholds.
 
 Thirteen independent `TimeRandomRuntimeTest` cases cover four reference seeds,
 counter wrap, both word endpoints, timespec overflow, errno preservation,
@@ -279,7 +333,7 @@ sanitizers; compiler cases also run against installed and relocated packages.
 
 ## Numerical utilities (SPEC-030f)
 
-Twelve `MathLibraryTest` cases execute all 47 public functions, typed constants,
+Fourteen `MathLibraryTest` cases execute all 47 public functions, typed constants,
 signed-minimum absolute overflow, signed-zero selections, clamp bounds, floating
 rounding, domains, finite subnormals, independent numerical references, and the
 explicit `def foo: int = -some_val;` initializer. Canonical module privacy, wrong
@@ -287,6 +341,8 @@ signatures, invalid private selectors, replaceable source policy, native symbol
 collisions, malformed MLIR ABIs, and all four external LLVM math ABIs are covered.
 Both guide programs and the streaming geometry/statistics example run verbatim,
 including invalid/empty input and installed/relocated package execution.
+The migrated built-in results reject discarded calls and unproven payload access;
+GloinIR emission and native `-O0`/`-O2` execution preserve distinct error messages.
 
 Twelve independent `MathRuntimeTest` cases verify both widths against exact cases,
 decimal constants (4 scaled machine epsilons), trigonometric/logarithmic identities
@@ -304,6 +360,11 @@ bounds, both join allocation failures, metadata/mutations, CLI forwarding and
 filename escaping, missing/empty/copied environment values, process allocation
 failures, host cwd, invocation argument restoration and rejected NUL, type/privacy
 checks, native collisions/ABIs, directory iteration, external execution, and the packaged tool/guide.
+Filesystem result checks cover mandatory handling, proven payload access, exact
+missing-path errno, empty and repeated directory end, retained entry names,
+allocation failures before opening and after consuming an entry, and JIT/native
+`-O0`/`-O2` execution through typed GloinIR. End-of-directory succeeds without
+allocating; failures expose diagnostics without a success payload.
 The tool runs from another directory with spaced paths, missing/empty/nonempty
 labels, and malformed options that leave the filesystem untouched.
 
@@ -326,13 +387,21 @@ against installed and relocated packages.
 
 ## Streams and files (SPEC-030d)
 
-Sixteen `IoLibraryTest` cases exercise borrowed stdin/stdout/stderr, compatible
+Eighteen `IoLibraryTest` cases exercise borrowed stdin/stdout/stderr, compatible
 stdio buffering, each file mode and I/O method, alias close state, bounded binary
 reads and EOF, partial read_all prefixes, wrong directions, malformed paths,
 OS errors/messages, metadata allocation before destructive opens, read allocation
 failure without consumption, scratch reuse, failed-close invalidation, write_line
 suffix failure, receiver mutability/privacy, native signatures and collisions,
 external LLVM execution, and packaged copier/filter/guide programs.
+The migrated APIs use built-in results and caller-owned transfer state. Tests
+perform real text/direct reads and writes before injecting deterministic failures,
+verify exact retained bytes/counts and native codes, then check that closed calls
+reset state without touching the destination. JIT and native `-O0`/`-O2` executions
+agree; IR assertions retain nominal result types and GloinIR error/ABI operations.
+Discarded I/O calls and unproven File/message payloads are rejected. Process-context
+queries similarly enforce handling and payload proofs while retaining missing,
+empty, allocation-failure and native cwd-error distinctions.
 
 Fourteen independent `IoRuntimeTest` cases cover real binary/empty files,
 exclusive create/append/truncate, actual and injected permission errors, chunk/line/
@@ -345,7 +414,7 @@ also run against installed and relocated packages.
 
 ## Numeric text and conversion (SPEC-030c)
 
-Twelve `NumericLibraryTest` cases execute all 29 public APIs, recoverable failures,
+Sixteen `NumericLibraryTest` cases execute the public numeric APIs, recoverable failures,
 exact/rounded/truncated conversion choices, signed zero, arena allocation failure,
 invalid-precision preflight, source type/privacy checks, reserved runtime-name
 collisions, malformed native ABIs, and external LLVM execution. The statistics
@@ -363,7 +432,7 @@ and arena reset passes with a 2 MiB stack.
 
 ## Text traversal and construction (SPEC-030b)
 
-Seventeen `TextLibraryTest` cases cover split/line boundary semantics, independent
+Nineteen `TextLibraryTest` cases cover split/line boundary semantics, independent
 cursor positions and borrowed views, invalid delimiters, bounded concat/repeat/
 replacement/case conversion, overflow and empty-output paths, independent result
 lifetimes, all 256 byte values, shared builder state, atomic failed appends,
@@ -380,10 +449,15 @@ and sanitizer validation. A separate million-iteration composition of splitting,
 case conversion, building, snapshotting, replacement, and scratch reset passes
 with a 2 MiB stack.
 
+Development regressions reject discarded append results, inactive payloads,
+private cursor construction and zeroed cursor arrays. They exercise repeated
+cursor end, empty items, exact error codes, aliases and atomic failed appends
+through GloinIR, JIT and native `-O0`/`-O2`.
+
 ## Byte strings (SPEC-030a)
 
-Eighteen `StringLibraryTest` cases cover the byte-string functions, including
-two checked result alternatives, shared status
+Twenty `StringLibraryTest` cases cover the byte-string functions, including
+canonical built-in results and their checked aliases, shared status
 compatibility, unsigned ordering, NUL/arbitrary bytes, UTF-8 byte slicing,
 extreme/empty bounds, first/absent/empty search, exact ASCII trimming, and a
 64-case independent search/order oracle. They exercise copy lifetime independence,
@@ -395,6 +469,10 @@ Both Gloin code blocks in [the API guide](../docs/strings.md) compile and execut
 verbatim in the maintained suite. The suite is required by `check-core` and
 installed/relocated package validation.
 
+Development regressions also reject unchecked, discarded and inactive results,
+verify exact messages/codes and alias behavior, and preserve codes through
+forwarding and match in GloinIR, JIT and native `-O0`/`-O2`.
+
 Two additional `StandardRuntimeTest` cases verify all 256 byte values, exact-sized
 copy destinations and guard bytes, no implicit terminator, and null-pointer
 zero-length copies. The native runtime is instrumented by the sanitizer build.
@@ -403,8 +481,8 @@ also passes with a 2 MiB stack; its scratch arena is reset each iteration.
 
 ## Standard input and conversions (SPEC-030)
 
-Twenty-four `StandardLibraryTest` cases cover the source API, prompts/stdin,
-explicit statuses, integer boundaries, exact output bytes, wrong types/arity,
+Twenty-six `StandardLibraryTest` cases cover the source API, prompts/stdin,
+checked results and error codes, integer boundaries, exact output bytes, wrong types/arity,
 EOF/empty/CRLF/final lines, NUL/non-UTF-8 bytes, zero/exact/oversized limits,
 allocation and I/O errors, retained strings across growth, arena reset/free,
 deferred views, zeroed bytes, private primitives, symbol collisions, JIT ABI
@@ -651,3 +729,30 @@ All repository-owned test drivers now run without Python.
 | `AsyncTest.SpawnGeneration`, `SemaAsyncTest.AsyncTypes` | SPEC-040/SPEC-041: legacy syntax is rejected; concurrency contract, canonical fixtures, and runtime remain open. |
 | `AsyncTest.DeferredFunctionGeneration` | SPEC-040: fixture uses obsolete `let` and an omitted return annotation; replace against the deferred-call contract when defined. |
 | `CodeGenTest.GenerateSpawn` | SPEC-040, SPEC-041: restored lit assertion finds no spawn operation |
+
+## Switch and match (SPEC-017a)
+
+`SelectionTest` covers subject evaluation once, lazy arm evaluation, no
+fallthrough, exact string bytes (including NUL), constant labels, enum coverage,
+result bindings and scope, generic specialization, aggregates, pointer/slice
+capabilities and integer widths. Programs run through checking, GloinIR/LLVM
+output, JIT, and native `-O0`/`-O2`. Negative cases cover coverage, duplicates,
+unreachable defaults, arm types, initialization, result access and malformed
+syntax. The suite participates in `check-core`.
+
+Lowering tests deliberately corrupt keys, domain size, yield type and subject
+source types to verify GIR rejection, and check borrowed-string read effects. The Gloin formatter's selection golden
+fixture covers nested match arms, `=>` token preservation and declaration alignment inside switch arms.
+See [the language guide](../docs/switch-match.md) and
+[runnable example](../examples/switch_match.gloin).
+
+## Standard-result migration after 0.1.0
+
+Four new std/numeric cases cover discarded results, unproven and inactive payload
+access, removed wrapper types, input end versus empty/NUL text, alias codes,
+rounded integer endpoints and ties, precision rejection before allocation, and
+GloinIR/JIT/native `-O0`/`-O2` execution. Existing allocation injection now checks
+canonical formatters, all integer aliases and legacy `to_string` as recoverable
+results. The exact-widening case verifies a scalar i64 API and unchanged GIR
+sign-extension lowering. Existing parser/formatting/rounding/native-ABI tests
+retain their boundaries, lifetimes and independent oracles.

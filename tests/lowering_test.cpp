@@ -1,6 +1,8 @@
 #include "codegen.h"
 #include "compiler.h"
+#include "gir_float_checks.h"
 #include "lowering.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
@@ -11,6 +13,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Passes/PassBuilder.h"
 #include <gtest/gtest.h>
 
 namespace {
@@ -1868,7 +1871,161 @@ TEST(LoweringTest, ConversionErrorsDiscardPartialIRAndStayInDiagnostics) {
     EXPECT_NE(render(diagnostics).find("memory space"), std::string::npos);
 }
 
-TEST(LoweringTest, GIRVersionsCountedSliceLoopsWithoutRelaxingFloatChecks) {
+TEST(LoweringTest, GIRCombinesAdjacentFloatChecksWithSeparateRoundingAndMandatoryFailure) {
+    for (const std::string type : {"f32", "f64"}) {
+        for (bool product_first : {false, true}) {
+            for (bool unused : {false, true}) {
+                SCOPED_TRACE(type + (product_first ? " product first" : " product second") +
+                             (unused ? " discarded" : " returned"));
+                mlir::MLIRContext context;
+                auto high = parse(context, "module { func.func @calculate(%a: " + type +
+                    ", %b: " + type + ", %total: " + type + ") -> " + type + " {"
+                    " %p = \"gloin.checked_float_binary\"(%a, %b) <{kind = \"*\"}> : (" +
+                    type + ", " + type + ") -> " + type + " loc(\"pair.gloin\":2:1)"
+                    " %s = \"gloin.checked_float_binary\"(" +
+                    (product_first ? "%p, %total" : "%total, %p") + ") <{kind = \"+\"}> : (" +
+                    type + ", " + type + ") -> " + type + " loc(\"pair.gloin\":3:1)"
+                    " return " + (unused ? "%total" : "%s") + " : " + type + " } }");
+                ASSERT_TRUE(high);
+                combine_gloin_float_checks(*high);
+                ASSERT_TRUE(mlir::succeeded(mlir::verify(*high)));
+                unsigned checked = 0, multiplies = 0;
+                high->walk([&](gloin::CheckedFloatBinaryOp op) {
+                    ++checked;
+                    EXPECT_EQ(op.getKind(), "+");
+                    EXPECT_EQ(op.getLoc(), mlir::FileLineColLoc::get(&context, "pair.gloin", 3, 1));
+                });
+                high->walk([&](mlir::arith::MulFOp op) {
+                    ++multiplies;
+                    EXPECT_EQ(op.getFastmath(), mlir::arith::FastMathFlags::none);
+                    EXPECT_EQ(op.getLoc(), mlir::FileLineColLoc::get(&context, "pair.gloin", 2, 1));
+                });
+                EXPECT_EQ(checked, 1u);
+                EXPECT_EQ(multiplies, 1u);
+                const auto once = print(*high);
+                combine_gloin_float_checks(*high);
+                EXPECT_EQ(print(*high), once);
+                Diagnostics diagnostics;
+                auto low = lower_to_llvm(std::move(high), diagnostics);
+                ASSERT_TRUE(low) << render(diagnostics);
+                expect_exportable(*low);
+                unsigned products = 0, sums = 0, finite = 0, traps = 0;
+                low->walk([&](mlir::LLVM::FMulOp op) {
+                    ++products;
+                    EXPECT_EQ(op.getFastmathFlags(), mlir::LLVM::FastmathFlags::none);
+                });
+                low->walk([&](mlir::LLVM::FAddOp op) {
+                    ++sums;
+                    EXPECT_EQ(op.getFastmathFlags(), mlir::LLVM::FastmathFlags::none);
+                });
+                low->walk([&](mlir::LLVM::FCmpOp) { ++finite; });
+                low->walk([&](mlir::LLVM::Trap) { ++traps; });
+                EXPECT_EQ(products, 1u);
+                EXPECT_EQ(sums, 1u);
+                EXPECT_EQ(finite, 2u); // Both comparisons of the sum, even when unused.
+                EXPECT_EQ(traps, 1u);
+            }
+        }
+    }
+}
+
+TEST(LoweringTest, GIRFloatCheckCombiningRejectsInterveningOperationsAndEscapingProducts) {
+    for (const std::string type : {"f32", "f64"}) {
+        const std::string multiply =
+            " %p = \"gloin.checked_float_binary\"(%a, %b) <{kind = \"*\"}> : (" +
+            type + ", " + type + ") -> " + type;
+        const auto sum = [&](const std::string &operands, const std::string &kind = "+") {
+            return " %s = \"gloin.checked_float_binary\"(" + operands + ") <{kind = \"" +
+                kind + "\"}> : (" + type + ", " + type + ") -> " + type;
+        };
+        const auto addition = sum("%total, %p");
+        const std::string result = " return %s : " + type;
+        const std::vector<std::pair<std::string, std::string>> bodies{
+            {"call", multiply + " func.call @effect() : () -> ()" + addition + result},
+            {"load", multiply + " %v = llvm.load %address : !llvm.ptr -> " + type + addition + result},
+            {"store", multiply + " llvm.store %a, %address : " + type + ", !llvm.ptr" + addition + result},
+            {"assert", multiply + " \"gloin.assert\"(%ok) : (i1) -> ()" + addition + result},
+            {"integer failure", multiply + " %i = \"gloin.checked_int_binary\"(%n, %n)"
+                " <{kind = \"+\", is_signed = true}> : (i64, i64) -> i64" + addition + result},
+            {"float division", multiply + " %d = \"gloin.checked_float_binary\"(%a, %b)"
+                " <{kind = \"/\"}> : (" + type + ", " + type + ") -> " + type + addition + result},
+            {"infallible constant", multiply + " %c = arith.constant 0 : i64" + addition + result},
+            {"unknown operation", multiply + " \"opaque.effect\"() : () -> ()" + addition + result},
+            {"block boundary", multiply + " cf.br ^next ^next:" + addition + result},
+            {"conditional consumer", multiply + " cf.cond_br %ok, ^next, ^exit ^next:" +
+                addition + result + " ^exit: return %total : " + type},
+            {"two uses in one consumer", multiply + sum("%p, %p") + result},
+            {"escaping product", multiply + addition + " func.call @consume(%p) : (" + type +
+                ") -> ()" + result},
+            {"subtraction", multiply + sum("%total, %p", "-") + result},
+            {"division consumer", multiply + sum("%total, %p", "/") + result},
+        };
+        for (const auto &[name, body] : bodies) {
+            SCOPED_TRACE(type + " " + name);
+            mlir::MLIRContext context;
+            context.allowUnregisteredDialects();
+            auto high = parse(context, "module { func.func private @effect()"
+                " func.func private @consume(" + type + ")"
+                " func.func @calculate(%a: " + type + ", %b: " + type + ", %total: " + type +
+                ", %address: !llvm.ptr, %ok: i1, %n: i64) -> " + type + " {" + body + " } }");
+            ASSERT_TRUE(high);
+            ASSERT_TRUE(mlir::succeeded(mlir::verify(*high)));
+            const auto before = print(*high);
+            combine_gloin_float_checks(*high);
+            EXPECT_EQ(print(*high), before);
+        }
+    }
+}
+
+TEST(LoweringTest, GIRFloatCheckCombiningPreservesProductFailureWithPoisonOrUndefAddend) {
+    for (const std::string type : {"f32", "f64"}) {
+        for (const std::string other : {"poison", "undef"}) {
+            SCOPED_TRACE(type + " " + other);
+            mlir::MLIRContext context;
+            auto high = parse(context, "module { func.func @main() -> i32 {"
+                " %other = llvm.mlir." + other + " : " + type +
+                " %a = arith.constant " + (type == "f32" ? "3.0e+38" : "1.0e+308") + " : " + type +
+                " %b = arith.constant 2.0 : " + type +
+                " %zero = arith.constant 0 : i32"
+                " %p = \"gloin.checked_float_binary\"(%a, %b) <{kind = \"*\"}> : (" +
+                type + ", " + type + ") -> " + type +
+                " %s = \"gloin.checked_float_binary\"(%other, %p) <{kind = \"+\"}> : (" +
+                type + ", " + type + ") -> " + type + " return %zero : i32 } }");
+            ASSERT_TRUE(high);
+            Diagnostics diagnostics;
+            auto low = lower_to_llvm(std::move(high), diagnostics);
+            ASSERT_TRUE(low) << render(diagnostics);
+            expect_exportable(*low);
+            llvm::LLVMContext llvm_context;
+            auto exported = mlir::translateModuleToLLVMIR(*low, llvm_context);
+            ASSERT_TRUE(exported);
+            llvm::LoopAnalysisManager loops;
+            llvm::FunctionAnalysisManager functions;
+            llvm::CGSCCAnalysisManager calls;
+            llvm::ModuleAnalysisManager modules;
+            llvm::PassBuilder passes;
+            passes.registerLoopAnalyses(loops);
+            passes.registerFunctionAnalyses(functions);
+            passes.registerCGSCCAnalyses(calls);
+            passes.registerModuleAnalyses(modules);
+            passes.crossRegisterProxies(loops, functions, calls, modules);
+            auto optimizer = passes.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+            optimizer.run(*exported, modules);
+            ASSERT_FALSE(llvm::verifyModule(*exported, &llvm::errs()));
+            unsigned traps = 0;
+            for (const auto &block : *exported->getFunction("main"))
+                for (const auto &op : block)
+                    if (auto call = llvm::dyn_cast<llvm::CallBase>(&op))
+                        if (auto callee = call->getCalledFunction())
+                            traps += callee->getIntrinsicID() == llvm::Intrinsic::trap;
+            // The original always traps on multiplication before using the
+            // other addend. Introducing poison UB here could erase that trap.
+            EXPECT_EQ(traps, 1u);
+        }
+    }
+}
+
+TEST(LoweringTest, GIRVersionsCountedSliceLoopsAndRetainsEachIterationsFloatCheck) {
     for (const std::string type : {"i64", "u64"}) {
         SCOPED_TRACE(type);
         mlir::MLIRContext context;
@@ -1908,7 +2065,7 @@ TEST(LoweringTest, GIRVersionsCountedSliceLoopsWithoutRelaxingFloatChecks) {
         });
         EXPECT_EQ(products, 2u) << print(*low); // checked fast and fallback copies
         EXPECT_EQ(sums, 2u);
-        EXPECT_EQ(finite_checks, 8u); // product and sum, two finite comparisons each
+        EXPECT_EQ(finite_checks, 4u); // one combined product/sum check in each loop copy
         EXPECT_EQ(entry_checks, 2u);
         EXPECT_EQ(bounds, type == "u64" ? 4u : 2u); // plus unsigned loop headers
         EXPECT_EQ(overflow, type == "u64" ? 0u : 1u); // original signed fallback
@@ -1956,5 +2113,234 @@ TEST(LoweringTest, GIRSliceLoopVersioningRejectsUnprovenInductionAndMutableDescr
         function.walk([&](mlir::LLVM::Trap) { ++traps; });
         EXPECT_EQ(sums, 1u);
         EXPECT_GT(traps, 0u);
+    }
+}
+
+TEST(LoweringTest, GIRVersionsStridedSlicesAndJoinsTailCounters) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        def pack(output: [f64], n: u64, value: f64) -> u64 {
+            def mut i: u64 = 0;
+            def mut j: u64 = 0;
+            def mut total: u64 = 0;
+            while i + 3 <= n {
+                output[j] = value + value;
+                output[j + 1] = value;
+                output[j + 1 + 1] = value;
+                output[j + 3] = value;
+                i = i + 3;
+                j = j + 4;
+                total = total + 1;
+            }
+            return i + j + total;
+        }
+    )", "strided-slices.gloin", context, CompilationMode::Module, CompilationOutput::LLVM);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+    expect_exportable(*compiled.module); // Includes dominance of live values at the shared tail.
+    unsigned sums = 0, finite_checks = 0, bounds = 0, divisions = 0, overflow = 0;
+    compiled.module->walk([&](mlir::LLVM::FAddOp op) {
+        ++sums;
+        EXPECT_EQ(op.getFastmathFlags(), mlir::LLVM::FastmathFlags::none);
+    });
+    compiled.module->walk([&](mlir::LLVM::FCmpOp) { ++finite_checks; });
+    compiled.module->walk([&](mlir::LLVM::ICmpOp op) {
+        bounds += op.getPredicate() == mlir::LLVM::ICmpPredicate::ult;
+    });
+    compiled.module->walk([&](mlir::LLVM::UDivOp) { ++divisions; });
+    compiled.module->walk([&](mlir::LLVM::UAddWithOverflowOp) { ++overflow; });
+    EXPECT_EQ(sums, 2u); // Both copies retain checked floating arithmetic.
+    EXPECT_EQ(finite_checks, 4u);
+    EXPECT_EQ(bounds, 4u); // Four original guards; none in the fast copy.
+    EXPECT_EQ(divisions, 2u); // Entry uses n/3 and capacity/4, never groups*4.
+    EXPECT_GT(overflow, 0u); // Unrelated sums and the checked fallback remain.
+}
+
+TEST(LoweringTest, GIRStridedVersioningRejectsUnprovenCountersAndDescriptors) {
+    const std::vector<std::pair<std::string, std::string>> cases{
+        {"nonzero primary", "def mut i: u64 = 1; def mut j: u64 = 0; while i + 3 <= n {"
+                            " output[j] = x + x; i = i + 3; j = j + 4; }"},
+        {"variable stride", "def mut i: u64 = 0; def mut j: u64 = 0; while i + step <= n {"
+                            " output[j] = x + x; i = i + step; j = j + 4; }"},
+        {"different backedge", "def mut i: u64 = 0; def mut j: u64 = 0; while i + 3 <= n {"
+                               " output[j] = x + x; i = i + 2; j = j + 4; }"},
+        {"nonzero secondary", "def mut i: u64 = 0; def mut j: u64 = 1; while i + 3 <= n {"
+                              " output[j] = x + x; i = i + 3; j = j + 4; }"},
+        {"offset outside group", "def mut i: u64 = 0; def mut j: u64 = 0; while i + 3 <= n {"
+                                 " output[j + 4] = x + x; i = i + 3; j = j + 4; }"},
+        {"escaped secondary", "def mut i: u64 = 0; def mut j: u64 = 0; while i + 3 <= n {"
+                              " change(&j); output[j] = x + x; i = i + 3; j = j + 4; }"},
+        {"loaded descriptor", "def mut i: u64 = 0; def mut j: u64 = 0; while i + 3 <= n {"
+                              " def row: [f64] = rows[0]; row[j] = x + x; i = i + 3; j = j + 4; }"},
+        {"conditional body", "def mut i: u64 = 0; def mut j: u64 = 0; while i + 3 <= n {"
+                             " if x > 0.0 { output[j] = x + x; } i = i + 3; j = j + 4; }"},
+        {"signed primary", "def mut i: i64 = 0; def mut j: u64 = 0; while i + 3 <= signed_n {"
+                           " output[j] = x + x; i = i + 3; j = j + 4; }"}
+    };
+    for (const auto &[name, body] : cases) {
+        SCOPED_TRACE(name);
+        mlir::MLIRContext context;
+        auto compiled = compile_source(
+            "def change(j: &u64) -> void { *j = 0; }"
+            "def pack(output: [f64], rows: [const [f64]], n: u64, step: u64, signed_n: i64, x: f64) -> void {" +
+            body + "}", "unproven-strides.gloin", context,
+            CompilationMode::Module, CompilationOutput::LLVM);
+        ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+        expect_exportable(*compiled.module);
+        unsigned sums = 0, traps = 0;
+        compiled.module->walk([&](mlir::LLVM::FAddOp) { ++sums; });
+        compiled.module->walk([&](mlir::LLVM::Trap) { ++traps; });
+        EXPECT_EQ(sums, 1u);
+        EXPECT_GT(traps, 0u);
+    }
+}
+
+TEST(LoweringTest, MatchVerifiesCoverageKeysAndYieldType) {
+    for (int invalid = 0; invalid < 4; ++invalid) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(
+            "def main() -> i32 { return match true { case true => 42; case false => 0; }; }",
+            "match.gloin", context);
+        ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+        gloin::MatchOp matching;
+        compiled.module->walk([&](gloin::MatchOp op) { matching = op; });
+        ASSERT_TRUE(matching);
+        mlir::OpBuilder builder(&context);
+        if (invalid == 0)
+            matching.setKeysAttr(
+                builder.getArrayAttr({builder.getBoolAttr(true), builder.getBoolAttr(true)}));
+        else if (invalid == 1)
+            matching.setKeysAttr(
+                builder.getArrayAttr({builder.getI32IntegerAttr(1), builder.getI32IntegerAttr(0)}));
+        else if (invalid == 2)
+            matching.setDomainSizeAttr(builder.getI64IntegerAttr(3));
+        else {
+            auto &arm = matching.getArms().front();
+            auto yield = mlir::cast<gloin::MatchYieldOp>(arm.back().getTerminator());
+            builder.setInsertionPoint(yield);
+            auto wrong = builder.create<gloin::ConstantOp>(yield.getLoc(), builder.getI64Type(),
+                                                           builder.getI64IntegerAttr(42));
+            yield->setOperand(0, wrong);
+        }
+        Diagnostics diagnostics;
+        EXPECT_FALSE(verify_module(*compiled.module, diagnostics));
+        EXPECT_TRUE(diagnostics.has_errors());
+    }
+}
+
+TEST(LoweringTest, SelectionRejectsLayoutSubjectsAtCheckedBoundary) {
+    for (bool matching : {false, true}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(
+            matching
+                ? "def main() -> i32 { return match \"x\" { case \"x\" => 42; default => 0; }; }"
+                : "def main() -> i32 { switch \"x\" { case \"x\" { return 42; } default { return "
+                  "0; } } }",
+            "selection.gloin", context);
+        ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+        mlir::Operation *selection = nullptr;
+        compiled.module->walk([&](mlir::Operation *op) {
+            if (mlir::isa<gloin::MatchOp, gloin::SwitchOp>(op))
+                selection = op;
+        });
+        ASSERT_NE(selection, nullptr);
+        mlir::OpBuilder builder(selection);
+        auto layout = mlir::LLVM::LLVMStructType::getLiteral(
+            &context, {mlir::LLVM::LLVMPointerType::get(&context), builder.getI64Type()});
+        auto untyped = builder.create<gloin::ToLayoutOp>(selection->getLoc(), layout,
+                                                         selection->getOperand(0));
+        selection->setOperand(0, untyped);
+        Diagnostics diagnostics;
+        EXPECT_FALSE(lower_to_llvm(std::move(compiled.module), diagnostics));
+        EXPECT_NE(render(diagnostics).find("requires a source-typed subject"), std::string::npos);
+    }
+}
+
+TEST(LoweringTest, StringMatchDeclaresBorrowedStorageReadEffects) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(
+        "def main() -> i32 { return match \"x\" { case \"x\" => 42; default => 0; }; }",
+        "match-effects.gloin", context);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+    gloin::MatchOp matching;
+    compiled.module->walk([&](gloin::MatchOp op) { matching = op; });
+    ASSERT_TRUE(matching);
+    llvm::SmallVector<mlir::MemoryEffects::EffectInstance> effects;
+    matching.getEffects(effects);
+    ASSERT_EQ(effects.size(), 1u);
+    EXPECT_TRUE(mlir::isa<mlir::MemoryEffects::Read>(effects.front().getEffect()));
+}
+
+TEST(LoweringTest, ErrorDiagnosticsRejectMalformedStorageAndCodeWidths) {
+    for (unsigned invalid = 0; invalid < 5; ++invalid) {
+        mlir::MLIRContext context;
+        auto compiled =
+            compile_source("def main() -> i32 { def problem: error = error(\"failed\", 7, 9); "
+                           "return problem.code + problem.os_error; }",
+                           "error-layout.gloin", context);
+        ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+        gloin::ErrorLiteralOp literal;
+        compiled.module->walk([&](gloin::ErrorLiteralOp op) { literal = op; });
+        ASSERT_TRUE(literal);
+        mlir::OpBuilder builder(literal);
+        auto text = mlir::LLVM::LLVMStructType::getLiteral(
+            &context, {mlir::LLVM::LLVMPointerType::get(&context), builder.getI64Type()});
+        if (invalid == 0)
+            literal.setLayoutType(text); // The old message-only layout is no longer an error.
+        else if (invalid == 1)
+            literal.setLayoutType(mlir::LLVM::LLVMStructType::getLiteral(
+                &context, {text, builder.getI64Type(), builder.getI32Type()}));
+        else if (invalid == 2 || invalid == 3) {
+            auto wide = builder.create<gloin::ConstantOp>(literal.getLoc(), builder.getI64Type(),
+                                                          builder.getI64IntegerAttr(1));
+            literal->setOperand(invalid - 1, wide);
+        } else {
+            gloin::ErrorCodeOp code;
+            compiled.module->walk([&](gloin::ErrorCodeOp op) { code = op; });
+            code->setOperand(0, literal.getMessage());
+        }
+        Diagnostics diagnostics;
+        EXPECT_FALSE(verify_module(*compiled.module, diagnostics));
+        EXPECT_TRUE(diagnostics.has_errors());
+    }
+}
+
+TEST(LoweringTest, ErrorAccessRejectsStorageBeforeSourceBoundary) {
+    for (const auto *field : {"message", "code", "os_error"}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(
+            "def main() -> i32 { def problem: error = error(\"failed\", 7, 9); def member: " +
+                std::string(std::string(field) == "message" ? "string" : "i32") + " = problem." +
+                field + "; return 0; }",
+            "error-boundary.gloin", context);
+        ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+        gloin::ErrorLiteralOp literal;
+        mlir::Operation *access = nullptr;
+        compiled.module->walk([&](mlir::Operation *op) {
+            if (auto value = mlir::dyn_cast<gloin::ErrorLiteralOp>(op))
+                literal = value;
+            if (mlir::isa<gloin::ErrorMessageOp, gloin::ErrorCodeOp, gloin::ErrorOsErrorOp>(op))
+                access = op;
+        });
+        ASSERT_TRUE(literal);
+        ASSERT_NE(access, nullptr);
+        mlir::OpBuilder builder(access);
+        auto storage = builder.create<gloin::ToLayoutOp>(access->getLoc(), literal.getLayoutType(),
+                                                         access->getOperand(0));
+        access->setOperand(0, storage);
+        // The message accessor also has a source-typed result; use the matching layout
+        // so this is valid intermediate IR, rejected specifically at the input boundary.
+        if (auto message = mlir::dyn_cast<gloin::ErrorMessageOp>(access)) {
+            auto source_type = message.getMessage().getType();
+            message.getMessage().setType(message.getLayoutType());
+            builder.setInsertionPointAfter(access);
+            auto restored = builder.create<gloin::FromLayoutOp>(access->getLoc(), source_type,
+                                                                message.getMessage());
+            message.getMessage().replaceAllUsesExcept(restored, restored);
+        }
+        Diagnostics diagnostics;
+        EXPECT_FALSE(lower_to_llvm(std::move(compiled.module), diagnostics));
+        EXPECT_NE(render(diagnostics).find("checked error access requires a source-typed error"),
+                  std::string::npos)
+            << render(diagnostics);
     }
 }

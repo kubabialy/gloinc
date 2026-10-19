@@ -26,7 +26,7 @@ def const OBJECT_VALUE: i32 = 7;
 def const OBJECT_NEXT: i32  = 8;
 
 def byte(text: string, index: u64) -> u8 {
-    return strings.byte_at(text, index).value;
+    return byte_or_zero(text, index);
 }
 
 def whitespace(value: u8) -> bool {
@@ -405,8 +405,8 @@ def pub struct Event {
     def pub as_i64(self: &const Event) -> result<i64> {
         if self.kind != NUMBER { return error("JSON event is not a number"); }
 
-        def parsed: std.I64Result = std.parse_i64(self.raw);
-        if parsed.status != status.OK { return error("JSON number is not a representable i64 integer"); }
+        def parsed: result<i64> = std.parse_i64(self.raw);
+        if parsed.erroneous { return error("JSON number is not a representable i64 integer"); }
 
         return parsed.value;
     }
@@ -414,8 +414,8 @@ def pub struct Event {
     def pub as_u64(self: &const Event) -> result<u64> {
         if self.kind != NUMBER { return error("JSON event is not a number"); }
 
-        def parsed: std.U64Result = std.parse_u64(self.raw);
-        if parsed.status != status.OK { return error("JSON number is not a representable u64 integer"); }
+        def parsed: result<u64> = std.parse_u64(self.raw);
+        if parsed.erroneous { return error("JSON number is not a representable u64 integer"); }
 
         return parsed.value;
     }
@@ -423,8 +423,8 @@ def pub struct Event {
     def pub as_f64(self: &const Event) -> result<f64> {
         if self.kind != NUMBER { return error("JSON event is not a number"); }
 
-        def parsed: std.F64Result = std.parse_f64(self.raw);
-        if parsed.status != status.OK { return error("JSON number is outside the f64 conversion contract"); }
+        def parsed: result<f64> = std.parse_f64(self.raw);
+        if parsed.erroneous { return error("JSON number is outside the f64 conversion contract"); }
 
         return parsed.value;
     }
@@ -462,7 +462,7 @@ def pub struct Reader {
     def event(self: &const Reader, kind: i32, start: u64) -> Event {
         return Event {
             kind: kind,
-            raw: strings.slice_bytes(self.text, start, self.position - start).value,
+            raw: slice_or_empty(self.text, start, self.position - start),
             offset: start
         };
     }
@@ -517,8 +517,8 @@ def pub struct Reader {
             return self.event(NUMBER, start);
         }
 
-        def rest: string = strings.slice_bytes(self.text, start,
-            strings.byte_length(self.text) - start).value;
+        def rest: string = slice_or_empty(self.text, start,
+            strings.byte_length(self.text) - start);
         if strings.starts_with(rest, "true") {
             self.position = self.position + 4;
 
@@ -903,4 +903,22 @@ def pub struct Writer {
         return strings.view_bytes(self.output[0..self.used]);
     }
 
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
 }

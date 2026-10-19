@@ -449,7 +449,9 @@ std::shared_ptr<Type> Sema::check_field(const MemberAccessExpression *member) {
     if (dynamic_cast<ErrorType *>(base.get())) {
         if (name && name->value == "message")
             return get_builtin_type("string");
-        log_error("Error has only the message member");
+        if (name && (name->value == "code" || name->value == "os_error"))
+            return get_builtin_type("i32");
+        log_error("Error has only message, code, and os_error members");
         return nullptr;
     }
     if (std::dynamic_pointer_cast<SliceType>(base)) {
@@ -536,6 +538,22 @@ std::shared_ptr<Type> Sema::expression_type_hint(const Expression *expression) {
         if (!name)
             return nullptr;
         auto base = expression_type_hint(member->left.get());
+        // A payload supplies the same numeric context as an ordinary field.
+        // This is only a hint: check_field still requires the result proof.
+        if (auto result = std::dynamic_pointer_cast<ResultType>(base)) {
+            if (name->value == "value")
+                return result->value;
+            if (name->value == "erroneous")
+                return get_builtin_type("bool");
+            if (name->value == "error")
+                return std::make_shared<ErrorType>();
+        }
+        if (std::dynamic_pointer_cast<ErrorType>(base)) {
+            if (name->value == "message")
+                return get_builtin_type("string");
+            if (name->value == "code" || name->value == "os_error")
+                return get_builtin_type("i32");
+        }
         if (auto pointer = std::dynamic_pointer_cast<PointerType>(base))
             base = pointer->pointee;
         if (auto structure = std::dynamic_pointer_cast<StructType>(base))

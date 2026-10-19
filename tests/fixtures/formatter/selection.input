@@ -1,0 +1,19 @@
+def main() -> i32 {
+def value: i32 = match true {
+case true => 42;
+case false => match 1 {
+case 1 => 0;
+default => 2;
+};
+};
+switch value {
+case 42 {
+def x: i32=1;
+def longer: i32=2;
+return value;
+}
+default {
+return 0;
+}
+}
+}

@@ -10,6 +10,7 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
@@ -124,12 +125,24 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
     // also work when users link --emit-object with their ordinary compiler.
     builder->setRelocationModel(llvm::Reloc::PIC_);
 #endif
-    builder->setCodeGenOptLevel(optimization == NativeOptimization::O2
-                                    ? llvm::CodeGenOptLevel::Default
-                                    : llvm::CodeGenOptLevel::None);
-    auto machine = builder->createTargetMachine();
+    const auto codegen_level = optimization == NativeOptimization::O2
+                                   ? llvm::CodeGenOptLevel::Default
+                                   : llvm::CodeGenOptLevel::None;
+    // Reuse host CPU/features, but emit an ordinary linked object. The JIT
+    // builder creates target machines with JIT=true, selecting the large code
+    // model on AArch64/x86-64 and turning known calls into indirect calls.
+    std::string target_error;
+    const auto *target = llvm::TargetRegistry::lookupTarget(builder->getTargetTriple(), target_error);
+    if (!target) {
+        error(diagnostics, target_error);
+        return false;
+    }
+    auto machine = std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
+        builder->getTargetTriple(), builder->getCPU(), builder->getFeatures().getString(),
+        llvm::TargetOptions{}, builder->getRelocationModel(), std::nullopt,
+        codegen_level, /*JIT=*/false));
     if (!machine) {
-        error(diagnostics, llvm::toString(machine.takeError()));
+        error(diagnostics, "Cannot create native target machine");
         return false;
     }
     target_setup.stop();
@@ -143,8 +156,8 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
         error(diagnostics, "Cannot translate verified LLVM-dialect module");
         return false;
     }
-    translated->setTargetTriple((*machine)->getTargetTriple());
-    translated->setDataLayout((*machine)->createDataLayout());
+    translated->setTargetTriple(machine->getTargetTriple());
+    translated->setDataLayout(machine->createDataLayout());
     if (!add_native_entry(*translated, diagnostics))
         return false;
     std::string verification;
@@ -162,7 +175,7 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
         llvm::FunctionAnalysisManager functions;
         llvm::CGSCCAnalysisManager call_graphs;
         llvm::ModuleAnalysisManager modules;
-        llvm::PassBuilder pass_builder(machine->get());
+        llvm::PassBuilder pass_builder(machine.get());
         modules.registerPass([] { return llvm::PluginInlineAdvisorAnalysis(bounded_inliner); });
         pass_builder.registerModuleAnalyses(modules);
         pass_builder.registerCGSCCAnalyses(call_graphs);
@@ -193,7 +206,7 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
         return false;
     }
     llvm::legacy::PassManager passes;
-    if ((*machine)->addPassesToEmitFile(passes, object, nullptr,
+    if (machine->addPassesToEmitFile(passes, object, nullptr,
                                         llvm::CodeGenFileType::ObjectFile)) {
         error(diagnostics, "Native target cannot emit object files");
         return false;

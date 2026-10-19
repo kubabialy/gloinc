@@ -78,11 +78,11 @@ def close_descriptor(descriptor: &i32) -> i32 {
 // At most 10ms between child-status checks, rounded up to 1ms near deadline.
 // Subtraction avoids overflow for long duration budgets.
 def wait_interval(started: time.Instant, timeout: time.Duration) -> result<i32> {
-    def now: time.InstantResult = time.monotonic_now();
-    if now.status != status.OK { return error("child deadline clock failed"); }
+    def now: result<time.Instant> = time.monotonic_now();
+    if now.erroneous { return error("child deadline clock failed"); }
 
-    def elapsed: time.DurationResult = time.elapsed(started, now.value);
-    if elapsed.status != status.OK { return error("child deadline clock moved backwards"); }
+    def elapsed: result<time.Duration> = time.elapsed(started, now.value);
+    if elapsed.erroneous { return error("child deadline clock moved backwards"); }
     if elapsed.value.nanoseconds >= timeout.nanoseconds { return 0; }
     if timeout.nanoseconds - elapsed.value.nanoseconds < 10000000 { return 1; }
 
@@ -314,15 +314,17 @@ def pub struct Child {
 
     // Expiration is ready=false and leaves the child owned and running.
     def pub wait_timeout(self: &Child, timeout: time.Duration) -> result<PollOutcome> {
-        def started: time.InstantResult = time.monotonic_now();
-        if started.status != status.OK { return error("child deadline clock failed"); }
+        def started: result<time.Instant> = time.monotonic_now();
+        if started.erroneous { return error("child deadline clock failed"); }
+
+        def start: time.Instant = started.value;
 
         while true {
             def observed: result<PollOutcome> = self.poll();
             if observed.erroneous { return observed.error; }
             if observed.value.ready { return observed.value; }
 
-            def interval: result<i32> = wait_interval(started.value, timeout);
+            def interval: result<i32> = wait_interval(start, timeout);
             if interval.erroneous { return interval.error; }
             if interval.value == 0 { return observed.value; }
 
@@ -341,8 +343,10 @@ def pub struct Child {
     def pump(self: &Child, input: [const u8], output: [u8], errors: [u8], timeout: time.Duration) -> result<Output> {
         if !self.is_open() || !self.state.piped { return error("child has no pipes"); }
 
-        def started: time.InstantResult = time.monotonic_now();
-        if started.status != status.OK { return error("child deadline clock failed"); }
+        def started: result<time.Instant> = time.monotonic_now();
+        if started.erroneous { return error("child deadline clock failed"); }
+
+        def start: time.Instant = started.value;
 
         def mut sent: u64            = 0;
         def mut received: u64        = 0;
@@ -350,7 +354,7 @@ def pub struct Child {
         def mut probe: [u8; 1]       = zeroed;
 
         while true {
-            def interval: result<i32> = wait_interval(started.value, timeout);
+            def interval: result<i32> = wait_interval(start, timeout);
             if interval.erroneous { return interval.error; }
             if interval.value == 0 { return error("child communication timed out"); }
 
@@ -534,13 +538,13 @@ def start_impl(owner: &arena.GeneralArena, executable: string, arguments: [const
             return error("invalid child environment entry");
         }
 
-        def key: string = strings.slice_bytes(entry, 0, equal.offset).value;
+        def key: string = slice_or_empty(entry, 0, equal.offset);
 
         for def mut j: u64 = 0; j < i; j = j + 1 {
             def previous: string              = options.environment[j];
             def separator: strings.FindResult = strings.find(previous, "=");
 
-            if strings.equal(key, strings.slice_bytes(previous, 0, separator.offset).value) {
+            if strings.equal(key, slice_or_empty(previous, 0, separator.offset)) {
                 return error("duplicate child environment name");
             }
         }
@@ -616,108 +620,69 @@ def start_impl(owner: &arena.GeneralArena, executable: string, arguments: [const
     };
 }
 
-// Failures have static empty text; nonempty success owns arena bytes until reset/free.
-// arg/env have os_error=0; cwd preserves native errno. Empty success can be static.
-def pub struct TextResult {
-    def pub status: i32,
-    def pub os_error: i32,
-    def pub value: string,
-}
-
 // Example: process.arg_count(). O(1), no allocation. CLI includes source filename at index zero.
 // Only values after FILE -- are forwarded. An unconfigured embedding/external runner has count zero.
 def pub arg_count() -> u64 {
     return __process_arg_count();
 }
 
-// Example: process.arg(&memory, 1). OUT_OF_RANGE consumes no arena storage; empty argument is OK/empty.
-// O(argument bytes) copy/zeroing, one exact-size arena request for nonempty text, no terminator promised.
-// NO_MEMORY is recoverable; bytes survive argument-scope exit but expire on memory reset/free.
-def pub arg(memory: &arena.GeneralArena, index: u64) -> TextResult {
+// OUT_OF_RANGE uses no arena storage; successful empty argument is static empty.
+// Nonempty text is copied in one exact-sized request; O(bytes), no terminator promised.
+// Bytes survive argument-scope exit but expire on arena reset/free. No native errno here.
+def pub arg(memory: &arena.GeneralArena, index: u64) -> result<string> {
     def mut length: u64 = 0;
     def mut code: i32   = 0;
     def bytes: *u8      = __process_arg(index, &length, &code);
 
-    if code != status.OK {
-        return TextResult {
-            status: code,
-            os_error: 0,
-            value: ""
-        };
-    }
+    if code != status.OK { return error("argument index is out of range", code, 0); }
 
-    def outcome: strings.StringResult = strings.copy(memory, __process_string_view(bytes, length));
+    def copied: result<string> = strings.copy(memory, __process_string_view(bytes, length));
+    if copied.erroneous { return error("argument copy failed", copied.error.code, 0); }
 
-    return TextResult {
-        status: outcome.status,
-        os_error: 0,
-        value: outcome.value
-    };
+    return copied.value;
 }
 
-// Example: process.env(&memory, "GLOIN_LABEL"). Missing -> NOT_FOUND; present empty -> OK/empty.
-// Empty name, '=' or NUL -> INVALID. No encoding conversion; host mutation must be externally coordinated.
-// O(name+value bytes) plus host environment lookup, temporary native name length+1 copy,
-// and one exact-size arena request for nonempty value. NO_MEMORY is recoverable; arena lifetime applies.
-def pub env(memory: &arena.GeneralArena, name: string) -> TextResult {
+// Missing -> NOT_FOUND; present empty -> success/empty. Empty/NUL/'=' name -> INVALID.
+// O(name+value bytes), temporary native name copy and one exact-size arena value copy.
+// No encoding conversion. Host environment mutation needs external coordination.
+// Errors have zero native code; nonempty values expire on arena reset/free.
+def pub env(memory: &arena.GeneralArena, name: string) -> result<string> {
     def mut length: u64 = 0;
     def mut code: i32   = 0;
     def bytes: *u8      = __process_env(name, &length, &code);
 
-    if code != status.OK {
-        return TextResult {
-            status: code,
-            os_error: 0,
-            value: ""
-        };
-    }
+    if code != status.OK { return error("cannot read environment variable", code, 0); }
 
-    def outcome: strings.StringResult = strings.copy(memory, __process_string_view(bytes, length));
+    def copied: result<string> = strings.copy(memory, __process_string_view(bytes, length));
+    if copied.erroneous { return error("environment value copy failed", copied.error.code, 0); }
 
-    return TextResult {
-        status: outcome.status,
-        os_error: 0,
-        value: outcome.value
-    };
+    return copied.value;
 }
 
-// Example: process.cwd(&memory, 4096). Absolute host cwd, no implicit chdir; caller chooses byte bound.
-// One max_bytes+1 zeroed arena request retained even on error; O(max_bytes) plus host getcwd work.
-// TOO_LONG/ERANGE means bound too small, not truncation. NO_MEMORY preflight for enormous bounds.
-// Other failures preserve errno and empty text; successful bytes expire on arena reset/free.
-def pub cwd(memory: &arena.GeneralArena, max_bytes: u64) -> TextResult {
-    if max_bytes > 9223372036854775806 {
-        return TextResult {
-            status: status.NO_MEMORY,
-            os_error: 0,
-            value: ""
-        };
-    }
+// Absolute host cwd; no chdir. TOO_LONG/ERANGE means insufficient bound, no truncation.
+// O(max_bytes) zeroing plus getcwd; one max_bytes+1 arena request retained even on error.
+// Enormous bound/allocation failure -> NO_MEMORY/0. Native failures retain errno.
+// Successful bytes expire on arena reset/free.
+def pub cwd(memory: &arena.GeneralArena, max_bytes: u64) -> result<string> {
+    if max_bytes > 9223372036854775806 { return error("cwd allocation exceeds addressable storage", status.NO_MEMORY, 0); }
 
     def bytes: *u8 = memory.try_alloc_bytes(max_bytes + 1);
-    if bytes == null {
-        return TextResult {
-            status: status.NO_MEMORY,
-            os_error: 0,
-            value: ""
-        };
-    }
+    if bytes == null { return error("cwd allocation failed", status.NO_MEMORY, 0); }
 
     def mut length: u64       = 0;
     def mut failure_code: i32 = 0;
     def code: i32             = __process_cwd(&*bytes, max_bytes + 1, &length, &failure_code);
 
-    if code != status.OK {
-        return TextResult {
-            status: code,
-            os_error: failure_code,
-            value: ""
-        };
-    }
+    if code != status.OK { return error("cannot read current directory", code, failure_code); }
 
-    return TextResult {
-        status: code,
-        os_error: 0,
-        value: __process_string_view(bytes, length)
-    };
+    return __process_string_view(bytes, length);
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
 }

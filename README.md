@@ -4,15 +4,19 @@ Gloin is an experimental language with explicit types, manual memory management,
 and native executables. Its compiler, `gloinc`, is built on LLVM/MLIR, with
 language operations represented in the GloinIR dialect.
 
-**[Download 0.1.0](https://github.com/kubabialy/gloinc/releases/tag/v0.1.0)** ·
-[Language guide](docs/site/0.1.0/index.html) ·
+**[Download 0.2.0](https://github.com/kubabialy/gloinc/releases/tag/v0.2.0)** ·
+[Language guide](docs/site/0.2.0/index.html) ·
 [Examples](examples/README.md) ·
-[Release notes](docs/release-notes-0.1.0.md)
+[Release notes](docs/release-notes-0.2.0.md)
+
+Version 0.2.0 adds switch/match, built-in results throughout fallible library
+APIs, and compiler fixes. See the [migration notes](docs/release-notes-0.2.0.md#migrating-from-010)
+when updating 0.1.0 programs.
 
 ## Get started
 
 Download and extract the archive for your platform. Verify it with the attached
-`.sha256` file; see the [installation guide](docs/release-0.1.0.md#installation-and-package).
+`.sha256` file; see the [installation guide](docs/release-0.2.0.md#installation-and-package).
 
 | Supported platform | Required LLVM/MLIR | Bundled toolchain installer |
 | --- | --- | --- |
@@ -50,8 +54,8 @@ TLS need OpenSSL. See the [CLI reference](docs/cli.md) for all options.
 
 ## What works today
 
-- **Language:** structs, methods, explicit generics, payloadless enums, and local
-  and directory modules.
+- **Language:** structs, methods, explicit generics, payloadless enums, switch,
+  exhaustive match, and local and directory modules.
 - **Memory and collections:** typed pointers, arenas, raw allocation, fixed
   arrays, borrowed slices, and fixed or growable vectors.
 - **Error handling:** built-in `result<T>` and `error`, with compiler-enforced
@@ -60,28 +64,28 @@ TLS need OpenSSL. See the [CLI reference](docs/cli.md) for all options.
   and pipes, JSON, nonblocking TCP, client/server TLS, and streaming HTTP/HTTPS.
 - **Tools:** `gloinfmt`, written in Gloin, formats files and checks source trees.
 
-Gloin is in early development and is not ready for production use. Switch,
-match, enum payloads, maps, packed structs, and async/spawn are not supported.
+Gloin is in early development and is not ready for production use. Enum payloads,
+maps, packed structs and async/spawn remain unsupported.
 Windows support is not planned; contributions are welcome.
 
 ## Documentation
 
 | I want to… | Start here |
 | --- | --- |
-| Learn the language | [0.1.0 HTML guide](docs/site/0.1.0/index.html) |
+| Learn the language | [0.2.0 HTML guide](docs/site/0.2.0/index.html) |
 | Run complete programs | [Examples and usage](examples/README.md) |
 | Use library APIs | [Standard library](docs/standard-library.md), [I/O](docs/io.md), [processes](docs/child-processes.md), [networking](docs/networking.md), [HTTP](docs/http-client.md), [JSON](docs/json.md) |
 | Format Gloin code | [gloinfmt](docs/gloinfmt.md) and [source style](docs/gloin-style.md) |
 | Understand the compiler | [Checked programs](docs/checked-program.md) and [GloinIR/lowering](docs/lowering.md) |
-| Inspect release verification | [Validation record](docs/next-release-draft.md) and [test inventory](tests/README.md) |
+| Inspect release verification | [0.2.0 record](docs/release-0.2.0.md#verification-boundary) and [test inventory](tests/README.md) |
 
 To read the HTML guide in a browser, open
-`share/doc/gloinc/docs/site/0.1.0/index.html` inside an extracted archive.
+`share/doc/gloinc/docs/site/0.2.0/index.html` inside an extracted archive.
 Older releases keep their own versioned guides.
 
 ## Build from source
 
-Follow the [macOS and Linux build instructions](docs/release-0.1.0.md#build-and-run).
+Follow the [macOS and Linux build instructions](docs/release-0.2.0.md#build-and-run).
 Source builds require a C++23 compiler, CMake 3.28+, Ninja, OpenSSL 3 and the
 pinned LLVM/MLIR installation above. See the [toolchain guide](docs/toolchain.md)
 for compiler-only builds and offline dependencies.

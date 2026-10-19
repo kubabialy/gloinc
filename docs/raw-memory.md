@@ -1,6 +1,6 @@
 # Raw memory and user-written arenas
 
-This API is available in the current development tree after 0.0.4. The
+This API has been available since 0.1.0. The
 versioned 0.0.4 guide describes the released language and does not include it.
 Import `@memory` to own individual native blocks and build allocation policies
 in Gloin. The complete [bump arena example](../examples/custom_arena.gloin)

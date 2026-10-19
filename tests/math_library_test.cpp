@@ -11,12 +11,40 @@ namespace {
 class MathLibraryTest : public gloin_test::CliFixture {
   protected:
     std::string program(const std::string &body) {
-        return source("import \"@math\"; import \"@status\"; import \"@std\"; import \"@strings\"; "
-                      "import \"@arena\"; "
-                      "def close(a: f64, b: f64) -> bool { return math.abs_f64(a-b).value < "
-                      "0.000000000001; } "
-                      "def main() -> i32 { " +
-                      body + " }");
+        return source(R"(
+        import "@math"; import "@status"; import "@std"; import "@strings"; import "@arena";
+        def close(a: f64, b: f64) -> bool {
+            return match math.abs_f64(a-b) {
+                case value(distance) => distance < 0.000000000001;
+                case error(problem) => false;
+            };
+        }
+        def success<T>(outcome: result<T>, expected: T) -> bool {
+            return match outcome {
+                case value(found) => found == expected;
+                case error(problem) => false;
+            };
+        }
+        def failure<T>(outcome: result<T>, expected: string) -> bool {
+            return match outcome {
+                case value(found) => false;
+                case error(problem) => strings.equal(problem.message, expected);
+            };
+        }
+        def near(outcome: result<f64>, expected: f64) -> bool {
+            return match outcome {
+                case value(found) => close(found, expected);
+                case error(problem) => false;
+            };
+        }
+        def formatted(outcome: result<f64>, memory: &arena.GeneralArena) -> string {
+            if outcome.erroneous { return "ERROR"; }
+            def text: result<string> = std.format_f64(memory,outcome.value);
+            if text.erroneous { return "ERROR"; }
+            return text.value;
+        }
+        def main() -> i32 {
+    )" + body + " }");
     }
     std::filesystem::path library() {
         const char *binary = std::getenv("GLOIN_TEST_CLI");
@@ -33,31 +61,19 @@ TEST_F(MathLibraryTest, TypedMinMaxClampAndSignedAbsoluteBoundaries) {
                           c = t[0] == 'f' ? "4.0" : "4";
         body += "if math.min_" + t + "(" + a + "," + b + ") != " + a + " || math.max_" + t + "(" +
                 a + "," + b + ") != " + b + " { return 1; }";
-        body += "{ def lo: math." +
-                (t == "i32"   ? std::string("I32")
-                 : t == "i64" ? "I64"
-                 : t == "u64" ? "U64"
-                 : t == "f32" ? "F32"
-                              : "F64") +
-                "Result = math.clamp_" + t + "(" + a + "," + b + "," + c +
-                "); if lo.status != status.OK || lo.value != " + b + " { return 2; } }";
-        body += "if math.clamp_" + t + "(" + c + "," + a + "," + b + ").value != " + b +
-                " || math.clamp_" + t + "(" + b + "," + a + "," + c + ").value != " + b +
-                " { return 3; }";
-        body += "{ def r: math." +
-                (t == "i32"   ? std::string("I32")
-                 : t == "i64" ? "I64"
-                 : t == "u64" ? "U64"
-                 : t == "f32" ? "F32"
-                              : "F64") +
-                "Result = math.clamp_" + t + "(" + a + "," + c + "," + b +
-                "); if r.status != status.INVALID || r.value != " +
-                std::string(t[0] == 'f' ? "0.0" : "0") + " { return 4; } }";
+        body += "if !success<" + t + ">(math.clamp_" + t + "(" + a + "," + b + "," + c + ")," + b +
+                ") { return 2; }";
+        body += "if !success<" + t + ">(math.clamp_" + t + "(" + c + "," + a + "," + b + ")," + b +
+                ") || !success<" + t + ">(math.clamp_" + t + "(" + b + "," + a + "," + c + ")," +
+                b + ") { return 3; }";
+        body += "if !failure<" + t + ">(math.clamp_" + t + "(" + a + "," + c + "," + b +
+                "),\"math clamp bounds are reversed\") { return 4; }";
     }
     body += R"(
-        if math.abs_i32(-2147483648).status != status.OVERFLOW || math.abs_i32(-2147483648).value != 0 { return 5; }
-        if math.abs_i64(-9223372036854775808).status != status.OVERFLOW || math.abs_i64(-9223372036854775808).value != 0 { return 6; }
-        if math.abs_i32(-2147483647).value != 2147483647 || math.abs_i64(-9223372036854775807).value != 9223372036854775807 { return 7; }
+        if !failure<i32>(math.abs_i32(-2147483648), "math absolute value overflow") { return 5; }
+        if !failure<i64>(math.abs_i64(-9223372036854775808), "math absolute value overflow") { return 6; }
+        if !success<i32>(math.abs_i32(-2147483647),2147483647)
+            || !success<i64>(math.abs_i64(-9223372036854775807),9223372036854775807) { return 7; }
         if math.min_u64(18446744073709551615,0) != 0 || math.max_u64(18446744073709551615,0) != 18446744073709551615 { return 8; }
         return 0;)";
     expect_run(invoke({program(body)}), 0);
@@ -70,7 +86,7 @@ TEST_F(MathLibraryTest, UnaryNegationOfValuesWorksInTypedInitializers) {
         def number: f64 = 1.25; def flipped: f64 = -number;
         def small: f32 = 2.5; def flipped_small: f32 = -small;
         if foo != -42 || restored != 42 || negative != -9000000000 { return 1; }
-        if flipped != -1.25 || flipped_small != -2.5 || math.abs_i32(foo).value != some_val { return 2; }
+        if flipped != -1.25 || flipped_small != -2.5 || !success<i32>(math.abs_i32(foo),some_val) { return 2; }
         return 0;)")}),
                0);
 }
@@ -86,9 +102,7 @@ TEST_F(MathLibraryTest, EveryFloatingFunctionExecutesAtBothWidths) {
         for (auto [call, want] : calls) {
             std::string invocation = call;
             invocation.insert(invocation.find('('), "_" + t);
-            body += "{ def r: math." + std::string(t == "f32" ? "F32Result" : "F64Result") +
-                    " = math." + invocation + "; if r.status != status.OK || r.value != " + want +
-                    " { return 1; } }";
+            body += "if !success<" + t + ">(math." + invocation + "," + want + ") { return 1; }";
         }
         expect_run(invoke({program(body + "return 0;")}), 0);
     }
@@ -99,51 +113,60 @@ TEST_F(MathLibraryTest, FloatingDomainsOverflowAndUnderflowAreRecoverable) {
         for (std::string call :
              {"sqrt(-1.0)", "log(0.0)", "log10(-1.0)", "pow(-2.0,0.5)", "pow(0.0,-1.0)"}) {
             call.insert(call.find('('), "_" + t);
-            body += "{ def r: math." + std::string(t == "f32" ? "F32Result" : "F64Result") +
-                    " = math." + call +
-                    "; if r.status != status.INVALID || r.value != 0.0 { return 1; } }";
+            body += "if !failure<" + t + ">(math." + call + ",\"math domain error\") { return 1; }";
         }
-        body += "if math.exp_" + t + "(10000.0).status != status.OVERFLOW || math.exp_" + t +
-                "(-10000.0).status != status.UNDERFLOW { return 2; }";
-        body += "if math.pow_" + t + "(0.0,0.0).value != 1.0 { return 3; } return 0;";
+        body += "if !failure<" + t + ">(math.exp_" + t +
+                "(10000.0),\"math result overflow\") || "
+                "!failure<" +
+                t + ">(math.exp_" + t + "(-10000.0),\"math result underflow\") { return 2; }";
+        body += "if !success<" + t + ">(math.pow_" + t + "(0.0,0.0),1.0) { return 3; } return 0;";
         expect_run(invoke({program(body)}), 0);
     }
 }
 TEST_F(MathLibraryTest, SignedZeroSelectionRoundingAndFloatConstants) {
     expect_run(invoke({program(R"(
         def mut memory: arena.GeneralArena = arena.GeneralArena.create(); defer memory.free();
-        def z: f64 = std.parse_f64("-0").value;
-        if !strings.equal(std.format_f64(&memory, math.min_f64(z,0.0)).value,"-0") { return 1; }
-        if !strings.equal(std.format_f64(&memory, math.max_f64(0.0,z)).value,"0") { return 2; }
-        if !strings.equal(std.format_f64(&memory, math.clamp_f64(z,0.0,1.0).value).value,"-0") { return 3; }
-        if !strings.equal(std.format_f64(&memory, math.sqrt_f64(z).value).value,"-0") { return 4; }
-        if !strings.equal(std.format_f64(&memory, math.abs_f64(z).value).value,"0") { return 5; }
-        if !strings.equal(std.format_f64(&memory, math.round_f64(-0.25).value).value,"-0") { return 6; }
-        if math.round_f32(2.5).value != 3.0 || math.round_f64(-2.5).value != -3.0 { return 7; }
+        def parsed: result<f64> = std.parse_f64("-0"); if parsed.erroneous { return 1; } def z: f64 = parsed.value;
+        def min: result<string> = std.format_f64(&memory,math.min_f64(z,0.0)); if min.erroneous { return 1; } if !strings.equal(min.value,"-0") { return 1; }
+        def max: result<string> = std.format_f64(&memory,math.max_f64(0.0,z)); if max.erroneous { return 2; } if !strings.equal(max.value,"0") { return 2; }
+        if !strings.equal(formatted(math.clamp_f64(z,0.0,1.0),&memory),"-0") { return 3; }
+        if !strings.equal(formatted(math.sqrt_f64(z),&memory),"-0") { return 4; }
+        if !strings.equal(formatted(math.abs_f64(z),&memory),"0") { return 5; }
+        if !strings.equal(formatted(math.round_f64(-0.25),&memory),"-0") { return 6; }
+        if !success<f32>(math.round_f32(2.5),3.0) || !success<f64>(math.round_f64(-2.5),-3.0) { return 7; }
         def pi: f32 = math.PI_F32; def tau: f32 = math.TAU_F32;
         if pi < 3.14159 || pi > 3.14160 || tau != pi * 2.0 { return 8; }
         if !close(math.PI_F64,3.141592653589793) || math.TAU_F64 != math.PI_F64 * 2.0 { return 9; }
-        if !close(math.atan2_f64(z,z).value,-math.PI_F64) { return 10; }
+        if !near(math.atan2_f64(z,z),-math.PI_F64) { return 10; }
         return 0;)")}),
                0);
 }
 TEST_F(MathLibraryTest, IndependentGeometryAndStatisticsReferences) {
     expect_run(invoke({program(R"(
-        if !close(math.sqrt_f64(2.0).value,1.4142135623730951) || !close(math.log_f64(2.0).value,0.6931471805599453) { return 1; }
-        if !close(math.exp_f64(1.0).value,2.718281828459045) || !close(math.sin_f64(1.0).value,0.8414709848078965) { return 2; }
-        if !close(math.cos_f64(1.0).value,0.5403023058681397) || !close(math.tan_f64(1.0).value,1.5574077246549023) { return 3; }
+        if !near(math.sqrt_f64(2.0),1.4142135623730951) || !near(math.log_f64(2.0),0.6931471805599453) { return 1; }
+        if !near(math.exp_f64(1.0),2.718281828459045) || !near(math.sin_f64(1.0),0.8414709848078965) { return 2; }
+        if !near(math.cos_f64(1.0),0.5403023058681397) || !near(math.tan_f64(1.0),1.5574077246549023) { return 3; }
         def mut i: i32 = -100;
         while i <= 100 {
-            def x: f64 = std.f64_from_i64_exact(std.i64_from_i32(i).value).value / 16.0;
-            def s: f64 = math.sin_f64(x).value; def c: f64 = math.cos_f64(x).value;
+            def x: f64 = std.f64_from_i64_rounded(std.i64_from_i32(i)) / 16.0;
+            def sine: result<f64> = math.sin_f64(x);
+            if sine.erroneous { return 4; }
+            def cosine: result<f64> = math.cos_f64(x);
+            if cosine.erroneous { return 4; }
+            def s: f64 = sine.value; def c: f64 = cosine.value;
             if !close(s*s+c*c,1.0) { return 4; }
             i = i + 1;
         }
-        def huge: f64 = std.parse_f64("1e300").value;
-        def length: math.F64Result = math.hypot_f64(huge,huge);
-        if length.status != status.OK || !close(length.value/huge,1.4142135623730951) { return 5; }
-        if math.pow_f32(2.0,-149.0).status != status.OK || math.pow_f32(2.0,-149.0).value == 0.0 { return 6; }
-        if math.pow_f64(2.0,-1074.0).status != status.OK || math.pow_f64(2.0,-1074.0).value == 0.0 { return 7; }
+        def parsed: result<f64> = std.parse_f64("1e300"); if parsed.erroneous { return 5; } def huge: f64 = parsed.value;
+        def length: result<f64> = math.hypot_f64(huge,huge);
+        if length.erroneous { return 5; }
+        if !close(length.value/huge,1.4142135623730951) { return 5; }
+        def small32: result<f32> = math.pow_f32(2.0,-149.0);
+        if small32.erroneous { return 6; }
+        if small32.value == 0.0 { return 6; }
+        def small64: result<f64> = math.pow_f64(2.0,-1074.0);
+        if small64.erroneous { return 7; }
+        if small64.value == 0.0 { return 7; }
         return 0;)")}),
                0);
 }
@@ -170,6 +193,48 @@ TEST_F(MathLibraryTest, PublicSignaturesAndPrivatePrimitivesRejectInvalidUse) {
     root = source("import \"@fs\"; def main() -> i32 { fs.probe(); return 0; }");
     expect_error(invoke({"--stdlib-dir", directory, "--check", root}), 1, "error:");
 }
+
+TEST_F(MathLibraryTest, CheckedPublicResultsCannotBeIgnoredOrReadWithoutProof) {
+    for (std::string body :
+         {"math.sqrt_f64(4.0);", "def r: result<f64> = math.sqrt_f64(4.0); return 0;",
+          "def r: result<f64> = math.sqrt_f64(4.0); if r.value == 2.0 { return 0; }",
+          "def r: result<f64> = math.sqrt_f64(-1.0); if r.erroneous { def x: f64 = r.value; }",
+          "def r: result<f64> = math.sqrt_f64(4.0); if r.erroneous { return 1; } "
+          "std.println(r.error.message);",
+          "def r: math.F64Result = math.sqrt_f64(4.0);"}) {
+        expect_error(invoke({"--check", program(body + "return 0;")}), 1, "error:");
+    }
+}
+
+TEST_F(MathLibraryTest, MigratedResultsKeepGloinIrTypesAndExecuteInNativeModes) {
+    auto file = program(R"(
+        if !success<i32>(math.clamp_i32(42,0,100),42) { return 1; }
+        if !success<f64>(math.sqrt_f64(4.0),2.0) { return 2; }
+        if !failure<f64>(math.log_f64(0.0),"math domain error") { return 3; }
+        if !failure<f32>(math.exp_f32(10000.0),"math result overflow") { return 4; }
+        if !failure<f64>(math.exp_f64(-10000.0),"math result underflow") { return 5; }
+        def payload: result<f64> = math.hypot_f64(3.0,4.0);
+        if payload.erroneous { return 6; }
+        if payload.value != 5.0 || 4.0 >= payload.value { return 7; }
+        return 42;
+    )");
+    auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *operation : {"!gloin.result<f64>", "!gloin.error", "gloin.result_success",
+                                  "gloin.result_failure", "gloin.error_literal", "gloin.match"})
+        EXPECT_NE(ir.out.find(operation), std::string::npos) << operation;
+    expect_run(invoke({file}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/math-results";
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        std::string message;
+        bool failed = false;
+        const auto code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10,
+                                                    0, &message, &failed);
+        EXPECT_FALSE(failed) << message;
+        EXPECT_EQ(code, 42) << message;
+    }
+}
 TEST_F(MathLibraryTest, PublicSourceIsReplaceableAndInvalidPrivateSelectorsAreChecked) {
     auto root = source("import \"@math\"; def main() -> i32 { return math.probe(); }");
     source("def pub probe() -> i32 { def mut v: f64 = 99.0; def c: i32 = "
@@ -181,13 +246,15 @@ TEST_F(MathLibraryTest, PublicSourceIsReplaceableAndInvalidPrivateSelectorsAreCh
     // Ordinary math needs only status.gloin, no arena/std or injected implementation.
     source(read((library() / "math.gloin").string()), "math.gloin");
     source(read((library() / "status.gloin").string()), "status.gloin");
-    root = source("import \"@math\"; def main() -> i32 { if math.hypot_f64(3.0,4.0).value == 5.0 { "
-                  "return 42; } return 1; }");
+    root = source(R"(import "@math"; def main() -> i32 {
+        def value: result<f64> = math.hypot_f64(3.0,4.0);
+        if value.erroneous { return 1; }
+        if value.value == 5.0 { return 42; } return 1; })");
     expect_run(invoke({"--stdlib-dir", directory, root}), 42);
 }
 TEST_F(MathLibraryTest, NativeNamesCannotCollideAndMalformedAbisFailBeforeExecution) {
     expect_run(invoke({source(R"(import "@math"; def gloin_math_unary_f64() -> i32 { return 42; }
-        def main() -> i32 { if math.sqrt_f64(4.0).value != 2.0 { return 1; } return gloin_math_unary_f64(); })")}),
+        def main() -> i32 { def value: result<f64> = math.sqrt_f64(4.0); if value.erroneous { return 1; } if value.value != 2.0 { return 1; } return gloin_math_unary_f64(); })")}),
                42);
     mlir::MLIRContext context;
     context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
@@ -207,9 +274,9 @@ TEST_F(MathLibraryTest, NativeNamesCannotCollideAndMalformedAbisFailBeforeExecut
 }
 TEST_F(MathLibraryTest, ExternalLlvmExecutionUsesAllFourTypedMathAbis) {
     auto ir = invoke({"--emit-llvm", program(R"(
-        if math.sqrt_f32(4.0).value != 2.0 || math.sqrt_f64(9.0).value != 3.0 { return 1; }
-        if math.hypot_f32(3.0,4.0).value != 5.0 || math.pow_f64(2.0,3.0).value != 8.0 { return 2; }
-        if math.log_f64(0.0).status != status.INVALID { return 3; } return 42;)")});
+        if !success<f32>(math.sqrt_f32(4.0),2.0) || !success<f64>(math.sqrt_f64(9.0),3.0) { return 1; }
+        if !success<f32>(math.hypot_f32(3.0,4.0),5.0) || !success<f64>(math.pow_f64(2.0,3.0),8.0) { return 2; }
+        if !failure<f64>(math.log_f64(0.0),"math domain error") { return 3; } return 42;)")});
     ASSERT_EQ(ir.status, 0) << ir.err;
     const char *runtime = std::getenv("GLOIN_TEST_ARENA_RUNTIME");
     gloin_test::ToolCommand runner{

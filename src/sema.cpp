@@ -306,7 +306,7 @@ void Sema::check_live_results_handled() {
         for (const auto &[name, symbol] : scope->symbols)
             if (dynamic_cast<ResultType *>(symbol.type.get()) &&
                 !result_handled[symbol.id])
-                log_error("Result '" + name + "' must be checked with .erroneous");
+                log_error("Result '" + name + "' must be checked with .erroneous or match");
 }
 
 void Sema::leave_scope() {
@@ -315,7 +315,7 @@ void Sema::leave_scope() {
             if (recording && falls_through &&
                 dynamic_cast<ResultType *>(symbol.type.get()) &&
                 !result_handled[symbol.id])
-                log_error("Result '" + name + "' must be checked with .erroneous");
+                log_error("Result '" + name + "' must be checked with .erroneous or match");
             initialization.erase(symbol.id);
             result_proof.erase(symbol.id);
             result_handled.erase(symbol.id);
@@ -790,6 +790,8 @@ void Sema::check_statement(const Statement *stmt) {
         }
         check_live_results_handled();
         falls_through = false;
+    } else if (const auto *selection = dynamic_cast<const SwitchStatement *>(stmt)) {
+        check_switch(selection);
     } else if (const auto *if_stmt = dynamic_cast<const IfStatement *>(stmt)) {
         check_conditional(if_stmt->condition.get(), if_stmt->consequence.get(),
                           if_stmt->alternative.get(), "If");
@@ -833,7 +835,7 @@ void Sema::check_statement(const Statement *stmt) {
     } else if (const auto *expr_stmt = dynamic_cast<const ExpressionStatement *>(stmt)) {
         auto type = check_expression(expr_stmt->expression.get(), std::nullopt, true);
         if (recording && dynamic_cast<ResultType *>(type.get()))
-            log_error("A result cannot be discarded; bind it and check .erroneous");
+            log_error("A result cannot be discarded; bind it and check .erroneous, or use match");
     } else if (const auto *struct_def = dynamic_cast<const StructDefinition *>(stmt)) {
         if (recording) {
             log_error("Structs are not supported in checked core programs");
@@ -899,6 +901,11 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
     }
     if (checking_constant)
         return check_constant_expression(expr);
+    if (const auto *matching = dynamic_cast<const MatchExpression *>(expr))
+        return check_match(matching,
+                           expected_type
+                               ? get_builtin_type(std::string(core_type_info(*expected_type).name))
+                               : nullptr);
     if (dynamic_cast<const NullLiteral *>(expr)) {
         if (!expected_pointer || !expected_pointer->nullable) {
             log_error("null requires a nullable pointer type (*T), not a reference");
@@ -1178,13 +1185,23 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         if (recording) {
             const auto *name = dynamic_cast<const Identifier *>(call->function.get());
             if (name && name->value == "error") {
-                if (call->arguments.size() != 1 ||
+                if ((call->arguments.size() != 1 && call->arguments.size() != 3) ||
                     !dynamic_cast<const StringLiteral *>(call->arguments.front().get())) {
-                    log_error("error construction requires one string literal");
+                    log_error("error construction requires one string literal, optionally followed "
+                              "by code and os_error");
                     return nullptr;
                 }
                 if (!check_expression(call->arguments.front().get(), CoreType::String))
                     return nullptr;
+                for (size_t i = 1; i < call->arguments.size(); ++i) {
+                    auto type = check_expression(call->arguments[i].get(), CoreType::I32);
+                    if (!type)
+                        return nullptr;
+                    if (!type->equals(*get_builtin_type("i32"))) {
+                        log_error("error code and os_error must have type i32");
+                        return nullptr;
+                    }
+                }
                 recording->error_constructors.insert(call);
                 return std::make_shared<ErrorType>();
             }

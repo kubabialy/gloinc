@@ -980,12 +980,12 @@ TEST_F(CoreAcceptanceTest, RejectDeferredQuestion) {
     rejects("reject/deferred_question.gloin", "semicolon");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredSwitch) {
-    rejects("reject/deferred_switch.gloin", "Expected expression");
+TEST_F(CoreAcceptanceTest, RejectSwitchFloatSubject) {
+    rejects("reject/deferred_switch.gloin", "Unsupported switch subject");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredMatch) {
-    rejects("reject/deferred_match.gloin", "Expected expression");
+TEST_F(CoreAcceptanceTest, RejectNonExhaustiveMatch) {
+    rejects("reject/deferred_match.gloin", "require default");
 }
 
 TEST_F(CoreAcceptanceTest, StandardHelloWorld) {

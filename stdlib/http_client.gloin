@@ -29,10 +29,13 @@ def struct Deadline {
     def static create(timeout_ms: i32) -> result<Deadline> {
         if timeout_ms <= 0 { return error("HTTP timeout must be positive"); }
 
-        def now: time.InstantResult = time.monotonic_now();
-        if now.status != status.OK { return error("HTTP clock read failed"); }
+        def now: result<time.Instant> = time.monotonic_now();
+        if now.erroneous { return error("HTTP clock read failed"); }
 
-        def duration: u64 = std.u64_from_i64(std.i64_from_i32(timeout_ms).value).value * 1000000;
+        def converted: result<u64> = std.u64_from_i64(std.i64_from_i32(timeout_ms));
+        if converted.erroneous { return converted.error; }
+
+        def duration: u64 = converted.value * 1000000;
         if duration > 18446744073709551615 - now.value.ticks_ns {
             return error("HTTP deadline overflows clock range");
         }
@@ -44,8 +47,9 @@ def struct Deadline {
     }
 
     def remaining(self: &const Deadline) -> result<i32> {
-        def now: time.InstantResult = time.monotonic_now();
-        if now.status != status.OK || now.value.ticks_ns < self.start {
+        def now: result<time.Instant> = time.monotonic_now();
+        if now.erroneous { return error("HTTP clock read failed or moved backwards"); }
+        if now.value.ticks_ns < self.start {
             return error("HTTP clock read failed or moved backwards");
         }
         if now.value.ticks_ns >= self.end { return error("HTTP request timed out"); }
@@ -54,7 +58,13 @@ def struct Deadline {
         // Round upward so sub-millisecond waits do not become busy polling.
         def milliseconds: u64 = (remaining + 999999) / 1000000;
 
-        return std.i32_from_i64(std.i64_from_u64(milliseconds).value).value;
+        def wide: result<i64> = std.i64_from_u64(milliseconds);
+        if wide.erroneous { return wide.error; }
+
+        def narrowed: result<i32> = std.i32_from_i64(wide.value);
+        if narrowed.erroneous { return narrowed.error; }
+
+        return narrowed.value;
     }
 
 }
@@ -408,7 +418,7 @@ def struct ExchangeState {
                 if count > self.buffers.send.len { count = self.buffers.send.len; }
 
                 for def mut i: u64 = 0; i < count; i = i + 1 {
-                    self.buffers.send[i] = strings.byte_at(self.request_head, self.head_offset + i).value;
+                    self.buffers.send[i] = byte_or_zero(self.request_head, self.head_offset + i);
                 }
 
                 self.head_offset = self.head_offset + count;
@@ -549,7 +559,7 @@ def pub struct Exchange {
         if count > self.state.buffers.send.len { count = self.state.buffers.send.len; }
 
         for def mut i: u64 = 0; i < count; i = i + 1 {
-            self.state.buffers.send[i] = strings.byte_at(bytes, i).value;
+            self.state.buffers.send[i] = byte_or_zero(bytes, i);
         }
 
         self.state.send_used = count;
@@ -688,7 +698,7 @@ def pub request(endpoint: Endpoint, request: Request, headers: [const http.Heade
             def count: u64    = strings.byte_length(bytes);
 
             for def mut i: u64 = 0; i < count; i = i + 1 {
-                body_storage[received + i] = strings.byte_at(bytes, i).value;
+                body_storage[received + i] = byte_or_zero(bytes, i);
             }
 
             received = received + count;
@@ -696,8 +706,8 @@ def pub request(endpoint: Endpoint, request: Request, headers: [const http.Heade
             def consumed: result<void> = exchange.consume(count);
             if consumed.erroneous { return consumed.error; }
         } else if step.state == NEED_INPUT {
-            def accepted: result<u64> = exchange.supply(strings.slice_bytes(
-                request.body, sent, strings.byte_length(request.body) - sent).value);
+            def accepted: result<u64> = exchange.supply(slice_or_empty(
+                request.body, sent, strings.byte_length(request.body) - sent));
             if accepted.erroneous { return accepted.error; }
 
             sent = sent + accepted.value;
@@ -712,4 +722,22 @@ def pub request(endpoint: Endpoint, request: Request, headers: [const http.Heade
     }
 
     return error("HTTP exchange ended unexpectedly");
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
 }

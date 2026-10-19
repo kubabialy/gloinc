@@ -101,7 +101,8 @@ It aligns `=` in adjacent single-line declaration groups and assignments to the
 same kind of target. It separates setup, validation, loops, and final returns,
 while keeping immediate guards and `defer` registration with their declarations.
 Comments and existing blank lines delimit alignment groups; leading comments
-stay attached to the step they describe. Assignments inside one-line guards,
+stay attached to the step they describe. The 0.2.0 formatter also handles
+switch blocks, nested match arms and the `=>` token. Assignments inside one-line guards,
 comparisons, and `=` inside strings or comments do not join alignment groups.
 
 These rules run in the Gloin-written formatter for both normal output and

@@ -65,8 +65,8 @@ def pub inspect(memory: &arena.GeneralArena, path: string, text: string) -> resu
 }
 
 def pub unquote(memory: &arena.GeneralArena, text: string) -> result<string> {
-    def made: strings.BuilderResult = strings.StringBuilder.create(memory, strings.byte_length(text));
-    if made.status != status.OK { return error("cannot allocate URL decoder"); }
+    def made: result<strings.StringBuilder> = strings.StringBuilder.create(memory, strings.byte_length(text));
+    if made.erroneous { return error("cannot allocate URL decoder"); }
 
     def mut out: strings.StringBuilder = made.value;
     def mut i: u64                     = 0;
@@ -87,13 +87,13 @@ def pub unquote(memory: &arena.GeneralArena, text: string) -> result<string> {
             i     = i + 2;
         }
 
-        if out.append_byte(value) != status.OK { return error("cannot decode URL"); }
+        if !append_succeeded(out.append_byte(value)) { return error("cannot decode URL"); }
 
         i = i + 1;
     }
 
-    def copied: strings.StringResult = out.to_string(memory);
-    if copied.status != status.OK { return error("cannot retain decoded URL"); }
+    def copied: result<string> = out.to_string(memory);
+    if copied.erroneous { return error("cannot retain decoded URL"); }
     if !common.valid_text(copied.value) { return error("URL is not valid UTF-8 text"); }
 
     return copied.value;
@@ -142,7 +142,10 @@ def pub link(memory: &arena.GeneralArena, pages: &vector.Vector<Page>, from: str
     def mut target: string = from;
 
     if !strings.is_empty(decoded_path.value) {
-        def joined: result<string> = common.join(memory, fs.dirname(from).value, decoded_path.value);
+        def parent: result<string> = fs.dirname(from);
+        if parent.erroneous { return parent.error; }
+
+        def joined: result<string> = common.join(memory, parent.value, decoded_path.value);
         if joined.erroneous { return joined.error; }
 
         target = joined.value;
@@ -153,10 +156,10 @@ def pub link(memory: &arena.GeneralArena, pages: &vector.Vector<Page>, from: str
 
     target = resolved.value;
 
-    def info: fs.MetadataResult = fs.metadata(target);
-    if info.status != status.OK { return error("cannot inspect local link"); }
+    def info: result<fs.Metadata> = fs.metadata(target);
+    if info.erroneous { return info.error; }
 
-    if info.kind == fs.DIRECTORY {
+    if info.value.kind == fs.DIRECTORY {
         def index: result<string> = common.join(memory, target, "index.html");
         if index.erroneous { return index.error; }
 
@@ -166,8 +169,9 @@ def pub link(memory: &arena.GeneralArena, pages: &vector.Vector<Page>, from: str
         target = indexed.value;
     }
 
-    def file: fs.MetadataResult = fs.metadata(target);
-    if file.status != status.OK || file.kind != fs.FILE { return error("local link does not resolve to a file"); }
+    def file: result<fs.Metadata> = fs.metadata(target);
+    if file.erroneous { return file.error; }
+    if file.value.kind != fs.FILE { return error("local link does not resolve to a file"); }
 
     if !strings.is_empty(anchor) {
         for def mut i: i64 = 0; i < pages.len(); i = i + 1 {
@@ -189,15 +193,15 @@ def pub link(memory: &arena.GeneralArena, pages: &vector.Vector<Page>, from: str
 def collect(memory: &arena.GeneralArena, pages: &vector.Vector<Page>, path: string, depth: u64, total: &u64) -> result<void> {
     if depth == 0 { return error("documentation traversal exceeds 64 levels"); }
 
-    def info: fs.MetadataResult = fs.metadata(path);
-    if info.status != status.OK { return error("cannot inspect documentation entry"); }
+    def info: result<fs.Metadata> = fs.metadata(path);
+    if info.erroneous { return info.error; }
 
-    if info.kind == fs.DIRECTORY {
+    if info.value.kind == fs.DIRECTORY {
         def mut owner: arena.GeneralArena = arena.GeneralArena.create();
         defer owner.free();
 
-        def opened: fs.DirectoryResult = fs.Directory.open(&owner, path);
-        if opened.status != status.OK { return error("cannot open documentation directory"); }
+        def opened: result<fs.Directory> = fs.Directory.open(&owner, path);
+        if opened.erroneous { return opened.error; }
 
         def mut directory: fs.Directory = opened.value;
         defer common.close_directory(&directory);
@@ -205,12 +209,13 @@ def collect(memory: &arena.GeneralArena, pages: &vector.Vector<Page>, path: stri
         def mut scanning: bool = true;
 
         while scanning {
-            def entry: fs.DirectoryEntryResult = directory.next(&owner);
+            def entry: result<fs.DirectoryRead> = directory.next(&owner);
 
-            if entry.status == status.END { scanning = false; }
-            else if entry.status != status.OK { return error("cannot read documentation directory"); }
+            if entry.erroneous { return entry.error; }
+
+            if entry.value.end { scanning = false; }
             else {
-                def child: result<string> = common.join(&owner, path, entry.name);
+                def child: result<string> = common.join(&owner, path, entry.value.name);
                 if child.erroneous { return child.error; }
 
                 def collected: result<void> = collect(memory, pages, child.value, depth - 1, total);
@@ -218,17 +223,19 @@ def collect(memory: &arena.GeneralArena, pages: &vector.Vector<Page>, path: stri
             }
         }
 
-        if directory.close().status != status.OK { return error("cannot close documentation directory"); }
-    } else if strings.ends_with(path, ".html") && (info.kind == fs.FILE || info.kind == fs.SYMLINK) {
+        def closed: result<void> = directory.close();
+        if closed.erroneous { return closed.error; }
+    } else if strings.ends_with(path, ".html") && (info.value.kind == fs.FILE || info.value.kind == fs.SYMLINK) {
         if pages.len() >= 4096 { return error("documentation exceeds 4096 HTML pages"); }
 
         def resolved: result<string> = fs.canonical_path(memory, path, 65536);
         if resolved.erroneous { return resolved.error; }
 
-        def canonical: string         = resolved.value;
-        def actual: fs.MetadataResult = fs.metadata(canonical);
+        def canonical: string           = resolved.value;
+        def actual: result<fs.Metadata> = fs.metadata(canonical);
 
-        if actual.kind != fs.FILE { return error("HTML entry does not resolve to a regular file"); }
+        if actual.erroneous { return actual.error; }
+        if actual.value.kind != fs.FILE { return error("HTML entry does not resolve to a regular file"); }
 
         for def mut i: i64 = 0; i < pages.len(); i = i + 1 {
             if strings.equal(pages.get_mut(i).path, canonical) { return; }
@@ -257,7 +264,10 @@ def pub check(root: string) -> result<i64> {
 
     def canonical: result<string> = fs.canonical_path(&memory, root, 65536);
     if canonical.erroneous { return canonical.error; }
-    if fs.metadata(canonical.value).kind != fs.DIRECTORY { return error("documentation root must be a directory"); }
+
+    def info: result<fs.Metadata> = fs.metadata(canonical.value);
+    if info.erroneous { return info.error; }
+    if info.value.kind != fs.DIRECTORY { return error("documentation root must be a directory"); }
 
     def mut pages: vector.Vector<Page> = vector.Vector<Page>.empty(&memory, 0);
     def mut total: u64                 = 0;
@@ -286,4 +296,11 @@ def pub check(root: string) -> result<i64> {
     if failed { return error("documentation link check failed"); }
 
     return pages.len();
+}
+
+// Keep append chains short-circuiting while explicitly handling every result.
+def append_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
 }

@@ -10,6 +10,8 @@ import "@arena";
 import "@status";
 
 def main() -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
@@ -20,124 +22,178 @@ def main() -> i32 {
     def mut errors: io.Stream = io.stderr();
 
     if process.arg_count() == 2 {
-        def flag: process.TextResult = process.arg(&owner, 1);
+        def flag: result<string> = process.arg(&owner, 1);
 
-        if flag.status == status.OK && strings.equal(flag.value, "--help") {
-            if output.write_line("usage: --copy SOURCE NEW_DESTINATION").status != status.OK {
+        if flag.erroneous { return 1; }
+
+        if strings.equal(flag.value, "--help") {
+            if !io_succeeded(output.write_line("usage: --copy SOURCE NEW_DESTINATION", &io_progress)) {
                 return 1;
             }
 
-            return output.flush().status;
+            if !io_succeeded(output.flush()) { return 1; }
+
+            return 0;
         }
     }
 
     if process.arg_count() != 4 {
-        errors.write_line("expected --copy SOURCE NEW_DESTINATION");
-        errors.flush();
+        report_io_failure(errors.write_line("expected --copy SOURCE NEW_DESTINATION", &io_progress));
+        report_io_failure(errors.flush());
 
         return 2;
     }
 
-    def flag: process.TextResult = process.arg(&owner, 1);
-    if flag.status != status.OK || !strings.equal(flag.value, "--copy") {
-        errors.write_line("unknown option");
-        errors.flush();
+    def flag: result<string> = process.arg(&owner, 1);
+    if flag.erroneous {
+        report_io_failure(errors.write_line("unknown option", &io_progress));
+        report_io_failure(errors.flush());
+
+        return 2;
+    }
+    if !strings.equal(flag.value, "--copy") {
+        report_io_failure(errors.write_line("unknown option", &io_progress));
+        report_io_failure(errors.flush());
 
         return 2;
     }
 
-    def source: process.TextResult = process.arg(&owner, 2);
-    def target: process.TextResult = process.arg(&owner, 3);
-    def cwd: process.TextResult    = process.cwd(&owner, 4096);
+    def source: result<string> = process.arg(&owner, 2);
+    if source.erroneous {
+        return 3;
+    }
 
-    if source.status != status.OK || target.status != status.OK || cwd.status != status.OK {
+    def target: result<string> = process.arg(&owner, 3);
+    if target.erroneous {
+        return 3;
+    }
+
+    def cwd: result<string> = process.cwd(&owner, 4096);
+
+    if cwd.erroneous {
         return 3;
     }
     if strings.is_empty(source.value) || strings.is_empty(target.value) { return 2; }
 
-    def from: fs.PathResult = fs.join(&owner, cwd.value, source.value, 65536);
-    def to: fs.PathResult   = fs.join(&owner, cwd.value, target.value, 65536);
+    def from: result<string> = fs.join(&owner, cwd.value, source.value, 65536);
+    if from.erroneous { return 3; }
 
-    if from.status != status.OK || to.status != status.OK { return 3; }
+    def to: result<string> = fs.join(&owner, cwd.value, target.value, 65536);
 
-    def info: fs.MetadataResult = fs.metadata(from.value);
-    if info.status != status.OK || info.kind != fs.FILE {
-        errors.write_line("source must be a regular file");
-        errors.flush();
+    if to.erroneous { return 3; }
+
+    def from_path: string = from.value;
+    def to_path: string   = to.value;
+
+    def info: result<fs.Metadata> = fs.metadata(from_path);
+    if info.erroneous { report_io_failure(errors.write_line(info.error.message, &io_progress)); report_io_failure(errors.flush()); return 4; }
+    if info.value.kind != fs.FILE {
+        report_io_failure(errors.write_line("source must be a regular file", &io_progress));
+        report_io_failure(errors.flush());
 
         return 4;
     }
 
-    def opened: io.FileResult = io.File.open_read(&owner, from.value);
-    if opened.status != status.OK { return 5; }
+    def opened: result<io.File> = io.File.open_read(&owner, from_path);
+    if opened.erroneous { return 5; }
 
     def mut reader: io.File = opened.value;
-    defer reader.close();
+    defer close_file(&reader);
 
-    def made: io.FileResult = io.File.create_new(&owner, to.value);
-    if made.status != status.OK {
-        errors.write_line("cannot create new destination");
-        errors.flush();
+    def made: result<io.File> = io.File.create_new(&owner, to_path);
+    if made.erroneous {
+        report_io_failure(errors.write_line("cannot create new destination", &io_progress));
+        report_io_failure(errors.flush());
 
         return 6;
     }
 
     def mut writer: io.File = made.value;
-    defer writer.close();
+    defer close_file(&writer);
 
     def mut copying: bool = true;
     def mut total: u64    = 0;
 
     while copying {
         scratch.reset();
-        def chunk: io.ReadResult = reader.read_chunk(&scratch, 4096);
+        def mut chunk: io.ReadState    = io.ReadState.empty();
+        def chunk_result: result<void> = reader.read_chunk(&scratch, 4096, &chunk);
 
-        if chunk.status == status.END {
+        if chunk_result.erroneous { return 7; }
+
+        if chunk.end {
             copying = false;
         } else {
-            if chunk.status != status.OK { return 7; }
 
-            def written: io.WriteResult = writer.write_all(chunk.value);
-            if written.status != status.OK { return 8; }
+            def mut written: io.WriteState   = io.WriteState.empty();
+            def written_result: result<void> = writer.write_all(chunk.value, &written);
+
+            if written_result.erroneous { return 8; }
 
             total = total + written.written;
         }
     }
 
-    if writer.flush().status != status.OK { return 9; }
+    if !io_succeeded(writer.flush()) { return 9; }
 
-    def closed: io.IoResult      = writer.close();
-    def read_closed: io.IoResult = reader.close();
+    def closed: result<void> = writer.close();
+    if closed.erroneous { return 9; }
 
-    if closed.status != status.OK || read_closed.status != status.OK { return 9; }
+    def read_closed: result<void> = reader.close();
+
+    if read_closed.erroneous { return 9; }
 
     scratch.reset();
-    def setting: process.TextResult = process.env(&scratch, "GLOIN_COPY_LABEL");
-    def mut label: string           = "copied";
+    def setting: result<string> = process.env(&scratch, "GLOIN_COPY_LABEL");
+    def mut label: string       = "copied";
 
-    if setting.status == status.OK {
+    if !setting.erroneous {
         label = setting.value;
     } else {
-        if setting.status != status.NOT_FOUND { return 10; }
+        if !setting.erroneous { return 10; }
+        if setting.error.code != status.NOT_FOUND { return 10; }
     }
 
-    def name: fs.PathResult     = fs.basename(to.value);
-    def count: std.FormatResult = std.format_u64(&scratch, total);
+    def name: result<string> = fs.basename(to_path);
+    if name.erroneous { return 10; }
 
-    if name.status != status.OK || count.status != status.OK { return 10; }
+    def count: result<string> = std.format_u64(&scratch, total);
+    if count.erroneous { return 10; }
 
     if !strings.is_empty(label) {
-        if output.write_all(label).status != status.OK
-            || output.write_all(" ").status != status.OK {
+        if !io_succeeded(output.write_all(label, &io_progress))
+            || !io_succeeded(output.write_all(" ", &io_progress)) {
             return 11;
         }
     }
 
-    if output.write_all(name.value).status != status.OK
-        || output.write_all(": ").status != status.OK {
+    if !io_succeeded(output.write_all(name.value, &io_progress))
+        || !io_succeeded(output.write_all(": ", &io_progress)) {
         return 11;
     }
-    if output.write_line(count.value).status != status.OK { return 11; }
+    if !io_succeeded(output.write_line(count.value, &io_progress)) { return 11; }
 
-    return output.flush().status;
+    if !io_succeeded(output.flush()) { return 1; }
+
+    return 0;
+}
+
+// The owner must remain live until deferred cleanup has run.
+def close_file(file: &io.File) -> void {
+    if file.is_open() {
+        def closed: result<void> = file.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// Report cleanup/diagnostic failures without recursively writing to a failed stream.
+def report_io_failure(outcome: result<void>) -> void {
+    if outcome.erroneous { std.println(outcome.error.message); }
 }

@@ -41,9 +41,13 @@ declaration order, starting at zero. The tag is private and its numeric values
 are not part of the source-language API. No foreign-function ABI guarantee is
 made for enums yet.
 
-Payload variants, pattern matching, and exhaustiveness checking remain open
-under SPEC-034. Until those rules exist, use ordinary `if` comparisons and an
-explicit fallback path. Built-in `result<T>` and `error` are available in the
-development tree after 0.0.4; see the [implemented result guide](results.md).
-The [wiki design record](https://github.com/kubabialy/gloinc/wiki/Language-Spec#resultt-and-error-spec-034-proposed-not-implemented)
-predates that implementation.
+## Selection in 0.2.0
+
+After 0.1.0, `switch` accepts qualified enum variants and `match` can produce a
+value with compile-time coverage checking. A match must cover every variant,
+either explicitly or through a final default, and contain at least two arms.
+A one-variant enum therefore cannot be used in a match with only one arm.
+See [switch and match](switch-match.md) for syntax, examples and limitations.
+Published 0.1.0 uses ordinary `if` comparisons. Payload-bearing enum variants
+remain unsupported. Built-in `result<T>` and `error` are available in 0.1.0;
+see [the result guide](results.md).

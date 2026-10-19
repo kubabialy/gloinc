@@ -36,12 +36,14 @@ def close_config(config: &net.TlsServerConfig) -> void {
 }
 
 def within(start: time.Instant) -> bool {
-    def now: time.InstantResult = time.monotonic_now();
-    if now.status != status.OK { return false; }
+    def now: result<time.Instant> = time.monotonic_now();
+    if now.erroneous { return false; }
 
-    def elapsed: time.DurationResult = time.elapsed(start, now.value);
+    def elapsed: result<time.Duration> = time.elapsed(start, now.value);
 
-    return elapsed.status == status.OK && elapsed.value.nanoseconds < 5000000000;
+    if elapsed.erroneous { return false; }
+
+    return elapsed.value.nanoseconds < 5000000000;
 }
 
 def wait_pair(client: net.Socket, server: net.Socket, client_event: i32, server_event: i32) -> bool {
@@ -60,8 +62,8 @@ def exchange(certificate: string, key: string, hostname: string, trust: string, 
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
-    def clock: time.InstantResult = time.monotonic_now();
-    if clock.status != status.OK { return 1; }
+    def clock: result<time.Instant> = time.monotonic_now();
+    if clock.erroneous { return 1; }
 
     def start: time.Instant                 = clock.value;
     def loaded: result<net.TlsServerConfig> = net.TlsServerConfig.load(&owner, certificate, key);
@@ -310,10 +312,12 @@ def main() -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def certificate: process.TextResult = process.arg(&memory, 1);
-    def key: process.TextResult         = process.arg(&memory, 2);
+    def certificate: result<string> = process.arg(&memory, 1);
+    if certificate.erroneous { return 91; }
 
-    if certificate.status != status.OK || key.status != status.OK { return 91; }
+    def key: result<string> = process.arg(&memory, 2);
+
+    if key.erroneous { return 91; }
 
     def trusted: i32 = exchange(certificate.value, key.value, "localhost", certificate.value, false);
     if trusted != 0 { return trusted; }

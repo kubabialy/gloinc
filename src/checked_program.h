@@ -121,6 +121,9 @@ struct ResolvedSymbol {
     SourceSpan span;
 };
 struct SemanticData {
+    std::unordered_map<const CasePattern *, ConstantValue> case_values;
+    std::unordered_map<const Node *, uint64_t> selection_domains;
+    std::unordered_set<const Node *> exhaustive_selections;
     std::vector<const SourceModule *> modules; // Dependency order, each file once.
     // Concrete copies give every generic method specialization distinct node identities.
     std::vector<std::unique_ptr<FunctionDefinition>> specialized_methods;

@@ -20,8 +20,18 @@ std::shared_ptr<Type> Sema::check_typed_expression(const Expression *expression,
     auto previous_array = expected_array;
     expected_pointer = std::dynamic_pointer_cast<PointerType>(expected);
     expected_array = std::dynamic_pointer_cast<ArrayType>(expected);
-    auto actual = check_expression(expression, expected ? resolve_core_type(expected->to_string())
-                                                        : std::nullopt);
+    auto matching = dynamic_cast<const MatchExpression *>(expression);
+    auto actual =
+        matching && !checking_constant
+            ? check_match(matching, expected)
+            : check_expression(expression,
+                               expected ? resolve_core_type(expected->to_string()) : std::nullopt);
+    if (matching && recording && actual) {
+        // Invalid arms can retain a function type after reporting a diagnostic.
+        // Only supported values may enter the checked source-type table.
+        if (auto type = value_type(actual))
+            recording->types[expression] = *type;
+    }
     auto pointer = std::dynamic_pointer_cast<PointerType>(actual);
     if (recording && pointer && expected_pointer &&
         pointer_conversion(*pointer, *expected_pointer)) {

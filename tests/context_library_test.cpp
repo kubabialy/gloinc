@@ -5,6 +5,7 @@
 #include "mlir/Parser/Parser.h"
 #include "support/cli_fixture.h"
 #include "support/external_runner.h"
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <tuple>
@@ -54,8 +55,11 @@ class ContextLibraryTest : public gloin_test::CliFixture {
     std::string program(const std::string &body) {
         return source("import \"@fs\"; import \"@process\"; import \"@strings\"; import "
                       "\"@status\"; import \"@arena\"; import \"@io\"; import \"@std\"; "
-                      "def same(r: fs.PathResult, s: string) -> bool { return r.status == "
-                      "status.OK && strings.equal(r.value,s); } "
+                      "def same(r: result<string>, s: string) -> bool { if r.erroneous { return false; } "
+                      "return strings.equal(r.value,s); } "
+                      "def path_failure(r: result<string>, code: i32) -> bool { "
+                      "if !r.erroneous { return false; } "
+                      "return r.error.code == code && r.error.os_error == 0; } "
                       "def main() -> i32 { def mut memory: arena.GeneralArena = "
                       "arena.GeneralArena.create(); defer memory.free(); " +
                       body + " }");
@@ -102,7 +106,7 @@ TEST_F(ContextLibraryTest, LexicalBasenameAndDirnameCoverRootsDotsSeparatorsAndB
                 ") || !same(fs.dirname(" + literal(path) + ")," + literal(dir) + ") { return 1; }";
     }
     body +=
-        R"(if fs.basename("a\0b").status != status.INVALID || fs.dirname("a\0b").status != status.INVALID { return 2; } return 0;)";
+        R"(if !path_failure(fs.basename("a\0b"),status.INVALID) || !path_failure(fs.dirname("a\0b"),status.INVALID) { return 2; } return 0;)";
     expect_run(invoke({program(body)}), 0);
 }
 TEST_F(ContextLibraryTest, JoinBoundsAbsoluteChildrenAndRetainedResults) {
@@ -122,13 +126,16 @@ TEST_F(ContextLibraryTest, JoinBoundsAbsoluteChildrenAndRetainedResults) {
         body += "if !same(fs.join(" + args + std::to_string(result.size()) + ")," +
                 literal(result) + ") { return 1; }";
         if (!result.empty())
-            body += "if fs.join(" + args + std::to_string(result.size() - 1) +
-                    ").status != status.TOO_LONG { return 2; }";
+            body += "if !path_failure(fs.join(" + args + std::to_string(result.size() - 1) +
+                    "),status.TOO_LONG) { return 2; }";
     }
-    body += R"(def retained: fs.PathResult = fs.join(&memory,"a","b",3);
-        def later: fs.PathResult = fs.join(&memory,"c","d",3); if !same(retained,"a/b") { return 3; }
+    body += R"(def retained: result<string> = fs.join(&memory,"a","b",3);
+        if retained.erroneous { return 3; }
+        def later: result<string> = fs.join(&memory,"c","d",3);
+        if later.erroneous { return 3; }
+        if !strings.equal(retained.value,"a/b") || !strings.equal(later.value,"c/d") { return 3; }
         memory.free();
-        if fs.join(&memory,"bad\0","/x",10).status != status.INVALID || fs.join(&memory,"a","b",2).status != status.TOO_LONG { return 4; }
+        if !path_failure(fs.join(&memory,"bad\0","/x",10),status.INVALID) || !path_failure(fs.join(&memory,"a","b",2),status.TOO_LONG) { return 4; }
         if !same(fs.join(&memory,"","",0),"") { return 5; } return 0;)";
     expect_run(invoke({program(body)}), 0);
 }
@@ -148,7 +155,7 @@ TEST_F(ContextLibraryTest, BothJoinAllocationsFailRecoverably) {
             invoke(
                 {"--stdlib-dir", directory,
                  program(
-                     R"(def r: fs.PathResult = fs.join(&memory,"base","child",10); if r.status != status.NO_MEMORY || !strings.is_empty(r.value) { return 1; } return 0;)")}),
+                     R"(def r: result<string> = fs.join(&memory,"base","child",10); if !r.erroneous { return 1; } if r.error.code != status.NO_MEMORY || r.error.os_error != 0 { return 1; } return 0;)")}),
             0);
     }
 }
@@ -156,14 +163,24 @@ TEST_F(ContextLibraryTest, FilesystemQueriesAndMutationsPreserveDefinedEffects) 
     auto src = source("source", "a"), dst = source("old", "b"), child = directory + "/sub";
     expect_run(invoke({program("def a: string = " + literal(src) + "; def b: string = " +
                                literal(dst) + "; def dir: string = " + literal(child) + R"(;
-        def m: fs.MetadataResult = fs.metadata(a); if m.status != status.OK || m.os_error != 0 || m.kind != fs.FILE || m.size != 6 { return 1; }
-        if fs.mkdir(dir).status != status.OK || fs.mkdir(dir).status != status.ALREADY_EXISTS { return 2; }
-        if fs.metadata(dir).kind != fs.DIRECTORY || fs.metadata(dir).size != 0 { return 3; }
-        if fs.remove_file(dir).status == status.OK { return 4; }
-        if fs.rename_replace(a,b).status != status.OK || fs.metadata(a).status != status.NOT_FOUND || fs.metadata(b).size != 6 { return 5; }
-        if fs.remove_file(b).status != status.OK || fs.remove_file(b).status != status.NOT_FOUND { return 6; }
-        def bad: fs.MetadataResult = fs.metadata("a\0b");
-        if bad.status != status.INVALID || bad.os_error != 0 || bad.kind != 0 || bad.size != 0 { return 7; }
+        def m: result<fs.Metadata> = fs.metadata(a); if m.erroneous { return 1; } if m.value.kind != fs.FILE || m.value.size != 6 { return 1; }
+        def made: result<void> = fs.mkdir(dir); if made.erroneous { return 2; }
+        def exists: result<void> = fs.mkdir(dir); if !exists.erroneous { return 2; }
+        if exists.error.code != status.ALREADY_EXISTS || exists.error.os_error <= 0 { return 2; }
+        def directory_info: result<fs.Metadata> = fs.metadata(dir); if directory_info.erroneous { return 3; } if directory_info.value.kind != fs.DIRECTORY || directory_info.value.size != 0 { return 3; }
+        def denied: result<void> = fs.remove_file(dir); if !denied.erroneous { return 4; }
+        if denied.error.os_error <= 0 { return 4; }
+        def renamed: result<void> = fs.rename_replace(a,b); if renamed.erroneous { return 5; }
+        def gone: result<fs.Metadata> = fs.metadata(a); if !gone.erroneous { return 5; }
+        if gone.error.code != status.NOT_FOUND || gone.error.os_error <= 0 { return 5; }
+        def replaced: result<fs.Metadata> = fs.metadata(b); if replaced.erroneous { return 5; }
+        if replaced.value.size != 6 { return 5; }
+        def removed: result<void> = fs.remove_file(b); if removed.erroneous { return 6; }
+        def missing: result<void> = fs.remove_file(b); if !missing.erroneous { return 6; }
+        if missing.error.code != status.NOT_FOUND || missing.error.os_error <= 0 { return 6; }
+        def bad: result<fs.Metadata> = fs.metadata("a\0b");
+        if !bad.erroneous { return 7; }
+        if bad.error.code != status.INVALID || bad.error.os_error != 0 { return 7; }
         return 0;)")}),
                0);
     EXPECT_FALSE(std::filesystem::exists(src));
@@ -175,32 +192,45 @@ TEST_F(ContextLibraryTest, DirectoryIterationCopiesNamesAndCloseInvalidatesAlias
     ASSERT_TRUE(std::filesystem::create_directory(entries));
     { std::ofstream(entries + "/dir-alpha") << "a"; }
     { std::ofstream(entries + "/dir-beta") << "b"; }
-    const auto body = "def opened: fs.DirectoryResult = fs.Directory.open(&memory," +
+    const auto body = "def opened: result<fs.Directory> = fs.Directory.open(&memory," +
                       literal(entries) + R"();
-        if opened.status != status.OK || opened.os_error != 0 { return 1; }
+        if opened.erroneous { return 1; }
         def mut cursor: fs.Directory = opened.value;
         def mut alias: fs.Directory = cursor;
-        def one: fs.DirectoryEntryResult = cursor.next(&memory);
-        def two: fs.DirectoryEntryResult = alias.next(&memory);
-        if one.status != status.OK || two.status != status.OK || strings.equal(one.name,two.name) { return 2; }
-        def alpha: bool = strings.equal(one.name,"dir-alpha") || strings.equal(two.name,"dir-alpha");
-        def beta: bool = strings.equal(one.name,"dir-beta") || strings.equal(two.name,"dir-beta");
-        if !alpha || !beta || cursor.next(&memory).status != status.END { return 3; }
-        if alias.close().status != status.OK || cursor.is_open() { return 4; }
-        if cursor.next(&memory).status != status.CLOSED || cursor.close().status != status.CLOSED { return 5; }
-        if fs.Directory.open(&memory,"").status != status.INVALID ||
-           fs.Directory.open(&memory,"a\0b").status != status.INVALID { return 6; }
+        def one: result<fs.DirectoryRead> = cursor.next(&memory);
+        if one.erroneous { return 2; }
+        def two: result<fs.DirectoryRead> = alias.next(&memory);
+        if two.erroneous { return 2; }
+        if one.value.end || two.value.end || strings.equal(one.value.name,two.value.name) { return 2; }
+        def alpha: bool = strings.equal(one.value.name,"dir-alpha") || strings.equal(two.value.name,"dir-alpha");
+        def beta: bool = strings.equal(one.value.name,"dir-beta") || strings.equal(two.value.name,"dir-beta");
+        def end: result<fs.DirectoryRead> = cursor.next(&memory); if end.erroneous { return 3; }
+        if !alpha || !beta || !end.value.end || !strings.is_empty(end.value.name) { return 3; }
+        def closed: result<void> = alias.close(); if closed.erroneous { return 4; }
+        if cursor.is_open() { return 4; }
+        def repeated: result<void> = cursor.close(); if !repeated.erroneous { return 5; }
+        if repeated.error.code != status.CLOSED || repeated.error.os_error != 0 { return 5; }
+        def closed_read: result<fs.DirectoryRead> = cursor.next(&memory);
+        if !closed_read.erroneous { return 5; }
+        if closed_read.error.code != status.CLOSED || closed_read.error.os_error != 0 { return 5; }
+        def empty: result<fs.Directory> = fs.Directory.open(&memory,"");
+        if !empty.erroneous { return 6; }
+        if empty.error.code != status.INVALID || empty.error.os_error != 0 { return 6; }
+        def nul: result<fs.Directory> = fs.Directory.open(&memory,"a\0b");
+        if !nul.erroneous { return 6; }
+        if nul.error.code != status.INVALID || nul.error.os_error != 0 { return 6; }
         return 0;)";
     expect_run(invoke({program(body)}), 0);
 }
+
 TEST_F(ContextLibraryTest, CliForwardsExactBytesOnlyAfterFileDelimiter) {
     const auto file = program(R"(
         if process.arg_count() != 5 { return 1; }
-        if !strings.equal(process.arg(&memory,1).value,"--check") || !strings.equal(process.arg(&memory,2).value,"") { return 2; }
-        if !strings.equal(process.arg(&memory,3).value,"é path") || !strings.equal(process.arg(&memory,4).value,"--") { return 3; }
-        def bad: process.TextResult = process.arg(&memory,5);
-        if bad.status != status.OUT_OF_RANGE || bad.os_error != 0 || !strings.is_empty(bad.value) { return 4; }
-        std.println(process.arg(&memory,0).value); return 0;)");
+        if !same(process.arg(&memory,1),"--check") || !same(process.arg(&memory,2),"") { return 2; }
+        if !same(process.arg(&memory,3),"é path") || !same(process.arg(&memory,4),"--") { return 3; }
+        if !path_failure(process.arg(&memory,5),status.OUT_OF_RANGE) { return 4; }
+        def name: result<string> = process.arg(&memory,0); if name.erroneous { return 5; }
+        std.println(name.value); return 0;)");
     expect_run(invoke({"--run", file, "--", "--check", "", "é path", "--"}), 0, file + "\n");
     expect_run(invoke({"--", file, "--", "--check", "", "é path", "--"}), 0, file + "\n");
     for (const std::string mode : {"--check", "--emit-ir", "--emit-llvm"})
@@ -210,7 +240,8 @@ TEST_F(ContextLibraryTest, CliForwardsExactBytesOnlyAfterFileDelimiter) {
 TEST_F(ContextLibraryTest, DashFilenameEscapeAndEmptyForwardingRemainExplicit) {
     auto file = source("import \"@process\"; import \"@arena\"; import \"@std\"; def main() -> i32 "
                        "{ def mut m: arena.GeneralArena = arena.GeneralArena.create(); defer "
-                       "m.free(); std.println(process.arg(&m,0).value); return 0; }",
+                       "m.free(); def name: result<string> = process.arg(&m,0); if name.erroneous "
+                       "{ return 1; } std.println(name.value); return 0; }",
                        "-program.gloin");
     CwdGuard cwd(directory);
     expect_run(invoke({"--", "-program.gloin"}), 0, "-program.gloin\n");
@@ -219,12 +250,15 @@ TEST_F(ContextLibraryTest, DashFilenameEscapeAndEmptyForwardingRemainExplicit) {
 }
 TEST_F(ContextLibraryTest, EnvironmentMissingEmptyOwnedValuesAndMalformedNames) {
     EnvGuard env("GLOIN_SPEC030E_LIBRARY");
-    auto file =
-        program(R"(def text: process.TextResult = process.env(&memory,"GLOIN_SPEC030E_LIBRARY");
-        def expected: process.TextResult = process.arg(&memory,1);
-        if strings.equal(expected.value,"missing") { if text.status != status.NOT_FOUND || !strings.is_empty(text.value) { return 1; } }
-        else { if text.status != status.OK || text.os_error != 0 || !strings.equal(text.value,expected.value) { return 2; } }
-        if process.env(&memory,"").status != status.INVALID || process.env(&memory,"a=b").status != status.INVALID || process.env(&memory,"a\0b").status != status.INVALID { return 3; }
+    auto file = program(R"(def expected: result<string> = process.arg(&memory,1);
+        if expected.erroneous { return 4; }
+        def text: result<string> = process.env(&memory,"GLOIN_SPEC030E_LIBRARY");
+        if text.erroneous {
+            if !strings.equal(expected.value,"missing") || text.error.code != status.NOT_FOUND || text.error.os_error != 0 { return 1; }
+        } else {
+            if !strings.equal(text.value,expected.value) { return 2; }
+        }
+        if !path_failure(process.env(&memory,""),status.INVALID) || !path_failure(process.env(&memory,"a=b"),status.INVALID) || !path_failure(process.env(&memory,"a\0b"),status.INVALID) { return 3; }
         return 0;)");
     unsetenv(env.name.c_str());
     expect_run(invoke({file, "--", "missing"}), 0);
@@ -242,19 +276,20 @@ TEST_F(ContextLibraryTest, ArgumentEnvironmentAndCwdAllocationFailuresAreRecover
             "def bytes: *u8 = null;");
     source(arena, "arena.gloin");
     expect_run(invoke({"--stdlib-dir", directory, program(R"(
-        if process.arg(&memory,1).status != status.NO_MEMORY || process.env(&memory,"GLOIN_SPEC030E_ALLOC").status != status.NO_MEMORY || process.cwd(&memory,1024).status != status.NO_MEMORY { return 1; }
+        if !path_failure(process.arg(&memory,1),status.NO_MEMORY) || !path_failure(process.env(&memory,"GLOIN_SPEC030E_ALLOC"),status.NO_MEMORY) || !path_failure(process.cwd(&memory,1024),status.NO_MEMORY) { return 1; }
         memory.free();
-        if process.arg(&memory,2).status != status.OK || !strings.is_empty(process.arg(&memory,2).value) { return 2; }
-        if process.arg(&memory,18446744073709551615).status != status.OUT_OF_RANGE || process.cwd(&memory,18446744073709551615).status != status.NO_MEMORY { return 3; }
+        if !same(process.arg(&memory,2),"") { return 2; }
+        if !path_failure(process.arg(&memory,18446744073709551615),status.OUT_OF_RANGE) || !path_failure(process.cwd(&memory,18446744073709551615),status.NO_MEMORY) { return 3; }
         return 0;)"),
                        "--", "value", ""}),
                0);
 }
 TEST_F(ContextLibraryTest, CwdUsesHostWorkingDirectoryAndReportsTooSmallBounds) {
-    auto file = program(R"(def outcome: process.TextResult = process.cwd(&memory,4096);
-        if outcome.status != status.OK || outcome.os_error != 0 { return 1; } std.println(outcome.value);
-        def small: process.TextResult = process.cwd(&memory,0);
-        if small.status != status.TOO_LONG || small.os_error == 0 || !strings.is_empty(small.value) { return 2; } return 0;)");
+    auto file = program(R"(def outcome: result<string> = process.cwd(&memory,4096);
+        if outcome.erroneous { return 1; } std.println(outcome.value);
+        def small: result<string> = process.cwd(&memory,0);
+        if !small.erroneous { return 2; }
+        if small.error.code != status.TOO_LONG || small.error.os_error == 0 { return 2; } return 0;)");
     CwdGuard cwd(directory);
     expect_run(invoke({file}), 0, std::filesystem::current_path().string() + "\n");
 }
@@ -263,7 +298,7 @@ TEST_F(ContextLibraryTest, EmbeddingArgumentsAreInvocationOwnedAndNeverLeak) {
     auto compiled = compile_source(R"(import "@process"; import "@strings"; import "@arena";
         def main() -> i32 { if process.arg_count() == 0 { return 0; }
         def mut memory: arena.GeneralArena = arena.GeneralArena.create(); defer memory.free();
-        def arg: process.TextResult = process.arg(&memory,0); if strings.equal(arg.value,"first") { return 11; }
+        def arg: result<string> = process.arg(&memory,0); if arg.erroneous { return 98; } if strings.equal(arg.value,"first") { return 11; }
         if strings.equal(arg.value,"second") { return 22; } return 99; })",
                                    "embed.gloin", context, CompilationMode::Executable,
                                    CompilationOutput::HighLevel, library().string());
@@ -600,13 +635,15 @@ TEST_F(ContextLibraryTest, RuntimeCollisionsAndMalformedAbisAreRejectedCorrectly
 }
 TEST_F(ContextLibraryTest, ExternalRuntimeHasNoImplicitHostArgumentsAndSupportsFilesystemCalls) {
     const auto path = source("bytes", "external.txt");
-    auto ir =
-        invoke({"--emit-llvm",
-                program("if process.arg_count() != 0 { return 1; } def info: fs.MetadataResult = "
-                        "fs.metadata(" +
-                        literal(path) +
-                        "); if info.status != status.OK || info.size != 5 { return 2; } if "
-                        "process.cwd(&memory,4096).status != status.OK { return 3; } return 42;")});
+    auto ir = invoke(
+        {"--emit-llvm",
+         program("def cwd: result<string> = process.cwd(&memory,4096); def mut cwd_ok: bool = "
+                 "true; if cwd.erroneous { cwd_ok = false; } if process.arg_count() != 0 { return "
+                 "1; } def info: result<fs.Metadata> = "
+                 "fs.metadata(" +
+                 literal(path) +
+                 "); if info.erroneous { return 2; } if info.value.size != 5 { return 2; } if "
+                 "!cwd_ok { return 3; } return 42;")});
     ASSERT_EQ(ir.status, 0) << ir.err;
     const char *runtime = std::getenv("GLOIN_TEST_ARENA_RUNTIME");
     gloin_test::ToolCommand runner{
@@ -670,9 +707,191 @@ TEST_F(ContextLibraryTest, PackagedToolRunsFromAnotherDirectoryWithPathsLabelsAn
         auto end = doc.find("```", pos);
         ASSERT_NE(end, std::string::npos);
         expect_run(invoke({source(doc.substr(pos, end - pos))}), 0,
-                   blocks == 0 ? "report.txt\n/work\n" : "arguments ready\n");
+                   blocks == 0 ? "report.txt\n/work\n" : blocks == 1 ? "" : "arguments ready\n");
         pos = end + 3;
         ++blocks;
     }
-    EXPECT_EQ(blocks, 2u);
+    EXPECT_EQ(blocks, 3u);
+    EXPECT_TRUE(std::filesystem::is_directory(directory + "/output"));
+}
+
+TEST_F(ContextLibraryTest, FilesystemMutationErrorsPreserveCodesWithoutValidationSideEffects) {
+    const auto original = source("retained", "original");
+    const auto missing = directory + "/missing";
+    const auto file = program("def original: string = " + literal(original) +
+                              "; def missing: string = " + literal(missing) + R"(;
+        def invalid_mkdir: result<void> = fs.mkdir("bad\0path");
+        if !invalid_mkdir.erroneous { return 1; }
+        if invalid_mkdir.error.code != status.INVALID || invalid_mkdir.error.os_error != 0 { return 2; }
+        def invalid_remove: result<void> = fs.remove_file("");
+        if !invalid_remove.erroneous { return 3; }
+        if invalid_remove.error.code != status.INVALID || invalid_remove.error.os_error != 0 { return 4; }
+        def invalid_rename: result<void> = fs.rename_replace(original, "bad\0path");
+        if !invalid_rename.erroneous { return 5; }
+        if invalid_rename.error.code != status.INVALID || invalid_rename.error.os_error != 0 { return 6; }
+        def absent: result<void> = fs.remove_file(missing);
+        if !absent.erroneous { return 7; }
+        if absent.error.code != status.NOT_FOUND || absent.error.os_error != )" +
+                              std::to_string(ENOENT) + R"( { return 8; }
+        def exists: result<void> = fs.mkdir(original);
+        if !exists.erroneous { return 9; }
+        if exists.error.code != status.ALREADY_EXISTS || exists.error.os_error != )" +
+                              std::to_string(EEXIST) + R"( { return 10; }
+        def no_source: result<void> = fs.rename_replace(missing, original);
+        if !no_source.erroneous { return 11; }
+        if no_source.error.code != status.NOT_FOUND || no_source.error.os_error != )" +
+                              std::to_string(ENOENT) + R"( { return 12; }
+        def info: result<fs.Metadata> = fs.metadata(original); if info.erroneous { return 13; } if info.value.size != 8 { return 13; }
+        return 0;)");
+    expect_run(invoke({"--jit", file}), 0);
+    const auto executable = directory + "/filesystem-errors";
+    expect_success(invoke_raw({"-O2", "-o", executable, file}), "");
+    const auto err = executable + ".err";
+    const std::optional<llvm::StringRef> redirects[] = {std::nullopt, std::nullopt, err};
+    std::string message;
+    bool launch_failed = false;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects, 10, 0,
+                                        &message, &launch_failed),
+              0)
+        << message << read(err);
+    EXPECT_FALSE(launch_failed) << message;
+    EXPECT_EQ(read(original), "retained");
+    EXPECT_FALSE(std::filesystem::exists(missing));
+}
+
+TEST_F(ContextLibraryTest, DirectoryEndAndMissingPathsUseDistinctResultsInJitAndNative) {
+    const auto entries = directory + "/entries";
+    ASSERT_TRUE(std::filesystem::create_directory(entries));
+    const auto empty = directory + "/empty";
+    ASSERT_TRUE(std::filesystem::create_directory(empty));
+    {
+        std::ofstream(entries + "/only") << "abc";
+    }
+    const auto file = program("def empty_path: string = " + literal(empty) +
+                              "; def path: string = " + literal(entries) +
+                              "; def absent: string = " + literal(directory + "/absent") + R"(;
+        def missing: result<fs.Metadata> = fs.metadata(absent);
+        if !missing.erroneous { return 1; }
+        if missing.error.code != status.NOT_FOUND || missing.error.os_error != )" +
+                              std::to_string(ENOENT) + R"( { return 2; }
+        def missing_directory: result<fs.Directory> = fs.Directory.open(&memory, absent);
+        if !missing_directory.erroneous { return 3; }
+        if missing_directory.error.code != status.NOT_FOUND || missing_directory.error.os_error != )" +
+                              std::to_string(ENOENT) + R"( { return 4; }
+        def info: result<fs.Metadata> = fs.metadata(path);
+        if info.erroneous { return 5; }
+        if info.value.kind != fs.DIRECTORY || info.value.size != 0 { return 6; }
+        def opened: result<fs.Directory> = fs.Directory.open(&memory, path);
+        if opened.erroneous { return 7; }
+        def mut cursor: fs.Directory = opened.value;
+        def first: result<fs.DirectoryRead> = cursor.next(&memory);
+        if first.erroneous { return 8; }
+        if first.value.end || !strings.equal(first.value.name, "only") { return 9; }
+        def end: result<fs.DirectoryRead> = cursor.next(&memory);
+        if end.erroneous { return 10; }
+        if !end.value.end || !strings.is_empty(end.value.name) { return 11; }
+        def again: result<fs.DirectoryRead> = cursor.next(&memory);
+        if again.erroneous { return 12; }
+        if !again.value.end || !strings.is_empty(again.value.name) { return 13; }
+        if !strings.equal(first.value.name, "only") { return 14; }
+        def closed: result<void> = cursor.close(); if closed.erroneous { return 15; }
+        def opened_empty: result<fs.Directory> = fs.Directory.open(&memory, empty_path);
+        if opened_empty.erroneous { return 16; }
+        def mut empty_cursor: fs.Directory = opened_empty.value;
+        def empty_read: result<fs.DirectoryRead> = empty_cursor.next(&memory);
+        if empty_read.erroneous { return 17; }
+        if !empty_read.value.end || !strings.is_empty(empty_read.value.name) { return 18; }
+        def closed_empty: result<void> = empty_cursor.close();
+        if closed_empty.erroneous { return 19; }
+        return 42;)");
+    auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *operation : {"!gloin.result<!gloin.struct<", "gloin.result_failure",
+                                  "gloin.result_value", "gloin.error_code", "gloin.abi_call"})
+        EXPECT_NE(ir.out.find(operation), std::string::npos) << operation;
+    expect_run(invoke({"--jit", file}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/directory-result" + optimization;
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        const auto err = executable + ".err";
+        const std::optional<llvm::StringRef> redirects[] = {std::nullopt, std::nullopt, err};
+        std::string message;
+        bool launch_failed = false;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects, 10,
+                                            0, &message, &launch_failed),
+                  42)
+            << message << read(err);
+        EXPECT_FALSE(launch_failed) << message;
+        EXPECT_TRUE(read(err).empty());
+    }
+}
+
+TEST_F(ContextLibraryTest, DirectoryAllocationFailuresPreserveCodesAndConsumedCursorState) {
+    const auto entries = directory + "/entries";
+    ASSERT_TRUE(std::filesystem::create_directory(entries));
+    {
+        std::ofstream(entries + "/only") << "x";
+    }
+    copy_modules();
+    auto arena = read((library() / "arena.gloin").string());
+    replace(arena, "return __arena_general_alloc(self.state, size, alignment);", "return null;");
+    source(arena, "arena.gloin");
+    expect_run(invoke({"--stdlib-dir", directory,
+                       program("def opened: result<fs.Directory> = fs.Directory.open(&memory," +
+                               literal(entries) +
+                               R"(); if !opened.erroneous { return 1; }
+        if opened.error.code != status.NO_MEMORY || opened.error.os_error != 0 { return 2; }
+        return 0;)")}),
+               0);
+    arena = read((library() / "arena.gloin").string());
+    replace(arena, "def bytes: *u8 = __arena_general_alloc(self.state, size, 1);",
+            "def bytes: *u8 = null;");
+    source(arena, "arena.gloin");
+    expect_run(invoke({"--stdlib-dir", directory,
+                       program("def opened: result<fs.Directory> = fs.Directory.open(&memory," +
+                               literal(entries) + R"();
+        if opened.erroneous { return 1; }
+        def mut cursor: fs.Directory = opened.value;
+        def lost: result<fs.DirectoryRead> = cursor.next(&memory);
+        if !lost.erroneous { return 2; }
+        if lost.error.code != status.NO_MEMORY || lost.error.os_error != 0 { return 3; }
+        // The host cursor consumed the entry before its arena copy failed.
+        // End needs no allocation, even with every byte allocation failing.
+        def end: result<fs.DirectoryRead> = cursor.next(&memory);
+        if end.erroneous { return 4; }
+        if !end.value.end || !strings.is_empty(end.value.name) { return 5; }
+        def closed: result<void> = cursor.close(); if closed.erroneous { return 6; }
+        return 0;)")}),
+               0);
+}
+
+TEST_F(ContextLibraryTest, FilesystemResultsRequireHandlingAndPayloadProofs) {
+    for (const auto *call :
+         {"fs.basename(\"x\")", "fs.dirname(\"x\")", "fs.join(&memory,\"x\",\"y\",100)",
+          "fs.metadata(\"x\")", "fs.Directory.open(&memory,\"x\")"}) {
+        expect_error(invoke({"--check", program(std::string(call) + "; return 0;")}), 1, "A result cannot be discarded");
+    }
+    for (const auto *body :
+         {"def value: result<string> = fs.basename(\"x\"); std.println(value.value); return 0;",
+          "def value: result<fs.Metadata> = fs.metadata(\"x\"); if value.value.kind == fs.FILE { "
+          "return 0; } return 1;",
+          "def value: result<fs.Directory> = fs.Directory.open(&memory,\"x\"); def mut cursor: "
+          "fs.Directory = value.value; return 0;",
+          "def opened: result<fs.Directory> = fs.Directory.open(&memory,\"x\"); if "
+          "opened.erroneous { return 1; } def mut cursor: fs.Directory = opened.value; def value: "
+          "result<fs.DirectoryRead> = cursor.next(&memory); if value.value.end { return 0; } "
+          "return 1;"}) {
+        expect_error(invoke({"--check", program(body)}), 1, "requires a proven non-erroneous path");
+    }
+}
+
+TEST_F(ContextLibraryTest, ContextTextResultsRequireHandlingAndPayloadProofs) {
+    for (const auto *call :
+         {"process.arg(&memory,0)", "process.env(&memory,\"HOME\")", "process.cwd(&memory,4096)"}) {
+        expect_error(invoke({"--check", program(std::string(call) + "; return 0;")}), 1,
+                     "A result cannot be discarded");
+        expect_error(invoke({"--check", program(std::string("def text: result<string> = ") + call +
+                                                "; std.println(text.value); return 0;")}),
+                     1, "requires a proven non-erroneous path");
+    }
 }

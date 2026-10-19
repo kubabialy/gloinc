@@ -52,8 +52,8 @@ def folded_at(text: string, start: u64, name: string) -> bool {
 }
 
 def lower(memory: &arena.GeneralArena, value: string) -> result<string> {
-    def lowered: strings.StringResult = strings.lower_ascii(memory, value, 65536);
-    if lowered.status != status.OK { return error("markup name exceeds limit or cannot be allocated"); }
+    def lowered: result<string> = strings.lower_ascii(memory, value, 65536);
+    if lowered.erroneous { return error("markup name exceeds limit or cannot be allocated"); }
 
     return lowered.value;
 }

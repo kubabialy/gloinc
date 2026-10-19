@@ -3,6 +3,8 @@ import "@io";
 import "@status";
 
 def main() -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut input: io.Stream  = io.stdin();
     def mut output: io.Stream = io.stdout();
     def mut errors: io.Stream = io.stderr();
@@ -11,26 +13,36 @@ def main() -> i32 {
     for def mut i: u64 = 0; i < 4096; i = i + 1 { block[i] = 42; }
 
     for def mut i: i32 = 0; i < 64; i = i + 1 {
-        if errors.write_all_bytes(block[..]).status != status.OK { return 81; }
+        if !io_succeeded(errors.write_all_bytes(block[..], &io_progress)) { return 81; }
     }
 
-    if errors.flush().status != status.OK { return 82; }
+    if !io_succeeded(errors.flush()) { return 82; }
 
     for def mut i: u64 = 0; i < 4096; i = i + 1 { block[i] = 37; }
 
     for def mut i: i32 = 0; i < 64; i = i + 1 {
-        if output.write_all_bytes(block[..]).status != status.OK { return 83; }
+        if !io_succeeded(output.write_all_bytes(block[..], &io_progress)) { return 83; }
     }
 
-    if output.flush().status != status.OK { return 84; }
+    if !io_succeeded(output.flush()) { return 84; }
 
     while true {
-        def read: io.ByteReadResult = input.read_into(block[..]);
-        if read.status == status.END { return 37; }
-        if read.status != status.OK { return 85; }
-        if output.write_all_bytes(block[..read.read]).status != status.OK { return 86; }
-        if output.flush().status != status.OK { return 87; }
+        def mut read: io.ByteReadState = io.ByteReadState.empty();
+        def read_result: result<void>  = input.read_into(block[..], &read);
+
+        if read_result.erroneous { return 85; }
+        if read.end { return 37; }
+
+        if !io_succeeded(output.write_all_bytes(block[..read.read], &io_progress)) { return 86; }
+        if !io_succeeded(output.flush()) { return 87; }
     }
 
     return 88;
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
 }

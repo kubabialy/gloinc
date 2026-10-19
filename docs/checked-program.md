@@ -149,7 +149,7 @@ rejects implicit conversions between already typed values and numeric cast
 syntax. Explicit named standard-library conversion functions are checked
 against their declared signatures. The private exact i32-to-i64 primitive is
 selected through the checked standard-call table and emits
-[`gloin.exact_int_widen`](lowering.md#exact-integer-widening-unreleased-perf-008),
+[`gloin.exact_int_widen`](lowering.md#exact-integer-widening-020-perf-008),
 a typed output store and status `OK`; no function-name heuristic bypasses sema.
 
 [numeric.cpp](../src/numeric.cpp) validates complete spellings and ranges before
@@ -186,24 +186,24 @@ fail before codegen, including through the AST API.
 
 [codegen_operators.cpp](../src/codegen_operators.cpp) emits checked GloinIR
 integer and floating operations with their semantic types and signedness.
-In the development compiler after 0.1.0, GIR preparation simplifies proven-safe
+In the 0.2.0 compiler, GIR preparation simplifies proven-safe
 integer constants and identities, preserving operand effects and traps.
 After layout resolution, a separate GIR analysis promotes eligible locals to
 SSA and uses dominating unsigned comparisons to prove some arithmetic and bounds
 checks unnecessary. Escaping addresses and fresh memory loads do not inherit
 facts from earlier snapshots; unproven checks remain. See the
-[range-proof contract](lowering.md#bounds-and-unsigned-range-proofs-unreleased-perf-006).
+[range-proof contract](lowering.md#bounds-and-unsigned-range-proofs-020-perf-006).
 Small counted slice loops can additionally use a GIR entry predicate to choose
 between a copy with proven bounds and the original checked loop. Failure of
 that predicate selects the original loop rather than trapping before its
 earlier effects. The narrow induction proof and code-size limits are described
-in [counted slice loop versioning](lowering.md#counted-slice-loop-versioning-unreleased-perf-007).
+in [counted slice loop versioning](lowering.md#counted-slice-loop-versioning-020-perf-007).
 Floating-point operations remain ordered, separately rounded and checked for
 non-finite results in both copies.
 Remaining integer addition/subtraction/multiplication lower to source-width
 LLVM overflow intrinsics and a guarded trap. Published 0.1.0 uses double-width
 intermediates with truncate/extend comparisons instead; both enforce the same
-checked arithmetic. See [the lowering contract](lowering.md#checked-integer-simplification-and-overflow-unreleased-perf-005).
+checked arithmetic. See [the lowering contract](lowering.md#checked-integer-simplification-and-overflow-020-perf-005).
 Division/remainder guard zero divisors and signed
 minimum with -1 before executing. Negation checks signed overflow. Floating
 operations have no fast-math flags; finite bounds checks reject non-finite
@@ -454,3 +454,17 @@ capacity. Counted writes reuse the existing native copy routine. Cursor state,
 builder metadata/aliasing, output sizing, and transformations stay in Gloin.
 These private string primitives add no generic specialization. Nullable pointer
 offsets are a separate [development-branch feature](pointer-offsets.md).
+
+## Switch and match (SPEC-017a)
+
+Checked selections retain folded case keys, the subject domain, exhaustive
+coverage and arm-local symbol identities. Switch merges initialization and
+result proofs over continuing paths, including the unmatched path when needed.
+Match checks every expression arm with its contextual result type and records
+result payload bindings without changing their ownership rules.
+
+Codegen emits source-typed `gloin.switch` and `gloin.match`; match regions yield
+through `gloin.match_yield`. GloinIR verifies keys, coverage, destinations and
+yield types. The checked boundary rejects layout-typed subjects or outputs.
+Signature lowering translates their value types before dispatch lowering builds
+conditional branches and typed value joins. See [the language contract](switch-match.md).

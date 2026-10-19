@@ -59,6 +59,35 @@ def EnumCompareOp : Gloin_Op<"enum_compare", [Pure]> {
     let hasVerifier = 1;
 }
 
+// Dispatch retains source types and checked case keys until GIR lowering.
+def CaseTestOp : Gloin_Op<"case_test"> {
+    let arguments = (ins AnyType:$subject, AnyAttr:$key, TypeAttr:$source_type);
+    let results = (outs I1:$matches);
+    let hasVerifier = 1;
+}
+
+def SwitchOp : Gloin_Op<"switch", [Terminator]> {
+    let arguments = (ins AnyType:$subject, ArrayAttr:$keys, TypeAttr:$source_type,
+                         I64Attr:$domain_size);
+    // One successor per key, then the unmatched continuation.
+    let successors = (successor VariadicSuccessor<AnySuccessor>:$destinations);
+    let hasVerifier = 1;
+}
+
+def MatchOp : Gloin_Op<"match", [RecursiveMemoryEffects,
+                               DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+    let arguments = (ins AnyType:$subject, ArrayAttr:$keys, TypeAttr:$source_type,
+                         I64Attr:$domain_size, TypeAttr:$value_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let regions = (region VariadicRegion<AnyRegion>:$arms);
+    let hasVerifier = 1;
+}
+
+def MatchYieldOp : Gloin_Op<"match_yield", [Pure, Terminator]> {
+    let arguments = (ins AnyType:$value);
+    let hasVerifier = 1;
+}
+
 // Basic Constant Op
 def ConstantOp : Gloin_Op<"constant", [Pure]> {
   let summary = "constant operation";
@@ -98,6 +127,13 @@ def CheckedFloatBinaryOp : Gloin_Op<"checked_float_binary"> {
     let summary = "Finite floating arithmetic with Gloin division checks";
     let arguments = (ins AnyType:$lhs, AnyType:$rhs, StrAttr:$kind);
     let results = (outs AnyType:$result);
+    let hasVerifier = 1;
+}
+
+// This check is observable even when the arithmetic result is unused.
+def RequireFiniteOp : Gloin_Op<"require_finite"> {
+    let summary = "Trap unless a floating value is finite";
+    let arguments = (ins AnyType:$value);
     let hasVerifier = 1;
 }
 
@@ -171,8 +207,8 @@ def StringLiteralOp : Gloin_Op<"string_literal", [Pure]> {
 }
 
 def ErrorLiteralOp : Gloin_Op<"error_literal", [Pure]> {
-    let summary = "Construct an error from a checked static string literal";
-    let arguments = (ins AnyType:$message, TypeAttr:$layout_type);
+    let summary = "Construct an error from a static message and explicit diagnostic codes";
+    let arguments = (ins AnyType:$message, I32:$code, I32:$os_error, TypeAttr:$layout_type);
     let results = (outs AnyType:$value);
     let hasVerifier = 1;
 }
@@ -181,6 +217,20 @@ def ErrorMessageOp : Gloin_Op<"error_message", [Pure]> {
     let summary = "Read the public message of an error";
     let arguments = (ins AnyType:$error, TypeAttr:$layout_type);
     let results = (outs AnyType:$message);
+    let hasVerifier = 1;
+}
+
+def ErrorCodeOp : Gloin_Op<"error_code", [Pure]> {
+    let summary = "Read the library or application diagnostic code of an error";
+    let arguments = (ins AnyType:$error);
+    let results = (outs I32:$code);
+    let hasVerifier = 1;
+}
+
+def ErrorOsErrorOp : Gloin_Op<"error_os_error", [Pure]> {
+    let summary = "Read the captured native OS diagnostic code of an error";
+    let arguments = (ins AnyType:$error);
+    let results = (outs I32:$os_error);
     let hasVerifier = 1;
 }
 

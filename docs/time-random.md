@@ -1,4 +1,4 @@
-# Monotonic timing and seeded randomness (SPEC-030g)
+# Monotonic timing and seeded randomness (SPEC-030g, 0.2.0)
 
 `@time` loads [time.gloin](../stdlib/time.gloin); `@random` loads
 [random.gloin](../stdlib/random.gloin). Public types and policy are ordinary Gloin,
@@ -6,6 +6,16 @@ with two narrow native primitives for clock reads and the SplitMix64 transition.
 Neither module needs a caller arena for its operations. Both import `@std` for
 explicit numeric conversions; importing it does not allocate an arena at runtime.
 Every public function/method documents usage, failure, lifetime, and cost in source.
+
+**Development after 0.1.0:** `SplitMix64.below(bound: u64)` now returns
+`result<u64>`. Its former `random.U64Result` type is removed. Bound zero returns
+`error("random bound must be greater than zero")` without consuming any state.
+Check `.erroneous` before `.value`, or match success and error. The generator
+algorithm, seeded sequences and draw counts are unchanged. The six fallible
+`@time` APIs now return built-in results as well. `InstantResult` and
+`DurationResult` are removed; the migration table below lists each signature.
+The [0.1.0 guide](https://github.com/kubabialy/gloinc/blob/v0.1.0/docs/time-random.md)
+preserves the released time and random APIs.
 
 ## Instants, durations, and units
 
@@ -19,32 +29,34 @@ integer nanosecond storage. Its maximum is 18,446,744,073,709,551,615 ns. Public
 fields are immutable through ordinary bindings; create another value for a change.
 Reading either scalar field is O(1), with no allocation.
 
-`time.InstantResult { status: i32, os_error: i32, value: Instant }` has zero ticks
-on failure. Only IO_ERROR carries an OS error number, with EIO as fallback.
-`time.DurationResult { status: i32, value: Duration }` has zero nanoseconds on
-failure. Zero is also a valid success: always inspect status.
+Clock reads return `result<time.Instant>`; elapsed time, checked constructors,
+addition and subtraction return `result<time.Duration>`. Check `.erroneous`
+before `.value` or `.error`, or match both variants. A failure exposes only an
+error, with no readable zero-tick or zero-duration fallback. Zero ticks and
+zero durations are valid successes. Diagnostic categories use `@status` in
+`.error.code`; native clock I/O failures preserve errno in `.error.os_error`.
 
-| API and example | Behavior and cost |
-| --- | --- |
-| `time.monotonic_now()` | Checked host CLOCK_MONOTONIC reading converted to u64 ns; no allocation; one OS read plus fixed conversion, or the injected callback's cost |
-| `time.elapsed(start, end)` | Checked `end - start`; backwards ticks are INVALID/zero, equal ticks are OK/zero; O(1), no allocation or hidden read |
-| `time.Duration.from_milliseconds(1500)` | OK/1,500,000,000 ns; values above 18,446,744,073,709 fail OVERFLOW/zero before multiplication; O(1), no allocation |
-| `time.Duration.from_seconds(2)` | OK/2,000,000,000 ns; values above 18,446,744,073 fail OVERFLOW/zero before multiplication; O(1), no allocation |
-| `duration.whole_microseconds()` | u64 nanoseconds divided by 1000, flooring the fraction; O(1), no allocation/failure |
-| `duration.whole_milliseconds()` | u64 nanoseconds divided by 1,000,000, flooring the fraction; O(1), no allocation/failure |
-| `duration.seconds_f64_rounded()` | Rounded u64-to-f64 conversion followed by division by 1e9; finite f64, O(1), no allocation/failure; large durations lose nanosecond precision |
-| `a.checked_add(b)` | DurationResult; unrepresentable sum is OVERFLOW/zero; operands unchanged, O(1), no allocation |
-| `a.checked_sub(b)` | DurationResult; a negative result is OVERFLOW/zero; equal operands give OK/zero; O(1), no allocation |
+| API and example | Return type | Behavior and cost |
+| --- | --- | --- |
+| `time.monotonic_now()` | `result<time.Instant>` | Host CLOCK_MONOTONIC converted to u64 ns; no allocation; one OS read plus fixed conversion, or the injected callback's cost |
+| `time.elapsed(start, end)` | `result<time.Duration>` | Checked `end - start`; backwards ticks fail INVALID, equal ticks succeed with zero; O(1), no allocation or hidden read |
+| `time.Duration.from_milliseconds(1500)` | `result<time.Duration>` | Success with 1,500,000,000 ns; values above 18,446,744,073,709 fail OVERFLOW before multiplication; O(1), no allocation |
+| `time.Duration.from_seconds(2)` | `result<time.Duration>` | Success with 2,000,000,000 ns; values above 18,446,744,073 fail OVERFLOW before multiplication; O(1), no allocation |
+| `duration.whole_microseconds()` | `u64` | Nanoseconds divided by 1000, flooring the fraction; O(1), no allocation/failure |
+| `duration.whole_milliseconds()` | `u64` | Nanoseconds divided by 1,000,000, flooring the fraction; O(1), no allocation/failure |
+| `duration.seconds_f64_rounded()` | `f64` | Rounded u64-to-f64 conversion followed by division by 1e9; finite, O(1), no allocation/failure; large durations lose nanosecond precision |
+| `a.checked_add(b)` | `result<time.Duration>` | Unrepresentable sum fails OVERFLOW; operands unchanged, O(1), no allocation |
+| `a.checked_sub(b)` | `result<time.Duration>` | Negative result fails OVERFLOW; equal operands succeed with zero; operands unchanged, O(1), no allocation |
 
 Nanoseconds specify **units, not clock resolution or accuracy**. Consecutive reads
 may be equal. The host monotonic clock measures elapsed time rather than CPU time;
 resolution, suspend behavior, and scheduling effects follow the host. No sleep,
 timer, wall-clock, timezone, or CPU affinity interface is added here. A clock's
-failure is IO_ERROR with errno; unrepresentable native ticks produce OVERFLOW/zero,
-and invalid native seconds/nanoseconds or a malformed callback produce INVALID/zero.
+failure is IO_ERROR with errno; unrepresentable native ticks produce OVERFLOW,
+and invalid native seconds/nanoseconds or a malformed callback produce INVALID.
 Clock reads preserve the caller's errno. The library operations retain no input
-pointers and allocate no storage; an injected callback controls its own effects,
-and binding an embedding clock has separate costs below.
+pointers and request no heap or arena allocation; an injected callback controls
+its own effects, and binding an embedding clock has separate costs below.
 
 The floating seconds conversion is explicitly approximate and uses two rounding
 steps. Keep `nanoseconds` or use integer whole-unit methods for exact comparisons.
@@ -57,17 +69,71 @@ import "@std";
 def main() -> i32 {
     def start: time.Instant = time.Instant { ticks_ns: 100 };
     def finish: time.Instant = time.Instant { ticks_ns: 2100100 };
-    def elapsed: time.DurationResult = time.elapsed(start, finish);
-    if elapsed.status != status.OK || elapsed.value.nanoseconds != 2100000 { return 1; }
-    if elapsed.value.whole_milliseconds() != 2 { return 2; }
+    def elapsed: result<time.Duration> = time.elapsed(start, finish);
+    if elapsed.erroneous { return 1; }
+    def duration: time.Duration = elapsed.value;
+    if duration.nanoseconds != 2100000 { return 1; }
+    if duration.whole_milliseconds() != 2 { return 2; }
     std.println("elapsed=2 ms");
     return 0;
 }
 ```
 
 For live timing, obtain both instants using `monotonic_now()` and check each
-reading's status before calculating elapsed time. Equal ticks are not a failed
+reading's result before calculating elapsed time. Equal ticks are not a failed
 measurement; do not assume a minimum nonzero interval.
+
+## Migration from 0.1.0
+
+Names, arguments, arithmetic boundaries and clock sources are unchanged.
+Replace status checks with direct `.erroneous` checks or exhaustive matches;
+read `.error.code` and `.error.os_error` only after proving failure. Successful
+payloads remain ordinary independent `Instant`/`Duration` values. If a reading
+must survive a loop, extract its checked `Instant` first: result proofs do not
+survive loop boundaries. See [result handling](results.md).
+
+| API | 0.1.0 return | Development return |
+| --- | --- | --- |
+| `monotonic_now()` | `InstantResult` | `result<Instant>` |
+| `elapsed(start, end)` | `DurationResult` | `result<Duration>` |
+| `Duration.from_milliseconds(value)` | `DurationResult` | `result<Duration>` |
+| `Duration.from_seconds(value)` | `DurationResult` | `result<Duration>` |
+| `duration.checked_add(other)` | `DurationResult` | `result<Duration>` |
+| `duration.checked_sub(other)` | `DurationResult` | `result<Duration>` |
+
+The three unit accessors keep their scalar signatures. There is no arena owner,
+heap allocation, borrowed input storage or cleanup associated with these payloads
+or static errors. Native clock ABIs, callback normalization and scoped binding
+behavior are unchanged. Results and diagnostics use typed GloinIR operations;
+the clock call retains its checked native ABI boundary. Higher-level process
+and HTTP deadline APIs retain their existing messages and error policy.
+
+### Diagnostics
+
+These are the exact static messages. Duration failures have OS code zero.
+Clock IO_ERROR retains a positive native errno, using EIO when unavailable;
+all other clock failure categories have OS code zero. Diagnostic codes describe
+failures; only the result variant establishes success.
+
+| Failure | Message | Code | OS code |
+| --- | --- | --- | --- |
+| Clock read failed | `cannot read monotonic clock` | IO_ERROR (4) | Native errno or EIO |
+| Clock ticks cannot fit u64 ns | `monotonic clock reading is out of range` | OVERFLOW (3) | 0 |
+| Invalid native time or callback response | `invalid monotonic clock reading` | INVALID (2) | 0 |
+| Elapsed end precedes start | `monotonic clock moved backwards` | INVALID (2) | 0 |
+| Millisecond construction overflow | `millisecond duration is out of range` | OVERFLOW (3) | 0 |
+| Second construction overflow | `second duration is out of range` | OVERFLOW (3) | 0 |
+| Addition overflow | `duration addition is out of range` | OVERFLOW (3) | 0 |
+| Subtraction would be negative | `duration subtraction would be negative` | OVERFLOW (3) | 0 |
+
+Forwarding or copying an error preserves its message and both codes. Handling
+a failure does not reveal a fallback duration. It also cannot validate whether
+two successful instants belong to the same clock domain; that remains the
+caller's responsibility. No source location or stack trace is added by this API.
+
+To call a duration method, first bind its successful payload to an ordinary
+`time.Duration`, as in the example. The current compiler forbids taking a method
+receiver reference directly through `result.value`, even for a const receiver.
 
 ## Deterministic clocks for embedding and tests
 
@@ -129,7 +195,7 @@ This generator is for reproducible simulations, **not cryptographic randomness**
 | --- | --- |
 | `random.SplitMix64.seeded(42)` | Construct value state; O(1), no allocation/failure |
 | `rng.next_u64()` | One SplitMix64-v1 transition, returns full u64 including either endpoint; O(1), no allocation/failure |
-| `rng.below(6)` | U64Result with OK/value in `[0,6)`; zero bound gives INVALID/0 without advancing; no allocation, expected fewer than two draws under the uniform-word model, no small fixed draw budget |
+| `rng.below(6)` | `result<u64>` with success in `[0,6)`; zero bound errors without advancing; no allocation, expected fewer than two draws under the uniform-word model, no small fixed draw budget |
 | `rng.unit_f64()` | Exactly one draw, returns one of 2^53 equally spaced f64 values in `[0,1)`; O(1), no allocation/failure |
 
 The three drawing methods require mutable receivers. Explicitly shared mutable
@@ -171,10 +237,13 @@ def main() -> i32 {
     def mut copy: random.SplitMix64 = rng;
     def first: u64 = rng.next_u64();
     if first != 13679457532755275413 || copy.next_u64() != first { return 1; }
+    def sample: result<u64> = rng.below(6);
+    if sample.erroneous { return 2; }
+    if sample.value >= 6 { return 2; }
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
-    def text: std.FormatResult = std.format_u64(&memory, first);
-    if text.status != status.OK { return 2; }
+    def text: result<string> = std.format_u64(&memory, first);
+    if text.erroneous { return 2; }
     std.println(text.value);
     return 0;
 }
@@ -184,7 +253,7 @@ The arena in this example belongs to text formatting, not the random generator.
 
 ### Bounded integers and unit floats
 
-`random.U64Result { status: i32, value: u64 }` is used by `below`.
+`below` returns built-in `result<u64>`; there is no success payload on failure.
 For a nonzero bound b, the source computes `threshold = (2^64 - b) % b` without
 wrapping: `(u64_MAX - b + 1) % b`. It rejects words below that threshold and returns
 `word % b` for the first accepted word. The accepted domain has a size divisible

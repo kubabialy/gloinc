@@ -69,9 +69,9 @@ def run_case(path: string, tls: bool, trust_file: string) -> i32 {
     defer cleanup(&exchange);
 
     def mut alias: http_client.Exchange = exchange;
-    def repeated: strings.StringResult  = strings.repeat(&owner, "a", 8192, 8192);
+    def repeated: result<string>        = strings.repeat(&owner, "a", 8192, 8192);
 
-    if repeated.status != status.OK { return 3; }
+    if repeated.erroneous { return 3; }
 
     def upload: string    = repeated.value;
     def mut supplied: u64 = 0;
@@ -167,7 +167,7 @@ def run_case(path: string, tls: bool, trust_file: string) -> i32 {
                 }
 
                 for def mut i: u64 = 0; i < count; i = i + 1 {
-                    if strings.byte_at(bytes, i).value != 97 { return 13; }
+                    if byte_or_zero(bytes, i) != 97 { return 13; }
                 }
 
                 received = received + count;
@@ -204,7 +204,7 @@ def run_case(path: string, tls: bool, trust_file: string) -> i32 {
                 def mut count: u64 = length - supplied;
                 if count > 8192 { count = 8192; }
 
-                def accepted: result<u64> = exchange.supply(strings.slice_bytes(upload, 0, count).value);
+                def accepted: result<u64> = exchange.supply(slice_or_empty(upload, 0, count));
                 if accepted.erroneous { return 18; }
 
                 supplied = supplied + accepted.value;
@@ -231,10 +231,12 @@ def main() -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
-    def mode: process.TextResult  = process.arg(&owner, 1);
-    def trust: process.TextResult = process.arg(&owner, 2);
+    def mode: result<string> = process.arg(&owner, 1);
+    if mode.erroneous { return 1; }
 
-    if mode.status != status.OK || trust.status != status.OK { return 1; }
+    def trust: result<string> = process.arg(&owner, 2);
+
+    if trust.erroneous { return 1; }
 
     def cases: [string; 10] = {
         "/upload", "/early", "/input-wait", "/input-timeout", "/output-timeout",
@@ -250,4 +252,22 @@ def main() -> i32 {
     }
 
     return 0;
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
 }

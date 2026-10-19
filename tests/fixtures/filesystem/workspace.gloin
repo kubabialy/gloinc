@@ -1,3 +1,4 @@
+import "@std";
 import "@arena";
 import "@fs";
 import "@io";
@@ -6,13 +7,17 @@ import "@status";
 import "@strings";
 
 def main() -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def root: process.TextResult     = process.arg(&memory, 1);
-    def expected: process.TextResult = process.arg(&memory, 2);
+    def root: result<string> = process.arg(&memory, 1);
+    if root.erroneous { return 1; }
 
-    if root.status != status.OK || expected.status != status.OK { return 1; }
+    def expected: result<string> = process.arg(&memory, 2);
+
+    if expected.erroneous { return 1; }
 
     def size: u64                = strings.byte_length(expected.value);
     def resolved: result<string> = fs.canonical_path(&memory, root.value, size);
@@ -22,15 +27,18 @@ def main() -> i32 {
 
     def small: result<string> = fs.canonical_path(&memory, root.value, size - 1);
     if !small.erroneous { return 4; }
+    if small.error.code != status.TOO_LONG { return 4; }
 
     def zero: result<string> = fs.canonical_path(&memory, root.value, 0);
     if !zero.erroneous { return 5; }
 
     def invalid: result<string> = fs.canonical_path(&memory, "bad\0path", 4096);
     if !invalid.erroneous { return 6; }
+    if invalid.error.code != status.INVALID || invalid.error.os_error != 0 { return 6; }
 
     def huge: result<string> = fs.canonical_path(&memory, root.value, 18446744073709551615);
     if !huge.erroneous { return 7; }
+    if huge.error.code != status.TOO_LONG || huge.error.os_error != 0 { return 7; }
 
     def prefix: string        = "case XXX";
     def bound: u64            = size + 1 + strings.byte_length(prefix) + 7;
@@ -44,9 +52,11 @@ def main() -> i32 {
 
     def short: result<string> = fs.temp_dir(&memory, root.value, prefix, bound - 1);
     if !short.erroneous { return 13; }
+    if short.error.code != status.TOO_LONG || short.error.os_error != 0 { return 13; }
 
     def bad_prefix: result<string> = fs.temp_dir(&memory, root.value, "../escape", bound);
     if !bad_prefix.erroneous { return 14; }
+    if bad_prefix.error.code != status.INVALID || bad_prefix.error.os_error != 0 { return 14; }
 
     def empty_prefix: result<string> = fs.temp_dir(&memory, root.value, "", bound);
     if !empty_prefix.erroneous { return 15; }
@@ -54,8 +64,8 @@ def main() -> i32 {
     def nul_prefix: result<string> = fs.temp_dir(&memory, root.value, "bad\0name", bound);
     if !nul_prefix.erroneous { return 16; }
 
-    def link: fs.PathResult = fs.join(&memory, first.value, "link", 65536);
-    if link.status != status.OK { return 20; }
+    def link: result<string> = fs.join(&memory, first.value, "link", 65536);
+    if link.erroneous { return 20; }
 
     def linked: result<void> = fs.symlink(second.value, link.value);
     if linked.erroneous { return 21; }
@@ -66,29 +76,42 @@ def main() -> i32 {
 
     def full: result<void> = fs.remove_dir(first.value);
     if !full.erroneous { return 24; }
+    if full.error.code != status.ALREADY_EXISTS || full.error.os_error <= 0 { return 24; }
 
     def not_directory: result<void> = fs.remove_dir(link.value);
     if !not_directory.erroneous { return 25; }
-    if fs.metadata(second.value).kind != fs.DIRECTORY { return 26; }
-    if fs.remove_file(link.value).status != status.OK { return 27; }
+    if not_directory.error.code != status.NOT_FOUND || not_directory.error.os_error <= 0 { return 25; }
 
-    def opened: io.FileResult = io.File.create_new(&memory, link.value);
-    if opened.status != status.OK { return 40; }
+    def directory_info: result<fs.Metadata> = fs.metadata(second.value);
+    if directory_info.erroneous { return 26; }
+    if directory_info.value.kind != fs.DIRECTORY { return 26; }
+
+    def removed: result<void> = fs.remove_file(link.value);
+    if removed.erroneous { return 27; }
+
+    def opened: result<io.File> = io.File.create_new(&memory, link.value);
+    if opened.erroneous { return 40; }
 
     def mut file: io.File = opened.value;
-    if file.write_all("old\0text").status != status.OK { file.close(); return 41; }
-    if file.close().status != status.OK { return 42; }
+    if !io_succeeded(file.write_all("old\0text", &io_progress)) { report_io_failure(file.close()); return 41; }
+    if !io_succeeded(file.close()) { return 42; }
 
     def stale: result<void> = fs.replace_file(link.value, "old", "wrong");
     if !stale.erroneous { return 43; }
+    if stale.error.code != status.INVALID { return 43; }
 
     def replaced: result<void> = fs.replace_file(link.value, "old\0text", "new\0text");
     if replaced.erroneous { return 44; }
 
     def emptied: result<void> = fs.replace_file(link.value, "new\0text", "");
     if emptied.erroneous { return 45; }
-    if fs.metadata(link.value).size != 0 { return 46; }
-    if fs.remove_file(link.value).status != status.OK { return 47; }
+
+    def file_info: result<fs.Metadata> = fs.metadata(link.value);
+    if file_info.erroneous { return 46; }
+    if file_info.value.size != 0 { return 46; }
+
+    def removed_again: result<void> = fs.remove_file(link.value);
+    if removed_again.erroneous { return 47; }
 
     def removed_first: result<void> = fs.remove_dir(first.value);
     if removed_first.erroneous { return 28; }
@@ -108,4 +131,16 @@ def main() -> i32 {
     if !special.erroneous { return 33; }
 
     return 0;
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// Report cleanup/diagnostic failures without recursively writing to a failed stream.
+def report_io_failure(outcome: result<void>) -> void {
+    if outcome.erroneous { std.println(outcome.error.message); }
 }

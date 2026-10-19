@@ -1,6 +1,6 @@
 # Command-line interface (SPEC-020)
 
-Build instructions are in [the README](../README.md). The 0.1.0 release
+Build instructions are in [the README](../README.md). The 0.2.0
 targets Apple Silicon macOS with LLVM/MLIR 21.1.6 and 64-bit Ubuntu 24.04 Linux
 with LLVM/MLIR 21.1.8.
 
@@ -53,15 +53,15 @@ Native output requires `main() -> i32`; object output requires `-o PATH`.
 Native output defaults to `-O0`. `-O2` runs LLVM's standard O2 IR pipeline
 before optimized target code generation. Optimization flags apply only to
 native object and executable output.
-The development compiler bounds optional inlining into large callers to control
-optimized build cost; see [checked arithmetic and inlining](lowering.md#checked-integer-simplification-and-overflow-unreleased-perf-005)
+The 0.2.0 compiler bounds optional inlining into large callers to control
+optimized build cost; see [checked arithmetic and inlining](lowering.md#checked-integer-simplification-and-overflow-020-perf-005)
 for the policy and its trade-offs. Published 0.1.0 predates this limit.
 
-In the unreleased compiler, executable and JIT builds remove unreachable source
+In 0.2.0, executable and JIT builds remove unreachable source
 functions through GloinIR after all source checking. This also applies at `-O0`.
 Inspection and object modes retain their functions, including symbols available
 to external object callers. Unused invalid source still produces diagnostics.
-See [executable reachability](lowering.md#executable-reachability-unreleased-perf-004).
+See [executable reachability](lowering.md#executable-reachability-020-perf-004).
 
 Executable output defaults to `a.out` when no output path is given. The output must differ from
 the source path. Successful emission replaces the named output atomically; source
@@ -87,9 +87,9 @@ CLI, they do not use the `FILE -- ARG...` forwarding delimiter.
 ./hello-from-object
 ```
 
-## Compilation measurements (unreleased)
+## Compilation measurements (0.2.0)
 
-The working compiler adds `--time-compilation`; released 0.1.0 does not have
+Version 0.2.0 adds `--time-compilation`; released 0.1.0 does not have
 this option. It may appear once with any compilation mode. It writes one
 `gloinc-timings: ` line followed by JSON to stderr, preserving normal stdout
 and exit status. Without the option, successful compilation stays quiet.
@@ -127,10 +127,10 @@ supported platform, following [the JIT contract](jit.md). They produce no result
 shells may describe the signal and map it to a shell-specific status. The CLI
 does not add signal recovery or execution timeouts.
 
-The 0.1.0 release reports `gloinc 0.1.0 (LLVM/MLIR 21.1.6)` on macOS or
-`gloinc 0.1.0 (LLVM/MLIR 21.1.8)` on Linux with
+The 0.2.0 reports `gloinc 0.2.0 (LLVM/MLIR 21.1.6)` on macOS or
+`gloinc 0.2.0 (LLVM/MLIR 21.1.8)` on Linux with
 `--version`. [SPEC-021's fixtures](../tests/fixtures/core/README.md) check
-core acceptance; [the release guide](release-0.1.0.md) documents installation,
+core acceptance; [the release guide](release-0.2.0.md) documents installation,
 packaging, and validation. `import "@std";` enables `std.print(string)` and
 `std.println(string)`. Output preserves exact bytes, including embedded NULs;
 println appends LF. Both return void. Missing modules/members fail before execution.

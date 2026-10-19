@@ -17,6 +17,15 @@ std::unique_ptr<Identifier> identifier(const Identifier *source) {
 std::unique_ptr<Expression> expression(const Expression *source);
 std::unique_ptr<Statement> statement(const Statement *source);
 
+CasePattern pattern(const CasePattern &source) {
+    CasePattern result;
+    result.span = source.span;
+    result.kind = source.kind;
+    result.value = expression(source.value.get());
+    result.binding = identifier(source.binding.get());
+    return result;
+}
+
 std::unique_ptr<BlockStatement> block(const BlockStatement *source) {
     if (!source)
         return nullptr;
@@ -31,6 +40,13 @@ std::unique_ptr<Expression> expression(const Expression *source) {
         return nullptr;
     if (auto *node = dynamic_cast<const Identifier *>(source))
         return identifier(node);
+    if (auto *node = dynamic_cast<const MatchExpression *>(source)) {
+        auto result = copied<MatchExpression>(*node);
+        result->subject = expression(node->subject.get());
+        for (const auto &arm : node->arms)
+            result->arms.push_back({pattern(arm.pattern), expression(arm.value.get())});
+        return result;
+    }
     if (auto *node = dynamic_cast<const IntegerLiteral *>(source))
         return copied<IntegerLiteral>(*node, node->literal);
     if (auto *node = dynamic_cast<const FloatLiteral *>(source))
@@ -91,6 +107,13 @@ std::unique_ptr<Statement> statement(const Statement *source) {
         return nullptr;
     if (auto *node = dynamic_cast<const BlockStatement *>(source))
         return block(node);
+    if (auto *node = dynamic_cast<const SwitchStatement *>(source)) {
+        auto result = copied<SwitchStatement>(*node);
+        result->subject = expression(node->subject.get());
+        for (const auto &arm : node->arms)
+            result->arms.push_back({pattern(arm.pattern), block(arm.body.get())});
+        return result;
+    }
     if (auto *node = dynamic_cast<const ExpressionStatement *>(source))
         return copied<ExpressionStatement>(*node, expression(node->expression.get()));
     if (auto *node = dynamic_cast<const ReturnStatement *>(source))

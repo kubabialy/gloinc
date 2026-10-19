@@ -4,10 +4,12 @@ Import `@fs` for paths and filesystem operations and `@process` for invocation
 arguments, the host environment, and the current working directory. Public
 implementations live in [fs.gloin](../stdlib/fs.gloin) and
 [process.gloin](../stdlib/process.gloin). Both depend on `@strings`, `@arena`, and
-`@status`. Older context and filesystem APIs return status structs; the new
-`symlink`, `read_link`, `canonical_path`, `temp_dir`, `remove_dir` and `replace_file` operations
-use built-in `result<T>`. Nothing prints
-or throws automatically. The new [child-process API](child-processes.md)
+`@status`. In 0.2.0, every fallible filesystem API uses
+built-in `result<T>`; `Directory.is_open()` remains an ordinary bool query.
+Failures carry `@status` categories in `.error.code` and captured native errno
+in `.error.os_error` (zero when no native diagnostic applies). Process
+argument/environment/cwd APIs now return `result<string>` as well. Nothing prints or
+throws automatically. The new [child-process API](child-processes.md)
 uses built-in `result<T>` for launch, observation, termination, nonblocking
 pipes, bounded stdout/stderr capture, deadlines and cleanup. `start_with` adds
 child cwd/environment options and an explicit process-group cleanup scope.
@@ -18,14 +20,16 @@ Only `/` is a separator on the supported POSIX host. A leading `/` makes a path
 absolute; backslash is an ordinary byte. Helpers operate on counted bytes, reject
 embedded NUL with `INVALID`, and do not look up files, expand `~`, resolve symlinks,
 or resolve `.`/`..`. Empty lexical paths are allowed, although filesystem
-operations reject them. The two extraction helpers return `fs.PathResult
-{ status: i32, value: string }`; failed values are static empty text.
+operations reject them. Both extraction helpers return `result<string>`. Check
+`.erroneous` before reading `.value`; failure has no readable empty-string
+payload. Path validation failures use `.error.code = status.INVALID` and
+`.error.os_error = 0`.
 
 | API and example | Result | Ownership and cost |
 | --- | --- | --- |
-| `fs.basename("/work/report.txt/")` | `OK`, `"report.txt"` | Borrowed input view, O(path bytes), no allocation |
-| `fs.dirname("/work/report.txt/")` | `OK`, `"/work"` | Borrowed input view, O(path bytes), no allocation |
-| `fs.join(&memory, "/work/", "report.txt", 1024)` | `OK`, `"/work/report.txt"` | Independent arena copy, O(input + output bytes), up to two arena requests |
+| `fs.basename("/work/report.txt/")` | `"report.txt"` | Borrowed input view, O(path bytes), no allocation |
+| `fs.dirname("/work/report.txt/")` | `"/work"` | Borrowed input view, O(path bytes), no allocation |
+| `fs.join(&memory, "/work/", "report.txt", 1024)` | `"/work/report.txt"` | Independent arena copy, O(input + output bytes), up to two arena requests |
 
 `basename` and `dirname` ignore trailing separators. Empty input gives static
 `.`; paths made entirely of separators give `/`. No slash gives dirname `.`.
@@ -38,7 +42,7 @@ Borrowed views last only as long as the original bytes; static `.` and `/` have
 process lifetime. No extension-stripping or normalization occurs.
 
 `join(memory: &arena.GeneralArena, base: string, child: string, max_bytes: u64)`
-returns `fs.PathResult`. Both inputs are validated, including an ignored base.
+returns `result<string>`. Both inputs are validated, including an ignored base.
 An absolute child replaces base unchanged. An empty side copies the other unchanged;
 both empty gives static empty text without allocation. Otherwise trailing base
 separators are reduced at the join boundary and one separator joins the components.
@@ -50,7 +54,7 @@ The final byte bound and overflow are checked before allocation (`TOO_LONG` on
 failure). Root joins and single-input copies make one exact output-size request;
 ordinary joins make an intermediate `base + "/"` request followed by the final
 output-size request. Both allocations remain until arena reset/free, including
-an intermediate left behind on failure. `NO_MEMORY` returns empty text. Allocator
+an intermediate left behind on failure. `NO_MEMORY` is an error without a text payload. Allocator
 zeroing and byte copying are included in the O(n) work; arena metadata/slab costs
 are additional. There is no promised trailing NUL. Returned nonempty bytes expire
 on destination arena reset/free and are independent of source bytes.
@@ -61,9 +65,10 @@ import "@std";
 import "@status";
 
 def main() -> i32 {
-    def base: fs.PathResult = fs.basename("/work/report.txt/");
-    def parent: fs.PathResult = fs.dirname("/work/report.txt/");
-    if base.status != status.OK || parent.status != status.OK { return 1; }
+    def base: result<string> = fs.basename("/work/report.txt/");
+    if base.erroneous { return 1; }
+    def parent: result<string> = fs.dirname("/work/report.txt/");
+    if parent.erroneous { return 1; }
     std.println(base.value);
     std.println(parent.value);
     return 0;
@@ -74,21 +79,26 @@ This prints `report.txt` and `/work` on separate lines.
 
 ## Metadata and explicit mutations
 
-`fs.FsResult` contains `status: i32` and `os_error: i32`.
-`fs.MetadataResult` additionally contains `kind: i32` and `size: u64`; both are
-zero on failure. Success has `os_error = 0`. Validation/allocation failures also
-have zero OS code; OS failures preserve errno, with EIO as a fallback when absent.
-Status mapping is shared with [I/O](io.md): missing paths are `NOT_FOUND`, access
+In 0.2.0, mutations return built-in `result<void>`.
+Their errors carry a static `.message`, a library `.code`, and native
+`.os_error`; `fs.FsResult` is removed. Success has no payload.
+`metadata` returns `result<fs.Metadata>`, whose success payload contains only
+`kind: i32` and `size: u64`. There are no dummy kind/size fields on failure.
+Missing paths are errors with code `NOT_FOUND`; callers can handle that category
+as an expected absence, but must check the result first. Other failures must
+not be mistaken for absence. Validation and Gloin-side allocation failures
+have zero OS code; native failures preserve errno, with EIO as a fallback when absent.
+Status mapping is shared with [I/O](io.md): ENOENT and ENOTDIR map to `NOT_FOUND`, access
 denials `PERMISSION_DENIED`, existing destinations where disallowed
 `ALREADY_EXISTS`, native ENOMEM `NO_MEMORY`, and other OS failures `IO_ERROR`.
 A failed query never pretends the path merely does not exist.
 
 | API | Behavior / example |
 | --- | --- |
-| `fs.metadata("data.bin") -> MetadataResult` | Native `lstat`; `fs.FILE = 1`, `fs.DIRECTORY = 2`, `fs.SYMLINK = 3`, `fs.OTHER = 4` |
-| `fs.mkdir("output") -> FsResult` | Create one directory with mode 0777 filtered by host umask; no parent creation |
-| `fs.remove_file("old.bin") -> FsResult` | Unlink one file or symlink itself; never recursively remove or remove a directory |
-| `fs.rename_replace("draft.txt", "report.txt") -> FsResult` | Native POSIX rename with explicit replacement of a compatible existing target |
+| `fs.metadata("data.bin") -> result<fs.Metadata>` | Native `lstat`; `fs.FILE = 1`, `fs.DIRECTORY = 2`, `fs.SYMLINK = 3`, `fs.OTHER = 4` |
+| `fs.mkdir("output") -> result<void>` | Create one directory with mode 0777 filtered by host umask; no parent creation |
+| `fs.remove_file("old.bin") -> result<void>` | Unlink one file or symlink itself; never recursively remove or remove a directory |
+| `fs.rename_replace("draft.txt", "report.txt") -> result<void>` | Native POSIX rename with explicit replacement of a compatible existing target |
 
 These operations reject empty/NUL-containing paths before filesystem access.
 Each has O(path bytes) preparation plus potentially blocking host filesystem work.
@@ -105,13 +115,85 @@ atomic snapshot tied to a later open. A negative native file size reports `OVERF
 `mkdir` returning `ALREADY_EXISTS` does not establish that the entry is a directory.
 Check metadata if that distinction matters.
 
+### Mutation migration from 0.1.0
+
+| API | 0.1.0 return | Development return | Failure message |
+| --- | --- | --- | --- |
+| `fs.mkdir(path)` | `FsResult` | `result<void>` | `cannot create directory` |
+| `fs.remove_file(path)` | `FsResult` | `result<void>` | `cannot remove file` |
+| `fs.rename_replace(from, to)` | `FsResult` | `result<void>` | `cannot rename path` |
+| `Directory.close()` | `FsResult` | `result<void>` | `cannot close directory`, or `directory is closed` before a native call |
+
+Replace `.status != status.OK` with an explicit result check. Inspect
+`.error.code` only after proving failure; no success field is available:
+
+```gloin
+import "@fs";
+import "@status";
+
+def main() -> i32 {
+    def created: result<void> = fs.mkdir("output");
+    if created.erroneous {
+        // ALREADY_EXISTS can also describe a regular file. This program
+        // requires a fresh directory and gives that case its own exit code.
+        if created.error.code == status.ALREADY_EXISTS { return 2; }
+        return 1;
+    }
+    return 0;
+}
+```
+
+All failure categories and OS codes from the old wrappers are preserved.
+Argument validation precedes mutation; rename still validates both paths first.
+Error messages identify the operation, while `.code` supplies the category.
+Native errno values vary by platform; `.os_error = 0` means no native code,
+not success. Copying or forwarding the error preserves both codes. There is no
+partial byte count on these operations. They may still have external effects
+before failure, notably close consuming a handle. The remaining filesystem
+wrappers are also migrated in development:
+
+| API | 0.1.0 return | Development return |
+| --- | --- | --- |
+| `basename`, `dirname`, `join` | `PathResult` | `result<string>` |
+| `metadata` | `MetadataResult` | `result<Metadata>`; success has `kind` and `size` |
+| `Directory.open` | `DirectoryResult` | `result<Directory>` |
+| `Directory.next` | `DirectoryEntryResult` | `result<DirectoryRead>`; success has `end` and `name` |
+
+All five old filesystem result structs are removed. A former metadata read
+`info.kind` becomes `info.value.kind` after checking `info.erroneous`.
+For directory iteration, first check failure, then inspect `read.value.end`;
+`status.END` no longer crosses the public API. `DirectoryRead` is a successful
+outcome record, not an error wrapper: neither it nor `Metadata` has status or
+OS-error fields. There are no automatic conversions from the old structs.
+Check each result before beginning another operation that could return early.
+Extract needed payloads into ordinary values before loops; result access proofs
+are conservatively forgotten across loops.
+
+The existing `symlink`, `read_link`, `canonical_path`, `temp_dir`, `remove_dir`,
+and `replace_file` signatures/messages remain the same and now also preserve
+library categories and native errno. Their Gloin validation errors use
+`INVALID`, excessive byte limits use `TOO_LONG`, and arena allocation failures
+use `NO_MEMORY`, all with zero native code. Native failure categories remain
+those documented for each operation. Codes do not change ownership, rollback,
+or cleanup behavior. Partial I/O progress is not stored on an error.
+
+New static messages identify path validation (`path must not contain NUL`),
+join bounds (`joined path exceeds byte limit`), copy/concatenation failure
+(`cannot copy path`, `cannot join path`), metadata (`cannot inspect path`),
+directory path validation (`directory path must be nonempty and contain no NUL`),
+state allocation (`directory state allocation failed`), native opening/reading
+(`cannot open directory`, `cannot read directory`), and entry-name allocation
+(`cannot copy directory entry`). Use the documented code to classify failures;
+message text is explanatory rather than a stable machine-readable key.
+
 Rename replaces compatible regular-file destinations or empty directory
 destinations under host rules. It renames symlinks themselves, is subject to host
 permissions, and fails across filesystems (`IO_ERROR`, EXDEV) instead of copying.
 Naming the operation `rename_replace` makes its replacement policy visible.
 Use `remove_dir` below for one empty directory. A public recursive-removal API
-and a no-replace rename API remain follow-ups. Use `io.error_message(&arena, result.os_error)` to format an
-OS diagnostic separately if desired.
+and a no-replace rename API remain follow-ups. After proving failure, use
+`io.error_message(&arena, failure.error.os_error)` to format a native diagnostic
+separately if desired.
 
 ## Checked file replacement
 
@@ -142,8 +224,8 @@ writers. ACLs, extended attributes and timestamps are not copied. The parent
 directory is not synced; success does not promise persistence across a crash.
 Do not use it where those metadata or concurrency guarantees are required.
 
-The wrapper returns static built-in errors; errno and structured categories
-are not currently exposed. No Gloin arena is needed. Preparation makes temporary
+The wrapper returns built-in errors with static messages, library categories in
+`.error.code`, and native errno in `.error.os_error`. No Gloin arena is needed. Preparation makes temporary
 native path copies; byte work is O(path + expected + replacement), including
 two bounded-buffer reads of the original. Native temporary allocation failure
 is recoverable; host I/O can block. The call uses `gloin.abi_call` at the
@@ -161,10 +243,11 @@ Gloin 0.1.0 exposes these operations on macOS and Linux:
 | `fs.symlink(target: string, link_path: string) -> result<void>` | Creates one new link storing `target` verbatim | Invalid input, existing destination, missing parent, permission, allocation or other host error |
 | `fs.read_link(memory: &arena.GeneralArena, path: string, max_bytes: u64) -> result<string>` | An independent arena copy of the immediate link's stored target bytes | Invalid input/bound, non-link entry, missing path, permission, allocation, oversized target or other host error |
 
-Check `.erroneous` before accessing `.value` or `.error`. Errors currently
-contain static messages; these two APIs do **not** expose errno or a structured
-error category. Do not parse error message text as a stable error code. Older
-`metadata`, `remove_file` and other status APIs retain their existing signatures.
+Check `.erroneous` before accessing `.value` or `.error`. In development these
+APIs preserve `@status` categories and native errno in `.error.code` and
+`.error.os_error`. Argument validation/allocation errors have zero native code;
+OS failures retain it. Do not parse message text as a stable error code.
+`metadata` and `remove_file` also use built-in results as described above.
 
 ### Creation and resolution
 
@@ -218,7 +301,7 @@ operation; the filesystem may change between calls.
 | `fs.metadata(path)` | Reports the link (`SYMLINK`), including a broken link |
 | `fs.read_link(&memory, path, limit)` | Reads the stored target bytes |
 | `fs.remove_file(path)` | Unlinks the link; leaves its target untouched |
-| `io.File.open(...)` or `fs.Directory.open(...)` | Follows links under host path-resolution rules |
+| `io.File.open_read(...)` (and other file open modes), or `fs.Directory.open(...)` | Follows links under host path-resolution rules |
 
 Run the [complete example](../examples/symlinks.gloin) with a new destination:
 
@@ -238,8 +321,8 @@ explicit ABI/storage boundary.
 
 These additions are part of Gloin 0.1.0 on macOS and Linux. They
 use built-in results: inspect `.erroneous`, then `.value` or `.error`. Errors
-currently contain static messages without errno or a structured error category;
-message text is not a stable error code.
+carry static messages; in development they also retain library categories and
+native errno. Message text is not a stable error code.
 
 | API | Behavior |
 | --- | --- |
@@ -340,8 +423,7 @@ rolled back, and the runner reports failure.
 
 ## Directory iteration
 
-`fs.Directory.open(&owner, path)` returns `fs.DirectoryResult { status,
-os_error, value }`. It opens a native directory cursor; the owner arena holds
+`fs.Directory.open(&owner, path)` returns `result<fs.Directory>`. It opens a native directory cursor; the owner arena holds
 shared cursor metadata. Copies of `Directory` alias that metadata. Close the
 cursor before resetting or freeing the owner arena. Opening an empty or
 NUL-containing path returns `INVALID`; missing paths and access errors use the
@@ -350,21 +432,37 @@ to a directory, as with native `opendir`. Open attempts one owner-arena metadata
 allocation before the host call; that allocation remains until arena reset/free
 even if the host open fails.
 
-`directory.next(&scratch)` returns `fs.DirectoryEntryResult { status, os_error,
-name }`. `OK` has a relative entry name copied into `scratch`; `END` means the
-cursor is exhausted and has an empty name. `.` and `..` are omitted. A failed
-call has an empty name; an allocation failure returns `NO_MEMORY` and can
-consume that entry. Names are counted bytes, including any non-UTF-8 bytes; they
-remain valid until `scratch` is reset or freed, independent of later calls to
-`next`. Each nonempty name makes one exact-size arena allocation; `END` and host
-errors allocate no name storage. Directory order is host-defined and is not
-sorted or snapshotted.
+`directory.next(&scratch)` returns `result<fs.DirectoryRead>`. First check
+`.erroneous`; a failure has no readable success payload. After success:
+
+| `read.value.end` | `read.value.name` | Meaning |
+| --- | --- | --- |
+| `false` | Nonempty relative entry name, copied into `scratch` | One entry was read |
+| `true` | Static empty string | The cursor reached normal end |
+
+End is not an error and allocates no name storage. Repeated reads of an
+unchanged exhausted directory succeed with `end = true`. There is no permanent
+end latch: concurrent directory changes retain native `readdir` behavior.
+The compiler proves result success, not that `end` is false; reading the empty
+name at end is valid, and callers must inspect `end` before treating it as an entry.
+`.` and `..` are omitted. An arena copy failure reports `NO_MEMORY` and can
+consume the entry already read from the host; retrying does not recover that name.
+Names are counted bytes, including non-UTF-8 bytes. Copies remain valid until
+`scratch` is reset or freed, independent of later reads or cursor close. Each
+nonempty name makes one exact-size arena allocation; end and native failures
+allocate no name storage. Directory order is host-defined, unsorted and not
+snapshotted.
 Callers requiring deterministic order must collect and sort names. To inspect
 an entry's kind, join its name to the parent path and call `fs.metadata`; the
 directory cursor itself does not promise `d_type` information.
 
-`directory.close()` consumes the native cursor, even on an OS close failure,
-and invalidates every alias. Later `next` or `close` calls return `CLOSED`.
+`directory.close() -> result<void>` consumes the native cursor, even on an OS
+close failure, and invalidates every alias. Later `next` and `close` calls
+fail with `.error.code = status.CLOSED` and
+`.error.os_error = 0`. Native close failures preserve their mapped status and
+errno. Bind and check the close result, including in cleanup helpers. A deferred
+cleanup helper must handle/report a failure itself; it cannot return a failure
+from the function that scheduled it.
 No arena cleanup closes a native cursor automatically. Opening, advancing,
 and closing can block on the host filesystem. Calls through aliases must not
 advance or close the same cursor concurrently. Concurrent directory mutation
@@ -417,18 +515,20 @@ external program. This API scopes arguments only, not the host environment or cw
 
 ## Argument, environment, and cwd functions
 
-`process.TextResult { status: i32, os_error: i32, value: string }` has static empty
-text on failure. Nonempty successful results are independent caller-arena copies;
-empty argument/environment values succeed as static empty text. Argument/env
-results have `os_error = 0`; cwd can carry a native error. All copied bytes expire
+`process.arg`, `process.env`, and `process.cwd` now return `result<string>`;
+the former `TextResult` is removed. Failure has no readable text payload.
+Nonempty successful results are independent caller-arena copies; empty
+argument/environment values succeed as static empty text. Errors carry `@status`
+in `.error.code`. Argument/env errors have `.error.os_error = 0`; cwd errors can
+carry native errno. All copied bytes expire
 on arena reset/free, independent of argument scope exit or later environment changes.
 
 | API and example | Contract | Cost and allocation |
 | --- | --- | --- |
 | `process.arg_count() -> u64` | Current invocation argument count | O(1), no allocation |
-| `process.arg(&memory, 1) -> TextResult` | Checked u64 index; `OUT_OF_RANGE` if absent | O(argument bytes) copy/zeroing, one exact-size arena request for nonempty bytes |
-| `process.env(&memory, "GLOIN_COPY_LABEL") -> TextResult` | Missing is `NOT_FOUND`; present empty is `OK/empty` | O(name + value bytes) plus host environment lookup; temporary native name-length + 1 copy, then one exact-size arena request for nonempty value |
-| `process.cwd(&memory, 4096) -> TextResult` | Absolute host cwd with explicit u64 byte bound | One max_bytes + 1 arena request, O(max_bytes) zeroing plus host getcwd work |
+| `process.arg(&memory, 1) -> result<string>` | Checked u64 index; `OUT_OF_RANGE` if absent | O(argument bytes) copy/zeroing, one exact-size arena request for nonempty bytes |
+| `process.env(&memory, "GLOIN_COPY_LABEL") -> result<string>` | Missing fails `NOT_FOUND`; present empty succeeds | O(name + value bytes) plus host environment lookup; temporary native name-length + 1 copy, then one exact-size arena request for nonempty value |
+| `process.cwd(&memory, 4096) -> result<string>` | Absolute host cwd with explicit u64 byte bound | One max_bytes + 1 arena request, O(max_bytes) zeroing plus host getcwd work |
 
 `arg` checks the index before touching the arena. It does not retain invocation
 pointers. `env` rejects an empty name, NUL, or `=` with `INVALID`; it does not
@@ -438,8 +538,8 @@ lookup is followed immediately by copying. Host environment mutations must be
 externally coordinated with these calls; the library does not snapshot the whole
 environment or synchronize unrelated host `setenv` calls.
 
-Cwd's byte bound excludes NUL. A too-small bound is `TOO_LONG` with ERANGE and empty
-text, never a truncated path. Bounds above 9,223,372,036,854,775,806 return
+Cwd's byte bound excludes NUL. A too-small bound fails `TOO_LONG` with ERANGE,
+without a truncated path payload. Bounds above 9,223,372,036,854,775,806 return
 `NO_MEMORY` before allocation; other allocation failures also return `NO_MEMORY`.
 Storage is retained on native cwd failure until arena reset/free. A deleted or
 inaccessible working directory preserves the actual OS failure. This query does
@@ -457,9 +557,12 @@ def main() -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
     if process.arg_count() != 1 { return 1; }
-    def name: process.TextResult = process.arg(&memory, 0);
-    if name.status != status.OK || strings.is_empty(name.value) { return 2; }
-    if process.arg(&memory, 1).status != status.OUT_OF_RANGE { return 3; }
+    def name: result<string> = process.arg(&memory, 0);
+    if name.erroneous { return 2; }
+    if strings.is_empty(name.value) { return 2; }
+    def missing: result<string> = process.arg(&memory, 1);
+    if !missing.erroneous { return 3; }
+    if missing.error.code != status.OUT_OF_RANGE { return 3; }
     std.println("arguments ready");
     return 0;
 }

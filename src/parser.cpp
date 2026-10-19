@@ -162,6 +162,8 @@ bool GloinParser::generic_type_prefix_ahead() const {
 
 std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
     switch (current_token.type) {
+    case GLOIN_TOKEN_MATCH:
+        return parse_match();
     case GLOIN_TOKEN_NUMBER: {
         auto node = located_node<IntegerLiteral>(std::string(current_token.literal));
         advance_token();
@@ -421,6 +423,8 @@ std::unique_ptr<Statement> GloinParser::parse_def_statement_impl() {
 
 std::unique_ptr<Statement> GloinParser::parse_statement_impl() {
     switch (current_token.type) {
+    case GLOIN_TOKEN_SWITCH:
+        return parse_switch();
     case GLOIN_TOKEN_DEF:
         return parse_def_statement();
     case GLOIN_TOKEN_RETURN:
@@ -613,6 +617,62 @@ std::unique_ptr<BlockStatement> GloinParser::parse_block_statement_impl() {
         block->statements.push_back(parse_statement());
     expect(GLOIN_TOKEN_RBRACE, "Expected closing brace");
     return block;
+}
+
+CasePattern GloinParser::parse_case_pattern(bool matching) {
+    CasePattern pattern;
+    pattern.span = current_token.span;
+    if (accept(GLOIN_TOKEN_DEFAULT)) {
+        pattern.kind = CaseKind::Default;
+        return pattern;
+    }
+    expect(GLOIN_TOKEN_CASE, "Expected 'case' or 'default'");
+    if (matching && next_token.type == GLOIN_TOKEN_LPAREN &&
+        (current_token.type == GLOIN_TOKEN_ERROR ||
+         (current_token.type == GLOIN_TOKEN_IDENTIFIER && current_token.literal == "value"))) {
+        pattern.kind =
+            current_token.type == GLOIN_TOKEN_ERROR ? CaseKind::Error : CaseKind::Success;
+        advance_token();
+        advance_token();
+        if (current_token.type != GLOIN_TOKEN_RPAREN)
+            pattern.binding = parse_name();
+        expect(GLOIN_TOKEN_RPAREN, "Expected ')' after result pattern binding");
+    } else {
+        Restore literals(allow_struct_literal, false);
+        pattern.value = parse_expression(0);
+    }
+    return pattern;
+}
+
+std::unique_ptr<SwitchStatement> GloinParser::parse_switch() {
+    auto statement = located_node<SwitchStatement>();
+    advance_token();
+    statement->subject = parse_condition();
+    expect(GLOIN_TOKEN_LBRACE, "Expected '{' after switch subject");
+    while (current_token.type != GLOIN_TOKEN_RBRACE && !at_end()) {
+        auto pattern = parse_case_pattern(false);
+        auto body = parse_block_statement();
+        statement->arms.push_back({std::move(pattern), std::move(body)});
+    }
+    expect(GLOIN_TOKEN_RBRACE, "Expected '}' after switch arms");
+    return statement;
+}
+
+std::unique_ptr<MatchExpression> GloinParser::parse_match() {
+    auto expression = located_node<MatchExpression>();
+    advance_token();
+    expression->subject = parse_condition();
+    expect(GLOIN_TOKEN_LBRACE, "Expected '{' after match subject");
+    while (current_token.type != GLOIN_TOKEN_RBRACE && !at_end()) {
+        auto pattern = parse_case_pattern(true);
+        expect(GLOIN_TOKEN_DOUBLE_ARROW, "Expected '=>' before match arm expression");
+        Restore arm_context(allow_struct_literal, true);
+        auto value = parse_expression(0);
+        expect(GLOIN_TOKEN_SEMICOLON, "Expected ';' after match arm expression");
+        expression->arms.push_back({std::move(pattern), std::move(value)});
+    }
+    expect(GLOIN_TOKEN_RBRACE, "Expected '}' after match arms");
+    return expression;
 }
 
 std::unique_ptr<IfStatement> GloinParser::parse_if_statement_impl() {

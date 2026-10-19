@@ -1,7 +1,7 @@
 # Contributing to Gloin
 
 Contributions are welcome, including work on platforms outside the maintained
-release matrix. Version 0.1.0 supports Apple Silicon macOS and Ubuntu 24.04
+release matrix. The maintained platforms are Apple Silicon macOS and Ubuntu 24.04
 Linux on ARM64 and x86_64. Windows support is not planned, but contributors may
 propose and maintain it.
 

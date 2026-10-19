@@ -32,8 +32,8 @@ TEST_F(ResultTest, SuccessFailureAndExplicitForwardingRunInJitAndAot) {
     const std::optional<llvm::StringRef> redirects[] = {std::nullopt, out, err};
     std::string message;
     bool launch_failed = false;
-    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt,
-                                                redirects, 10, 0, &message, &launch_failed);
+    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                               10, 0, &message, &launch_failed);
     EXPECT_FALSE(launch_failed) << message;
     EXPECT_EQ(code, 43) << message << read(err);
     EXPECT_TRUE(read(out).empty());
@@ -65,6 +65,33 @@ TEST_F(ResultTest, VoidResultAndErrorMessage) {
         }
     )");
     expect_run(invoke({file}), 42, "bad action\n");
+}
+
+TEST_F(ResultTest, PayloadsAnchorNumericLiteralsWithoutRelaxingAccessOrConversions) {
+    for (std::string type : {"i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64"}) {
+        const std::string literal = type[0] == 'f' ? "42.5" : "42";
+        const std::string lower = type[0] == 'f' ? "40.5" : "40";
+        const std::string step = type[0] == 'f' ? "2.0" : "2";
+        const auto header = "def answer() -> result<" + type + "> { return " + literal + "; } ";
+        auto file = source(header + "def main() -> i32 { def x: result<" + type +
+                           "> = answer(); if x.erroneous { return 1; } if x.value != " + literal +
+                           " || " + literal + " != x.value || x.value - " + step + " != " + lower +
+                           " { return 2; } return 42; }");
+        expect_run(invoke({file}), 42);
+        expect_error(invoke({"--check", source(header + "def main() -> i32 { def x: result<" +
+                                               type + "> = answer(); if x.value == " + literal +
+                                               " { return 0; } return 1; }")}),
+                     1, "requires a proven non-erroneous path");
+    }
+    expect_error(invoke({"--check", source(R"(
+        def answer() -> result<f64> { return 42.0; }
+        def main() -> i32 {
+            def x: result<f64> = answer(); if x.erroneous { return 1; }
+            def other: f32 = 42.0;
+            if x.value == other { return 0; } return 1;
+        }
+    )")}),
+                 1, "Type mismatch in binary expression");
 }
 
 TEST_F(ResultTest, StandardParserExposesCheckedAlternative) {
@@ -125,8 +152,8 @@ TEST_F(ResultTest, AggregatePayloadsKeepTheirSourceTypesInJitAndAot) {
     const std::optional<llvm::StringRef> redirects[] = {std::nullopt, std::nullopt, err};
     std::string message;
     bool launch_failed = false;
-    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt,
-                                                redirects, 10, 0, &message, &launch_failed);
+    const int code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects,
+                                               10, 0, &message, &launch_failed);
     EXPECT_FALSE(launch_failed) << message;
     EXPECT_EQ(code, 52) << message << read(err);
     EXPECT_TRUE(read(err).empty());
@@ -193,16 +220,19 @@ TEST_F(ResultTest, RequiresProofAndHandling) {
             def x: result<i32> = compute();
             return x.value;
         }
-    )", "requires a proven non-erroneous path");
+    )",
+                  "requires a proven non-erroneous path");
     require_error(header + R"(
         def main() -> i32 { compute(); return 0; }
-    )", "result cannot be discarded");
+    )",
+                  "result cannot be discarded");
     require_error(header + R"(
         def main() -> i32 {
             def x: result<i32> = compute();
             return 0;
         }
-    )", "must be checked with .erroneous");
+    )",
+                  "must be checked with .erroneous");
     require_error(header + R"(
         def main() -> i32 {
             def x: result<i32> = compute();
@@ -210,14 +240,16 @@ TEST_F(ResultTest, RequiresProofAndHandling) {
             if x.erroneous { return 1; }
             return x.value;
         }
-    )", "must be checked with .erroneous");
+    )",
+                  "must be checked with .erroneous");
     require_error(header + R"(
         def main() -> i32 {
             def x: result<i32> = compute();
             if x.erroneous { return x.value; }
             return 0;
         }
-    )", "requires a proven non-erroneous path");
+    )",
+                  "requires a proven non-erroneous path");
     require_error(header + R"(
         def main() -> i32 {
             def mut x: result<i32> = compute();
@@ -225,7 +257,8 @@ TEST_F(ResultTest, RequiresProofAndHandling) {
             x = compute();
             return x.value;
         }
-    )", "requires a proven non-erroneous path");
+    )",
+                  "requires a proven non-erroneous path");
 }
 
 TEST_F(ResultTest, RejectsInvalidTypeAndConstruction) {
@@ -252,19 +285,111 @@ TEST_F(ResultTest, RejectsInvalidTypeAndConstruction) {
         def struct Box { def value: result<i32>, }
         def main() -> i32 { return 0; }
     )");
-    expect_error(invoke({"--check", field}), 1,
-                 "Result fields are not supported");
+    expect_error(invoke({"--check", field}), 1, "Result fields are not supported");
     auto unhandled_parameter = source(R"(
         def forget(value: result<i32>) -> i32 { return 0; }
         def main() -> i32 { return 0; }
     )");
-    expect_error(invoke({"--check", unhandled_parameter}), 1,
-                 "must be checked with .erroneous");
+    expect_error(invoke({"--check", unhandled_parameter}), 1, "must be checked with .erroneous");
     auto implicit_forward = source(R"(
         def compute() -> result<i32> { return 1; }
         def forward() -> result<i32> { return compute(); }
         def main() -> i32 { return 0; }
     )");
-    expect_error(invoke({"--check", implicit_forward}), 1,
-                 "result return must be a value");
+    expect_error(invoke({"--check", implicit_forward}), 1, "result return must be a value");
+}
+
+TEST_F(ResultTest, ErrorDetailsSurviveCopiesForwardingAndMatchingInJitAndAot) {
+    auto file = source(R"(
+        import "@strings";
+        def next(sequence: &i32) -> i32 {
+            *sequence = *sequence + 1;
+            return *sequence;
+        }
+        def fail(sequence: &i32) -> result<i32> {
+            return error("detailed failure", next(sequence), next(sequence));
+        }
+        def forward(sequence: &i32) -> result<i32> {
+            def attempt: result<i32> = fail(sequence);
+            if attempt.erroneous {
+                def original: error = attempt.error;
+                def copied: error = original;
+                return copied;
+            }
+            return attempt.value;
+        }
+        def inspect(problem: error) -> i32 {
+            if !strings.equal(problem.message, "detailed failure") { return 10; }
+            if problem.code != 1 || problem.os_error != 2 { return 11; }
+            return 42;
+        }
+        def empty_failure() -> result<void> { return error("unspecified"); }
+        def main() -> i32 {
+            def plain: result<void> = empty_failure();
+            if !plain.erroneous { return 1; }
+            if plain.error.code != 0 || plain.error.os_error != 0 { return 2; }
+            def bounds: error = error("bounds", -2147483648, 2147483647);
+            if bounds.code != -2147483648 || bounds.os_error != 2147483647 { return 3; }
+            def mut sequence: i32 = 0;
+            def answer: i32 = match forward(&sequence) {
+                case value(number) => 4;
+                case error(problem) => inspect(problem);
+            };
+            if sequence != 2 { return 5; }
+            return answer;
+        }
+    )");
+    auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *operation :
+         {"!gloin.error", "gloin.error_literal", "gloin.error_message", "gloin.error_code",
+          "gloin.error_os_error", "gloin.result_failure"})
+        EXPECT_NE(ir.out.find(operation), std::string::npos) << operation;
+    expect_run(invoke({"--jit", file}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/error-details" + optimization;
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        const auto err = executable + ".err";
+        const std::optional<llvm::StringRef> redirects[] = {std::nullopt, std::nullopt, err};
+        std::string message;
+        bool launch_failed = false;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects, 10,
+                                            0, &message, &launch_failed),
+                  42)
+            << message << read(err);
+        EXPECT_FALSE(launch_failed) << message;
+        EXPECT_TRUE(read(err).empty());
+    }
+}
+
+TEST_F(ResultTest, ErrorDetailsRejectInvalidConstructorsWritesAndUnprovenAccess) {
+    for (const auto *expression :
+         {"error()", "error(\"bad\", 1)", "error(\"bad\", 1, 2, 3)", "error(message, 1, 2)"}) {
+        expect_error(invoke({"--check", source("def main() -> i32 { def message: string = "
+                                               "\"dynamic\"; def problem: error = " +
+                                               std::string(expression) + "; return 0; }")}),
+                     1, "error construction requires one string literal");
+    }
+    for (const auto *arguments : {"true, 0", "0, false", "wide, 0", "0, wide"}) {
+        expect_error(
+            invoke(
+                {"--check",
+                 source(
+                     "def main() -> i32 { def wide: i64 = 1; def problem: error = error(\"bad\", " +
+                     std::string(arguments) + "); return 0; }")}),
+            1, "error code and os_error must have type i32");
+    }
+    for (const auto *field : {"code", "os_error"}) {
+        const auto result = invoke(
+            {"--check",
+             source("def main() -> i32 { def mut problem: error = error(\"bad\", 1, 2); problem." +
+                    std::string(field) + " = 3; return 0; }")});
+        expect_error(result, 1, "Result and error members are read-only");
+        expect_error(
+            invoke({"--check", source("def fail() -> result<i32> { return error(\"bad\", 1, 2); } "
+                                      "def main() -> i32 { def attempt: result<i32> = fail(); "
+                                      "return attempt.error." +
+                                      std::string(field) + "; }")}),
+            1, "requires a proven erroneous path");
+    }
 }

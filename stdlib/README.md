@@ -83,8 +83,10 @@ SPEC-030 adds `input(&memory, max_bytes)`, `to_int(text)`, and
 `to_string(&memory, i32_value)`. The shipped `std.gloin` imports `@arena` and
 `@status`, so an explicit replacement standard-library directory must include
 both dependencies.
-Input returns `InputResult`; parsing returns `IntResult`. Both expose `status`
-and `value`. Successful strings borrow caller-owned arena bytes until reset/free.
+In 0.2.0, input returns `result<InputLine>`, parsing
+`result<i32>`, and formatting `result<string>`. Successful `InputLine` carries
+`end` and `value`, distinguishing EOF from an empty line. Successful text borrows
+caller-owned arena bytes until reset/free. The old result structs are removed.
 See [the standard-library guide](../docs/standard-library.md) for statuses,
 strict decimal grammar, line limits, and cleanup.
 
@@ -99,16 +101,20 @@ SPEC-030a adds `import "@strings";` and dependency-free `import "@status";`.
 failure behavior, and cost. The [string API guide](../docs/strings.md) covers
 byte length/access, slicing, equality/ordering, search, ASCII trimming, and
 explicit arena copies. All operations except `copy` allocate nothing; views
-borrow their source bytes. `copy` returns a concrete status result.
+borrow their source bytes. In 0.2.0, byte access returns
+`result<u8>`; slicing and copying return `result<string>`. Bounds and allocation
+failures require handling before payload access.
 
 `std.gloin` now also imports `@status`; replacement directories supplying the
 shipped `std.gloin` must provide both `arena.gloin` and `status.gloin`.
-The development tree adds `std.parse_i32_checked(value) -> result<i32>` as a
-checked alternative to the existing status-returning parser. See
+`std.parse_i32_checked(value) -> result<i32>` remains an alias of the
+canonical result-returning parser, with identical diagnostic codes. See
 [results](../docs/results.md) for required handling and static error messages.
-`strings.byte_at_checked` and `strings.slice_bytes_checked` likewise expose
+`strings.byte_at_checked` and `strings.slice_bytes_checked` remain aliases of
+the canonical result-returning functions. Both forms expose
 byte bounds failures as `result<u8>` and `result<string>`; successful slices
-still borrow their source bytes.
+still borrow their source bytes. Errors carry `@status` categories in `.code`
+and zero `.os_error`; a failure supplies no readable zero/empty payload.
 Existing std statuses keep their names/values as aliases. Only canonical
 `@strings` can use its four private byte/descriptor/copy primitives. Public
 algorithms and allocation policy remain ordinary Gloin source.
@@ -116,7 +122,13 @@ algorithms and allocation policy remain ordinary Gloin source.
 SPEC-030b adds concrete `SplitCursor`, `LineCursor`, and `StringBuilder` types
 alongside bounded concat/repeat/replace and ASCII case conversion. See
 [usage, ownership, and costs](../docs/text-construction.md) for every API.
-Cursors borrow bytes without allocating. Builder copies alias shared fixed-capacity
+Cursors borrow bytes without allocating. Split construction returns
+`result<SplitCursor>`; advancing either valid cursor returns ordinary
+`TextItem { end: bool, value: string }`, separating empty items from exhaustion.
+Transformations and snapshots return `result<string>`, builder construction
+`result<StringBuilder>`, and appends `result<void>`. A failed append leaves bytes
+and length unchanged. The four old string status wrappers are removed.
+Builder copies alias shared fixed-capacity
 storage; append/clear allocate nothing, and `to_string` copies explicitly into a
 caller-supplied arena. Three additional module-private primitives handle checked
 buffer views/stores/writes using the existing native copy ABI.
@@ -126,7 +138,10 @@ formatters, and fifteen explicit checked conversions. See the [numeric guide](..
 for every signature, usage example, range/rounding rule, failure, ownership, and
 cost. Numeric formatters allocate in the caller's arena and return recoverable
 results; boolean formatting returns static text. Parsing and conversion allocate
-nothing. Existing input/to_int/to_string contracts remain unchanged. Only
+nothing. The old numeric status structs are removed; see the migration tables
+for changed return types. `i64_from_i32` and rounded i64/u64-to-f64 return plain
+numbers because they cannot fail. `to_string` now reports allocation failure as a
+result. Native ABIs, numeric behavior and ownership retain their contracts. Only
 canonical `@std` can invoke the new native primitives. Locale-independent float
 parsing uses the pinned MIT-licensed [fast_float dependency](../third_party/fast_float/README.md);
 its implementation is compiled into the runtime, and its license ships with packages.
@@ -138,24 +153,37 @@ partial progress, OS errors, flush/close results, native buffering, and costs ar
 specified in [the I/O guide](../docs/io.md). Public code owns allocation and lifecycle
 policy. Nine private native primitives perform actual I/O and bounded diagnostic
 lookup; an additional guarded descriptor primitive constructs returned strings.
-The native line reader is shared with unchanged legacy `std.input`.
+The native line reader is shared with `std.input`; their public result shapes differ.
+In 0.2.0, every fallible I/O call uses built-in results. Opens
+return `result<File>`, OS diagnostics `result<string>`, and close/flush/transfers
+`result<void>`. Transfers take a final caller-owned `ReadState`, `ByteReadState`
+or `WriteState`; valid partial progress survives failure, and each call resets
+state before validation. Empty EOF is a successful end state for line/chunk/direct
+reads. Errors preserve categories and native errno. All six older I/O result
+structs are removed; failed opens no longer provide a dummy File.
 Direct byte read/write primitives added after 0.0.4 work on caller-owned slices
 without constructing strings; see [direct byte I/O](../docs/io.md#direct-byte-io).
 
 SPEC-030e adds [fs.gloin](fs.gloin) and [process.gloin](process.gloin). Lexical
-paths borrow bytes or copy into caller arenas; older filesystem mutations use explicit
-names and preserve OS errors. New symlink/workspace helpers and checked file
-replacement use built-in results with static errors. `fs.replace_file` supports
+paths borrow bytes or copy into caller arenas. In 0.2.0, all
+fallible filesystem APIs use built-in results with library `.error.code` and
+native `.error.os_error`. Paths return strings, metadata returns a `Metadata`
+payload, open returns a `Directory`, and next returns a `DirectoryRead` payload
+with `end`/`name`. End-of-directory is successful. The five old filesystem result
+structs are removed. Symlink/workspace helpers also retain diagnostic codes.
+`fs.replace_file` supports
 checked staged writes with ordinary Unix permission preservation; its concurrency
 and metadata limits are documented in the filesystem guide.
 Directory cursors copy each entry name into a
 caller arena and require explicit close. Arguments are scoped per invocation;
 environment values distinguish missing/empty, and cwd is explicitly bounded.
+These three process-context queries now return `result<string>`; `TextResult`
+is removed. Errors retain categories, and cwd also preserves native errno.
 Both modules import `@strings`, `@arena`, and `@status`; private native routines and
 module-scoped descriptor primitives support their public source implementations.
 See [every API's usage, ownership, and costs](../docs/filesystem-process.md).
 
-The unreleased 0.1.0 `@process` also supports explicit child launch, pipes,
+The released 0.1.0 `@process` also supports explicit child launch, pipes,
 bounded capture, deadlines, cwd/environment options and process-group cleanup.
 `Options.stack_limit_bytes` sets only the child's soft stack limit; zero
 inherits and nonzero requires the host's original main thread on macOS.
@@ -177,20 +205,37 @@ behavior and the distinction between JSON events and incremental network input.
 five scalar types, signed/float absolute value, floating rounding, and the common
 finite math operations listed in [the guide](../docs/math.md). It depends only on
 `@status`, never on an arena. Constants are PI/TAU at f32/f64 widths. Source policy
-and concrete results remain ordinary Gloin; four canonical-module-only typed
+and result construction remain ordinary Gloin; four canonical-module-only typed
 native calls provide checked host math, including preserved errno/floating state.
 Every function documents an example, failure values, and cost. See
 [math_lab.gloin](../examples/math_lab.gloin) for streaming geometry/statistics.
+
+In 0.2.0, all 37 fallible functions return built-in `result<T>`;
+the five old numeric result structs are removed. Min/max still return scalars.
+Domain, overflow and underflow failures have distinct static error messages,
+and success values require a compiler-checked proof or match. See the
+[migration table](../docs/math.md#migration-from-010). Native status codes remain
+private; result construction and handling pass through GloinIR.
 
 ## Timing and seeded randomness (`@time`, `@random`, SPEC-030g)
 
 [time.gloin](time.gloin) exposes monotonic `Instant` readings, unsigned nanosecond
 `Duration` values, checked arithmetic/construction, and explicit unit conversion.
 [random.gloin](random.gloin) exposes seeded `SplitMix64` values, full-width words,
-unbiased bounded sampling, and the exact 53-bit `[0, 1)` floating grid. Both import
-`@status` and `@std`; operations use no arena or hidden global generator. Each
+unbiased bounded sampling, and the exact 53-bit `[0, 1)` floating grid. `@time`
+imports `@status` and `@std`; `@random` imports `@std`. Operations use no arena
+or hidden global generator. Each
 module has one canonical-module-only native primitive. Clock reads allocate
 nothing in the runtime; binding a host clock scope allocates one small record.
+
+The 0.2.0 `SplitMix64.below(bound)` returns `result<u64>` and removes
+`random.U64Result`. Bound zero errors without advancing the generator. Seeded
+sequences, rejection sampling and draw counts are unchanged. Fallible timing
+APIs now return `result<Instant>` or `result<Duration>`; their two old status
+structs are removed. Errors retain category codes and native clock errno.
+Zero/equal readings remain valid successes; backwards elapsed inputs fail.
+Unit accessors retain scalar signatures. See the guide's migration and diagnostic
+tables for exact behavior.
 
 All 13 public functions/methods document examples, failure rules, and costs.
 See the [guide](../docs/time-random.md) for clock ownership/injection, algorithm

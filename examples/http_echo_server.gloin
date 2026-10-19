@@ -16,12 +16,14 @@ def cleanup(socket: &net.Socket) -> void {
 }
 
 def within(start: time.Instant) -> bool {
-    def now: time.InstantResult = time.monotonic_now();
-    if now.status != status.OK { return false; }
+    def now: result<time.Instant> = time.monotonic_now();
+    if now.erroneous { return false; }
 
-    def elapsed: time.DurationResult = time.elapsed(start, now.value);
+    def elapsed: result<time.Duration> = time.elapsed(start, now.value);
 
-    return elapsed.status == status.OK && elapsed.value.nanoseconds < 30000000000;
+    if elapsed.erroneous { return false; }
+
+    return elapsed.value.nanoseconds < 30000000000;
 }
 
 def send_all(socket: &net.Socket, bytes: string, start: time.Instant) -> result<void> {
@@ -29,7 +31,7 @@ def send_all(socket: &net.Socket, bytes: string, start: time.Instant) -> result<
     def size: u64     = strings.byte_length(bytes);
 
     while sent < size && within(start) {
-        def written: result<net.WriteOutcome> = socket.write_text(strings.slice_bytes(bytes, sent, size - sent).value);
+        def written: result<net.WriteOutcome> = socket.write_text(slice_or_empty(bytes, sent, size - sent));
         if written.erroneous { return written.error; }
 
         sent = sent + written.value.count;
@@ -115,8 +117,8 @@ def serve(owner: &arena.GeneralArena) -> result<void> {
     def listening: result<void> = listener.listen(1);
     if listening.erroneous { return listening.error; }
 
-    def clock: time.InstantResult = time.monotonic_now();
-    if clock.status != status.OK { return error("cannot read server clock"); }
+    def clock: result<time.Instant> = time.monotonic_now();
+    if clock.erroneous { return error("cannot read server clock"); }
 
     def start: time.Instant = clock.value;
 
@@ -154,4 +156,13 @@ def main() -> i32 {
     if served.erroneous { std.println(served.error.message); return 1; }
 
     return 0;
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
 }

@@ -389,18 +389,24 @@ TEST_F(IntegratedExamplesTest, ReportWriteFlushAndCloseFailuresAreObserved) {
     for (const std::string operation : {"write", "flush", "close"}) {
         std::string io = original;
         if (operation == "write")
-            replace(io, "def write_mode(self: &Stream, text: string, all: i32) -> WriteResult {",
-                    "def write_mode(self: &Stream, text: string, all: i32) -> WriteResult { if "
-                    "strings.equal(text,\"column,count,min,max,mean\") { return WriteResult { "
-                    "status: status.IO_ERROR, os_error: 5, written: 0 }; }");
+            replace(io,
+                    "def write_mode(self: &Stream, text: string, all: i32, progress: &WriteState) "
+                    "-> result<void> {",
+                    "def write_mode(self: &Stream, text: string, all: i32, progress: &WriteState) "
+                    "-> result<void> { if "
+                    "strings.equal(text,\"column,count,min,max,mean\") { *progress = "
+                    "WriteState.empty(); return error("
+                    "\"injected write failure\",status.IO_ERROR,5); }");
         if (operation == "flush")
-            replace(io, "def pub flush(self: &Stream) -> IoResult {",
-                    "def pub flush(self: &Stream) -> IoResult { if self.standard == 0 && "
-                    "!self.readable { return IoResult { status: status.IO_ERROR, os_error: 5 }; }");
+            replace(
+                io, "def pub flush(self: &Stream) -> result<void> {",
+                "def pub flush(self: &Stream) -> result<void> { if self.standard == 0 && "
+                "!self.readable { return error(\"injected flush failure\",status.IO_ERROR,5); }");
         if (operation == "close")
-            replace(io, "def code: i32             = __io_close(handle, &failure_code);",
-                    "def mut code: i32 = __io_close(handle, &failure_code); if !self.readable { code = "
-                    "status.IO_ERROR; }");
+            replace(
+                io, "def code: i32             = __io_close(handle, &failure_code);",
+                "def mut code: i32 = __io_close(handle, &failure_code); if !self.readable { code = "
+                "status.IO_ERROR; }");
         source(io, "io.gloin");
         Backing backing;
         embedded(wrapper("statistics_tool", "execute(" + literal(input) + "," +
@@ -430,10 +436,13 @@ TEST_F(IntegratedExamplesTest, InputCloseFailuresPreventSuccessAndOutputCreation
 TEST_F(IntegratedExamplesTest, StandardOutputAndClockFailuresReleaseProgramStorage) {
     copy_modules();
     auto io = read((library() / "io.gloin").string());
-    replace(
-        io, "def write_mode(self: &Stream, text: string, all: i32) -> WriteResult {",
-        "def write_mode(self: &Stream, text: string, all: i32) -> WriteResult { if self.standard "
-        "== 2 { return WriteResult { status: status.IO_ERROR, os_error: 5, written: 0 }; }");
+    replace(io,
+            "def write_mode(self: &Stream, text: string, all: i32, progress: &WriteState) -> "
+            "result<void> {",
+            "def write_mode(self: &Stream, text: string, all: i32, progress: &WriteState) -> "
+            "result<void> { if self.standard "
+            "== 2 { *progress = WriteState.empty(); return error(\"injected write "
+            "failure\",status.IO_ERROR,5); }");
     source(io, "io.gloin");
     Backing config, simulation;
     embedded(wrapper("config_reader",

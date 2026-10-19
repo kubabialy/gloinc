@@ -128,11 +128,35 @@ make clean BUILD_DIR=build-no-tests
 `BUILD_ARGS` passes build options; `CTEST_ARGS` passes test filters/options.
 `make test` explicitly enables tests and preserves CTest's failure exit status.
 `make run` defaults to `examples/core_counter.gloin`; `RUN_ARGS` overrides its CLI
-arguments. `check-core` requires a tests-enabled build and runs the 817 required
-scalar, module, arena, and standard-output checks. Installation, CPack archives, external runtime dependencies,
-and the sanitizer build option are described in the [current release guide](release-0.0.4.md).
+arguments. `check-core` requires a build with tests enabled and runs the required
+language, standard-library, runtime and tooling checks. Installation, CPack
+archives and external dependencies are described in the
+[0.2.0 guide](release-0.2.0.md).
 `make clean` invokes CMake's clean target in an already configured directory,
 removing build products while retaining the configuration and downloaded sources.
+
+## Sanitizer build
+
+Use a separate Debug build for AddressSanitizer and UndefinedBehaviorSanitizer.
+On Apple Silicon macOS:
+
+```sh
+cmake -S . -B build-sanitized -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=ON -DGLOIN_ENABLE_SANITIZERS=ON \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir
+cmake --build build-sanitized -j 2
+ASAN_OPTIONS=halt_on_error=1:detect_leaks=0 \
+  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  cmake --build build-sanitized --target check-core
+```
+
+These checks cover project C++ and native runtime code. Prebuilt LLVM/MLIR and
+generated Gloin code are not instrumented. `GloinDialect.cpp` disables ASan
+because generated type storage shares allocator slabs with uninstrumented MLIR;
+partial poisoning would otherwise report false accesses in shared storage.
+UBSan remains enabled for that file. Leak detection is not part of the local
+macOS gate. Sanitizer builds cannot create distribution packages.
 
 ## Shared-library contract
 

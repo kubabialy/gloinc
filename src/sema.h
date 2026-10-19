@@ -301,6 +301,12 @@ class Sema {
     void check_conditional(const Expression *condition, const BlockStatement *body,
                            const Statement *alternative, std::string_view construct);
     void check_for(const ForStatement *statement);
+    std::shared_ptr<Type> check_selection(const Node *node, const Expression *subject,
+                                          const std::vector<const CasePattern *> &patterns,
+                                          bool matching);
+    void check_switch(const SwitchStatement *statement);
+    std::shared_ptr<Type> check_match(const MatchExpression *expression,
+                                      std::shared_ptr<Type> expected);
     void check_constant(const VariableDeclaration *declaration);
     std::shared_ptr<Type> check_constant_expression(const Expression *expression);
     std::optional<ConstantValue> evaluate_constant(const Expression *expression);

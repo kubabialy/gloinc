@@ -146,8 +146,8 @@ def main() -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
-    def peer: process.TextResult = process.arg(&owner, 1);
-    if peer.status != status.OK { return 90; }
+    def peer: result<string> = process.arg(&owner, 1);
+    if peer.erroneous { return 90; }
 
     def a: i32 = duplex(&owner, peer.value);
     if a != 0 { return a; }

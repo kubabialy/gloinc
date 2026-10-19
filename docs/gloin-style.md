@@ -44,8 +44,8 @@ intentionally invalid tokens; formatting changes only whitespace and layout.
 def mut head: *Column = null;
 def mut tail: *Column = null;
 
-if input.status != status.OK
-    || output.status != status.OK {
+if selected_index > 63
+    || selected_count == 16 {
     return 2;
 }
 
@@ -72,17 +72,20 @@ def mut cursor: u64         = 0;
 def mut wrote: bool         = false;
 def mut pending_blank: bool = false;
 
-def opened: io.FileResult = io.File.open_read(&memory, path);
-if opened.status != status.OK { return error("cannot open source file"); }
+def opened: result<io.File> = io.File.open_read(&memory, path);
+if opened.erroneous { return opened.error; }
 
 def mut file: io.File = opened.value;
-defer file.close();
+defer close_file(&file);
 
-def read: io.ReadResult = file.read_all(&memory, 8388608);
-if read.status != status.OK { return error("cannot read source file"); }
+def mut read: io.ReadState    = io.ReadState.empty();
+def read_result: result<void> = file.read_all(&memory, 8388608, &read);
+if read_result.erroneous { return read_result.error; }
 
 return read.value;
 ```
+
+Here `close_file` is a cleanup helper that checks and handles the close result.
 
 Existing blank lines express additional logical groups and are preserved as a
 single blank line. Avoid padding unrelated operations into one alignment group.
@@ -102,3 +105,20 @@ and are checked by `gloinfmt --check`; a second formatting pass produces the sam
 bytes. It preserves token spelling, including comments and strings, but does not
 split statements or rewrap long calls. Review those choices against this guide. Keep
 intentionally invalid fixture tokens intact when formatting rejection cases.
+
+## Switch and match (0.2.0)
+
+Use the ordinary block indentation for switch cases and one expression arm per
+line for match. Leave spaces around `=>`; each expression arm ends with a
+semicolon. `gloinfmt` preserves line structure, indents nested arms, and aligns
+local declarations within each switch block.
+
+```gloin
+def reply(command: string) -> string {
+    return match command {
+        case "PING" => "PONG";
+        case "QUIT" => "BYE";
+        default => "ERR unknown command";
+    };
+}
+```

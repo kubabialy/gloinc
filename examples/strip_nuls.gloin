@@ -1,6 +1,7 @@
 // Copy a binary file to a NEW destination, removing NUL bytes.
 // build/gloinc --jit examples/strip_nuls.gloin -- input.bin output.bin
 // The destination may remain partial if a later read, write, or close fails.
+import "@std";
 import "@arena";
 import "@io";
 import "@process";
@@ -13,22 +14,24 @@ def main() -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
-    def source: process.TextResult = process.arg(&owner, 1);
-    def target: process.TextResult = process.arg(&owner, 2);
+    def source: result<string> = process.arg(&owner, 1);
+    if source.erroneous { return 2; }
 
-    if source.status != status.OK || target.status != status.OK { return 2; }
+    def target: result<string> = process.arg(&owner, 2);
 
-    def opened: io.FileResult = io.File.open_read(&owner, source.value);
-    if opened.status != status.OK { return 3; }
+    if target.erroneous { return 2; }
+
+    def opened: result<io.File> = io.File.open_read(&owner, source.value);
+    if opened.erroneous { return 3; }
 
     def mut reader: io.File = opened.value;
-    defer reader.close();
+    defer close_file(&reader);
 
-    def created: io.FileResult = io.File.create_new(&owner, target.value);
-    if created.status != status.OK { return 4; }
+    def created: result<io.File> = io.File.create_new(&owner, target.value);
+    if created.erroneous { return 4; }
 
     def mut writer: io.File = created.value;
-    defer writer.close();
+    defer close_file(&writer);
 
     def mut input: [u8; 4096]           = zeroed;
     def mut filtered: vector.Vector<u8> = vector.Vector<u8>.empty(&owner, 4096);
@@ -36,12 +39,14 @@ def main() -> i32 {
     def mut reading: bool               = true;
 
     while reading {
-        def chunk: io.ByteReadResult = reader.read_into(input[..]);
+        def mut chunk: io.ByteReadState = io.ByteReadState.empty();
+        def chunk_result: result<void>  = reader.read_into(input[..], &chunk);
 
-        if chunk.status == status.END {
+        if chunk_result.erroneous { return 5; }
+
+        if chunk.end {
             reading = false;
         } else {
-            if chunk.status != status.OK { return 5; }
 
             filtered.clear();
 
@@ -53,17 +58,36 @@ def main() -> i32 {
                 index = index + 1;
             }
 
-            def written: io.WriteResult = writer.write_all_bytes(filtered.as_const_slice());
-            if written.status != status.OK { return 7; }
+            def mut written: io.WriteState   = io.WriteState.empty();
+            def written_result: result<void> = writer.write_all_bytes(filtered.as_const_slice(), &written);
+
+            if written_result.erroneous { return 7; }
         }
     }
 
-    if writer.flush().status != status.OK { return 8; }
+    if !io_succeeded(writer.flush()) { return 8; }
 
-    def output_close: io.IoResult = writer.close();
-    def input_close: io.IoResult  = reader.close();
+    def output_close: result<void> = writer.close();
+    if output_close.erroneous { return 9; }
 
-    if output_close.status != status.OK || input_close.status != status.OK { return 9; }
+    def input_close: result<void> = reader.close();
+
+    if input_close.erroneous { return 9; }
 
     return 0;
+}
+
+// The owner must remain live until deferred cleanup has run.
+def close_file(file: &io.File) -> void {
+    if file.is_open() {
+        def closed: result<void> = file.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
 }

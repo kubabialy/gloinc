@@ -33,6 +33,22 @@ Complete-header parentheses, comma updates, ranges, `break`, and `continue`
 remain rejected in core mode. `defer` is allowed in a function's loop body,
 but not in a for initializer or update.
 
+## Switch and match (SPEC-017a; 0.2.0)
+
+`switch expression { case expression { statements } default { statements } }`
+is a statement. Its bodies have ordinary block scope; there is no trailing
+semicolon on the switch itself. `match expression { case expression => expression;
+default => expression; }` is an expression. Each arm has its own semicolon,
+in addition to any semicolon required by the enclosing declaration or return.
+A match case may also use `value(name)`, `error(name)`, or `value()` for a result
+subject. Subject parsing follows condition parsing so a body brace cannot be
+mistaken for a struct literal.
+
+Sema enforces supported subject types, constant labels, duplicate cases,
+default placement, the two-arm match minimum, exhaustiveness, binding scope,
+and compatible output types. Grouped cases, guards, ranges and block-valued
+match arms are unsupported. See [the complete contract](switch-match.md).
+
 ## Token consumption and failure
 
 The parser buffers tokens and removes newline trivia before parsing. Every
@@ -124,7 +140,10 @@ call operator is introduced. Async methods remain syntax-only/deferred.
 
 The lowercase `result` and `error` spellings are reserved for the built-in
 [result and error types](results.md). `error("literal")` constructs an error;
-`.error` names the failure member of a checked result.
+development also accepts `error("literal", code, os_error)`, with two `i32`
+diagnostic expressions. Semantic analysis requires exactly one or three
+arguments and a string literal message. `.error` names the failure member of
+a checked result; errors expose read-only `.message`, `.code`, and `.os_error`.
 
 ## Function-exit defer (SPEC-027)
 

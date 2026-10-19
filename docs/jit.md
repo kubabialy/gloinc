@@ -5,7 +5,7 @@ SPEC-018 lowering pipeline. The caller retains its module and MLIR context;
 the JIT lowers an owned clone and releases the clone and execution engine before
 returning. Both high-level and already-lowered compiler output are accepted.
 
-For checked GIR, the unreleased runner removes source functions unreachable from
+For checked GIR, the 0.2.0 runner removes source functions unreachable from
 `main` on that owned clone before lowering. The original module is preserved.
 Arbitrary unmarked MLIR and already-lowered input retain their functions and
 existing ABI validation. See [the reachability contract](lowering.md#executable-reachability-unreleased-perf-004).
@@ -92,7 +92,7 @@ remains visible if a later error or trap occurs. Concurrency and global variable
 remain deferred. File loading, result/exit conventions, and
 check/IR modes are documented in [the CLI reference](cli.md). Source-file acceptance
 is covered by [SPEC-021's fixtures](../tests/fixtures/core/README.md); installation
-and packaging are documented in [the current release guide](release-0.0.4.md).
+and packaging are documented in [the 0.2.0 guide](release-0.2.0.md).
 
 Codegen and the JIT share one thread-safe native-target initialization and layout
 query. Source-generated modules carry that native triple and data layout, so
@@ -112,14 +112,14 @@ following normal function cleanup.
 
 SPEC-030 also registers and validates the exact parse-i32, format-i32, bounded
 stdin, and zero-byte-initialization ABIs. Source declarations with native symbol
-spellings are mangled separately. Standard input statuses stay in program values;
+spellings are mangled separately. Standard input outcomes stay in program values;
 they do not turn into JIT errors or replace `main`'s result. The shared runtime
 supplies byte output for external runners, while the JIT retains its existing
 flush/error-reporting callback. See [standard-library APIs](standard-library.md).
 
 SPEC-030a additionally validates and binds the void native byte-copy ABI
 `gloin_strings_copy(pointer, i64, pointer)`. Length queries and guarded byte/slice
-access lower directly; string library result statuses do not alter JIT entry
+access lower directly; string library results do not alter JIT entry
 results. The shared runtime exports the same copy routine for external execution.
 See [byte-string usage, ownership, and costs](strings.md).
 

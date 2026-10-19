@@ -16,8 +16,8 @@ def close_child(child: &process.Child) -> void {
 }
 
 def join_text(memory: &arena.GeneralArena, a: string, b: string) -> result<string> {
-    def made: strings.StringResult = strings.concat(memory, a, b, 65536);
-    if made.status != status.OK { return error("HTTP test text exceeds limit"); }
+    def made: result<string> = strings.concat(memory, a, b, 65536);
+    if made.erroneous { return error("HTTP test text exceeds limit"); }
 
     return made.value;
 }
@@ -49,16 +49,16 @@ def checked(memory: &arena.GeneralArena, work: string, name: string, executable:
 }
 
 def port_line(memory: &arena.GeneralArena, child: &process.Child) -> result<string> {
-    def clock: time.InstantResult = time.monotonic_now();
-    if clock.status != status.OK { return error("cannot read HTTP startup clock"); }
+    def clock: result<time.Instant> = time.monotonic_now();
+    if clock.erroneous { return error("cannot read HTTP startup clock"); }
 
     def start: u64         = clock.value.ticks_ns;
     def mut bytes: [u8; 7] = zeroed;
     def mut size: u64      = 0;
 
     while size < 7 {
-        def now: time.InstantResult = time.monotonic_now();
-        if now.status != status.OK { return error("cannot read HTTP startup clock"); }
+        def now: result<time.Instant> = time.monotonic_now();
+        if now.erroneous { return error("cannot read HTTP startup clock"); }
         if now.value.ticks_ns < start || now.value.ticks_ns - start > 5000000000 { return error("HTTP peer did not announce its port within five seconds"); }
 
         def read: result<process.PipeOutcome> = child.read_stdout(bytes[size..]);
@@ -117,15 +117,15 @@ def source_at_port(memory: &arena.GeneralArena, work: string, name: string, sour
     def tail: string = common.part(rest, semicolon.offset + 1, strings.byte_length(rest));
     if strings.contains(tail, "def const PORT: u16") { return error("fixture repeats PORT declaration"); }
 
-    def built: strings.BuilderResult = strings.StringBuilder.create(memory, 262208);
-    if built.status != status.OK { return error("cannot allocate patched fixture"); }
+    def built: result<strings.StringBuilder> = strings.StringBuilder.create(memory, 262208);
+    if built.erroneous { return error("cannot allocate patched fixture"); }
 
     def mut builder: strings.StringBuilder = built.value;
-    if builder.append(common.part(text, 0, found.offset)) != status.OK || builder.append("def const PORT: u16 = ") != status.OK
-        || builder.append(port) != status.OK || builder.append(";") != status.OK || builder.append(tail) != status.OK { return error("patched fixture exceeds limit"); }
+    if !append_succeeded(builder.append(common.part(text, 0, found.offset))) || !append_succeeded(builder.append("def const PORT: u16 = "))
+        || !append_succeeded(builder.append(port)) || !append_succeeded(builder.append(";")) || !append_succeeded(builder.append(tail)) { return error("patched fixture exceeds limit"); }
 
-    def output: strings.StringResult = builder.to_string(memory);
-    if output.status != status.OK { return error("cannot retain patched source"); }
+    def output: result<string> = builder.to_string(memory);
+    if output.erroneous { return error("cannot retain patched source"); }
 
     def saved: result<void> = tool_runner.record(memory, work, name, ".gloin", output.value);
     if saved.erroneous { return saved.error; }
@@ -317,15 +317,17 @@ def main() -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def mode: process.TextResult = process.arg(&memory, 1);
-    if mode.status != status.OK { return 2; }
+    def mode: result<string> = process.arg(&memory, 1);
+    if mode.erroneous { return 2; }
 
-    if strings.equal(mode.value, "--peer") && process.arg_count() == 6 {
+    def mode_text: string = mode.value;
+
+    if strings.equal(mode_text, "--peer") && process.arg_count() == 6 {
         def mut args: [string; 4] = zeroed;
 
         for def mut i: u64 = 0; i < 4; i = i + 1 {
-            def read: process.TextResult = process.arg(&memory, i + 2);
-            if read.status != status.OK { return 2; }
+            def read: result<string> = process.arg(&memory, i + 2);
+            if read.erroneous { return 2; }
 
             args[i] = read.value;
         }
@@ -336,7 +338,7 @@ def main() -> i32 {
         return 0;
     }
 
-    if process.arg_count() != 7 || (!strings.equal(mode.value, "client") && !strings.equal(mode.value, "stream")) {
+    if process.arg_count() != 7 || (!strings.equal(mode_text, "client") && !strings.equal(mode_text, "stream")) {
         common.report("usage: gloin-http-test client|stream COMPILER REPOSITORY_ROOT TEMP_PARENT OPENSSL EXAMPLE"); return 2;
     }
 
@@ -346,8 +348,8 @@ def main() -> i32 {
         def mut index: u64 = i + 1;
         if i == 0 { index = 0; }
 
-        def read: process.TextResult = process.arg(&memory, index);
-        if read.status != status.OK { return 2; }
+        def read: result<string> = process.arg(&memory, index);
+        if read.erroneous { return 2; }
 
         def canonical: result<string> = fs.canonical_path(&memory, read.value, 65536);
         if canonical.erroneous { common.report(canonical.error.message); return 2; }
@@ -359,7 +361,7 @@ def main() -> i32 {
     if made.erroneous { common.report(made.error.message); return 1; }
 
     def work: string         = made.value;
-    def tested: result<void> = jobs(&memory, work, args[0], mode.value, args[1], args[2], args[4], args[5]);
+    def tested: result<void> = jobs(&memory, work, args[0], mode_text, args[1], args[2], args[4], args[5]);
 
     if tested.erroneous { common.report(tested.error.message); common.report(work); return 1; }
 
@@ -367,4 +369,11 @@ def main() -> i32 {
     if removed.erroneous { common.report(removed.error.message); common.report(work); return 1; }
 
     return 0;
+}
+
+// Keep append chains short-circuiting while explicitly handling every result.
+def append_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
 }

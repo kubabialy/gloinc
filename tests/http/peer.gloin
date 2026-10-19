@@ -347,15 +347,15 @@ def pub serve(memory: &arena.GeneralArena, kind: string, tls: bool, certificate:
     def mut fixed: u64                         = 0;
     def mut chunked: u64                       = 0;
     def mut stalled: u64                       = 0;
-    def clock: time.InstantResult              = time.monotonic_now();
+    def clock: result<time.Instant>            = time.monotonic_now();
 
-    if clock.status != status.OK { return error("cannot read peer clock"); }
+    if clock.erroneous { return error("cannot read peer clock"); }
 
     def start: u64 = clock.value.ticks_ns;
 
     while finished < total {
-        def clock: time.InstantResult = time.monotonic_now();
-        if clock.status != status.OK { return error("cannot read peer clock"); }
+        def clock: result<time.Instant> = time.monotonic_now();
+        if clock.erroneous { return error("cannot read peer clock"); }
 
         def now: u64 = clock.value.ticks_ns;
         if now < start || now - start > 300000000000 { return error("HTTP peer overall deadline exceeded"); }

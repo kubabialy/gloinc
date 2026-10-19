@@ -437,8 +437,8 @@ TEST(ParserTest, RejectsUnsupportedCoreSyntax) {
           "a & b",     "a | b",     "a ^ b",   "a << b", "a >> b",    "a += 1",
           "a ? b",     "0..3",      "a => b"})
         rejected("def main() -> void { " + expression + "; }");
-    for (const std::string statement :
-         {"break;", "continue;", "switch x {}", "match x {}", "for x in 0..3 {}"})
+    for (const std::string statement : {"break;", "continue;", "switch x { case 1 => 2; }",
+                                        "match x { case 1 {} };", "for x in 0..3 {}"})
         rejected("def main() -> void { " + statement + " }");
 }
 

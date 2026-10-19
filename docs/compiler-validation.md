@@ -780,7 +780,9 @@ explicit attribute. Lowering uses sign/zero extension; the current source API
 emits the signed i32-to-i64 case. No name-based substitution, implicit cast,
 new public conversion or result API migration is involved.
 
-`std.i64_from_i32` still returns concrete `std.I64Result { status, value }`.
+At this stage, `std.i64_from_i32` returned concrete `std.I64Result { status, value }`.
+The later [0.2.0 API migration](numbers.md#migration-from-010) changes its public
+return to plain i64 while keeping this GloinIR lowering.
 All i32 inputs are representable, including the negative minimum. Narrowing,
 sign-changing and floating/rounded conversions retain their runtime checks.
 The old runtime symbol remains implemented for existing ABI consumers; it may
@@ -959,13 +961,507 @@ These fixes remain unpublished. The [result guide](results.md),
 [slice guide](slices-vectors.md) and [GIR guide](lowering.md) distinguish the
 working compiler from the intermediate-binding workaround needed in 0.1.0.
 
+## Strided encoder loop versioning — 2026-10-18
+
+This extends the GIR loop versioning introduced in PERF-007. Inspection of a
+scalar Base64 encoder found four destination-bounds branches in each three-byte
+input/four-byte output iteration. The input and alphabet accesses were already
+proven safe in optimized native code. Division/remainder became shifts and
+masks, with no calls or allocations inside the loop. Adding the four output
+checks to the matched C encoder brought its timing close to the original Gloin
+encoder; that control motivated this compiler change.
+
+The encoder tests `i + 3 <= source.len`, increments `i` by three and `j` by four,
+and uses both counters in its padded tail. The earlier unit-stride recognizer
+could not version it. GIR now recognizes bounded unsigned complete-group loops
+and constructs a guarded copy. The overflow-safe capacity predicate for this
+case is `source.len / 3 <= output.len / 4`; a separate proof requires that the
+final header addition remain representable. A failed predicate selects the
+original checked loop, preserving partial writes and the order of any later
+failure. Counter values from either path join before the tail, whose checks
+remain. [The lowering guide](lowering.md#strided-groups-and-live-tail-counters-2026-10-18)
+defines the precise recognition limits and arithmetic proof.
+
+This changes compiler lowering, with identical benchmark source and runtime
+before and after. Buffer aliasing, checked arithmetic and floating checks keep
+their existing semantics. The alphabet table is still initialized once per
+call on the stack. The fast path applies in the shared JIT/native/object
+pipeline; native O2 subsequently simplifies the proven operations.
+
+### Measurement
+
+Apple M2, macOS 15.1.1, LLVM/MLIR and Clang 21.1.6, native O2 with host CPU
+selection. Each sample encodes 128 KiB 8,192 times (1 GiB of input), then
+decodes it with the existing grouped decoder. ASCII repeats `a`; binary cycles
+through all 256 byte values. Initialization, byte-for-byte round-trip validation
+and accumulated-length checks are outside the timed phases. Two warmup and six
+measured rounds per implementation/pattern run in rotated and reversed order.
+All 48 runs passed. No builds, tests or profilers ran during timing; the desktop
+remained shared and unpinned. All samples, including slower ones, are retained.
+
+Encoding seconds, **median ± median absolute deviation**:
+
+| Implementation | ASCII | Binary | Full-group instructions / conditional branches |
+| --- | ---: | ---: | ---: |
+| Gloin before | 0.499394 ± 0.001091 | 0.501755 ± 0.000575 | 36 / 5 |
+| Gloin after | 0.360247 ± 0.001488 | 0.373298 ± 0.002335 | 24 / 1 |
+| Matched scalar C | 0.362230 ± 0.000836 | 0.371424 ± 0.000807 | 23 / 1 |
+
+The compiler change reduces encoding time by **27.9% on ASCII and 25.6% on
+binary** (1.39× and 1.34× speedups). Updated Gloin and C medians differ by about
+0.5% in opposite directions; their observed ranges overlap. This batch supports
+comparable encoding performance for this kernel, not a ranking at that margin
+or a general claim about either language. C relies on its caller supplying
+enough output storage; Gloin retains the entry guard and checked fallback.
+The unchanged grouped decoder remains around 0.47 seconds in Gloin and
+0.45 seconds in C. Its before/after Gloin medians move by 0.1–0.4% here.
+
+The fast encoder's only conditional branch is its backedge. The four output
+bounds branches and associated index work are gone. Its extra instruction
+relative to C is a separate destination-pointer increment: C combines the
+last byte store with a post-indexed update. This is an instruction observation,
+not an isolated cycle-cost measurement. Both loops remain scalar. Keeping the
+fallback increases the entire Gloin encoder from 512 to 672 bytes (+31%);
+guard overhead and short-input performance have not been separately measured.
+
+### Validation
+
+- macOS `check-core`: **1,067 tests passed**; CTest discovers **1,114** overall.
+- Linux ARM64, LLVM/MLIR 21.1.8: **107 focused tests passed**, covering all
+  lowering/CLI cases and the Base64 acceptance fixture.
+- macOS ASan/UBSan: **79 focused tests passed**, with leak detection disabled
+  for the LLVM embedding, covering lowering, GIR runtime cases and Base64.
+- Four new regression tests verify fast/fallback structure, checked float
+  operations, tail SSA joins, rejected induction/descriptor patterns, exact and
+  spare capacity, sentinels, aliasing and tails. Runtime cases check every short
+  capacity across two groups, unrelated arithmetic overflow, final-header
+  overflow and extreme strides/limits in JIT, native O0 and native O2.
+- The saved compiler passes those same two new runtime tests with identical
+  outputs and failure traces. The optimization is not required for their
+  expected behavior.
+
+The compiler/runtime snapshots, sources, assembly, raw samples and hashes are
+retained with the local measurement artifacts. The runtime archives and standard
+library are identical before/after. The initial hash-capture command failed on
+an unsupported host locale; the timing runner explicitly used `LC_ALL=C` and
+completed normally. A hash checkpoint after round two matches the final hashes;
+the baseline binaries and sources also match the earlier retained investigation.
+This metadata failure did not discard or replace any timing sample.
+
+## Native call generation — 2026-10-18
+
+The recursive interpreter investigation found direct calls in GloinIR and the
+LLVM dialect becoming register-indirect calls in the native executable. Native
+emission used `JITTargetMachineBuilder::createTargetMachine`, which passes
+`JIT=true` and selects the large code model on the supported 64-bit targets.
+
+Native emission now creates an ordinary AoT target machine from the detected
+host CPU/features, with default target options and `JIT=false`. Linux keeps
+explicit PIC relocation. JIT execution and the shared GloinIR-to-LLVM pipeline
+are unchanged. [The lowering guide](lowering.md#native-target-configuration-2026-10-18)
+records the target defaults and address-range boundary.
+
+In the unchanged recursive interpreter, all three calls in `evaluate` become
+direct calls. The function shrinks from 120 to 110 AArch64 instructions
+(480 to 440 bytes), and its stack frame falls from 96 to 64 bytes. The saved
+GloinIR and LLVM-dialect inspection outputs compare byte-for-byte equal.
+Bounds, null and arithmetic checks remain. These static differences do not
+assign a cycle cost to an individual call or predict other workloads.
+
+The CLI regression checks direct external runtime-call relocations in native
+objects at `-O0` and `-O2`, and checks recursive execution/output in JIT and both
+native modes. The saved pre-change compiler fails the relocation assertions at
+both levels while still computing the correct output; the updated compiler
+passes. The ordinary function calls already carry their target symbol in GIR,
+so this correction belongs to native target setup rather than a new GIR pass.
+
+### Measurement and validation
+
+The unchanged recursive interpreter's short workload was measured on Apple M2,
+macOS 15.1.1, LLVM/Clang 21.1.6. Gloin uses native `-O2`; C uses
+`-O2 -mcpu=native`. Frozen before/after compilers use the same frozen standard
+library and interpreter source. This batch does not include the separate
+cached-cell source experiment.
+
+| Variant | Median whole-process CPU | CPU median absolute deviation | Median elapsed |
+| --- | ---: | ---: | ---: |
+| Previous native target setup | 2,308.084 ms | 0.625 ms | 2,309.521 ms |
+| Ordinary AoT target setup | 2,289.152 ms | 1.417 ms | 2,290.720 ms |
+| C reference | 1,899.704 ms | 5.861 ms | 1,900.893 ms |
+
+Each variant has two warmups and six measured runs, with all six run-order
+permutations represented. A separate C helper checks exit status and exact
+checksum 23280 while measuring child user+system CPU and elapsed time. All 24
+runs passed; tracked compiler/runtime, source, library, input and executable
+hashes were unchanged. Builds, tests and profiling were absent during timing.
+Desktop background activity remained.
+
+The median CPU reduction is **0.82%**. All six paired rounds favor the change;
+five reductions lie between 0.66% and 0.90%, while one slower baseline run
+produces a 3.12% reduction. Every observation is retained. Absolute CPU times
+are substantially higher than the preceding session for both Gloin and C,
+so only comparisons within this batch are used. This is a small workload-local
+improvement, not evidence of a general speedup. Updated Gloin still takes about
+20.5% more CPU time than this C implementation, whose safety and cell-access
+contracts differ. Repeated tape checks remain a separate source/compiler
+investigation; this result does not attribute their exact cost.
+
+Validation passed **1,068 macOS core tests**, **124 Linux ARM64 focused tests**
+(CLI, lowering and JIT), and **50 macOS ASan/UBSan tests** (CLI and JIT). The
+sanitizer run disables leak detection; generated Gloin code is not itself
+sanitizer-instrumented. Linux uses LLVM 21.1.8. Linux x86-64 execution was not
+tested in this session.
+
+Separately emitted O0/O2 objects link and execute with the ordinary system
+compiler on both tested platforms; Linux outputs are PIE executables. An
+independent small-program oracle passes **117 benchmark checks** across
+before/after/C, including invalid-input rejection in both Gloin builds. The
+HTML local-link checker passes all seven pages. The final release/package
+audit remains pending.
+
+## Matrix floating checks: investigation (2026-10-18)
+
+This investigation uses the current compiler without changing its implementation.
+The workload is an ascending-index `f64` dot product inside matrix multiplication,
+with the second matrix transposed. The existing GIR bounds proof already removes
+bounds checks from the fast loop. Native assembly still has scalar multiplication,
+ordered addition, and finite-result checks after both operations. LLVM's
+vectorizer diagnostics identify the early exits as an obstacle to vectorization.
+
+The experiment uses one separately compiled C driver for Gloin and seven C
+controls, with no LTO. Initialization, allocation and a bitwise reference check of
+every output cell are outside the timer. Gloin uses native `-O2`; C uses LLVM
+21.1.6 with `-O2 -mcpu=native -ffp-contract=off`, without fast-math. The host is
+an Apple M2 running macOS 15.1.1. CPU time is measured around the matrix kernel;
+elapsed time is retained separately. Each sample performs 268,435,456 products:
+128 repetitions at size 128, 16 at size 256, or two at size 512.
+
+### Checks after the reduction
+
+One C prototype first checks that the complete iteration range fits both slices.
+For that path it keeps every multiplication and addition, in the original order
+with separate rounding, and checks that the final accumulator is finite. If the
+range does not fit, it executes the original loop with bounds and arithmetic
+checks in their original sequence. Zero and negative counts return positive zero.
+This prototype is also compiled with vectorization disabled to distinguish its
+scalar result from LLVM's SIMD version.
+
+The numerical argument is specific to this reduction: a non-finite product makes
+the running sum non-finite, and subsequent additions cannot make it finite again.
+With a zero initial accumulator, a finite final sum therefore implies that every
+product and intermediate sum was finite. This does **not** authorize moving
+checks across arbitrary code. A GIR implementation would also have to prove
+that all intervening reads are valid, the counter cannot overflow, no effects or
+other failures are crossed, and intermediate accumulator values cannot escape.
+The final check must remain even if the computed value is unused. Failure is
+detected later on this path; retaining the identity/location of the first failed
+operation would need additional handling. Operations that can discard a
+non-finite value or turn one into a finite value do not qualify.
+
+The resulting AArch64 fast loop multiplies two lanes at a time, with four groups
+per iteration, then adds the eight products to the scalar accumulator in their
+original order. There is no fused multiply-add or reassociation. LLVM documents
+support for such [ordered reductions on AArch64](https://llvm.org/docs/Vectorizers.html#reductions).
+The scalar control retains separate scalar multiplication and addition, with the
+finite check outside the loop.
+
+Seven variants each have two warmups and seven measured samples per size, with
+balanced run positions. Median kernel CPU times and median absolute deviations,
+in milliseconds:
+
+| Variant | Size 128 | Size 256 | Size 512 |
+| --- | ---: | ---: | ---: |
+| Current Gloin | 373.371 ± 0.076 | 399.067 ± 0.098 | 412.027 ± 0.051 |
+| C, bounds and finite checks | 392.985 ± 0.098 | 400.593 ± 0.142 | 412.997 ± 0.071 |
+| C, bounds checks only | 222.872 ± 0.150 | 232.728 ± 0.046 | 319.861 ± 0.110 |
+| C, finite checks only | 382.270 ± 0.105 | 399.752 ± 0.102 | 413.450 ± 0.075 |
+| C, neither check | 221.232 ± 0.105 | 232.931 ± 0.344 | 319.690 ± 0.155 |
+| C prototype, final check, scalar | 267.061 ± 0.164 | 322.538 ± 0.154 | 366.286 ± 0.180 |
+| C prototype, final check, SIMD | 226.427 ± 0.101 | 234.515 ± 0.298 | 320.403 ± 0.092 |
+
+The SIMD prototype uses **39.4%, 41.2% and 22.2% less CPU time** than current
+Gloin, and is 2.35%, 0.68% and 0.22% above C without either check. Every paired
+round favors the SIMD prototype. Disabling vectorization increases prototype
+time: enabling it saves a further 12.5–27.3% relative to that scalar control.
+These are measurements of C prototypes, not improvements implemented in Gloin.
+Controls that omit checks entirely have weaker contracts.
+
+### Combining checks within each iteration
+
+A smaller prototype removes only the product's finite check, retaining the sum's
+check before the next iteration. A non-finite product necessarily fails that
+sum check. A corresponding GIR transformation would require the product to feed
+the checked addition without intervening observable work or another possible
+failure. It would retain separate rounding and the addition's mandatory check.
+
+This remains scalar. In a separate batch with two warmups and six measurements
+per variant and size, current Gloin takes 373.443, 399.083 and 412.008 ms; the
+prototype takes 354.508, 383.273 and 397.567 ms. Reductions are **5.1%, 4.0% and
+3.5%**, favorable in all 18 paired comparisons. The final-check SIMD prototype
+is included again as a contemporaneous control and reproduces the larger gain.
+The two batches' raw samples and summaries are kept separately.
+
+### Validation and scope
+
+All **261 timed executions** and **96 additional matrix size checks** pass
+cell-by-cell bitwise verification. Current Gloin, C with both checks, and the
+three prototypes each pass **20,299 independent bitwise cases and 20 expected
+traps**. Cases include deterministic random exponents and mantissas, signed
+zeros, subnormals, rounding-sensitive cancellation, a contraction-sensitive
+example, unequal lengths, zero/negative counts, aliased inputs, protected-page
+tails, product/sum overflow, infinities, quiet/signaling NaNs and insufficient
+capacity. Trap tests distinguish an arithmetic/bounds trap from an invalid
+memory access. They validate the tested cases, not a general compiler proof.
+
+Compiler, runtime, source, object and timed executable hashes remain unchanged
+through sampling. No task builds, tests or profiling run during timing. Desktop
+background activity remains; all outliers are retained. For example, the scalar
+prototype has one size-512 sample slower than Gloin. CPU time excludes
+descheduling but not changes in frequency or cache contention.
+
+The evidence supports a bounded GIR optimization for checked floating reductions,
+with combining adjacent product/sum checks as a smaller first step. A compiler
+implementation still needs explicit proof and rejection rules, retained checked
+fallbacks, and regression coverage for observable effects and failure order.
+This experiment does not measure end-to-end application speed or establish
+results for `f32`, Linux or x86-64.
+
+## Adjacent floating checks — 2026-10-19
+
+The smaller transformation investigated above is now implemented in GIR for
+`f32` and `f64`. A checked multiplication must immediately precede a checked
+addition in the same block, and its product must have exactly one use, in that
+addition. A non-finite product necessarily makes the sum non-finite. The product
+therefore becomes an ordinary multiply while the addition retains its mandatory
+finite check, including when the sum is discarded. Separate rounding and operand
+order are preserved; no fast-math, FMA contraction or reassociation is introduced.
+
+No intervening operation is allowed, including a load, call, other check or even
+a constant. The rule makes no pointer-validity, lifetime or aliasing assumption.
+It applies inside eligible fast and fallback loops, with a check remaining in
+each iteration before the next iteration's reads. At the mixed GIR/LLVM boundary,
+the other addend is frozen so that LLVM poison cannot suppress a product failure.
+Concrete values are unchanged. Current arithmetic failures share one fatal trap;
+distinguishing the first failed operation in future diagnostics would require
+additional handling. The [lowering guide](lowering.md#adjacent-floating-checks-2026-10-19)
+records the exact acceptance and rejection rules.
+
+### Measurement
+
+The unchanged matrix dot-product source is compiled before and after the change
+on Apple M2/macOS with LLVM 21.1.6. Both versions and two C controls link the same
+separate-translation-unit driver. Gloin uses native O2; C uses
+`-O2 -mcpu=native -ffp-contract=off`, without fast-math or LTO. Initialization,
+transposing B, reference calculation and cell-by-cell verification are outside
+the timer. Sizes 128/256/512 use 128/16/2 repetitions, respectively, giving
+268,435,456 products per sample.
+
+Each variant and size has two warmups and eight measured samples, with balanced
+run positions. Median kernel CPU times and median absolute deviations, in
+milliseconds:
+
+| Variant | Size 128 | Size 256 | Size 512 |
+| --- | ---: | ---: | ---: |
+| Gloin before | 373.301 ± 0.046 | 399.047 ± 0.045 | 411.946 ± 0.036 |
+| Gloin after | 354.635 ± 0.066 | 383.375 ± 0.046 | 397.562 ± 0.024 |
+| C, bounds and finite checks | 393.017 ± 0.065 | 400.493 ± 0.133 | 413.001 ± 0.069 |
+| C, neither check | 221.234 ± 0.085 | 232.562 ± 0.042 | 319.611 ± 0.033 |
+
+Gloin uses **5.0%, 3.9% and 3.5% less kernel CPU time**, respectively. Every one
+of the 24 paired before/after comparisons improves. Wall medians agree closely:
+373.338/399.096/411.984 ms before, and 354.646/383.386/397.607 ms after. All
+120 timed executions and 48 additional matrix size checks pass bitwise output
+verification. The C control without checks has a weaker safety contract.
+
+The complete dot function shrinks from **176 to 160 bytes**, including the
+checked fallback. Its fast inner loop goes from eleven to nine instructions;
+the product's comparison disappears and the sum's comparison remains. The
+freeze adds no native instruction in that loop. The arithmetic remains scalar.
+
+Compiler, runtime, source, object and timed executable hashes are unchanged
+through sampling. No task builds, tests or profiling run during timing. Desktop
+background activity remains, and no samples are excluded. CPU time excludes
+descheduling, but not frequency or cache contention. These are isolated kernel
+measurements on this machine, not end-to-end application results or performance
+measurements for `f32`, Linux or x86-64.
+
+### Validation
+
+- All **1,072 supported macOS core tests** pass. Coverage is audited against
+  CTest: 931 compiler cases pass in the unfiltered compiler run, followed by all
+  141 remaining runtime, tooling and acceptance cases. The unfiltered run has
+  978 tests overall, with 974 passing and the four documented deferred async/spawn
+  failures outside the supported core set.
+- **128 focused Linux ARM64 tests** pass with LLVM 21.1.8, covering lowering,
+  CLI and JIT execution. Linux x86-64 was not executed in this validation.
+- **80 macOS ASan/UBSan tests** pass. Compiler and test code are instrumented;
+  generated Gloin machine code is not. Leak detection is disabled.
+- Structural regressions cover both widths and operand positions, discarded
+  sums, idempotence, fourteen refusal cases per width, and poison/undef addends.
+  The latter retain the mandatory product trap after LLVM O2 optimization.
+  Runtime cases cover separate rounding, product/sum overflow, discarded
+  results, intervening effects and conditional/division consumers in JIT,
+  native O0 and O2.
+- An independent C oracle checks **835,168 calls** across before/after compilers
+  at O0/O2: 52,198 triples per width, both returned and discarded. Finite results
+  agree bitwise with separately rounded multiplication/addition, and invalid
+  results trap even when discarded. Inputs include deterministic random raw
+  bits, signed zeros, subnormals, extreme finite values, infinities, quiet and
+  signaling NaNs, and contraction-sensitive cases.
+- A separate dot-product oracle passes **20,299 bitwise cases and 20 expected
+  traps per compiler**, including aliasing and protected-page tails. All seven
+  HTML pages and their local links pass the Gloin documentation checker.
+
+This adjacent-pair change did not implement whole-loop deferral. The next
+milestone below establishes the stronger storage and failure-order conditions
+for a bounded set of local reductions.
+
+## Local floating reductions — 2026-10-19
+
+GIR now versions ordered `f32`/`f64` dot products over initialized local fixed
+arrays and their borrowed views. A range predicate selects a fast loop with one
+mandatory finite check at its exit, or the original checked loop. Products round
+separately and additions retain their source order. The final check remains even
+when the result is unused. The adjacent-pair rule still applies to the fallback.
+
+The proof requires a zero-initialized private accumulator, a terminating unit
+counter, valid reads throughout the selected range, and no crossed effects or
+other failures. Storage must trace to a matching local allocation and dominating
+whole initialization. Address and descriptor uses are audited; escaped pointers,
+calls with borrowed storage, missing/conditional initialization, stack restoration,
+unsupported layouts and unrepresentable extents prevent deferral. Read-only slice
+types alone supply no lifetime proof. Full rules and bounds are in the
+[lowering guide](lowering.md#local-floating-reductions-2026-10-19).
+
+The existing generic borrowed-slice dot function **does not qualify**. Its O2
+native object is byte-for-byte identical before and after this change. The
+transformation does not infer allocation validity from descriptor lengths or
+change the slice ABI. Arena/vector storage and interprocedural lifetime proofs
+remain outside this milestone.
+
+### Validation
+
+The full **1,078-test macOS core suite** passes. Subsequent extent, layout and
+stack-lifetime rejection hardening is covered by **89 focused tests on the final
+macOS compiler**, including all lowering tests and the GIR/JIT execution matrices.
+Structural tests cover both widths, arrays and slices, used/discarded results,
+the original fallback, and rejection of missing storage/effect/failure facts.
+Optimized mixed GIR/LLVM tests require an unconditional trap after early overflow
+even when a later input is poison or undef.
+
+**89 focused Linux ARM64 tests** pass with LLVM 21.1.8; three proof/rejection
+tests are rerun successfully after the final stack-restoration guard. **89 macOS
+ASan/UBSan tests** pass on the final compiler with LLVM 21.1.6. Leak detection is
+disabled; compiler and test code are instrumented, generated Gloin code is not.
+All seven HTML pages and their local links pass the Gloin documentation checker.
+Linux x86-64 execution was not tested in this milestone.
+
+An independent C reference checks **20,299 bitwise cases and 20 expected traps**
+per width, compiler and optimization level: **162,392 finite cases and 160 traps**
+across before/after, f32/f64 and O0/O2. These cover random exponents/mantissas,
+signed zeros, subnormals, extreme values, NaNs/infinities, cancellation,
+contraction-sensitive inputs, empty/negative counts, aliases, short descriptors
+and protected-page tails. A separate borrowed-slice test requires early overflow
+to trap before a later protected-page read; a finite-input control confirms the
+memory fault is otherwise reached. All four before/after O0/O2 builds agree.
+The final compiler emits byte-identical validation objects after proof hardening.
+
+The measured local-storage program copies inputs into fixed arrays before its
+reduction. Those copies are explicit source operations in both compiler builds;
+they are not inserted by this optimization. Its correctness and timing results
+must be kept separate from the generic-slice benchmark above.
+
+### Measurement
+
+Two separate fixtures use the same matrix values, ascending-index products/adds
+and independent cell-by-cell reference. Apple M2/macOS uses LLVM 21.1.6, native
+Gloin O2 and C `-O2 -mcpu=native -ffp-contract=off`, without fast-math or LTO.
+Each variant links a common separate-translation-unit C driver. Input generation,
+transposition and reference/output verification are outside the timer; local
+array initialization, copying and calculation are inside it.
+
+Each fixture has five variants: Gloin before/after, C checking products and sums,
+C checking the final sum, and C omitting bounds and finite checks. The last has
+a weaker failure contract. Each size/variant has two warmups and ten measured
+samples with balanced run positions. Sizes 128/256/512 use 128/16/2 repetitions,
+giving 268,435,456 products per sample. CPU and monotonic wall time are recorded.
+All **360 timed executions** and **125 additional size/variant checks** pass
+bitwise verification across the two fixtures.
+
+The first fixture copies two slices into local arrays of capacity 1,024 for
+**every dot product**. Initialization and copying add substantial work. Before
+CPU medians are 1,122.482/858.957/675.932 ms; after medians are
+1,094.237/834.284/668.742 ms. Reductions are **2.5%, 2.9% and 1.1%**; 29 of 30
+paired comparisons improve. One size-128 pair regresses by 1.9% and is retained.
+This does not establish a benefit from adding copies to an existing program.
+
+The second fixture owns two `[[f64; 512]; 512]` matrices for the entire
+multiplication. Each invocation initializes and copies them **once**, then
+borrows their rows for every dot product. Both compiler versions compile the
+same source; C uses the same owned-array structure. The local matrices occupy
+4 MiB of stack storage. Median CPU times ± median absolute deviation, in ms:
+
+| Variant | Size 128 | Size 256 | Size 512 |
+| --- | ---: | ---: | ---: |
+| Gloin before | 364.708 ± 0.833 | 389.969 ± 0.524 | 400.035 ± 0.466 |
+| Gloin after | 243.472 ± 0.701 | 246.267 ± 0.700 | 322.458 ± 0.363 |
+| C, product and sum checks | 418.543 ± 0.564 | 424.835 ± 2.833 | 424.471 ± 1.113 |
+| C, final sum check | 242.284 ± 0.548 | 245.730 ± 0.291 | 322.209 ± 0.520 |
+| C, neither check | 238.411 ± 1.217 | 243.302 ± 0.297 | 321.395 ± 0.167 |
+
+Gloin uses **33.2%, 36.9% and 19.4% less CPU time**. All 30 paired comparisons
+improve, with reductions ranging from 18.2% to 37.6%. The updated medians are
+0.49%, 0.22% and 0.08% above C with a final check, with overlapping sample ranges;
+this batch does not establish a meaningful speed difference between them.
+Relative to C without either check, Gloin takes 2.12%, 1.22% and 0.33% more CPU
+time. Before wall medians are 365.475/390.328/400.420 ms; after medians are
+243.705/246.710/322.894 ms.
+
+The matrix function grows from **488 to 636 bytes**. The fast inner loop uses
+two-lane SIMD multiplies and scalar additions in source order, with its finite
+check after the reduction. No FMA or reassociation is introduced. The separate
+per-dot-copy fixture grows from 716 to 880 bytes for f64, and from 716 to 1,060
+bytes for f32; these counts include copying and checked fallbacks/tails.
+
+No task builds, tests or profiling run during either timing batch. Desktop
+background activity remains, and all outliers are retained. The second batch
+has substantial slow samples: for example, size-256 Gloin after reaches
+357.710 ms versus a 246.267 ms median. CPU time excludes descheduling, but not
+frequency or cache contention. Compiler, source, runtime, object and executable
+hashes remain unchanged through sampling.
+
+These results measure the eligible local-storage programs on this machine.
+They do not measure an improvement to the earlier borrowed-slice kernel or the
+arena/vector matrix application. Linux and f32 have correctness coverage here;
+their performance, and Linux x86-64 execution, are unmeasured.
+
+## Candidate release audit — 2026-10-19
+
+The final working-tree audit passes 1,078 core tests on both macOS ARM64 and
+Ubuntu ARM64, plus 1,078 macOS ASan/UBSan core tests. Installed and relocated
+packages each pass 552 tests on both platforms, including separate TLS,
+HTTP/HTTPS, JSON and million-record integration drivers. Serial and parallel
+complete-suite reports each contain 1,121 passes and exactly the four documented
+async/spawn failures, with no skipped or duplicate cases.
+
+Linux crash-report contention required running the large arithmetic and GIR
+CLI matrices alone. Their assertions, deadlines and process behavior remain
+unchanged; the initial failed and interrupted attempts are retained. The
+[release guide](release-0.2.0.md#verification-boundary) records the full boundary,
+including example, documentation, package and sanitizer checks. Hosted macOS
+and Ubuntu x86_64 checks on the tagged revision are required for publication;
+their reports accompany the release.
+
 ## Remaining limitations
 
 PERF-001 through PERF-009 are complete within the scopes recorded above.
 General aggregate/array ABI costs remain. The arithmetic comparison includes
 small execution regressions; matrix application timings are mixed and noisy.
-Checked floating-point SIMD still needs a proof or transformation preserving
-ordered results and failures. Interpreter sampling does not isolate the cost
+Adjacent product/sum finite checks share one mandatory check. Eligible local
+reductions now defer that check to their exit, allowing ordered SIMD. Arbitrary
+borrowed slices and arena/vector buffers still need stronger storage and lifetime
+evidence before applying the same transformation.
+Interpreter sampling does not isolate the cost
 of each dispatch, bounds or null check.
 
 The fixes preserve arithmetic, bounds, null, initialization, result-handling

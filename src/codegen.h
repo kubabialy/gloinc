@@ -149,6 +149,9 @@ class CodeGen {
                     const Statement *alternative, bool invert = false);
     void gen_for(const ForStatement *statement);
     void gen_while(const WhileStatement *statement);
+    mlir::ArrayAttr case_keys(const std::vector<const CasePattern *> &patterns);
+    void gen_switch(const SwitchStatement *statement);
+    mlir::Value gen_match(const MatchExpression *expression);
     void gen_statement(const Statement *stmt);
     mlir::Value gen_expression(const Expression *expr, bool allow_void = false);
     mlir::Value gen_layout_expression(const Expression *expr, bool allow_void = false);

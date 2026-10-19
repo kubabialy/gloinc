@@ -74,47 +74,65 @@ TEST_F(StringLibraryTest, SharedStatusesRetainCompatibilityAndDistinctBoundsFail
 
 TEST_F(StringLibraryTest, LengthEqualityAndOrderingUseCountedUnsignedBytes) {
     auto file = program(R"(
-        def line: std.InputResult = std.input(&memory, 8);
-        if line.status != status.OK || strings.byte_length(line.value) != 4 { return 1; }
+        def line_result: result<std.InputLine> = std.input(&memory, 8);
+        if line_result.erroneous { return 97; }
+        def line: std.InputLine = line_result.value;
+        if line.end || strings.byte_length(line.value) != 4 { return 1; }
         if strings.byte_length("café") != 5 || !strings.is_empty("") || strings.is_empty("\0") { return 2; }
         if !strings.equal("a\0b", "a\0b") || strings.equal("a\0b", "a\0c") { return 3; }
         if strings.compare("", "") != 0 || strings.compare("ab", "abc") != -1
             || strings.compare("abc", "ab") != 1 || strings.compare("b", "a") != 1 { return 4; }
-        def high: strings.StringResult = strings.slice_bytes(line.value, 1, 1);
-        def byte: strings.ByteResult = strings.byte_at(line.value, 1);
-        if high.status != status.OK || byte.status != status.OK || byte.value != 255 { return 5; }
+        def high: result<string> = strings.slice_bytes(line.value, 1, 1);
+        if high.erroneous { return 97; }
+        def byte: result<u8> = strings.byte_at(line.value, 1);
+        if byte.erroneous { return 97; }
+        if high.erroneous || byte.erroneous || byte.value != 255 { return 5; }
         if strings.compare(high.value, "z") != 1 { return 6; }
         std.print(line.value); return 0;)");
     const std::string bytes = std::string("a") + char(255) + std::string("\0b", 2);
     expect_run(invoke({file}, source(bytes + "\n", "stdin")), 0, bytes);
 }
 
-TEST_F(StringLibraryTest, ByteAndSliceBoundariesNeverWrapAndFailuresHaveEmptyPayloads) {
+TEST_F(StringLibraryTest, ByteAndSliceBoundariesNeverWrapAndFailuresPreserveCodes) {
     expect_run(invoke({program(R"(
-        def first: strings.ByteResult = strings.byte_at("abc", 0);
-        def last: strings.ByteResult = strings.byte_at("abc", 2);
-        def empty: strings.ByteResult = strings.byte_at("", 0);
-        def end: strings.ByteResult = strings.byte_at("abc", 3);
-        def huge: strings.ByteResult = strings.byte_at("abc", 18446744073709551615);
-        if first.status != status.OK || first.value != 97 || last.value != 99 { return 1; }
-        if empty.status != status.OUT_OF_RANGE || end.status != status.OUT_OF_RANGE
-            || huge.status != status.OUT_OF_RANGE || empty.value != 0 || end.value != 0 || huge.value != 0 { return 2; }
-        def all: strings.StringResult = strings.slice_bytes("abc", 0, 3);
-        def tail: strings.StringResult = strings.slice_bytes("abc", 3, 0);
-        def none: strings.StringResult = strings.slice_bytes("", 0, 0);
-        if all.status != status.OK || !strings.equal(all.value, "abc")
-            || tail.status != status.OK || !strings.is_empty(tail.value)
-            || none.status != status.OK { return 3; }
-        def a: strings.StringResult = strings.slice_bytes("abc", 4, 0);
-        def b: strings.StringResult = strings.slice_bytes("abc", 2, 2);
-        def c: strings.StringResult = strings.slice_bytes("abc", 18446744073709551615, 2);
-        def d: strings.StringResult = strings.slice_bytes("abc", 1, 18446744073709551615);
-        if a.status != status.OUT_OF_RANGE || b.status != status.OUT_OF_RANGE
-            || c.status != status.OUT_OF_RANGE || d.status != status.OUT_OF_RANGE { return 4; }
-        if !strings.is_empty(a.value) || !strings.is_empty(b.value)
-            || !strings.is_empty(c.value) || !strings.is_empty(d.value) { return 5; }
-        def utf8: strings.StringResult = strings.slice_bytes("é", 1, 1);
-        def continuation: strings.ByteResult = strings.byte_at(utf8.value, 0);
+        def first: result<u8> = strings.byte_at("abc", 0);
+        if first.erroneous { return 97; }
+        def last: result<u8> = strings.byte_at("abc", 2);
+        if last.erroneous { return 97; }
+        def empty: result<u8> = strings.byte_at("", 0);
+        if !empty.erroneous { return 97; }
+        def end: result<u8> = strings.byte_at("abc", 3);
+        if !end.erroneous { return 97; }
+        def huge: result<u8> = strings.byte_at("abc", 18446744073709551615);
+        if !huge.erroneous { return 97; }
+        if first.erroneous || first.value != 97 || last.value != 99 { return 1; }
+        if empty.error.code != status.OUT_OF_RANGE || end.error.code != status.OUT_OF_RANGE
+            || huge.error.code != status.OUT_OF_RANGE || empty.error.os_error != 0 || end.error.os_error != 0 || huge.error.os_error != 0 { return 2; }
+        def all: result<string> = strings.slice_bytes("abc", 0, 3);
+        if all.erroneous { return 97; }
+        def tail: result<string> = strings.slice_bytes("abc", 3, 0);
+        if tail.erroneous { return 97; }
+        def none: result<string> = strings.slice_bytes("", 0, 0);
+        if none.erroneous { return 97; }
+        if all.erroneous || !strings.equal(all.value, "abc")
+            || tail.erroneous || !strings.is_empty(tail.value)
+            || none.erroneous { return 3; }
+        def a: result<string> = strings.slice_bytes("abc", 4, 0);
+        if !a.erroneous { return 97; }
+        def b: result<string> = strings.slice_bytes("abc", 2, 2);
+        if !b.erroneous { return 97; }
+        def c: result<string> = strings.slice_bytes("abc", 18446744073709551615, 2);
+        if !c.erroneous { return 97; }
+        def d: result<string> = strings.slice_bytes("abc", 1, 18446744073709551615);
+        if !d.erroneous { return 97; }
+        if a.error.code != status.OUT_OF_RANGE || b.error.code != status.OUT_OF_RANGE
+            || c.error.code != status.OUT_OF_RANGE || d.error.code != status.OUT_OF_RANGE { return 4; }
+        if a.error.os_error != 0 || b.error.os_error != 0
+            || c.error.os_error != 0 || d.error.os_error != 0 { return 5; }
+        def utf8: result<string> = strings.slice_bytes("é", 1, 1);
+        if utf8.erroneous { return 97; }
+        def continuation: result<u8> = strings.byte_at(utf8.value, 0);
+        if continuation.erroneous { return 97; }
         if continuation.value != 169 { return 6; } return 0;)")}),
                0);
 }
@@ -140,8 +158,10 @@ TEST_F(StringLibraryTest, SearchDistinguishesZeroAbsentEmptyAndLastMatch) {
 
 TEST_F(StringLibraryTest, TrimmingUsesExactlyAsciiWhitespaceAndPreservesInterior) {
     auto file = program(R"(
-        def input: std.InputResult = std.input(&memory, 32);
-        if input.status != status.OK || !strings.equal(strings.trim_ascii(input.value), "a b") { return 1; }
+        def input_result: result<std.InputLine> = std.input(&memory, 32);
+        if input_result.erroneous { return 97; }
+        def input: std.InputLine = input_result.value;
+        if input.end || !strings.equal(strings.trim_ascii(input.value), "a b") { return 1; }
         if !strings.equal(strings.trim_start_ascii(" \tx \r"), "x \r")
             || !strings.equal(strings.trim_end_ascii(" \tx \r"), " \tx") { return 2; }
         if !strings.is_empty(strings.trim_ascii(" \t\r\n")) || !strings.is_empty(strings.trim_ascii("")) { return 3; }
@@ -191,16 +211,20 @@ TEST_F(StringLibraryTest, DeterministicSearchAndOrderingAgreeWithIndependentOrac
 TEST_F(StringLibraryTest, CopiedBytesOutliveSourceResetAndFreeIncludingNul) {
     expect_run(invoke({program(R"(
         def mut source: arena.GeneralArena = arena.GeneralArena.create();
-        def original: strings.StringResult = strings.copy(&source, " a\0b ");
-        if original.status != status.OK { return 1; }
-        def kept: strings.StringResult = strings.copy(&memory, strings.trim_ascii(original.value));
-        if kept.status != status.OK { return 2; }
+        def original: result<string> = strings.copy(&source, " a\0b ");
+        if original.erroneous { return 97; }
+        if original.erroneous { return 1; }
+        def kept: result<string> = strings.copy(&memory, strings.trim_ascii(original.value));
+        if kept.erroneous { return 97; }
+        if kept.erroneous { return 2; }
         source.reset();
-        def overwrite: strings.StringResult = strings.copy(&source, "xxxxx");
+        def overwrite: result<string> = strings.copy(&source, "xxxxx");
+        if overwrite.erroneous { return 97; }
         source.free();
         if !strings.equal(kept.value, "a\0b") { return 3; }
-        def same: strings.StringResult = strings.copy(&memory, kept.value);
-        if same.status != status.OK || !strings.equal(same.value, kept.value) { return 4; }
+        def same: result<string> = strings.copy(&memory, kept.value);
+        if same.erroneous { return 97; }
+        if same.erroneous || !strings.equal(same.value, kept.value) { return 4; }
         std.print(same.value); return 0;)")}),
                0, std::string("a\0b", 3));
 }
@@ -218,26 +242,33 @@ TEST_F(StringLibraryTest, BorrowedViewsAndSearchRequireNoArenaAndCopiesFailExpli
     auto file = program(R"(
         def text: string = strings.trim_ascii(" a=b ");
         def position: strings.FindResult = strings.find(text, "=");
-        def key: strings.StringResult = strings.slice_bytes(text, 0, position.offset);
-        def byte: strings.ByteResult = strings.byte_at(text, 0);
-        if !position.found || key.status != status.OK || !strings.equal(key.value, "a")
+        def key: result<string> = strings.slice_bytes(text, 0, position.offset);
+        if key.erroneous { return 97; }
+        def byte: result<u8> = strings.byte_at(text, 0);
+        if byte.erroneous { return 97; }
+        if !position.found || key.erroneous || !strings.equal(key.value, "a")
             || byte.value != 97 || strings.compare(key.value, "a") != 0 { return 1; }
         if !strings.starts_with(text, "a") || !strings.ends_with(text, "b")
             || !strings.contains(text, "=") || strings.byte_length(text) != 3 { return 2; }
-        def copied: strings.StringResult = strings.copy(&memory, text);
-        def empty: strings.StringResult = strings.copy(&memory, "");
-        if copied.status != status.NO_MEMORY || !strings.is_empty(copied.value)
-            || empty.status != status.OK || !strings.is_empty(empty.value) { return 3; }
+        def copied: result<string> = strings.copy(&memory, text);
+        if !copied.erroneous { return 97; }
+        def empty: result<string> = strings.copy(&memory, "");
+        if empty.erroneous { return 97; }
+        if copied.error.code != status.NO_MEMORY || copied.error.os_error != 0
+            || empty.erroneous || !strings.is_empty(empty.value) { return 3; }
         return 0;)");
     expect_run(invoke({"--stdlib-dir", directory, file}), 0);
 }
 
 TEST_F(StringLibraryTest, EmptyCopyDoesNotInspectArenaButNonemptyCopyRequiresLiveHandle) {
     expect_run(invoke({program(
-                   R"(memory.free(); def outcome: strings.StringResult = strings.copy(&memory, "");
-        if outcome.status != status.OK || !strings.is_empty(outcome.value) { return 1; } return 0;)")}),
+                   R"(memory.free(); def outcome: result<string> = strings.copy(&memory, "");
+        if outcome.erroneous { return 97; }
+        if outcome.erroneous || !strings.is_empty(outcome.value) { return 1; } return 0;)")}),
                0);
-    EXPECT_EQ(invoke({program("memory.free(); strings.copy(&memory, \"x\"); return 0;")}).status,
+    EXPECT_EQ(invoke({program("memory.free(); def copied: result<string> = strings.copy(&memory, "
+                              "\"x\"); if copied.erroneous { return 1; } return 0;")})
+                  .status,
               -2);
 }
 
@@ -298,8 +329,9 @@ TEST_F(StringLibraryTest, PublicLibraryRemainsReplaceableAndNativeSymbolsCannotC
              source(
                  "import \"@strings\"; def main() -> i32 { return strings.byte_length(\"\"); }")}),
         42);
-    expect_run(invoke({program(R"(def text: strings.StringResult = strings.copy(&memory, "x");
-        if text.status != status.OK { return 1; } return gloin_strings_copy();)",
+    expect_run(invoke({program(R"(def text: result<string> = strings.copy(&memory, "x");
+        if text.erroneous { return 97; }
+        if text.erroneous { return 1; } return gloin_strings_copy();)",
                                "def gloin_strings_copy() -> i32 { return 42; }")}),
                42);
 }
@@ -324,11 +356,13 @@ TEST_F(StringLibraryTest, JitRejectsIncorrectCopyRuntimeAbi) {
 
 TEST_F(StringLibraryTest, ExternalLlvmExecutionUsesNativeCopyAndByteOperations) {
     auto ir = invoke({"--emit-llvm", program(R"(
-        def text: strings.StringResult = strings.copy(&memory, " a\0b ");
-        if text.status != status.OK { return 1; }
+        def text: result<string> = strings.copy(&memory, " a\0b ");
+        if text.erroneous { return 97; }
+        if text.erroneous { return 1; }
         if !strings.equal(strings.trim_ascii(text.value), "a\0b") { return 2; }
-        def byte: strings.ByteResult = strings.byte_at(text.value, 2);
-        if byte.status != status.OK || byte.value != 0 { return 3; } return 42;)")});
+        def byte: result<u8> = strings.byte_at(text.value, 2);
+        if byte.erroneous { return 97; }
+        if byte.erroneous || byte.value != 0 { return 3; } return 42;)")});
     ASSERT_EQ(ir.status, 0) << ir.err;
     const char *runtime = std::getenv("GLOIN_TEST_ARENA_RUNTIME");
     gloin_test::ToolCommand runner{
@@ -386,13 +420,85 @@ TEST_F(StringLibraryTest, NullEmptyDescriptorCanBeSlicedTrimmedSearchedAndCopied
     const auto file = program(R"(
         def empty: string = std.empty();
         if !strings.is_empty(empty) || !strings.equal(strings.trim_ascii(empty), "") { return 1; }
-        def slice: strings.StringResult = strings.slice_bytes(empty, 0, 0);
-        def byte: strings.ByteResult = strings.byte_at(empty, 0);
+        def slice: result<string> = strings.slice_bytes(empty, 0, 0);
+        if slice.erroneous { return 97; }
+        def byte: result<u8> = strings.byte_at(empty, 0);
+        if !byte.erroneous { return 97; }
         def found: strings.FindResult = strings.find(empty, "");
-        def copy: strings.StringResult = strings.copy(&memory, empty);
-        if slice.status != status.OK || !strings.is_empty(slice.value)
-            || byte.status != status.OUT_OF_RANGE || !found.found || found.offset != 0
-            || copy.status != status.OK || !strings.is_empty(copy.value) { return 2; }
+        def copy: result<string> = strings.copy(&memory, empty);
+        if copy.erroneous { return 97; }
+        if slice.erroneous || !strings.is_empty(slice.value)
+            || byte.error.code != status.OUT_OF_RANGE || !found.found || found.offset != 0
+            || copy.erroneous || !strings.is_empty(copy.value) { return 2; }
         return 0;)");
     expect_run(invoke({"--stdlib-dir", directory, file}), 0);
+}
+
+TEST_F(StringLibraryTest, ResultsRequireHandlingAndRejectInactiveOrLegacyPayloadAccess) {
+    for (const std::string body :
+         {"strings.byte_at(\"x\", 0);", "def r: result<string> = strings.copy(&memory, \"x\");",
+          "def n: u8 = strings.byte_at(\"x\", 0).value;",
+          "def r: result<u8> = strings.byte_at(\"x\", 0); def n: u8 = r.value;",
+          "def r: result<string> = strings.slice_bytes(\"x\", 2, 1); "
+          "if r.erroneous { std.println(r.value); }",
+          "def r: result<string> = strings.copy(&memory, \"x\"); "
+          "if r.erroneous { return 1; } std.println(r.error.message);",
+          "def r: strings.StringResult = strings.copy(&memory, \"x\");",
+          "def r: strings.ByteResult = strings.byte_at(\"x\", 0);"}) {
+        const auto file = program(body + " return 0;");
+        for (const auto *mode : {"--check", "--emit-ir", "--emit-llvm", "--jit"})
+            expect_error(invoke({mode, file}), 1, "error:");
+    }
+}
+
+TEST_F(StringLibraryTest, CodesAliasesAndForwardingUseGloinIrInJitAndNativeModes) {
+    const auto file = program(R"(
+        def byte: result<u8> = strings.byte_at("a\0b", 1);
+        if byte.erroneous { return 1; }
+        if byte.value != 0 { return 2; }
+        def view: result<string> = strings.slice_bytes("a\0b", 1, 2);
+        if view.erroneous { return 3; }
+        if !strings.equal(view.value, "\0b") { return 4; }
+        def ordinary: result<u8> = strings.byte_at("", 0);
+        if !ordinary.erroneous { return 5; }
+        def alias: result<u8> = strings.byte_at_checked("", 0);
+        if !alias.erroneous { return 6; }
+        if ordinary.error.code != status.OUT_OF_RANGE || ordinary.error.os_error != 0
+            || !strings.equal(ordinary.error.message, "string byte index is out of range")
+            || alias.error.code != ordinary.error.code
+            || !strings.equal(alias.error.message, ordinary.error.message) { return 7; }
+        def code: i32 = match forwarded() {
+            case value(text) => 0;
+            case error(problem) => problem.code;
+        };
+        if code != status.OUT_OF_RANGE { return 8; }
+        memory.free();
+        def empty: result<string> = strings.copy(&memory, "");
+        if empty.erroneous { return 9; }
+        if !strings.is_empty(empty.value) { return 10; }
+        return 42;
+    )",
+                              R"(
+        def forwarded() -> result<string> {
+            def part: result<string> = strings.slice_bytes_checked("abc", 1, 18446744073709551615);
+            if part.erroneous { return part.error; }
+            return part.value;
+        }
+    )");
+    const auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *operation : {"!gloin.result<", "!gloin.error", "gloin.result_success",
+                                  "gloin.result_failure", "gloin.error_code", "gloin.match"})
+        EXPECT_NE(ir.out.find(operation), std::string::npos) << operation;
+    expect_run(invoke({file}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/string-results";
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        std::string message;
+        bool failed = false;
+        const auto code = llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10,
+                                                    0, &message, &failed);
+        EXPECT_FALSE(failed) << message;
+        EXPECT_EQ(code, 42) << message;
+    }
 }

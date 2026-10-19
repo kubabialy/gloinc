@@ -4,7 +4,7 @@ import "./codec";
 def copy(text: string, output: [u8]) -> u64 {
     def length: u64 = strings.byte_length(text);
 
-    for def mut i: u64 = 0; i < length; i = i + 1 { output[i] = strings.byte_at(text, i).value; }
+    for def mut i: u64 = 0; i < length; i = i + 1 { output[i] = byte_or_zero(text, i); }
 
     return length;
 }
@@ -15,7 +15,7 @@ def main() -> i32 {
     def mut number: u8       = 0;
 
     for def mut i: u64 = 0; i < 64; i = i + 1 {
-        table[strings.byte_at(alphabet, i).value] = number;
+        table[byte_or_zero(alphabet, i)] = number;
         number = number + 1;
     }
 
@@ -124,4 +124,13 @@ def main() -> i32 {
     if !invalid_table.erroneous { return 11; }
 
     return 42;
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
 }

@@ -17,8 +17,8 @@ def checked_capture(memory: &arena.GeneralArena, work: string, name: string, exe
     def suffixes: [string; 2] = {".out", ".err"};
 
     for def mut i: u64 = 0; i < 2; i = i + 1 {
-        def leaf: strings.StringResult = strings.concat(memory, name, suffixes[i], 256);
-        if leaf.status != status.OK { return error("cannot make JSON capture name"); }
+        def leaf: result<string> = strings.concat(memory, name, suffixes[i], 256);
+        if leaf.erroneous { return error("cannot make JSON capture name"); }
 
         def path: result<string> = common.join(memory, work, leaf.value);
         if path.erroneous { return path.error; }
@@ -65,8 +65,8 @@ def jobs(memory: &arena.GeneralArena, compiler: string, root: string, example: s
 
     for def mut mode: u64 = 0; mode < 3; mode = mode + 1 {
         for def mut source: u64 = 0; source < 3; source = source + 1 {
-            def joined: strings.StringResult = strings.concat(memory, modes[mode], names[source], 128);
-            if joined.status != status.OK { return error("cannot make JSON job name"); }
+            def joined: result<string> = strings.concat(memory, modes[mode], names[source], 128);
+            if joined.erroneous { return error("cannot make JSON job name"); }
 
             def label: string = joined.value;
 
@@ -79,8 +79,8 @@ def jobs(memory: &arena.GeneralArena, compiler: string, root: string, example: s
                 def path: result<string> = common.join(memory, work, label);
                 if path.erroneous { return path.error; }
 
-                def compile_label: strings.StringResult = strings.concat(memory, label, "-compile", 256);
-                if compile_label.status != status.OK { return error("cannot make JSON compile label"); }
+                def compile_label: result<string> = strings.concat(memory, label, "-compile", 256);
+                if compile_label.erroneous { return error("cannot make JSON compile label"); }
 
                 def args: [string; 4]   = {options[mode], "-o", path.value, sources[source]};
                 def built: result<void> = checked_capture(memory, work, compile_label.value, compiler, args[..], "");
@@ -112,8 +112,8 @@ def main() -> i32 {
     def mut args: [string; 3] = zeroed;
 
     for def mut i: u64 = 0; i < 3; i = i + 1 {
-        def argument: process.TextResult = process.arg(&memory, i + 1);
-        if argument.status != status.OK { return 2; }
+        def argument: result<string> = process.arg(&memory, i + 1);
+        if argument.erroneous { return 2; }
 
         def canonical: result<string> = fs.canonical_path(&memory, argument.value, 65536);
         if canonical.erroneous { common.report(canonical.error.message); return 2; }
@@ -124,8 +124,8 @@ def main() -> i32 {
     def mut example: string = "examples/json.gloin";
 
     if process.arg_count() == 5 {
-        def argument: process.TextResult = process.arg(&memory, 4);
-        if argument.status != status.OK { return 2; }
+        def argument: result<string> = process.arg(&memory, 4);
+        if argument.erroneous { return 2; }
 
         def canonical: result<string> = fs.canonical_path(&memory, argument.value, 65536);
         if canonical.erroneous { common.report(canonical.error.message); return 2; }

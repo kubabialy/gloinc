@@ -1,9 +1,9 @@
-# Numbers: parsing, formatting, and explicit conversion (SPEC-030c)
+# Numbers: parsing, formatting, and explicit conversion (SPEC-030c, 0.2.0)
 
-Import `@std` for these functions and `@status` for status constants. The public
-implementation is [stdlib/std.gloin](../stdlib/std.gloin); results are ordinary
-structs. There are no implicit casts or implicit number-to-string conversions.
-The existing `to_int`, `to_string`, and `input` contracts remain unchanged.
+Import `@std` for these functions and `@status` for error categories. The public
+implementation is [stdlib/std.gloin](../stdlib/std.gloin). Fallible operations
+return built-in `result<T>`; three infallible conversions return plain numbers.
+There are no implicit casts or implicit number-to-string conversions.
 
 ## Parse, inspect, format
 
@@ -13,19 +13,20 @@ import "@status";
 import "@arena";
 
 def main() -> i32 {
-    def parsed: std.F64Result = std.parse_f64("+1.25e0");
-    if parsed.status != status.OK { return 1; }
+    def parsed: result<f64> = std.parse_f64("+1.25e0");
+    if parsed.erroneous { return 1; }
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
-    def text: std.FormatResult = std.format_f64_fixed(&memory, parsed.value, 2);
-    if text.status != status.OK { return 2; }
+    def text: result<string> = std.format_f64_fixed(&memory, parsed.value, 2);
+    if text.erroneous { return 2; }
     std.println(text.value);
     return 0;
 }
 ```
 
-This prints `1.25` and returns zero. Check `status` before using `value`: failure
-payloads are integer zero, positive floating zero, `false`, or static `""`.
+This prints `1.25` and returns zero. Check `.erroneous` or match a result before
+reading its active payload. Failure exposes only an error, with no readable
+zero/false/empty fallback. Error `.code` uses `@status`; `.os_error` is zero.
 `OK` is 0, `INVALID` 2, `OVERFLOW` 3, `NO_MEMORY` 6, `INEXACT` 8, and `UNDERFLOW` 9.
 Existing statuses keep their values. Both new statuses are also aliases in `std`.
 Successful parse/conversion results own no storage and retain no input reference.
@@ -39,12 +40,12 @@ Malformed input returns `INVALID` even if a numeric prefix would overflow.
 
 | Call example | Return type | Successful value / grammar | Failure statuses | Cost |
 | --- | --- | --- | --- | --- |
-| `std.parse_i32("-42")` | `std.IntResult` | `-42`; `[+-]?[0-9]+` | `INVALID`, `OVERFLOW` | O(n), no allocation |
-| `std.parse_i64("-9223372036854775808")` | `std.I64Result` | i64 minimum; same signed grammar | `INVALID`, `OVERFLOW` | O(n), no allocation |
-| `std.parse_u64("+18446744073709551615")` | `std.U64Result` | u64 maximum; `[+]?[0-9]+` | `INVALID`, `OVERFLOW` | O(n), no allocation |
-| `std.parse_f32(".125e1")` | `std.F32Result` | `1.25`; decimal float grammar below | `INVALID`, `OVERFLOW`, `UNDERFLOW` | O(n), no allocation |
-| `std.parse_f64("+1.25E+0")` | `std.F64Result` | `1.25`; decimal float grammar below | `INVALID`, `OVERFLOW`, `UNDERFLOW` | O(n), no allocation |
-| `std.parse_bool("true")` | `std.BoolResult` | `true`; exactly `true` or `false` | `INVALID` | O(1), no allocation |
+| `std.parse_i32("-42")` | `result<i32>` | `-42`; `[+-]?[0-9]+` | `INVALID`, `OVERFLOW` | O(n), no allocation |
+| `std.parse_i64("-9223372036854775808")` | `result<i64>` | i64 minimum; same signed grammar | `INVALID`, `OVERFLOW` | O(n), no allocation |
+| `std.parse_u64("+18446744073709551615")` | `result<u64>` | u64 maximum; `[+]?[0-9]+` | `INVALID`, `OVERFLOW` | O(n), no allocation |
+| `std.parse_f32(".125e1")` | `result<f32>` | `1.25`; decimal float grammar below | `INVALID`, `OVERFLOW`, `UNDERFLOW` | O(n), no allocation |
+| `std.parse_f64("+1.25E+0")` | `result<f64>` | `1.25`; decimal float grammar below | `INVALID`, `OVERFLOW`, `UNDERFLOW` | O(n), no allocation |
+| `std.parse_bool("true")` | `result<bool>` | `true`; exactly `true` or `false` | `INVALID` | O(1), no allocation |
 
 Here n is input bytes; numeric parsers use bounded auxiliary storage independent
 of n and impose no arbitrary text-length limit. `parse_i32` is the named equivalent
@@ -63,7 +64,7 @@ of the process locale.
 
 ## Formatters
 
-All numeric formatters return `std.FormatResult { status, value }`. They take
+All numeric formatters return `result<string>`. They take
 `&arena.GeneralArena` first, followed by a value of the width named in the function.
 The fixed forms take a final `precision: u32` in 0…18. No implicit widening occurs.
 In the examples below, `memory` is a mutable `arena.GeneralArena`.
@@ -106,49 +107,51 @@ independent. Precision above 18 returns `INVALID` **before allocation**.
 Native nonfinite values are rejected with `INVALID`; ordinary Gloin arithmetic
 already traps on nonfinite results. Internal buffer overflow returns `OVERFLOW`,
 although the documented buffer sizes suffice for every supported value/precision.
-The older `to_string(&memory, i32)` still returns a plain string and traps on
-allocation failure. Choose `format_i32` when allocation failure must be recoverable.
+`to_string(&memory, i32)` now returns `result<string>` and forwards `format_i32`,
+including recoverable allocation failure.
 `std.to_string_i8`, `to_string_i16`, `to_string_i32`, `to_string_i64`,
 `to_string_u8`, `to_string_u16`, `to_string_u32`, and `to_string_u64` are checked
 convenience forms for each integer width. Each takes `(&memory, value)` and returns
 built-in `result<string>`, including an error on allocation failure. Each uses its
 corresponding canonical formatter. For example, `to_string_u16` preserves the full
 decimal values of `0`, `30000`, and `65535`. Gloin does not implicitly widen
-`u16` to `u64`, and legacy `to_string(&memory, i32)` cannot take a `u16` binding.
+`u16` to `u64`, and `to_string(&memory, i32)` cannot take a `u16` binding.
 
 ## Explicit conversion
 
-Every conversion below is O(1), performs no allocation, and returns a concrete
-status/value struct. An integer failure payload is zero, a floating failure payload
-is positive zero. Floating input must be finite; native nonfinite input gives
-`INVALID`. Successful floating zeros preserve their sign when the destination is
+Every conversion below is O(1) and performs no allocation. Fallible conversions
+return built-in results; failure has no readable numeric payload. Floating input
+must be finite; native nonfinite input gives `INVALID`. Successful floating zeros
+preserve their sign when the destination is
 floating. The rounding environment is the core runtime's default nearest/ties-even.
 
 | Function and example argument | Return type | Rule / example result |
 | --- | --- | --- |
-| `std.i64_from_i32(42)` | `I64Result` | Exact widening, always `OK/42` |
-| `std.i32_from_i64(42)` | `IntResult` | `OK/42`; outside i32 range gives `OVERFLOW` |
-| `std.u64_from_i64(42)` | `U64Result` | `OK/42`; negative values give `OVERFLOW` |
-| `std.i64_from_u64(42)` | `I64Result` | `OK/42`; above i64 maximum gives `OVERFLOW` |
-| `std.f64_from_i64_exact(42)` | `F64Result` | `OK/42.0`; discarded integer bits give `INEXACT` |
-| `std.f64_from_i64_rounded(42)` | `F64Result` | `OK/42.0`; nearest/ties-even, may lose precision |
-| `std.f64_from_u64_exact(42)` | `F64Result` | `OK/42.0`; discarded integer bits give `INEXACT` |
-| `std.f64_from_u64_rounded(42)` | `F64Result` | `OK/42.0`; nearest/ties-even, may lose precision |
-| `std.i64_from_f64_exact(42.0)` | `I64Result` | `OK/42`; fraction gives `INEXACT`; range failure gives `OVERFLOW` first |
-| `std.i64_from_f64_trunc(-42.9)` | `I64Result` | `OK/-42`; truncate toward zero, then check range |
-| `std.u64_from_f64_exact(42.0)` | `U64Result` | `OK/42`; fraction gives `INEXACT`; range failure gives `OVERFLOW` first |
-| `std.u64_from_f64_trunc(42.9)` | `U64Result` | `OK/42`; truncate toward zero, then check range |
-| `std.f64_from_f32(1.25)` | `F64Result` | Exact widening, including subnormals; `OK/1.25` |
-| `std.f32_from_f64_exact(1.25)` | `F32Result` | `OK/1.25`; precision loss gives `INEXACT`, with range rules below |
-| `std.f32_from_f64_rounded(1.25)` | `F32Result` | `OK/1.25`; nearest/ties-even, with range rules below |
+| `std.i64_from_i32(42)` | `i64` | Exact widening; cannot fail |
+| `std.i32_from_i64(42)` | `result<i32>` | `42`; outside i32 range gives `OVERFLOW` |
+| `std.u64_from_i64(42)` | `result<u64>` | `42`; negative values give `OVERFLOW` |
+| `std.i64_from_u64(42)` | `result<i64>` | `42`; above i64 maximum gives `OVERFLOW` |
+| `std.f64_from_i64_exact(42)` | `result<f64>` | `42.0`; discarded integer bits give `INEXACT` |
+| `std.f64_from_i64_rounded(42)` | `f64` | `42.0`; nearest/ties-even, may lose precision |
+| `std.f64_from_u64_exact(42)` | `result<f64>` | `42.0`; discarded integer bits give `INEXACT` |
+| `std.f64_from_u64_rounded(42)` | `f64` | `42.0`; nearest/ties-even, may lose precision |
+| `std.i64_from_f64_exact(42.0)` | `result<i64>` | `42`; fraction gives `INEXACT`; range failure gives `OVERFLOW` first |
+| `std.i64_from_f64_trunc(-42.9)` | `result<i64>` | `-42`; truncate toward zero, then check range |
+| `std.u64_from_f64_exact(42.0)` | `result<u64>` | `42`; fraction gives `INEXACT`; range failure gives `OVERFLOW` first |
+| `std.u64_from_f64_trunc(42.9)` | `result<u64>` | `42`; truncate toward zero, then check range |
+| `std.f64_from_f32(1.25)` | `result<f64>` | Exact widening, including subnormals; `1.25` |
+| `std.f32_from_f64_exact(1.25)` | `result<f32>` | `1.25`; precision loss gives `INEXACT`, with range rules below |
+| `std.f32_from_f64_rounded(1.25)` | `result<f32>` | `1.25`; nearest/ties-even, with range rules below |
 
-Unreleased compiler change (PERF-008): `std.i64_from_i32` now lowers through an
-exact GloinIR widening operation to a sign extension, with no conversion runtime
-call. Its status remains `OK` for every i32 input, including `-2147483648`; its
-concrete `I64Result` API is unchanged. The other conversions keep their existing
-checks. See [the lowering contract](lowering.md#exact-integer-widening-unreleased-perf-008).
+`std.i64_from_i32` returns plain i64 through `gloin.exact_int_widen`, lowered to
+sign extension with no conversion runtime call. Every i32 input is representable.
+The two rounded integer-to-f64 conversions also return plain f64: the complete
+i64/u64 ranges are finite in f64 and the API explicitly permits rounding. They
+retain their native rounding path. `f64_from_f32` still returns `result<f64>`
+because it rejects native nonfinite input. Other conversions retain all range,
+finiteness and precision checks. See [the lowering contract](lowering.md#exact-integer-widening-020-perf-008).
 
-Result type names in the table are in `std`. For float-to-integer conversion, range
+For float-to-integer conversion, range
 checking uses the truncated candidate before testing fractional loss. For example,
 `u64_from_f64_trunc(-0.5)` succeeds with zero, `u64_from_f64_exact(-0.5)` gives
 `INEXACT`, and either conversion of `-1.5` gives `OVERFLOW`. Nothing wraps or saturates.
@@ -163,16 +166,17 @@ import "@status";
 import "@arena";
 
 def main() -> i32 {
-    def exact: std.F64Result = std.f64_from_i64_exact(9007199254740993);
-    if exact.status != status.INEXACT { return 1; }
-    def rounded: std.F64Result = std.f64_from_i64_rounded(9007199254740993);
-    if rounded.status != status.OK || rounded.value != 9007199254740992.0 { return 2; }
-    def whole: std.I64Result = std.i64_from_f64_trunc(42.9);
-    if whole.status != status.OK { return 3; }
+    def exact: result<f64> = std.f64_from_i64_exact(9007199254740993);
+    if !exact.erroneous { return 1; }
+    if exact.error.code != status.INEXACT { return 1; }
+    def rounded: f64 = std.f64_from_i64_rounded(9007199254740993);
+    if rounded != 9007199254740992.0 { return 2; }
+    def whole: result<i64> = std.i64_from_f64_trunc(42.9);
+    if whole.erroneous { return 3; }
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
-    def text: std.FormatResult = std.format_i64(&memory, whole.value);
-    if text.status != status.OK { return 4; }
+    def text: result<string> = std.format_i64(&memory, whole.value);
+    if text.erroneous { return 4; }
     std.println(text.value);
     return 0;
 }
@@ -195,5 +199,55 @@ checksums; building needs no dependency download. Float formatting uses C++
 `NumericRuntimeTest` checks boundaries, direct-width midpoint rounding, subnormals,
 signed zero, deterministic bit-pattern round trips, locale independence, guard bytes,
 and conversion range checks before native casts. `NumericLibraryTest` exercises
-every public API, failure payloads, allocation failure, source/privacy checks,
+every public API, error categories, allocation failure, source/privacy checks,
 external LLVM execution, this guide's full programs, and the packaged example.
+
+## Migration from 0.1.0
+
+`IntResult`, `I64Result`, `U64Result`, `F32Result`, `F64Result`, `BoolResult`,
+and `FormatResult` are removed. Parser and conversion payload types now appear
+directly in `result<T>`, as listed above. All numeric formatters return
+`result<string>`. Function names and arguments remain unchanged.
+
+| Exception/alias | Development behavior |
+| --- | --- |
+| `i64_from_i32` | Plain `i64`; exact, infallible |
+| `f64_from_i64_rounded`, `f64_from_u64_rounded` | Plain `f64`; infallible, permitted precision loss |
+| `format_bool` | Unchanged plain static string |
+| `to_int`, `parse_i32_checked` | Same checked result, messages and codes as `parse_i32` |
+| `to_string`, `to_string_i32` | Same checked result, messages and codes as `format_i32` |
+| Other `to_string_<integer width>` aliases | Forward their canonical formatter, now preserving its code |
+
+Grammar, range/rounding precedence, signed zeros, subnormals, formatting buffer
+sizes and lifetimes retain their contracts. No implicit casts are added. The
+`@status` constants retain their values. Bind and check each fallible result
+before creating another one if an early return could leave it unhandled.
+
+### Diagnostics
+
+All messages are static literals, require no arena allocation and carry OS code
+zero. The category is in `.error.code`, readable only after proving failure.
+The tables give exact messages; `<type>` below means the literal named width.
+
+| API/failure | Exact message | Code |
+| --- | --- | --- |
+| Signed integer syntax (`i32` or `i64`) | `invalid signed decimal <type>` | `INVALID` |
+| Signed integer range | `signed decimal <type> is out of range` | `OVERFLOW` |
+| Unsigned syntax | `invalid unsigned decimal u64` | `INVALID` |
+| Unsigned range | `unsigned decimal u64 is out of range` | `OVERFLOW` |
+| Float syntax (`f32` or `f64`) | `invalid decimal <type>` | `INVALID` |
+| Float range | `decimal <type> is out of range` | `OVERFLOW` |
+| Nonzero float rounded to zero | `decimal <type> underflows to zero` | `UNDERFLOW` |
+| Boolean syntax | `invalid boolean` | `INVALID` |
+| Numeric formatting | `<name> formatting failed`, e.g. `u16 formatting failed` or `f64_fixed formatting failed` | `NO_MEMORY`; native `INVALID`/`OVERFLOW` where applicable |
+| Fixed precision above 18 | `precision exceeds 18 digits` | `INVALID` before allocation |
+| Conversion nonfinite input | `numeric conversion requires a finite value` | `INVALID` |
+| Conversion range | `numeric conversion is out of range` | `OVERFLOW` |
+| Conversion precision loss | `numeric conversion loses precision` | `INEXACT` |
+| Conversion nonzero underflow | `numeric conversion underflows to zero` | `UNDERFLOW` |
+
+The conversion wrapper preserves an unexpected native category with
+`numeric conversion failed`; supported inputs use the categories above. Numeric
+native ABIs are unchanged. Result construction/proofs/access use the existing
+GloinIR operations; the widening operation remains visible until lowering.
+[Line input and its EOF outcome](standard-library.md) are documented separately.

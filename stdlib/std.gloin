@@ -15,7 +15,7 @@ def pub println(value: string) -> void {
     print("\n");
 }
 
-// Explicit result statuses. No exceptions or implicit conversion/formatting.
+// Compatibility aliases for @status codes. Recoverable failures use built-in results.
 def pub const OK: i32        = status.OK;
 def pub const END: i32       = status.END;
 def pub const INVALID: i32   = status.INVALID;
@@ -24,199 +24,143 @@ def pub const IO_ERROR: i32  = status.IO_ERROR;
 def pub const TOO_LONG: i32  = status.TOO_LONG;
 def pub const NO_MEMORY: i32 = status.NO_MEMORY;
 
-def pub struct IntResult {
-    def pub status: i32,
-    def pub value: i32,
-}
-
-def pub struct InputResult {
-    def pub status: i32,
-    def pub value: string,
-}
-
-// Example: std.to_int("42") -> OK/42. Strict signed decimal i32, O(n), no allocation.
-// INVALID/OVERFLOW have value 0. Legacy contract; parse_i32 is its named equivalent.
-def pub to_int(value: string) -> IntResult {
+// Example: std.to_int("42") -> success 42. Strict signed decimal i32, O(n), no allocation.
+// INVALID/OVERFLOW expose only an error. parse_i32 and parse_i32_checked are aliases.
+def pub to_int(value: string) -> result<i32> {
     def mut number: i32 = 0;
-    def status: i32     = __std_parse_i32(value, &number);
+    def code: i32       = __std_parse_i32(value, &number);
 
-    return IntResult {
-        status: status,
-        value: number
-    };
+    if code == status.INVALID { return error("invalid signed decimal i32", code, 0); }
+    if code != status.OK { return error("signed decimal i32 is out of range", code, 0); }
+
+    return number;
 }
 
-// Example: std.to_string(&memory, 42) -> "42". Bounded O(1) formatting plus arena allocation.
-// Requests 12 bytes; allocation failure traps. Bytes expire on memory.reset/free.
-def pub to_string(memory: &arena.GeneralArena, value: i32) -> string {
-    def bytes: *u8      = memory.alloc_bytes(12);
-    def mut length: u64 = 0;
+// Example: std.to_string(&memory, 42) -> success "42". Bounded O(1) formatting plus arena allocation.
+// Requests 12 bytes; allocation failure returns NO_MEMORY. Bytes expire on memory.reset/free.
+def pub to_string(memory: &arena.GeneralArena, value: i32) -> result<string> {
+    def formatted: result<string> = format_i32(memory, value);
+    if formatted.erroneous { return formatted.error; }
 
-    __std_format_i32(value, &*bytes, &length);
+    return formatted.value;
+}
 
-    return __std_string_view(bytes, length);
+// A successful input outcome. Empty lines have end=false; EOF has end=true.
+// value borrows the input arena on a line, and is static empty text at EOF.
+def pub struct InputLine {
+    def pub end: bool,
+    def pub value: string,
 }
 
 // Example: std.input(&memory, 128) reads one bounded line. Blocks for input; drains oversized lines.
 // O(consumed bytes + max_bytes zeroing) plus arena allocation; reserves max_bytes+1 bytes,
-// retained even on EOF/error. Check status; successful bytes expire on memory.reset/free.
-def pub input(memory: &arena.GeneralArena, max_bytes: u64) -> InputResult {
-    // Leave room for the terminator without wrapping the requested size.
+// retained even on EOF/error. Check .erroneous, then .value.end; line bytes expire on reset/free.
+def pub input(memory: &arena.GeneralArena, max_bytes: u64) -> result<InputLine> {
+    // Validate before allocation or consuming stdin. Keep the existing size limit.
     if max_bytes > 9223372036854775806 {
-        return InputResult {
-            status: NO_MEMORY,
-            value: ""
-        };
+        return error("input buffer size is not representable", status.NO_MEMORY, 0);
     }
 
     def bytes: *u8 = memory.try_alloc_bytes(max_bytes + 1);
-    if bytes == null {
-        return InputResult {
-            status: NO_MEMORY,
-            value: ""
-        };
-    }
+    if bytes == null { return error("cannot allocate input buffer", status.NO_MEMORY, 0); }
 
     def mut length: u64 = 0;
-    def status: i32     = __std_input(&*bytes, max_bytes, &length);
+    def code: i32       = __std_input(&*bytes, max_bytes, &length);
 
-    if status != OK {
-        return InputResult {
-            status: status,
-            value: ""
-        };
-    }
+    if code == status.END { return InputLine { end: true, value: "" }; }
+    if code == status.TOO_LONG { return error("input line exceeds byte limit", code, 0); }
+    if code != status.OK { return error("cannot read standard input", code, 0); }
 
-    return InputResult {
-        status: OK,
-        value: __std_string_view(bytes, length)
-    };
+    return InputLine { end: false, value: __std_string_view(bytes, length) };
 }
 
-// Numeric APIs: failure payloads are zero/false, formatted failures are static "".
+// Numeric errors carry @status categories and os_error = 0; no failure payload is readable.
 // See docs/numbers.md for grammar, exact range/rounding rules, examples, and costs.
 def pub const INEXACT: i32   = status.INEXACT;
 def pub const UNDERFLOW: i32 = status.UNDERFLOW;
 
-// Inspect status before value; failed i64 results contain zero. No owned storage.
-def pub struct I64Result {
-    def pub status: i32,
-    def pub value: i64,
-}
+// Example: parse_i32("-42") -> success -42. O(n), no allocation; identical to to_int.
+// Complete signed ASCII decimal; errors preserve INVALID/OVERFLOW codes.
+def pub parse_i32(value: string) -> result<i32> {
+    def parsed: result<i32> = to_int(value);
+    if parsed.erroneous { return parsed.error; }
 
-// Inspect status before value; failed u64 results contain zero. No owned storage.
-def pub struct U64Result {
-    def pub status: i32,
-    def pub value: u64,
-}
-
-// Inspect status before value; failed f32 results contain positive zero. No owned storage.
-def pub struct F32Result {
-    def pub status: i32,
-    def pub value: f32,
-}
-
-// Inspect status before value; failed f64 results contain positive zero. No owned storage.
-def pub struct F64Result {
-    def pub status: i32,
-    def pub value: f64,
-}
-
-// Inspect status before value; failed bool results contain false. No owned storage.
-def pub struct BoolResult {
-    def pub status: i32,
-    def pub value: bool,
-}
-
-// OK borrows arena bytes; failure is static empty text. No individual free.
-def pub struct FormatResult {
-    def pub status: i32,
-    def pub value: string,
-}
-
-// Example: parse_i32("-42") -> OK/-42. O(n), no allocation; identical to to_int.
-// Complete signed ASCII decimal; INVALID/OVERFLOW return zero.
-def pub parse_i32(value: string) -> IntResult {
-    return to_int(value);
+    return parsed.value;
 }
 
 // Example: parse_i32_checked("42") -> success 42. O(n), no allocation.
 // Malformed text and overflow return distinct static error messages.
 // The caller must inspect .erroneous before reading .value or .error.
 def pub parse_i32_checked(value: string) -> result<i32> {
-    def parsed: IntResult = to_int(value);
-    if parsed.status == status.INVALID {
-        return error("invalid signed decimal i32");
-    }
-    if parsed.status == status.OVERFLOW {
-        return error("signed decimal i32 is out of range");
-    }
+    def parsed: result<i32> = to_int(value);
+    if parsed.erroneous { return parsed.error; }
 
     return parsed.value;
 }
 
-// Example: parse_i64("-9223372036854775808") returns OK and that value.
+// Example: parse_i64("-9223372036854775808") succeeds with that value.
 // Signed ASCII decimal; INVALID precedes OVERFLOW.
 // O(n), bounded auxiliary storage, no allocation; complete input required, no trimming.
-def pub parse_i64(text: string) -> I64Result {
+def pub parse_i64(text: string) -> result<i64> {
     def mut value: i64 = 0;
     def code: i32      = __std_parse_i64(text, &value);
 
-    return I64Result {
-        status: code,
-        value: value
-    };
+    if code == status.INVALID { return error("invalid signed decimal i64", code, 0); }
+    if code != status.OK { return error("signed decimal i64 is out of range", code, 0); }
+
+    return value;
 }
 
-// Example: parse_u64("18446744073709551615") returns OK and that value.
+// Example: parse_u64("18446744073709551615") succeeds with that value.
 // Unsigned ASCII decimal with optional +; any minus is INVALID.
 // O(n), bounded auxiliary storage, no allocation; complete input required, no trimming.
-def pub parse_u64(text: string) -> U64Result {
+def pub parse_u64(text: string) -> result<u64> {
     def mut value: u64 = 0;
     def code: i32      = __std_parse_u64(text, &value);
 
-    return U64Result {
-        status: code,
-        value: value
-    };
+    if code == status.INVALID { return error("invalid unsigned decimal u64", code, 0); }
+    if code != status.OK { return error("unsigned decimal u64 is out of range", code, 0); }
+
+    return value;
 }
 
-// Example: parse_f32("1.25") returns OK and that value.
+// Example: parse_f32("1.25") succeeds with that value.
 // Direct-width nearest/ties-even; INVALID, OVERFLOW, or nonzero UNDERFLOW.
 // O(n), bounded auxiliary storage, no allocation; complete input required, no trimming.
-def pub parse_f32(text: string) -> F32Result {
+def pub parse_f32(text: string) -> result<f32> {
     def mut value: f32 = 0.0;
     def code: i32      = __std_parse_f32(text, &value);
 
-    return F32Result {
-        status: code,
-        value: value
-    };
+    if code == status.INVALID { return error("invalid decimal f32", code, 0); }
+    if code == status.UNDERFLOW { return error("decimal f32 underflows to zero", code, 0); }
+    if code != status.OK { return error("decimal f32 is out of range", code, 0); }
+
+    return value;
 }
 
-// Example: parse_f64("1.25") returns OK and that value.
+// Example: parse_f64("1.25") succeeds with that value.
 // Direct-width nearest/ties-even; INVALID, OVERFLOW, or nonzero UNDERFLOW.
 // O(n), bounded auxiliary storage, no allocation; complete input required, no trimming.
-def pub parse_f64(text: string) -> F64Result {
+def pub parse_f64(text: string) -> result<f64> {
     def mut value: f64 = 0.0;
     def code: i32      = __std_parse_f64(text, &value);
 
-    return F64Result {
-        status: code,
-        value: value
-    };
+    if code == status.INVALID { return error("invalid decimal f64", code, 0); }
+    if code == status.UNDERFLOW { return error("decimal f64 underflows to zero", code, 0); }
+    if code != status.OK { return error("decimal f64 is out of range", code, 0); }
+
+    return value;
 }
 
-// Example: parse_bool("true") -> OK/true; "TRUE" -> INVALID/false.
+// Example: parse_bool("true") -> success true; "TRUE" fails with INVALID.
 // Accepts exactly true/false. O(1), no allocation or retained storage.
-def pub parse_bool(text: string) -> BoolResult {
+def pub parse_bool(text: string) -> result<bool> {
     def mut byte: u8 = 0;
     def code: i32    = __std_parse_bool(text, &byte);
 
-    return BoolResult {
-        status: code,
-        value: byte != 0
-    };
+    if code != status.OK { return error("invalid boolean", code, 0); }
+
+    return byte != 0;
 }
 
 // Example: format_bool(false) -> "false". O(1), no allocation, cannot fail.
@@ -225,603 +169,484 @@ def pub format_bool(value: bool) -> string {
     if value { return "true"; } return "false";
 }
 
-// Example: format_i32(&memory, 42) -> OK/"42".
+// Example: format_i32(&memory, 42) -> success "42".
 // Canonical decimal, no implicit printing.
 // Bounded O(1) byte work plus arena allocation; requests 12 bytes including NUL.
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
-def pub format_i32(memory: &arena.GeneralArena, value: i32) -> FormatResult {
+def pub format_i32(memory: &arena.GeneralArena, value: i32) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(12);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("i32 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
 
     __std_format_i32(value, &*bytes, &length);
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
-// Example: format_i64(&memory, 42) -> OK/"42".
+// Example: format_i64(&memory, 42) -> success "42".
 // Canonical decimal, no implicit printing.
 // Bounded O(1) byte work plus arena allocation; requests 21 bytes including NUL.
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
-def pub format_i64(memory: &arena.GeneralArena, value: i64) -> FormatResult {
+def pub format_i64(memory: &arena.GeneralArena, value: i64) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(21);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("i64 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_i64(value, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("i64 formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
-// Example: format_u64(&memory, 42) -> OK/"42".
+// Example: format_u64(&memory, 42) -> success "42".
 // Canonical decimal, no implicit printing.
 // Bounded O(1) byte work plus arena allocation; requests 21 bytes including NUL.
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
-def pub format_u64(memory: &arena.GeneralArena, value: u64) -> FormatResult {
+def pub format_u64(memory: &arena.GeneralArena, value: u64) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(21);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("u64 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_u64(value, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("u64 formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
 // Canonical decimal for a u16, including 0 and 65535. One arena allocation
 // of six bytes including NUL; NO_MEMORY is recoverable.
-def pub format_u16(memory: &arena.GeneralArena, value: u16) -> FormatResult {
+def pub format_u16(memory: &arena.GeneralArena, value: u16) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(6);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("u16 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_u16(value, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("u16 formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
 // Checked convenience for callers using built-in result<T>.
 def pub to_string_u16(memory: &arena.GeneralArena, value: u16) -> result<string> {
-    def formatted: FormatResult = format_u16(memory, value);
-    if formatted.status != status.OK { return error("u16 formatting failed"); }
+    def formatted: result<string> = format_u16(memory, value);
+    if formatted.erroneous { return formatted.error; }
 
     return formatted.value;
 }
 
 // Canonical decimal for i8; requests 5 arena bytes including NUL.
-def pub format_i8(memory: &arena.GeneralArena, value: i8) -> FormatResult {
+def pub format_i8(memory: &arena.GeneralArena, value: i8) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(5);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("i8 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_i8(value, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("i8 formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
 // Canonical decimal for i16; requests 7 arena bytes including NUL.
-def pub format_i16(memory: &arena.GeneralArena, value: i16) -> FormatResult {
+def pub format_i16(memory: &arena.GeneralArena, value: i16) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(7);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("i16 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_i16(value, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("i16 formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
 // Canonical decimal for u8; requests 4 arena bytes including NUL.
-def pub format_u8(memory: &arena.GeneralArena, value: u8) -> FormatResult {
+def pub format_u8(memory: &arena.GeneralArena, value: u8) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(4);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("u8 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_u8(value, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("u8 formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
 // Canonical decimal for u32; requests 11 arena bytes including NUL.
-def pub format_u32(memory: &arena.GeneralArena, value: u32) -> FormatResult {
+def pub format_u32(memory: &arena.GeneralArena, value: u32) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(11);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("u32 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_u32(value, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("u32 formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
 // Checked decimal conversion; returned text borrows memory.
 def pub to_string_i8(memory: &arena.GeneralArena, value: i8) -> result<string> {
-    def formatted: FormatResult = format_i8(memory, value);
-    if formatted.status != status.OK { return error("i8 formatting failed"); }
+    def formatted: result<string> = format_i8(memory, value);
+    if formatted.erroneous { return formatted.error; }
 
     return formatted.value;
 }
 
 // Checked decimal conversion; returned text borrows memory.
 def pub to_string_i16(memory: &arena.GeneralArena, value: i16) -> result<string> {
-    def formatted: FormatResult = format_i16(memory, value);
-    if formatted.status != status.OK { return error("i16 formatting failed"); }
+    def formatted: result<string> = format_i16(memory, value);
+    if formatted.erroneous { return formatted.error; }
 
     return formatted.value;
 }
 
 // Checked decimal conversion; returned text borrows memory.
 def pub to_string_i32(memory: &arena.GeneralArena, value: i32) -> result<string> {
-    def formatted: FormatResult = format_i32(memory, value);
-    if formatted.status != status.OK { return error("i32 formatting failed"); }
+    def formatted: result<string> = format_i32(memory, value);
+    if formatted.erroneous { return formatted.error; }
 
     return formatted.value;
 }
 
 // Checked decimal conversion; returned text borrows memory.
 def pub to_string_i64(memory: &arena.GeneralArena, value: i64) -> result<string> {
-    def formatted: FormatResult = format_i64(memory, value);
-    if formatted.status != status.OK { return error("i64 formatting failed"); }
+    def formatted: result<string> = format_i64(memory, value);
+    if formatted.erroneous { return formatted.error; }
 
     return formatted.value;
 }
 
 // Checked decimal conversion; returned text borrows memory.
 def pub to_string_u8(memory: &arena.GeneralArena, value: u8) -> result<string> {
-    def formatted: FormatResult = format_u8(memory, value);
-    if formatted.status != status.OK { return error("u8 formatting failed"); }
+    def formatted: result<string> = format_u8(memory, value);
+    if formatted.erroneous { return formatted.error; }
 
     return formatted.value;
 }
 
 // Checked decimal conversion; returned text borrows memory.
 def pub to_string_u32(memory: &arena.GeneralArena, value: u32) -> result<string> {
-    def formatted: FormatResult = format_u32(memory, value);
-    if formatted.status != status.OK { return error("u32 formatting failed"); }
+    def formatted: result<string> = format_u32(memory, value);
+    if formatted.erroneous { return formatted.error; }
 
     return formatted.value;
 }
 
 // Checked decimal conversion; returned text borrows memory.
 def pub to_string_u64(memory: &arena.GeneralArena, value: u64) -> result<string> {
-    def formatted: FormatResult = format_u64(memory, value);
-    if formatted.status != status.OK { return error("u64 formatting failed"); }
+    def formatted: result<string> = format_u64(memory, value);
+    if formatted.erroneous { return formatted.error; }
 
     return formatted.value;
 }
 
-// Example: format_f32(&memory, 1.25) -> OK/"1.25".
+// Example: format_f32(&memory, 1.25) -> success "1.25".
 // Shortest round-trip decimal, preserves -0; locale-independent.
 // Bounded O(1) byte work plus arena allocation; requests 32 bytes including NUL.
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
-def pub format_f32(memory: &arena.GeneralArena, value: f32) -> FormatResult {
+def pub format_f32(memory: &arena.GeneralArena, value: f32) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(32);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("f32 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_f32(value, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("f32 formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
-// Example: format_f64(&memory, 1.25) -> OK/"1.25".
+// Example: format_f64(&memory, 1.25) -> success "1.25".
 // Shortest round-trip decimal, preserves -0; locale-independent.
 // Bounded O(1) byte work plus arena allocation; requests 32 bytes including NUL.
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
-def pub format_f64(memory: &arena.GeneralArena, value: f64) -> FormatResult {
+def pub format_f64(memory: &arena.GeneralArena, value: f64) -> result<string> {
     def bytes: *u8 = memory.try_alloc_bytes(32);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("f64 formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_f64(value, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("f64 formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
-// Example: format_f32_fixed(&memory, 1.25, 2) -> OK/"1.25".
+// Example: format_f32_fixed(&memory, 1.25, 2) -> success "1.25".
 // Fixed decimal, nearest/ties-even; precision 0..18, otherwise INVALID before allocation.
 // Bounded O(1) byte work plus arena allocation; requests 64 bytes including NUL.
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
-def pub format_f32_fixed(memory: &arena.GeneralArena, value: f32, precision: u32) -> FormatResult {
+def pub format_f32_fixed(memory: &arena.GeneralArena, value: f32, precision: u32) -> result<string> {
     if precision > 18 {
-        return FormatResult {
-            status: status.INVALID,
-            value: ""
-        };
+        return error("precision exceeds 18 digits", status.INVALID, 0);
     }
 
     def bytes: *u8 = memory.try_alloc_bytes(64);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("f32_fixed formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_f32_fixed(value, precision, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("f32_fixed formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
-// Example: format_f64_fixed(&memory, 1.25, 2) -> OK/"1.25".
+// Example: format_f64_fixed(&memory, 1.25, 2) -> success "1.25".
 // Fixed decimal, nearest/ties-even; precision 0..18, otherwise INVALID before allocation.
 // Bounded O(1) byte work plus arena allocation; requests 352 bytes including NUL.
 // NO_MEMORY is recoverable; returned bytes expire on destination reset/free.
-def pub format_f64_fixed(memory: &arena.GeneralArena, value: f64, precision: u32) -> FormatResult {
+def pub format_f64_fixed(memory: &arena.GeneralArena, value: f64, precision: u32) -> result<string> {
     if precision > 18 {
-        return FormatResult {
-            status: status.INVALID,
-            value: ""
-        };
+        return error("precision exceeds 18 digits", status.INVALID, 0);
     }
 
     def bytes: *u8 = memory.try_alloc_bytes(352);
     if bytes == null {
-        return FormatResult {
-            status: status.NO_MEMORY,
-            value: ""
-        };
+        return error("f64_fixed formatting failed", status.NO_MEMORY, 0);
     }
 
     def mut length: u64 = 0;
     def code: i32       = __std_format_f64_fixed(value, precision, &*bytes, &length);
 
     if code != status.OK {
-        return FormatResult {
-            status: code,
-            value: ""
-        };
+        return error("f64_fixed formatting failed", code, 0);
     }
 
-    return FormatResult {
-        status: status.OK,
-        value: __std_string_view(bytes, length)
-    };
+    return __std_string_view(bytes, length);
 }
 
-// Example: i64_from_i32(42) -> OK/42.
-// Exact widening; always OK.
-// O(1), no allocation; failed payload is zero.
-def pub i64_from_i32(value: i32) -> I64Result {
+// Example: i64_from_i32(42) -> success 42.
+// Exact widening; returns plain i64 and cannot fail. Uses GloinIR exact widening.
+// O(1), no allocation.
+def pub i64_from_i32(value: i32) -> i64 {
     def mut output: i64 = 0;
-    def code: i32       = __std_i64_from_i32(value, &output);
 
-    return I64Result {
-        status: code,
-        value: output
-    };
+    __std_i64_from_i32(value, &output);
+
+    return output;
 }
 
-// Example: i32_from_i64(42) -> OK/42.
+// Example: i32_from_i64(42) -> success 42.
 // OVERFLOW outside i32 range; no wrapping.
-// O(1), no allocation; failed payload is zero.
-def pub i32_from_i64(value: i64) -> IntResult {
+// O(1), no allocation.
+def pub i32_from_i64(value: i64) -> result<i32> {
     def mut output: i32 = 0;
     def code: i32       = __std_i32_from_i64(value, &output);
 
-    return IntResult {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: u64_from_i64(42) -> OK/42.
+// Example: u64_from_i64(42) -> success 42.
 // Negative input -> OVERFLOW; no wrapping.
-// O(1), no allocation; failed payload is zero.
-def pub u64_from_i64(value: i64) -> U64Result {
+// O(1), no allocation.
+def pub u64_from_i64(value: i64) -> result<u64> {
     def mut output: u64 = 0;
     def code: i32       = __std_u64_from_i64(value, &output);
 
-    return U64Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: i64_from_u64(42) -> OK/42.
+// Example: i64_from_u64(42) -> success 42.
 // Input above i64 maximum -> OVERFLOW.
-// O(1), no allocation; failed payload is zero.
-def pub i64_from_u64(value: u64) -> I64Result {
+// O(1), no allocation.
+def pub i64_from_u64(value: u64) -> result<i64> {
     def mut output: i64 = 0;
     def code: i32       = __std_i64_from_u64(value, &output);
 
-    return I64Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: f64_from_i64_exact(42) -> OK/42.
+// Example: f64_from_i64_exact(42) -> success 42.
 // INEXACT if f64 cannot represent the integer exactly.
-// O(1), no allocation; failed payload is zero.
-def pub f64_from_i64_exact(value: i64) -> F64Result {
+// O(1), no allocation.
+def pub f64_from_i64_exact(value: i64) -> result<f64> {
     def mut output: f64 = 0.0;
     def code: i32       = __std_f64_from_i64(value, 0, &output);
 
-    return F64Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: f64_from_i64_rounded(42) -> OK/42.
-// Round nearest/ties-even; may lose integer precision.
-// O(1), no allocation; failed payload is zero.
-def pub f64_from_i64_rounded(value: i64) -> F64Result {
+// Example: f64_from_i64_rounded(42) -> success 42.
+// Round nearest/ties-even; returns plain f64, may lose integer precision, cannot fail.
+// O(1), no allocation.
+def pub f64_from_i64_rounded(value: i64) -> f64 {
     def mut output: f64 = 0.0;
-    def code: i32       = __std_f64_from_i64(value, 1, &output);
 
-    return F64Result {
-        status: code,
-        value: output
-    };
+    __std_f64_from_i64(value, 1, &output);
+
+    return output;
 }
 
-// Example: f64_from_u64_exact(42) -> OK/42.
+// Example: f64_from_u64_exact(42) -> success 42.
 // INEXACT if f64 cannot represent the integer exactly.
-// O(1), no allocation; failed payload is zero.
-def pub f64_from_u64_exact(value: u64) -> F64Result {
+// O(1), no allocation.
+def pub f64_from_u64_exact(value: u64) -> result<f64> {
     def mut output: f64 = 0.0;
     def code: i32       = __std_f64_from_u64(value, 0, &output);
 
-    return F64Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: f64_from_u64_rounded(42) -> OK/42.
-// Round nearest/ties-even; may lose integer precision.
-// O(1), no allocation; failed payload is zero.
-def pub f64_from_u64_rounded(value: u64) -> F64Result {
+// Example: f64_from_u64_rounded(42) -> success 42.
+// Round nearest/ties-even; returns plain f64, may lose integer precision, cannot fail.
+// O(1), no allocation.
+def pub f64_from_u64_rounded(value: u64) -> f64 {
     def mut output: f64 = 0.0;
-    def code: i32       = __std_f64_from_u64(value, 1, &output);
 
-    return F64Result {
-        status: code,
-        value: output
-    };
+    __std_f64_from_u64(value, 1, &output);
+
+    return output;
 }
 
-// Example: i64_from_f64_exact(42.0) -> OK/42.
+// Example: i64_from_f64_exact(42.0) -> success 42.
 // Fraction -> INEXACT; out-of-range truncated candidate -> OVERFLOW first.
-// O(1), no allocation; failed payload is positive zero. Native nonfinite input -> INVALID.
-def pub i64_from_f64_exact(value: f64) -> I64Result {
+// O(1), no allocation; failure has no readable payload. Native nonfinite input -> INVALID.
+def pub i64_from_f64_exact(value: f64) -> result<i64> {
     def mut output: i64 = 0;
     def code: i32       = __std_i64_from_f64(value, 0, &output);
 
-    return I64Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: i64_from_f64_trunc(42.9) -> OK/42.
+// Example: i64_from_f64_trunc(42.9) -> success 42.
 // Explicit truncation toward zero; out-of-range candidate -> OVERFLOW.
-// O(1), no allocation; failed payload is positive zero. Native nonfinite input -> INVALID.
-def pub i64_from_f64_trunc(value: f64) -> I64Result {
+// O(1), no allocation; failure has no readable payload. Native nonfinite input -> INVALID.
+def pub i64_from_f64_trunc(value: f64) -> result<i64> {
     def mut output: i64 = 0;
     def code: i32       = __std_i64_from_f64(value, 1, &output);
 
-    return I64Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: u64_from_f64_exact(42.0) -> OK/42.
+// Example: u64_from_f64_exact(42.0) -> success 42.
 // Fraction -> INEXACT; out-of-range truncated candidate -> OVERFLOW first.
-// O(1), no allocation; failed payload is positive zero. Native nonfinite input -> INVALID.
-def pub u64_from_f64_exact(value: f64) -> U64Result {
+// O(1), no allocation; failure has no readable payload. Native nonfinite input -> INVALID.
+def pub u64_from_f64_exact(value: f64) -> result<u64> {
     def mut output: u64 = 0;
     def code: i32       = __std_u64_from_f64(value, 0, &output);
 
-    return U64Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: u64_from_f64_trunc(42.9) -> OK/42.
+// Example: u64_from_f64_trunc(42.9) -> success 42.
 // Truncate toward zero; -0.5 becomes 0; out-of-range candidate -> OVERFLOW.
-// O(1), no allocation; failed payload is positive zero. Native nonfinite input -> INVALID.
-def pub u64_from_f64_trunc(value: f64) -> U64Result {
+// O(1), no allocation; failure has no readable payload. Native nonfinite input -> INVALID.
+def pub u64_from_f64_trunc(value: f64) -> result<u64> {
     def mut output: u64 = 0;
     def code: i32       = __std_u64_from_f64(value, 1, &output);
 
-    return U64Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: f64_from_f32(1.25) -> OK/1.25.
+// Example: f64_from_f32(1.25) -> success 1.25.
 // Exact widening including subnormals and signed zero.
-// O(1), no allocation; failed payload is positive zero. Native nonfinite input -> INVALID.
-def pub f64_from_f32(value: f32) -> F64Result {
+// O(1), no allocation; failure has no readable payload. Native nonfinite input -> INVALID.
+def pub f64_from_f32(value: f32) -> result<f64> {
     def mut output: f64 = 0.0;
     def code: i32       = __std_f64_from_f32(value, &output);
 
-    return F64Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: f32_from_f64_exact(1.25) -> OK/1.25.
+// Example: f32_from_f64_exact(1.25) -> success 1.25.
 // OVERFLOW beyond f32 maximum, UNDERFLOW to zero, otherwise INEXACT on precision loss.
-// O(1), no allocation; failed payload is positive zero. Native nonfinite input -> INVALID.
-def pub f32_from_f64_exact(value: f64) -> F32Result {
+// O(1), no allocation; failure has no readable payload. Native nonfinite input -> INVALID.
+def pub f32_from_f64_exact(value: f64) -> result<f32> {
     def mut output: f32 = 0.0;
     def code: i32       = __std_f32_from_f64(value, 0, &output);
 
-    return F32Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
 }
 
-// Example: f32_from_f64_rounded(1.25) -> OK/1.25.
+// Example: f32_from_f64_rounded(1.25) -> success 1.25.
 // Nearest/ties-even, preserving -0; still reports OVERFLOW and nonzero UNDERFLOW.
-// O(1), no allocation; failed payload is positive zero. Native nonfinite input -> INVALID.
-def pub f32_from_f64_rounded(value: f64) -> F32Result {
+// O(1), no allocation; failure has no readable payload. Native nonfinite input -> INVALID.
+def pub f32_from_f64_rounded(value: f64) -> result<f32> {
     def mut output: f32 = 0.0;
     def code: i32       = __std_f32_from_f64(value, 1, &output);
 
-    return F32Result {
-        status: code,
-        value: output
-    };
+    if code != status.OK { return conversion_error(code); }
+
+    return output;
+}
+
+// Shared conversion categories; native primitives validate before writing output.
+def conversion_error(code: i32) -> error {
+    if code == status.INVALID { return error("numeric conversion requires a finite value", code, 0); }
+    if code == status.OVERFLOW { return error("numeric conversion is out of range", code, 0); }
+    if code == status.INEXACT { return error("numeric conversion loses precision", code, 0); }
+    if code == status.UNDERFLOW { return error("numeric conversion underflows to zero", code, 0); }
+
+    return error("numeric conversion failed", code, 0);
 }

@@ -13,7 +13,7 @@ def struct Layout {
 }
 
 def byte(source: string, index: u64) -> u8 {
-    return strings.byte_at(source, index).value;
+    return byte_or_zero(source, index);
 }
 
 def whitespace(value: u8) -> bool {
@@ -115,8 +115,8 @@ def pub format_text(memory: &arena.GeneralArena, source: string) -> result<strin
     if length > 8388608 { return error("source exceeds 8 MiB"); }
     if length == 0 { return ""; }
 
-    def made: strings.BuilderResult = strings.StringBuilder.create(memory, length * 8 + 64);
-    if made.status != status.OK { return error("formatter output allocation failed"); }
+    def made: result<strings.StringBuilder> = strings.StringBuilder.create(memory, length * 8 + 64);
+    if made.erroneous { return error("formatter output allocation failed"); }
 
     def mut output: strings.StringBuilder = made.value;
 
@@ -150,7 +150,7 @@ def pub format_text(memory: &arena.GeneralArena, source: string) -> result<strin
             if wrote { pending_blank = true; }
         } else {
             if pending_blank {
-                if output.append(newline) != status.OK { return error("formatter output too large"); }
+                if !append_succeeded(output.append(newline)) { return error("formatter output too large"); }
 
                 pending_blank = false;
             }
@@ -158,11 +158,11 @@ def pub format_text(memory: &arena.GeneralArena, source: string) -> result<strin
             def level: i32 = indentation(&layout, source, first, last);
 
             for def mut index: i32 = 0; index < level; index = index + 1 {
-                if output.append("    ") != status.OK { return error("formatter output too large"); }
+                if !append_succeeded(output.append("    ")) { return error("formatter output too large"); }
             }
 
-            def line: string = strings.slice_bytes(source, first, last - first).value;
-            if output.append(line) != status.OK || output.append(newline) != status.OK {
+            def line: string = slice_or_empty(source, first, last - first);
+            if !append_succeeded(output.append(line)) || !append_succeeded(output.append(newline)) {
                 return error("formatter output too large");
             }
 
@@ -177,11 +177,36 @@ def pub format_text(memory: &arena.GeneralArena, source: string) -> result<strin
         if cursor < length { cursor = cursor + 1; }
     }
 
-    def formatted: strings.StringResult = output.to_string(memory);
-    if formatted.status != status.OK { return error("formatter output copy failed"); }
+    def formatted: result<string> = output.to_string(memory);
+    if formatted.erroneous { return error("formatter output copy failed"); }
 
     def styled: result<string> = style.apply(memory, formatted.value, length * 8 + 64);
     if styled.erroneous { return styled.error; }
 
     return styled.value;
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
+}
+
+// Keep append chains short-circuiting while explicitly handling every result.
+def append_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
 }

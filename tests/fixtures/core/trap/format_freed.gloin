@@ -5,7 +5,9 @@ def main() -> i32 {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
 
     memory.free();
-    std.to_string(&memory, 42);
+
+    def formatted: result<string> = std.to_string(&memory, 42);
+    if formatted.erroneous { return 1; }
 
     return 0;
 }

@@ -11,19 +11,22 @@ class NetworkLibraryTest : public gloin_test::CliFixture {
         timeout_seconds = 60;
     }
 };
-}
+} // namespace
 
 TEST_F(NetworkLibraryTest, ServerTlsCallsRetainTheGloinIRAbiBoundary) {
-    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
-                         "fixtures/network/tls_sessions.gloin";
+    const auto fixture =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures/network/tls_sessions.gloin";
     const auto ir = invoke({"--emit-ir", fixture.string()});
     ASSERT_EQ(ir.status, 0) << ir.err;
-    for (const std::string name : {"gloin_net_tls_server_config", "gloin_net_tls_server_config_close",
-                                  "gloin_net_tls_server_create", "gloin_net_tls_shutdown"}) {
+    for (const std::string name :
+         {"gloin_net_tls_server_config", "gloin_net_tls_server_config_close",
+          "gloin_net_tls_server_create", "gloin_net_tls_shutdown"}) {
         const auto position = ir.out.find("callee = @" + name + "}");
         ASSERT_NE(position, std::string::npos) << name;
         const auto line = ir.out.rfind('\n', position);
-        EXPECT_NE(ir.out.substr(line + 1, position - line).find("gloin.abi_call"), std::string::npos) << name;
+        EXPECT_NE(ir.out.substr(line + 1, position - line).find("gloin.abi_call"),
+                  std::string::npos)
+            << name;
         EXPECT_EQ(ir.out.find("llvm.call @" + name), std::string::npos) << name;
     }
 }
@@ -45,12 +48,16 @@ def main() -> i32 {
     return 0;
 })");
     expect_success(invoke({program}), "");
-    for (const std::string body : {
-             "__net_tls_server_config_close(null);",
-             "def loaded: result<net.TlsServerConfig> = net.TlsServerConfig.load(&owner, 1, 2); if loaded.erroneous { return 1; }",
-             "def opened: result<net.Socket> = net.Socket.open(&owner); if opened.erroneous { return 1; } def mut socket: net.Socket = opened.value; socket.start_tls_server(&owner, 1);"}) {
-        const auto invalid = source("import \"@net\"; import \"@arena\"; def main() -> i32 { "
-            "def mut owner: arena.GeneralArena = arena.GeneralArena.create(); " + body + " return 0; }");
+    for (const std::string body :
+         {"__net_tls_server_config_close(null);",
+          "def loaded: result<net.TlsServerConfig> = net.TlsServerConfig.load(&owner, 1, 2); if "
+          "loaded.erroneous { return 1; }",
+          "def opened: result<net.Socket> = net.Socket.open(&owner); if opened.erroneous { return "
+          "1; } def mut socket: net.Socket = opened.value; socket.start_tls_server(&owner, 1);"}) {
+        const auto invalid =
+            source("import \"@net\"; import \"@arena\"; def main() -> i32 { "
+                   "def mut owner: arena.GeneralArena = arena.GeneralArena.create(); " +
+                   body + " return 0; }");
         const auto result = invoke({"--check", invalid});
         EXPECT_EQ(result.status, 1);
         EXPECT_FALSE(result.err.empty());
@@ -58,8 +65,8 @@ def main() -> i32 {
 }
 
 TEST_F(NetworkLibraryTest, LocalHttpRoundTripWorksInJitAndNativeExecutable) {
-    const auto example = std::filesystem::path(__FILE__).parent_path().parent_path() /
-                         "examples/network_http.gloin";
+    const auto example =
+        std::filesystem::path(__FILE__).parent_path().parent_path() / "examples/network_http.gloin";
     expect_success(invoke({example.string()}), "nonblocking HTTP round trip succeeded\n");
     const auto output = directory + "/network-http";
     expect_success(invoke_raw({"-o", output, example.string()}), "");
@@ -68,8 +75,8 @@ TEST_F(NetworkLibraryTest, LocalHttpRoundTripWorksInJitAndNativeExecutable) {
     const std::optional<llvm::StringRef> redirects[] = {std::nullopt, stdout_path, stderr_path};
     std::string message;
     bool launch_failed = false;
-    const auto status = llvm::sys::ExecuteAndWait(output, {output}, std::nullopt, redirects, 10,
-                                                  0, &message, &launch_failed);
+    const auto status = llvm::sys::ExecuteAndWait(output, {output}, std::nullopt, redirects, 10, 0,
+                                                  &message, &launch_failed);
     EXPECT_FALSE(launch_failed) << message;
     EXPECT_EQ(status, 0);
     EXPECT_EQ(read(stdout_path), "nonblocking HTTP round trip succeeded\n");
@@ -77,7 +84,8 @@ TEST_F(NetworkLibraryTest, LocalHttpRoundTripWorksInJitAndNativeExecutable) {
 }
 
 TEST_F(NetworkLibraryTest, HttpRejectsAmbiguousFramingAndHeaderInjection) {
-    const auto file = source(R"(import "@arena"; import "@http"; import "@status"; import "@strings";
+    const auto file =
+        source(R"(import "@arena"; import "@http"; import "@status"; import "@strings";
 def main() -> i32 {
     def partial: result<http.RequestHead> = http.parse_request("GET / HTTP/1.1\r\nHost: local", 128);
     if partial.erroneous { return 1; }
@@ -102,8 +110,9 @@ def main() -> i32 {
     def framed: result<http.Frame> = http.frame_request(framed_text, 128, 3);
     if framed.erroneous { return 15; }
     if !framed.value.complete || !strings.equal(framed.value.body, "abc") { return 16; }
-    def following: strings.StringResult = strings.slice_bytes(framed_text, framed.value.consumed, 4);
-    if following.status != status.OK || !strings.equal(following.value, "NEXT") { return 17; }
+    def following: result<string> = strings.slice_bytes(framed_text, framed.value.consumed, 4);
+        if following.erroneous { return 97; }
+    if following.erroneous || !strings.equal(following.value, "NEXT") { return 17; }
     def oversized_body: result<http.Frame> = http.frame_request(framed_text, 128, 2);
     if !oversized_body.erroneous { return 18; }
     def unframed_response: result<http.Frame> = http.frame_response(
@@ -227,10 +236,10 @@ def verify(wire: string, expected: string, method: string, eof: bool) -> i32 {
         def made: result<http.ResponseReader> = http.ResponseReader.create(head[..], body[..], method, 1024);
         if made.erroneous { return 1; }
         def mut reader: http.ResponseReader = made.value;
-        def first: result<http.ResponseProgress> = reader.feed(strings.slice_bytes(wire, 0, split).value, false);
+        def first: result<http.ResponseProgress> = reader.feed((match strings.slice_bytes(wire, 0, split) { case value(v) => v; case error(e) => ""; }), false);
         if first.erroneous { return 2; }
-        def second: result<http.ResponseProgress> = reader.feed(strings.slice_bytes(wire, split,
-            strings.byte_length(wire) - split).value, eof);
+        def second: result<http.ResponseProgress> = reader.feed((match strings.slice_bytes(wire, split,
+            strings.byte_length(wire) - split) { case value(v) => v; case error(e) => ""; }), eof);
         if second.erroneous { return 3; }
         if !second.value.complete { return 4; }
         def response: result<http.Response> = reader.response();
@@ -256,7 +265,7 @@ def main() -> i32 {
     if made.erroneous { return 9; }
     def mut reader: http.ResponseReader = made.value;
     for def mut i: u64 = 0; i < strings.byte_length(wire); i = i + 1 {
-        def step: result<http.ResponseProgress> = reader.feed(strings.slice_bytes(wire, i, 1).value, false);
+        def step: result<http.ResponseProgress> = reader.feed((match strings.slice_bytes(wire, i, 1) { case value(v) => v; case error(e) => ""; }), false);
         if step.erroneous { return 10; }
     }
     def tail: result<http.ResponseProgress> = reader.feed("NEXT", false);
@@ -336,7 +345,7 @@ def check(wire: string, eof: bool, suffix: u64) -> bool {
                 if part == 1 { end = strings.byte_length(wire); }
                 def mut again: bool = true;
                 while again {
-                    def bytes: string = strings.slice_bytes(wire, cursor, end - cursor).value;
+                    def bytes: string = (match strings.slice_bytes(wire, cursor, end - cursor) { case value(v) => v; case error(e) => ""; });
                     def fed: result<http.StreamProgress> = decoder.feed(bytes, eof && part == 1, output[0..capacity]);
                     if fed.erroneous { return false; }
                     def step: http.StreamProgress = fed.value;
@@ -354,7 +363,7 @@ def check(wire: string, eof: bool, suffix: u64) -> bool {
                         if paused.value.consumed != zero || paused.value.produced != zero { return false; }
                     }
                     for def mut i: u64 = 0; i < step.produced; i = i + 1 {
-                        if output[i] != strings.byte_at("a\0bcde", count + i).value { return false; }
+                        if output[i] != (match strings.byte_at("a\0bcde", count + i) { case value(v) => v; case error(e) => 0; }) { return false; }
                     }
                     count = count + step.produced;
                     cursor = cursor + step.consumed;
@@ -393,7 +402,7 @@ def check(head_text: string, suffix: string) -> bool {
     def mut cursor: u64 = 0;
     def mut count: u64 = 0;
     while cursor < strings.byte_length(suffix) {
-        def next: result<http.StreamProgress> = decoder.feed(strings.slice_bytes(suffix, cursor, 1).value, false, output[..]);
+        def next: result<http.StreamProgress> = decoder.feed((match strings.slice_bytes(suffix, cursor, 1) { case value(v) => v; case error(e) => ""; }), false, output[..]);
         if next.erroneous {
             if count != 2 { return false; }
             def again: result<http.StreamProgress> = decoder.feed("", false, output[..]);

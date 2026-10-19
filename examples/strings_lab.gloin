@@ -5,35 +5,31 @@ import "@strings";
 
 // A configuration line is inspected without allocation. Only retaining its
 // value in another arena allocates; parse_count never owns its borrowed input.
-def parse_count(line: string) -> std.IntResult {
+def parse_count(line: string) -> result<i32> {
     def text: string                  = strings.trim_ascii(line);
     def separator: strings.FindResult = strings.find(text, "=");
 
     if !separator.found {
-        return std.IntResult {
-            status: status.INVALID,
-            value: 0
-        };
+        return error("invalid count configuration", status.INVALID, 0);
     }
 
-    def left: strings.StringResult  = strings.slice_bytes(text, 0, separator.offset);
-    def start: u64                  = separator.offset + 1;
-    def right: strings.StringResult = strings.slice_bytes(text, start, strings.byte_length(text) - start);
+    def left: result<string> = strings.slice_bytes(text, 0, separator.offset);
+    if left.erroneous { return error("invalid count configuration", status.INVALID, 0); }
 
-    if left.status != status.OK || right.status != status.OK {
-        return std.IntResult {
-            status: status.INVALID,
-            value: 0
-        };
+    def start: u64            = separator.offset + 1;
+    def right: result<string> = strings.slice_bytes(text, start, strings.byte_length(text) - start);
+
+    if right.erroneous {
+        return error("invalid count configuration", status.INVALID, 0);
     }
     if !strings.equal(strings.trim_ascii(left.value), "count") {
-        return std.IntResult {
-            status: status.INVALID,
-            value: 0
-        };
+        return error("invalid count configuration", status.INVALID, 0);
     }
 
-    return std.to_int(strings.trim_ascii(right.value));
+    def number: result<i32> = std.to_int(strings.trim_ascii(right.value));
+    if number.erroneous { return number.error; }
+
+    return number.value;
 }
 
 def main() -> i32 {
@@ -43,14 +39,19 @@ def main() -> i32 {
     def mut retained: arena.GeneralArena = arena.GeneralArena.create();
     defer retained.free();
 
-    def line: strings.StringResult = strings.copy(&input, " \tcount = 42\r\n");
-    if line.status != status.OK { return 1; }
+    def line: result<string> = strings.copy(&input, " \tcount = 42\r\n");
+    if line.erroneous { return 1; }
 
-    def count: std.IntResult = parse_count(line.value);
-    if count.status != status.OK || count.value != 42 { return 2; }
+    def count: result<i32> = parse_count(line.value);
+    if count.erroneous { return 2; }
 
-    def saved: strings.StringResult = strings.copy(&retained, strings.trim_ascii(line.value));
-    if saved.status != status.OK { return 3; }
+    def expected: i32 = count.value;
+    if expected != 42 { return 2; }
+
+    def saved: result<string> = strings.copy(&retained, strings.trim_ascii(line.value));
+    if saved.erroneous { return 3; }
+
+    def retained_text: string = saved.value;
 
     input.reset(); // saved lives in retained; line and every view of it are now invalid.
 
@@ -75,21 +76,23 @@ def main() -> i32 {
     if !strings.equal(strings.trim_start_ascii(" x "), "x ") { return 9; }
     if !strings.equal(strings.trim_end_ascii(" x "), " x") { return 10; }
 
-    def invalid: std.IntResult = parse_count("missing separator");
-    if invalid.status != status.INVALID { return 11; }
+    def invalid: result<i32> = parse_count("missing separator");
+    if !invalid.erroneous { return 11; }
+    if invalid.error.code != status.INVALID { return 11; }
 
     // Reuse scratch storage over a long run; do not retain its borrowed views.
     for def mut i: i32 = 0; i < 10000; i = i + 1 {
-        def scratch: strings.StringResult = strings.copy(&input, " count = 42 ");
-        if scratch.status != status.OK { return 12; }
+        def scratch: result<string> = strings.copy(&input, " count = 42 ");
+        if scratch.erroneous { return 12; }
 
-        def parsed: std.IntResult = parse_count(scratch.value);
-        if parsed.status != status.OK || parsed.value != count.value { return 13; }
+        def parsed: result<i32> = parse_count(scratch.value);
+        if parsed.erroneous { return 13; }
+        if parsed.value != expected { return 13; }
 
         input.reset();
     }
 
-    std.println(saved.value);
+    std.println(retained_text);
     std.println("strings lab: ok");
 
     return 0;

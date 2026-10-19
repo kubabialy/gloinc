@@ -18,8 +18,8 @@ def struct Statistics {
     def add(self: &Statistics, value: f64) -> i32 {
         if self.count == 1000000 { return status.TOO_LONG; }
 
-        def n: std.F64Result = std.f64_from_u64_exact(self.count + 1);
-        if n.status != status.OK { return n.status; }
+        def n: result<f64> = std.f64_from_u64_exact(self.count + 1);
+        if n.erroneous { return n.error.code; }
 
         if self.count == 0 {
             self.minimum = value;
@@ -40,23 +40,29 @@ def struct Statistics {
 }
 
 def report_error(message: string) -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut stream: io.Stream = io.stderr();
 
-    stream.write_line(message);
-    stream.flush();
+    report_io_failure(stream.write_line(message, &io_progress));
+    report_io_failure(stream.flush());
 
     return 2;
 }
 
 // Fixed precision is explicit; each result belongs to the supplied scratch arena.
 def emit(output: &io.Stream, memory: &arena.GeneralArena, key: string, value: f64) -> bool {
-    def text: std.FormatResult = std.format_f64_fixed(memory, value, 3);
-    if text.status != status.OK { return false; }
+    def mut io_progress: io.WriteState = io.WriteState.empty();
 
-    return output.write_all(key).status == status.OK && output.write_line(text.value).status == status.OK;
+    def text: result<string> = std.format_f64_fixed(memory, value, 3);
+    if text.erroneous { return false; }
+
+    return io_succeeded(output.write_all(key, &io_progress)) && io_succeeded(output.write_line(text.value, &io_progress));
 }
 
 def main() -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
     defer scratch.free();
 
@@ -74,51 +80,51 @@ def main() -> i32 {
 
     while reading {
         scratch.reset();
-        def line: io.ReadResult = input.read_line(&scratch, 256);
+        def mut line: io.ReadState    = io.ReadState.empty();
+        def line_result: result<void> = input.read_line(&scratch, 256, &line);
 
-        if line.status == status.END {
+        if line_result.erroneous {
+            return report_error("input read failed or line exceeds 256 bytes");
+        }
+
+        if line.end {
             reading = false;
         } else {
-            if line.status != status.OK {
-                return report_error("input read failed or line exceeds 256 bytes");
-            }
 
-            def split: strings.SplitCursorResult = strings.SplitCursor.create(line.value, ",");
-            if split.status != status.OK { return report_error("invalid point"); }
+            def split: result<strings.SplitCursor> = strings.SplitCursor.create(line.value, ",");
+            if split.erroneous { return report_error("invalid point"); }
 
             def mut fields: strings.SplitCursor = split.value;
-            def first: strings.StringResult     = fields.next();
-            def second: strings.StringResult    = fields.next();
+            def first: strings.TextItem         = fields.next();
+            def second: strings.TextItem        = fields.next();
 
-            if first.status != status.OK
-                || second.status != status.OK
-                || fields.next().status != status.END {
+            if first.end
+                || second.end
+                || !fields.next().end {
                 return report_error("invalid point");
             }
 
-            def x: std.F64Result = std.parse_f64(strings.trim_ascii(first.value));
-            def y: std.F64Result = std.parse_f64(strings.trim_ascii(second.value));
+            def x: result<f64> = std.parse_f64(strings.trim_ascii(first.value));
+            if x.erroneous { return report_error("invalid point"); }
 
-            if x.status != status.OK || y.status != status.OK {
+            def y: result<f64> = std.parse_f64(strings.trim_ascii(second.value));
+
+            if y.erroneous { return report_error("invalid point"); }
+
+            def ax: result<f64> = math.abs_f64(x.value);
+            if ax.erroneous { return report_error(ax.error.message); }
+
+            def ay: result<f64> = math.abs_f64(y.value);
+            if ay.erroneous { return report_error(ay.error.message); }
+            if ax.value > 1000000.0 || ay.value > 1000000.0 {
                 return report_error("invalid point");
             }
 
-            def ax: math.F64Result = math.abs_f64(x.value);
-            def ay: math.F64Result = math.abs_f64(y.value);
+            def radius: result<f64> = math.hypot_f64(x.value, y.value);
+            if radius.erroneous { return report_error(radius.error.message); }
 
-            if ax.status != status.OK
-                || ay.status != status.OK
-                || ax.value > 1000000.0
-                || ay.value > 1000000.0 {
-                return report_error("invalid point");
-            }
-
-            def radius: math.F64Result = math.hypot_f64(x.value, y.value);
-            def angle: math.F64Result  = math.atan2_f64(y.value, x.value);
-
-            if radius.status != status.OK || angle.status != status.OK {
-                return report_error("geometry failed");
-            }
+            def angle: result<f64> = math.atan2_f64(y.value, x.value);
+            if angle.erroneous { return report_error(angle.error.message); }
             if stats.add(radius.value) != status.OK {
                 return report_error("statistics limit exceeded");
             }
@@ -129,18 +135,18 @@ def main() -> i32 {
 
     if stats.count == 0 { return report_error("expected x,y records"); }
 
-    def n: std.F64Result = std.f64_from_u64_exact(stats.count);
-    if n.status != status.OK { return report_error("count conversion failed"); }
+    def n: result<f64> = std.f64_from_u64_exact(stats.count);
+    if n.erroneous { return report_error("count conversion failed"); }
 
     // Roundoff can make accumulated variance slightly negative; explicitly clamp to zero.
-    def spread: math.F64Result = math.sqrt_f64(math.max_f64(0.0, stats.m2 / n.value));
-    if spread.status != status.OK { return report_error("variance failed"); }
+    def spread: result<f64> = math.sqrt_f64(math.max_f64(0.0, stats.m2 / n.value));
+    if spread.erroneous { return report_error(spread.error.message); }
 
     scratch.reset();
-    def count: std.FormatResult = std.format_u64(&scratch, stats.count);
-    if count.status != status.OK
-        || output.write_all("count=").status != status.OK
-        || output.write_line(count.value).status != status.OK {
+    def count: result<string> = std.format_u64(&scratch, stats.count);
+    if count.erroneous { return 3; }
+    if !io_succeeded(output.write_all("count=", &io_progress))
+        || !io_succeeded(output.write_line(count.value, &io_progress)) {
         return 3;
     }
     if !emit(&output, &scratch, "min=", stats.minimum)
@@ -150,7 +156,19 @@ def main() -> i32 {
         || !emit(&output, &scratch, "last_angle=", last_angle) {
         return 3;
     }
-    if output.flush().status != status.OK { return 3; }
+    if !io_succeeded(output.flush()) { return 3; }
 
     return 0;
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// Report cleanup/diagnostic failures without recursively writing to a failed stream.
+def report_io_failure(outcome: result<void>) -> void {
+    if outcome.erroneous { std.println(outcome.error.message); }
 }

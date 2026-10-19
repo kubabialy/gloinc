@@ -14,8 +14,8 @@ def main() -> i32 {
     def mut root: string = "docs/site";
 
     if process.arg_count() == 2 {
-        def argument: process.TextResult = process.arg(&memory, 1);
-        if argument.status != status.OK { return 2; }
+        def argument: result<string> = process.arg(&memory, 1);
+        if argument.erroneous { return 2; }
 
         root = argument.value;
     }

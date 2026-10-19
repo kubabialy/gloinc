@@ -9,8 +9,8 @@ import "@strings";
 def pub decode(memory: &arena.GeneralArena, text: string, html: bool) -> result<string> {
     if !strings.contains(text, "&") && (html || (!strings.contains(text, "\r") && !strings.contains(text, "\n") && !strings.contains(text, "\t"))) { return text; }
 
-    def made: strings.BuilderResult = strings.StringBuilder.create(memory, strings.byte_length(text) * 4 + 4);
-    if made.status != status.OK { return error("cannot allocate entity decoder"); }
+    def made: result<strings.StringBuilder> = strings.StringBuilder.create(memory, strings.byte_length(text) * 4 + 4);
+    if made.erroneous { return error("cannot allocate entity decoder"); }
 
     def mut out: strings.StringBuilder = made.value;
     def size: u64                      = strings.byte_length(text);
@@ -20,7 +20,7 @@ def pub decode(memory: &arena.GeneralArena, text: string, html: bool) -> result<
         if common.byte(text, i) != 38 {
             def mut value: u8 = common.byte(text, i);
             if !html && (value == 9 || value == 10 || value == 13) { value = 32; }
-            if out.append_byte(value) != status.OK { return error("entity decoder capacity exceeded"); }
+            if !append_succeeded(out.append_byte(value)) { return error("entity decoder capacity exceeded"); }
 
             if !html && common.byte(text, i) == 13 && i + 1 < size && common.byte(text, i + 1) == 10 { i = i + 1; }
 
@@ -35,7 +35,7 @@ def pub decode(memory: &arena.GeneralArena, text: string, html: bool) -> result<
 
             if end == size || common.byte(text, end) != 59 {
                 if !html { return error("unterminated XML entity"); }
-                if out.append_byte(38) != status.OK { return error("entity decoder capacity exceeded"); }
+                if !append_succeeded(out.append_byte(38)) { return error("entity decoder capacity exceeded"); }
 
                 i = i + 1;
             } else {
@@ -73,7 +73,7 @@ def pub decode(memory: &arena.GeneralArena, text: string, html: bool) -> result<
                     else if html { value = html_names.lookup(name); }
 
                     if strings.is_empty(value) { return error("unknown named entity"); }
-                    if out.append(value) != status.OK { return error("entity decoder capacity exceeded"); }
+                    if !append_succeeded(out.append(value)) { return error("entity decoder capacity exceeded"); }
                 }
 
                 i = end + 1;
@@ -81,8 +81,15 @@ def pub decode(memory: &arena.GeneralArena, text: string, html: bool) -> result<
         }
     }
 
-    def copied: strings.StringResult = out.to_string(memory);
-    if copied.status != status.OK { return error("cannot retain decoded entities"); }
+    def copied: result<string> = out.to_string(memory);
+    if copied.erroneous { return error("cannot retain decoded entities"); }
 
     return copied.value;
+}
+
+// Keep append chains short-circuiting while explicitly handling every result.
+def append_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
 }

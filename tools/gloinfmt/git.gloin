@@ -39,11 +39,12 @@ def pub files(memory: &arena.GeneralArena) -> result<vector.Vector<string>> {
     def mut start: u64                   = 0;
 
     for def mut i: u64 = 0; i < strings.byte_length(text); i = i + 1 {
-        if strings.byte_at(text, i).value == 0 {
+        if byte_or_zero(text, i) == 0 {
             if i == start { return error("Git returned an empty path"); }
 
-            def copied: strings.StringResult = strings.copy(memory, strings.slice_bytes(text, start, i - start).value);
-            if copied.status != status.OK || !names.push(copied.value) { return error("cannot retain Git path"); }
+            def copied: result<string> = strings.copy(memory, slice_or_empty(text, start, i - start));
+            if copied.erroneous { return error("cannot retain Git path"); }
+            if !names.push(copied.value) { return error("cannot retain Git path"); }
 
             start = i + 1;
         }
@@ -52,4 +53,22 @@ def pub files(memory: &arena.GeneralArena) -> result<vector.Vector<string>> {
     if start != strings.byte_length(text) { return error("Git returned an unterminated path"); }
 
     return names;
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
 }

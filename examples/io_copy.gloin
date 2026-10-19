@@ -7,75 +7,96 @@ import "@status";
 import "@std";
 
 def main() -> i32 {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
     def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
     defer scratch.free();
 
-    def mut input: io.Stream  = io.stdin();
-    def mut errors: io.Stream = io.stderr();
-    def source: io.ReadResult = input.read_line(&scratch, 4096);
+    def mut input: io.Stream        = io.stdin();
+    def mut errors: io.Stream       = io.stderr();
+    def mut source: io.ReadState    = io.ReadState.empty();
+    def source_result: result<void> = input.read_line(&scratch, 4096, &source);
 
-    if source.status != status.OK {
-        errors.write_line("source path required");
-        errors.flush();
+    if source_result.erroneous {
+        report_io_failure(errors.write_line("source path required", &io_progress));
+        report_io_failure(errors.flush());
+
+        return 1;
+    }
+    if source.end {
+        report_io_failure(errors.write_line("source path required", &io_progress));
+        report_io_failure(errors.flush());
 
         return 1;
     }
 
-    def opened: io.FileResult = io.File.open_read(&owner, source.value);
-    if opened.status != status.OK {
-        errors.write_line("cannot open source");
-        errors.flush();
+    def opened: result<io.File> = io.File.open_read(&owner, source.value);
+    if opened.erroneous {
+        report_io_failure(errors.write_line("cannot open source", &io_progress));
+        report_io_failure(errors.flush());
 
         return 2;
     }
 
     def mut reader: io.File = opened.value;
-    defer reader.close();
+    defer close_file(&reader);
 
     scratch.reset();
-    def target: io.ReadResult = input.read_line(&scratch, 4096);
-    if target.status != status.OK {
-        errors.write_line("destination path required");
-        errors.flush();
+    def mut target: io.ReadState    = io.ReadState.empty();
+    def target_result: result<void> = input.read_line(&scratch, 4096, &target);
+
+    if target_result.erroneous {
+        report_io_failure(errors.write_line("destination path required", &io_progress));
+        report_io_failure(errors.flush());
+
+        return 3;
+    }
+    if target.end {
+        report_io_failure(errors.write_line("destination path required", &io_progress));
+        report_io_failure(errors.flush());
 
         return 3;
     }
 
-    def created: io.FileResult = io.File.create_new(&owner, target.value);
-    if created.status != status.OK {
-        errors.write_line("cannot create new destination");
-        errors.flush();
+    def created: result<io.File> = io.File.create_new(&owner, target.value);
+    if created.erroneous {
+        report_io_failure(errors.write_line("cannot create new destination", &io_progress));
+        report_io_failure(errors.flush());
 
         return 4;
     }
 
     def mut writer: io.File = created.value;
-    defer writer.close();
+    defer close_file(&writer);
 
     def mut copying: bool = true;
     def mut count: u64    = 0;
 
     while copying {
         scratch.reset();
-        def chunk: io.ReadResult = reader.read_chunk(&scratch, 4096);
+        def mut chunk: io.ReadState    = io.ReadState.empty();
+        def chunk_result: result<void> = reader.read_chunk(&scratch, 4096, &chunk);
 
-        if chunk.status == status.END {
+        if chunk_result.erroneous {
+            report_io_failure(errors.write_line("read failed", &io_progress));
+            report_io_failure(errors.flush());
+
+            return 5;
+        }
+
+        if chunk.end {
             copying = false;
         } else {
-            if chunk.status != status.OK {
-                errors.write_line("read failed");
-                errors.flush();
 
-                return 5;
-            }
+            def mut written: io.WriteState   = io.WriteState.empty();
+            def written_result: result<void> = writer.write_all(chunk.value, &written);
 
-            def written: io.WriteResult = writer.write_all(chunk.value);
-            if written.status != status.OK {
-                errors.write_line("write failed");
-                errors.flush();
+            if written_result.erroneous {
+                report_io_failure(errors.write_line("write failed", &io_progress));
+                report_io_failure(errors.flush());
 
                 return 6;
             }
@@ -84,20 +105,44 @@ def main() -> i32 {
         }
     }
 
-    if writer.flush().status != status.OK { return 7; }
+    if !io_succeeded(writer.flush()) { return 7; }
 
     // Explicit results matter; deferred cleanup alone does not certify successful output.
-    def output_close: io.IoResult = writer.close();
-    def input_close: io.IoResult  = reader.close();
+    def output_close: result<void> = writer.close();
+    if output_close.erroneous { return 8; }
 
-    if output_close.status != status.OK || input_close.status != status.OK { return 8; }
+    def input_close: result<void> = reader.close();
+
+    if input_close.erroneous { return 8; }
 
     scratch.reset();
-    def text: std.FormatResult = std.format_u64(&scratch, count);
-    if text.status != status.OK { return 9; }
+    def text: result<string> = std.format_u64(&scratch, count);
+    if text.erroneous { return 9; }
 
     def mut output: io.Stream = io.stdout();
-    if output.write_line(text.value).status != status.OK { return 10; }
+    if !io_succeeded(output.write_line(text.value, &io_progress)) { return 10; }
 
-    return output.flush().status;
+    if !io_succeeded(output.flush()) { return 1; }
+
+    return 0;
+}
+
+// The owner must remain live until deferred cleanup has run.
+def close_file(file: &io.File) -> void {
+    if file.is_open() {
+        def closed: result<void> = file.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// Report cleanup/diagnostic failures without recursively writing to a failed stream.
+def report_io_failure(outcome: result<void>) -> void {
+    if outcome.erroneous { std.println(outcome.error.message); }
 }

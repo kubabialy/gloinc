@@ -18,8 +18,8 @@ def run_case(path: string, tls: bool, trust_file: string) -> i32 {
 
     if strings.equal(path, "/head") { method = "HEAD"; body_text = ""; }
     if strings.equal(path, "/large") {
-        def repeated: strings.StringResult = strings.repeat(&owner, "a\0b", 10000, 30000);
-        if repeated.status != status.OK { return 1; }
+        def repeated: result<string> = strings.repeat(&owner, "a\0b", 10000, 30000);
+        if repeated.erroneous { return 1; }
 
         body_text = repeated.value;
     }
@@ -83,10 +83,12 @@ def main() -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
-    def mode: process.TextResult  = process.arg(&owner, 1);
-    def trust: process.TextResult = process.arg(&owner, 2);
+    def mode: result<string> = process.arg(&owner, 1);
+    if mode.erroneous { return 1; }
 
-    if mode.status != status.OK || trust.status != status.OK { return 1; }
+    def trust: result<string> = process.arg(&owner, 2);
+
+    if trust.erroneous { return 1; }
 
     def tls: bool = strings.equal(mode.value, "tls");
     def cases: [string; 17] = {

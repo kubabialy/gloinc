@@ -18,8 +18,8 @@ def checked_capture(memory: &arena.GeneralArena, work: string, name: string,
     def suffixes: [string; 2] = {".out", ".err"};
 
     for def mut i: u64 = 0; i < 2; i = i + 1 {
-        def leaf: strings.StringResult = strings.concat(memory, name, suffixes[i], 256);
-        if leaf.status != status.OK { return error("cannot make TLS capture name"); }
+        def leaf: result<string> = strings.concat(memory, name, suffixes[i], 256);
+        if leaf.erroneous { return error("cannot make TLS capture name"); }
 
         def path: result<string> = common.join(memory, work, leaf.value);
         if path.erroneous { return path.error; }
@@ -69,8 +69,8 @@ def jobs(memory: &arena.GeneralArena, compiler: string, root: string,
         def output: result<string> = common.join(memory, work, labels[i]);
         if output.erroneous { return output.error; }
 
-        def compile_name: strings.StringResult = strings.concat(memory, labels[i], "-compile", 128);
-        if compile_name.status != status.OK { return error("cannot make TLS compile label"); }
+        def compile_name: result<string> = strings.concat(memory, labels[i], "-compile", 128);
+        if compile_name.erroneous { return error("cannot make TLS compile label"); }
 
         def compile_args: [string; 4] = {modes[i], "-o", output.value, source};
         def compiled: result<void>    = checked_capture(memory, work, compile_name.value, compiler, compile_args[..], "");
@@ -99,8 +99,8 @@ def main() -> i32 {
     def mut args: [string; 4] = zeroed;
 
     for def mut i: u64 = 0; i < 4; i = i + 1 {
-        def arg: process.TextResult = process.arg(&memory, i + 1);
-        if arg.status != status.OK { return 2; }
+        def arg: result<string> = process.arg(&memory, i + 1);
+        if arg.erroneous { return 2; }
 
         def canonical: result<string> = fs.canonical_path(&memory, arg.value, 65536);
         if canonical.erroneous { common.report(canonical.error.message); return 2; }

@@ -19,8 +19,8 @@ def send_all(socket: &net.Socket, text: string) -> result<void> {
     def size: u64         = strings.byte_length(text);
 
     while offset < size && attempts < 10 {
-        def part: strings.StringResult = strings.slice_bytes(text, offset, size - offset);
-        if part.status != status.OK { return error("invalid text offset"); }
+        def part: result<string> = strings.slice_bytes(text, offset, size - offset);
+        if part.erroneous { return error("invalid text offset"); }
 
         def sent: result<net.WriteOutcome> = socket.write_text(part.value);
         if sent.erroneous { return sent.error; }

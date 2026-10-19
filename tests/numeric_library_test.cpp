@@ -14,8 +14,18 @@ class NumericLibraryTest : public gloin_test::CliFixture {
     std::string program(const std::string &body) {
         return source(
             "import \"@std\"; import \"@status\"; import \"@arena\"; import \"@strings\"; "
-            "def same(r: std.FormatResult, s: string) -> bool { return r.status == status.OK && "
-            "strings.equal(r.value,s); } "
+            R"(def same(r: result<string>, s: string) -> bool {
+                if r.erroneous { return false; }
+                return strings.equal(r.value,s);
+            }
+            def succeeds<T>(r: result<T>, expected: T) -> bool {
+                if r.erroneous { return false; }
+                return r.value == expected;
+            }
+            def fails<T>(r: result<T>, code: i32) -> bool {
+                if r.erroneous { return r.error.code == code && r.error.os_error == 0; }
+                return false;
+            })"
             "def main() -> i32 { def mut memory: arena.GeneralArena = arena.GeneralArena.create(); "
             "defer memory.free(); " +
             body + " }");
@@ -29,35 +39,32 @@ class NumericLibraryTest : public gloin_test::CliFixture {
 };
 } // namespace
 TEST_F(NumericLibraryTest, PublicParsersReturnConcreteTypedResults) {
-    expect_run(invoke({program(R"(
-        def a: std.IntResult = std.parse_i32("-2147483648");
-        def b: std.I64Result = std.parse_i64("-9223372036854775808");
-        def c: std.U64Result = std.parse_u64("+18446744073709551615");
-        def d: std.F32Result = std.parse_f32(".125e1");
-        def e: std.F64Result = std.parse_f64("+1.25E+0");
-        def f: std.BoolResult = std.parse_bool("true");
-        if a.status != status.OK || a.value != -2147483648 { return 1; }
-        if b.status != status.OK || b.value != -9223372036854775808 { return 2; }
-        if c.status != status.OK || c.value != 18446744073709551615 { return 3; }
-        if d.status != status.OK || d.value != 1.25 || e.status != status.OK || e.value != 1.25 { return 4; }
-        if f.status != status.OK || !f.value || std.parse_bool("false").value { return 5; }
-        if std.INEXACT != status.INEXACT || std.UNDERFLOW != status.UNDERFLOW || status.INEXACT != 8 || status.UNDERFLOW != 9 { return 6; }
-        return 0;)")}),
+    expect_run(invoke({program(R"(if !succeeds<i32>(std.parse_i32("-2147483648"), -2147483648)
+    || !succeeds<i64>(std.parse_i64("-9223372036854775808"), -9223372036854775808)
+    || !succeeds<u64>(std.parse_u64("+18446744073709551615"), 18446744073709551615)
+    || !succeeds<f32>(std.parse_f32(".125e1"), 1.25)
+    || !succeeds<f64>(std.parse_f64("+1.25E+0"), 1.25)
+    || !succeeds<bool>(std.parse_bool("true"), true)
+    || !succeeds<bool>(std.parse_bool("false"), false) { return 1; }
+if std.INEXACT != status.INEXACT || std.UNDERFLOW != status.UNDERFLOW
+    || status.INEXACT != 8 || status.UNDERFLOW != 9 { return 2; }
+return 0;
+)")}),
                0);
 }
 TEST_F(NumericLibraryTest, ParseFailuresHaveNoPartialPayloadAndLegacyNamesRemain) {
-    expect_run(invoke({program(R"(
-        def a: std.I64Result = std.parse_i64("999999999999999999999x");
-        def b: std.U64Result = std.parse_u64("-0");
-        def c: std.F32Result = std.parse_f32("1e999");
-        def d: std.F64Result = std.parse_f64("-1e-999");
-        def e: std.BoolResult = std.parse_bool("TRUE");
-        if a.status != status.INVALID || a.value != 0 || b.status != status.INVALID || b.value != 0 { return 1; }
-        if c.status != status.OVERFLOW || c.value != 0.0 || d.status != status.UNDERFLOW || d.value != 0.0 { return 2; }
-        if e.status != status.INVALID || e.value || std.parse_f64("1\0").status != status.INVALID { return 3; }
-        if std.to_int("42").value != std.parse_i32("42").value || !strings.equal(std.to_string(&memory,-42),"-42") { return 4; }
-        return 0;)")}),
-               0);
+    expect_run(
+        invoke({program(R"(if !fails<i64>(std.parse_i64("999999999999999999999x"), status.INVALID)
+    || !fails<u64>(std.parse_u64("-0"), status.INVALID)
+    || !fails<f32>(std.parse_f32("1e999"), status.OVERFLOW)
+    || !fails<f64>(std.parse_f64("-1e-999"), status.UNDERFLOW)
+    || !fails<bool>(std.parse_bool("TRUE"), status.INVALID)
+    || !fails<f64>(std.parse_f64("1\0"), status.INVALID) { return 1; }
+if !succeeds<i32>(std.to_int("42"),42) || !succeeds<i32>(std.parse_i32("42"),42)
+    || !same(std.to_string(&memory,-42),"-42") { return 2; }
+return 0;
+)")}),
+        0);
 }
 TEST_F(NumericLibraryTest, EveryFormatterAndSignedZeroRoundTrip) {
     expect_run(invoke({program(R"(
@@ -88,29 +95,32 @@ TEST_F(NumericLibraryTest, EveryFormatterAndSignedZeroRoundTrip) {
         if !same(std.format_f32(&memory,1.25),"1.25") || !same(std.format_f64(&memory,1.25),"1.25") { return 4; }
         if !same(std.format_f32_fixed(&memory,2.5,0),"2") || !same(std.format_f64_fixed(&memory,3.5,0),"4") { return 5; }
         if !same(std.format_f64_fixed(&memory,-0.125,2),"-0.12") { return 6; }
-        def z: std.F64Result = std.parse_f64("-0e99999");
-        def small: std.F32Result = std.f32_from_f64_exact(z.value);
+        def z: result<f64> = std.parse_f64("-0e99999"); if z.erroneous { return 97; }
+        def small: result<f32> = std.f32_from_f64_exact(z.value); if small.erroneous { return 97; }
         if !same(std.format_f64(&memory,z.value),"-0") || !same(std.format_f32_fixed(&memory,small.value,2),"-0.00") { return 7; }
         if !strings.equal(std.format_bool(true),"true") || !strings.equal(std.format_bool(false),"false") { return 8; }
-        def saved: std.FormatResult = std.format_f64_fixed(&memory,1.25,18);
-        def ignored: std.FormatResult = std.format_f64(&memory,99.0);
-        if !same(saved,"1.250000000000000000") { return 9; }
+        def saved: result<string> = std.format_f64_fixed(&memory,1.25,18); if saved.erroneous { return 97; }
+        def ignored: result<string> = std.format_f64(&memory,99.0); if ignored.erroneous { return 97; }
+        if !strings.equal(saved.value,"1.250000000000000000") { return 9; }
         return 0;)")}),
                0);
 }
 TEST_F(NumericLibraryTest, AllFifteenNamedConversionsExecuteWithTheirDeclaredTypes) {
-    expect_run(invoke({program(R"(
-        if std.i64_from_i32(-42).value != -42 || std.i32_from_i64(42).value != 42 { return 1; }
-        if std.u64_from_i64(42).value != 42 || std.i64_from_u64(42).value != 42 { return 2; }
-        if std.f64_from_i64_exact(42).value != 42.0 || std.f64_from_i64_rounded(42).value != 42.0 { return 3; }
-        if std.f64_from_u64_exact(42).value != 42.0 || std.f64_from_u64_rounded(42).value != 42.0 { return 4; }
-        if std.i64_from_f64_exact(42.0).value != 42 || std.i64_from_f64_trunc(-42.9).value != -42 { return 5; }
-        if std.u64_from_f64_exact(42.0).value != 42 || std.u64_from_f64_trunc(42.9).value != 42 { return 6; }
-        if std.f64_from_f32(1.25).value != 1.25 || std.f32_from_f64_exact(1.25).value != 1.25 || std.f32_from_f64_rounded(1.25).value != 1.25 { return 7; }
-        return 0;)")}),
-               0);
+    expect_run(
+        invoke({program(
+            R"(if std.i64_from_i32(-42) != -42 || !succeeds<i32>(std.i32_from_i64(42),42) { return 1; }
+if !succeeds<u64>(std.u64_from_i64(42),42) || !succeeds<i64>(std.i64_from_u64(42),42) { return 2; }
+if !succeeds<f64>(std.f64_from_i64_exact(42),42.0) || std.f64_from_i64_rounded(42) != 42.0 { return 3; }
+if !succeeds<f64>(std.f64_from_u64_exact(42),42.0) || std.f64_from_u64_rounded(42) != 42.0 { return 4; }
+if !succeeds<i64>(std.i64_from_f64_exact(42.0),42) || !succeeds<i64>(std.i64_from_f64_trunc(-42.9),-42) { return 5; }
+if !succeeds<u64>(std.u64_from_f64_exact(42.0),42) || !succeeds<u64>(std.u64_from_f64_trunc(42.9),42) { return 6; }
+if !succeeds<f64>(std.f64_from_f32(1.25),1.25) || !succeeds<f32>(std.f32_from_f64_exact(1.25),1.25)
+    || !succeeds<f32>(std.f32_from_f64_rounded(1.25),1.25) { return 7; }
+return 0;
+)")}),
+        0);
 }
-TEST_F(NumericLibraryTest, ExactWideningUsesGIRAndPreservesStatusAcrossExecutionModes) {
+TEST_F(NumericLibraryTest, ExactWideningUsesGIRAndScalarValuesAcrossExecutionModes) {
     const auto file = source(R"(
         import "@std";
         import "@status";
@@ -119,17 +129,17 @@ TEST_F(NumericLibraryTest, ExactWideningUsesGIRAndPreservesStatusAcrossExecution
             def inputs: [string; 6] = {"-2147483648", "-42", "-1", "0", "1", "2147483647"};
             def expected: [i64; 6] = {-2147483648, -42, -1, 0, 1, 2147483647};
             for def mut i: u64 = 0; i < 6; i = i + 1 {
-                def parsed: std.IntResult = std.parse_i32(inputs[i]);
-                if parsed.status != status.OK { return 1; }
-                def wide: std.I64Result = std.i64_from_i32(parsed.value);
-                if wide.status != status.OK || wide.value != expected[i] { return 2; }
-                def narrow: std.IntResult = std.i32_from_i64(wide.value);
-                if narrow.status != status.OK || narrow.value != parsed.value { return 3; }
+                def parsed: result<i32> = std.parse_i32(inputs[i]);
+                if parsed.erroneous { return 1; }
+                def wide: i64 = std.i64_from_i32(parsed.value);
+                if wide != expected[i] { return 2; }
+                def narrow: result<i32> = std.i32_from_i64(wide); if narrow.erroneous { return 3; }
+                if narrow.value != parsed.value { return 3; }
             }
-            def overflow: std.IntResult = std.i32_from_i64(2147483648);
-            if overflow.status != status.OVERFLOW || overflow.value != 0 { return 4; }
-            if std.f64_from_i64_exact(9007199254740993).status != status.INEXACT { return 5; }
-            if std.f64_from_i64_rounded(9007199254740993).value != 9007199254740992.0 { return 6; }
+            def overflow: result<i32> = std.i32_from_i64(2147483648); if !overflow.erroneous { return 4; }
+            if overflow.error.code != status.OVERFLOW { return 4; }
+            def inexact: result<f64> = std.f64_from_i64_exact(9007199254740993); if !inexact.erroneous { return 5; } if inexact.error.code != status.INEXACT { return 5; }
+            if std.f64_from_i64_rounded(9007199254740993) != 9007199254740992.0 { return 6; }
             return 0;
         }
     )");
@@ -156,7 +166,8 @@ TEST_F(NumericLibraryTest, ExactWideningUsesGIRAndPreservesStatusAcrossExecution
 TEST_F(NumericLibraryTest, ExactWideningHonorsPrimitiveIdentityAndForwardedOutput) {
     source(R"(def pub convert(value: i32, output: &i64) -> i32 {
         return __std_i64_from_i32(value, output);
-    })", "std.gloin");
+    })",
+           "std.gloin");
     const auto file = source(R"(import "@std";
         def i64_from_i32(value: i32) -> i64 { return 99; }
         def gloin_std_i64_from_i32() -> i32 { return 42; }
@@ -170,18 +181,24 @@ TEST_F(NumericLibraryTest, ExactWideningHonorsPrimitiveIdentityAndForwardedOutpu
 }
 
 TEST_F(NumericLibraryTest, ConversionFailuresAndExplicitRoundingChoices) {
-    expect_run(invoke({program(R"(
-        if std.i32_from_i64(2147483648).status != status.OVERFLOW || std.u64_from_i64(-1).status != status.OVERFLOW || std.i64_from_u64(18446744073709551615).status != status.OVERFLOW { return 1; }
-        def exact: std.F64Result = std.f64_from_i64_exact(9007199254740993);
-        def rounded: std.F64Result = std.f64_from_i64_rounded(9007199254740993);
-        if exact.status != status.INEXACT || exact.value != 0.0 || rounded.status != status.OK || rounded.value != 9007199254740992.0 { return 2; }
-        if std.i64_from_f64_exact(1.5).status != status.INEXACT || std.i64_from_f64_exact(9223372036854775808.0).status != status.OVERFLOW { return 3; }
-        if std.u64_from_f64_trunc(-0.5).status != status.OK || std.u64_from_f64_exact(-0.5).status != status.INEXACT || std.u64_from_f64_exact(-1.5).status != status.OVERFLOW { return 4; }
-        if std.f32_from_f64_exact(0.1).status != status.INEXACT || std.f32_from_f64_rounded(0.1).status != status.OK { return 5; }
-        def tiny: std.F64Result = std.parse_f64("1e-300");
-        def huge: std.F64Result = std.parse_f64("1e300");
-        if std.f32_from_f64_rounded(tiny.value).status != status.UNDERFLOW || std.f32_from_f64_rounded(huge.value).status != status.OVERFLOW { return 6; }
-        return 0;)")}),
+    expect_run(invoke({program(R"(if !fails<i32>(std.i32_from_i64(2147483648),status.OVERFLOW)
+    || !fails<u64>(std.u64_from_i64(-1),status.OVERFLOW)
+    || !fails<i64>(std.i64_from_u64(18446744073709551615),status.OVERFLOW) { return 1; }
+if !fails<f64>(std.f64_from_i64_exact(9007199254740993),status.INEXACT)
+    || std.f64_from_i64_rounded(9007199254740993) != 9007199254740992.0 { return 2; }
+if !fails<i64>(std.i64_from_f64_exact(1.5),status.INEXACT)
+    || !fails<i64>(std.i64_from_f64_exact(9223372036854775808.0),status.OVERFLOW) { return 3; }
+if !succeeds<u64>(std.u64_from_f64_trunc(-0.5),0)
+    || !fails<u64>(std.u64_from_f64_exact(-0.5),status.INEXACT)
+    || !fails<u64>(std.u64_from_f64_exact(-1.5),status.OVERFLOW) { return 4; }
+if !fails<f32>(std.f32_from_f64_exact(0.1),status.INEXACT)
+    || !succeeds<f32>(std.f32_from_f64_rounded(0.5),0.5) { return 5; }
+def tiny: result<f64> = std.parse_f64("1e-300"); if tiny.erroneous { return 6; }
+def huge: result<f64> = std.parse_f64("1e300"); if huge.erroneous { return 6; }
+if !fails<f32>(std.f32_from_f64_rounded(tiny.value),status.UNDERFLOW)
+    || !fails<f32>(std.f32_from_f64_rounded(huge.value),status.OVERFLOW) { return 6; }
+return 0;
+)")}),
                0);
 }
 TEST_F(NumericLibraryTest, AllocationFailureAndInvalidPrecisionAreRecoverable) {
@@ -197,20 +214,36 @@ TEST_F(NumericLibraryTest, AllocationFailureAndInvalidPrecisionAreRecoverable) {
     }
     source(arena, "arena.gloin");
     std::string body;
-    for (std::string call :
-         {"format_i32(&memory,1)", "format_i64(&memory,1)", "format_u64(&memory,1)",
-          "format_u16(&memory,1)", "format_i8(&memory,1)", "format_i16(&memory,1)",
-          "format_u8(&memory,1)", "format_u32(&memory,1)",
-          "format_f32(&memory,1.0)", "format_f64(&memory,1.0)", "format_f32_fixed(&memory,1.0,18)",
-          "format_f64_fixed(&memory,1.0,18)"})
-        body += "{ def r: std.FormatResult = std." + call +
-                "; if r.status != status.NO_MEMORY || !strings.is_empty(r.value) { return 1; } }";
+    for (std::string call : {"format_i32(&memory,1)",
+                             "format_i64(&memory,1)",
+                             "format_u64(&memory,1)",
+                             "format_u16(&memory,1)",
+                             "format_i8(&memory,1)",
+                             "format_i16(&memory,1)",
+                             "format_u8(&memory,1)",
+                             "format_u32(&memory,1)",
+                             "format_f32(&memory,1.0)",
+                             "format_f64(&memory,1.0)",
+                             "format_f32_fixed(&memory,1.0,18)",
+                             "format_f64_fixed(&memory,1.0,18)",
+                             "to_string(&memory,1)",
+                             "to_string_i8(&memory,1)",
+                             "to_string_i16(&memory,1)",
+                             "to_string_i32(&memory,1)",
+                             "to_string_i64(&memory,1)",
+                             "to_string_u8(&memory,1)",
+                             "to_string_u16(&memory,1)",
+                             "to_string_u32(&memory,1)",
+                             "to_string_u64(&memory,1)"})
+        body += "{ def r: result<string> = std." + call +
+                "; if !r.erroneous { return 1; } if r.error.code != status.NO_MEMORY || "
+                "r.error.os_error != 0 { return 1; } }";
     body += R"(def port: u16 = 30000;
         def checked: result<string> = std.to_string_u16(&memory,port);
         if !checked.erroneous { return 4; }
         memory.free();
-        if std.format_f32_fixed(&memory,1.0,19).status != status.INVALID || std.format_f64_fixed(&memory,1.0,4294967295).status != status.INVALID { return 2; }
-        if std.parse_f64("1.25").value != 1.25 || std.f64_from_i64_exact(42).value != 42.0 || !strings.equal(std.format_bool(true),"true") { return 3; }
+        if !fails<string>(std.format_f32_fixed(&memory,1.0,19),status.INVALID) || !fails<string>(std.format_f64_fixed(&memory,1.0,4294967295),status.INVALID) { return 2; }
+        if !succeeds<f64>(std.parse_f64("1.25"),1.25) || !succeeds<f64>(std.f64_from_i64_exact(42),42.0) || !strings.equal(std.format_bool(true),"true") { return 3; }
         return 0;)";
     expect_run(invoke({"--stdlib-dir", directory, program(body)}), 0);
 }
@@ -232,15 +265,15 @@ TEST_F(NumericLibraryTest, NamedConversionsDoNotEnableImplicitCastsAndSignatures
 }
 TEST_F(NumericLibraryTest, PrivateNumericPrimitivesValidateReferencesAndModuleIdentity) {
     const auto file = source("import \"@std\"; def main() -> i32 { std.probe(); return 0; }");
-    for (std::string body : {"def mut v: f32 = 0.0; __std_parse_f64(\"1\",&v);",
-                             "def v: i64 = 0; __std_i64_from_i32(1,&v);",
-                             "def mut v: i32 = 0; __std_i64_from_i32(1,&v);",
-                             "__std_i64_from_i32(1,null);",
-                             "def v: f64 = 0.0; __std_parse_f64(\"1\",&v);",
-                             "def mut v: bool = false; __std_parse_bool(\"true\",&v);",
-                             "def mut v: i64 = 0; __std_i64_from_f64(1.0,&v);",
-                             "def mut v: i64 = 0; __std_i64_from_f64(1.0,true,&v);",
-                             "def mut v: u64 = 0; __std_format_f64(1.0,null,&v);"}) {
+    for (std::string body :
+         {"def mut v: f32 = 0.0; __std_parse_f64(\"1\",&v);",
+          "def v: i64 = 0; __std_i64_from_i32(1,&v);",
+          "def mut v: i32 = 0; __std_i64_from_i32(1,&v);", "__std_i64_from_i32(1,null);",
+          "def v: f64 = 0.0; __std_parse_f64(\"1\",&v);",
+          "def mut v: bool = false; __std_parse_bool(\"true\",&v);",
+          "def mut v: i64 = 0; __std_i64_from_f64(1.0,&v);",
+          "def mut v: i64 = 0; __std_i64_from_f64(1.0,true,&v);",
+          "def mut v: u64 = 0; __std_format_f64(1.0,null,&v);"}) {
         source("def pub probe() -> void {" + body + "}", "std.gloin");
         expect_error(invoke({"--stdlib-dir", directory, "--check", file}), 1, "error:");
     }
@@ -257,22 +290,26 @@ TEST_F(NumericLibraryTest, RuntimeSymbolsDoNotCollideWithUserFunctions) {
         def gloin_std_parse_f64() -> i32 { return 41; }
         def gloin_std_f64_from_i64() -> i32 { return 1; }
         def main() -> i32 {
-            def parsed: std.F64Result = std.parse_f64("42");
-            def number: std.F64Result = std.f64_from_i64_exact(42);
+            def parsed: result<f64> = std.parse_f64("42"); if parsed.erroneous { return 1; }
+            def number: result<f64> = std.f64_from_i64_exact(42); if number.erroneous { return 1; }
             if parsed.value != number.value { return 1; }
             return gloin_std_parse_f64() + gloin_std_f64_from_i64();
         })");
     expect_run(invoke({file}), 42);
 }
 TEST_F(NumericLibraryTest, FloatAndIntegerAbiExecuteWithExternalRuntime) {
-    auto ir = invoke({"--emit-llvm", program(R"(
-        def parsed: std.F32Result = std.parse_f32("1.25");
-        def wide: std.F64Result = std.f64_from_f32(parsed.value);
-        if !same(std.format_f64_fixed(&memory,wide.value,2),"1.25") { return 1; }
-        def n: std.I64Result = std.i64_from_f64_trunc(wide.value);
-        def u: std.U64Result = std.parse_u64("18446744073709551615");
-        if !same(std.format_u64(&memory,u.value),"18446744073709551615") || !std.parse_bool("true").value { return 2; }
-        return std.i32_from_i64(n.value).value + 41;)")});
+    auto ir = invoke(
+        {"--emit-llvm",
+         program(
+             R"(def parsed: result<f32> = std.parse_f32("1.25"); if parsed.erroneous { return 1; }
+def wide: result<f64> = std.f64_from_f32(parsed.value); if wide.erroneous { return 1; }
+if !same(std.format_f64_fixed(&memory,wide.value,2),"1.25") { return 1; }
+def n: result<i64> = std.i64_from_f64_trunc(wide.value); if n.erroneous { return 2; }
+def u: result<u64> = std.parse_u64("18446744073709551615"); if u.erroneous { return 2; }
+if !same(std.format_u64(&memory,u.value),"18446744073709551615") || !succeeds<bool>(std.parse_bool("true"),true) { return 2; }
+def narrowed: result<i32> = std.i32_from_i64(n.value); if narrowed.erroneous { return 3; }
+return narrowed.value + 41;
+)")});
     ASSERT_EQ(ir.status, 0) << ir.err;
     const char *runtime = std::getenv("GLOIN_TEST_ARENA_RUNTIME");
     gloin_test::ToolCommand runner{
@@ -345,5 +382,64 @@ TEST_F(NumericLibraryTest, JitRejectsIncorrectNumericRuntimeAbis) {
             &context);
         ASSERT_TRUE(module);
         EXPECT_FALSE(JitRunner::run(*module).success());
+    }
+}
+
+TEST_F(NumericLibraryTest, BuiltinResultsRejectUncheckedAccessAndRemovedWrappers) {
+    for (const std::string body :
+         {"std.parse_u64(\"42\");", "std.format_f64(&memory,1.0);", "std.i32_from_i64(42);",
+          "def r: result<f64> = std.parse_f64(\"1\"); def v: f64 = r.value;",
+          "def r: result<i64> = std.i64_from_u64(18446744073709551615); if r.erroneous { def v: "
+          "i64 = r.value; }",
+          "def r: std.I64Result = std.parse_i64(\"1\");",
+          "def r: std.U64Result = std.parse_u64(\"1\");",
+          "def r: std.F32Result = std.parse_f32(\"1\");",
+          "def r: std.F64Result = std.parse_f64(\"1\");",
+          "def r: std.BoolResult = std.parse_bool(\"true\");",
+          "def r: std.FormatResult = std.format_i32(&memory,1);",
+          "def n: i64 = std.i64_from_i32(42).value;"}) {
+        const auto file = program(body + " return 0;");
+        for (const auto *mode : {"--check", "--emit-ir", "--emit-llvm", "--jit"})
+            expect_error(invoke({mode, file}), 1, "error:");
+    }
+}
+
+TEST_F(NumericLibraryTest, ScalarRoundingAndErrorCodesSurviveGIRJitAndNativeOutput) {
+    const auto file = program(R"(
+        if std.f64_from_i64_rounded(-9223372036854775808) != -9223372036854775808.0
+            || std.f64_from_i64_rounded(9223372036854775807) != 9223372036854775808.0
+            || std.f64_from_u64_rounded(18446744073709551615) != 18446744073709551616.0
+            || std.f64_from_u64_rounded(9007199254740993) != 9007199254740992.0
+            || std.f64_from_u64_rounded(9007199254740995) != 9007199254740996.0 { return 1; }
+        def exact: result<f64> = std.f64_from_u64_exact(9007199254740993);
+        if !exact.erroneous { return 2; }
+        if exact.error.code != status.INEXACT || exact.error.os_error != 0
+            || !strings.equal(exact.error.message,"numeric conversion loses precision") { return 3; }
+        def underflow: result<f64> = std.parse_f64("1e-999");
+        if !underflow.erroneous { return 4; }
+        if underflow.error.code != status.UNDERFLOW
+            || !strings.equal(underflow.error.message,"decimal f64 underflows to zero") { return 5; }
+        def code: i32 = match std.parse_i32_checked("bad") {
+            case value(number) => 0;
+            case error(problem) => problem.code;
+        };
+        if code != status.INVALID { return 6; }
+        memory.free();
+        def precision: result<string> = std.format_f64_fixed(&memory,1.0,19);
+        if !precision.erroneous { return 7; }
+        if precision.error.code != status.INVALID || precision.error.os_error != 0
+            || !strings.equal(precision.error.message,"precision exceeds 18 digits") { return 8; }
+        return 42;
+    )");
+    const auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    for (const auto *operation :
+         {"gloin.result_success", "gloin.result_failure", "gloin.error_code", "gloin.match"})
+        EXPECT_NE(ir.out.find(operation), std::string::npos) << operation;
+    expect_run(invoke({file}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/numeric-results";
+        expect_success(invoke_raw({optimization, "-o", executable, file}), "");
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
     }
 }

@@ -13,8 +13,8 @@ def main() -> i32 {
 
     for def mut i: u64 = 1; i < 3; i = i + 1 {
         memory.reset();
-        def path: process.TextResult = process.arg(&memory, i);
-        if path.status != status.OK { return 2; }
+        def path: result<string> = process.arg(&memory, i);
+        if path.erroneous { return 2; }
 
         def read: result<string> = common.read(&memory, path.value, 67108864);
         if read.erroneous { common.report(path.value); common.report(read.error.message); return 1; }

@@ -1,4 +1,5 @@
 #include "gir_range_proofs.h"
+#include "gir_float_reductions.h"
 #include "dialect/GloinDialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -77,6 +78,205 @@ struct PromoteMemory : mlir::PromotableMemOpInterface::ExternalModel<
 
 using Wide = unsigned __int128;
 
+std::optional<uint64_t> unsigned_constant(mlir::Value value) {
+    mlir::IntegerAttr attr;
+    if (auto op = value.getDefiningOp<gloin::ConstantOp>())
+        attr = mlir::dyn_cast<mlir::IntegerAttr>(op.getValueAttr());
+    if (auto op = value.getDefiningOp<mlir::arith::ConstantOp>())
+        attr = mlir::dyn_cast<mlir::IntegerAttr>(op.getValue());
+    if (!attr || attr.getValue().getBitWidth() > 64) return std::nullopt;
+    return attr.getValue().getZExtValue();
+}
+
+// Recognize complete groups: i=0; i+S <= n; i+=S, with zero-based secondary
+// counters j+=P. For accesses j+offset, 0<=offset<P, groups<=length/P proves
+// the entire group fits without overflowing the entry calculation. Keep the
+// original loop on failure, including its stores, calls and trap ordering.
+void version_strided_slice_loops(mlir::func::FuncOp function, GloinRangeProofs &proofs) {
+    mlir::DominanceInfo dominance(function);
+    llvm::SmallVector<mlir::Block *> headers;
+    for (auto &block : function.getBody()) headers.push_back(&block);
+    for (auto *header : headers) {
+        if (proofs.versioned_reductions.contains(header)) continue;
+        auto branch = mlir::dyn_cast<mlir::cf::CondBranchOp>(header->getTerminator());
+        if (!branch || header->getOperations().size() > 8) continue;
+        auto compare = branch.getCondition().getDefiningOp<gloin::CheckedIntegerCompareOp>();
+        if (!compare || compare->getBlock() != header || compare.getIsSigned() ||
+            compare.getKind() != "<=") continue;
+        auto ahead = compare.getLhs().getDefiningOp<gloin::CheckedIntegerBinaryOp>();
+        if (!ahead || ahead->getBlock() != header || ahead.getIsSigned() ||
+            ahead.getKind() != "+") continue;
+        auto primary = mlir::dyn_cast<mlir::BlockArgument>(ahead.getLhs());
+        auto stride = unsigned_constant(ahead.getRhs());
+        if (!primary || primary.getOwner() != header || !primary.getType().isInteger(64) ||
+            !stride || *stride == 0) continue;
+        auto *body = branch.getTrueDest();
+        auto *after = branch.getFalseDest();
+        if (body == header || after == header || after == body ||
+            body->getSinglePredecessor() != header || after->getSinglePredecessor() != header ||
+            body->getNumArguments() != 0 || body->getOperations().size() > 128) continue;
+        auto back = mlir::dyn_cast<mlir::cf::BranchOp>(body->getTerminator());
+        if (!back || back.getDest() != header) continue;
+        mlir::Block *entry = nullptr;
+        unsigned predecessors = 0;
+        for (auto *pred : header->getPredecessors()) {
+            ++predecessors;
+            if (pred != body) entry = pred;
+        }
+        if (predecessors != 2 || !entry || entry == header) continue;
+        auto incoming = mlir::dyn_cast<mlir::cf::BranchOp>(entry->getTerminator());
+        if (!incoming || incoming.getDest() != header) continue;
+
+        auto bound = compare.getRhs();
+        auto bound_length = bound.getDefiningOp<gloin::SliceLengthOp>();
+        if (!dominance.dominates(bound, incoming) &&
+            !(bound_length && bound_length->getBlock() == header &&
+              dominance.dominates(bound_length.getBase(), incoming))) continue;
+        bool supported = true;
+        for (auto &op : *header) {
+            if (&op != branch && &op != compare && &op != ahead &&
+                &op != bound_length && !mlir::isa<gloin::ConstantOp, mlir::arith::ConstantOp>(op))
+                supported = false;
+        }
+        // Body results cannot be defined on the empty-loop path. Header SSA
+        // arguments may escape to the tail; they are joined explicitly below.
+        for (auto *block : {header, body}) {
+            for (auto &op : *block) {
+                if (op.getNumRegions() || mlir::isa<gloin::StackAllocOp>(op)) supported = false;
+                for (auto value : op.getResults())
+                    for (auto *user : value.getUsers())
+                        if (user->getBlock() != header && user->getBlock() != body) supported = false;
+            }
+        }
+        if (!supported) continue;
+        struct Counter {
+            mlir::BlockArgument value;
+            uint64_t step;
+            gloin::CheckedIntegerBinaryOp increment;
+        };
+        llvm::SmallVector<Counter> counters;
+        for (auto arg : header->getArguments()) {
+            if (!arg.getType().isInteger(64) ||
+                unsigned_constant(incoming.getDestOperands()[arg.getArgNumber()]) != 0) continue;
+            auto increment = back.getDestOperands()[arg.getArgNumber()]
+                                 .getDefiningOp<gloin::CheckedIntegerBinaryOp>();
+            if (!increment || (increment->getBlock() != body && increment != ahead) ||
+                increment.getKind() != "+" || increment.getIsSigned() ||
+                increment.getLhs() != arg) continue;
+            auto step = unsigned_constant(increment.getRhs());
+            if (step && *step > 0) counters.push_back({arg, *step, increment});
+        }
+        auto primary_counter = llvm::find_if(counters, [&](const Counter &counter) {
+            return counter.value == primary && counter.step == *stride;
+        });
+        if (primary_counter == counters.end()) continue;
+
+        struct Access {
+            gloin::SliceElementAddressOp op;
+            Counter *counter;
+            llvm::SmallVector<mlir::Operation *> offsets;
+        };
+        llvm::SmallVector<Access> accesses;
+        llvm::SmallVector<Access *> capacities;
+        for (auto access : body->getOps<gloin::SliceElementAddressOp>()) {
+            if (proofs.bounds.contains(access) ||
+                !dominance.dominates(access.getBase(), incoming)) continue;
+            mlir::Value index = access.getIndex();
+            Wide offset = 0;
+            llvm::SmallVector<mlir::Operation *> offsets;
+            for (unsigned depth = 0; depth < 4; ++depth) {
+                auto add = index.getDefiningOp<gloin::CheckedIntegerBinaryOp>();
+                if (!add || (add->getBlock() != header && add->getBlock() != body) ||
+                    add.getIsSigned() || add.getKind() != "+") break;
+                auto amount = unsigned_constant(add.getRhs());
+                if (!amount) break;
+                offset += *amount;
+                offsets.push_back(add);
+                index = add.getLhs();
+            }
+            auto counter = llvm::find_if(counters, [&](const Counter &candidate) {
+                return candidate.value == index && offset < candidate.step;
+            });
+            if (counter != counters.end()) accesses.push_back({access, &*counter, offsets});
+        }
+        // Collect after building the vector, so pointers remain stable.
+        for (auto &access : accesses)
+            if (llvm::none_of(capacities, [&](Access *prior) {
+                    return prior->op.getBase() == access.op.getBase() &&
+                           prior->counter->step == access.counter->step;
+                })) capacities.push_back(&access);
+        if (accesses.empty() || capacities.size() > 4) continue;
+
+        llvm::SmallVector<mlir::Value> live;
+        for (auto arg : header->getArguments()) {
+            bool escapes = false;
+            for (auto *user : arg.getUsers()) {
+                if (user->getBlock() == header || user->getBlock() == body) continue;
+                escapes = true;
+                if (!dominance.dominates(after, user->getBlock())) supported = false;
+            }
+            if (escapes) live.push_back(arg);
+        }
+        if (!supported) continue;
+        for (auto value : live) {
+            auto joined = after->addArgument(value.getType(), value.getLoc());
+            value.replaceUsesWithIf(joined, [&](mlir::OpOperand &use) {
+                return use.getOwner()->getBlock() != header && use.getOwner()->getBlock() != body;
+            });
+        }
+        branch.getFalseDestOperandsMutable().append(live);
+        mlir::IRMapping mapping;
+        for (auto *original : {header, body}) {
+            auto *copy = new mlir::Block;
+            function.getBody().getBlocks().insert(header->getIterator(), copy);
+            mapping.map(original, copy);
+            for (auto arg : original->getArguments())
+                mapping.map(arg, copy->addArgument(arg.getType(), arg.getLoc()));
+        }
+        mlir::OpBuilder builder(function.getContext());
+        for (auto *original : {header, body}) {
+            builder.setInsertionPointToEnd(mapping.lookup(original));
+            for (auto &op : *original) {
+                auto *copy = builder.clone(op, mapping);
+                if (proofs.arithmetic.contains(&op)) proofs.arithmetic.insert(copy);
+                if (proofs.bounds.contains(&op)) proofs.bounds.insert(copy);
+            }
+        }
+        proofs.arithmetic.insert(mapping.lookup(ahead.getOperation()));
+        proofs.arithmetic.insert(mapping.lookup(primary_counter->increment.getOperation()));
+        for (auto &access : accesses) {
+            proofs.bounds.insert(mapping.lookup(access.op.getOperation()));
+            proofs.arithmetic.insert(mapping.lookup(access.counter->increment.getOperation()));
+            for (auto *offset : access.offsets) proofs.arithmetic.insert(mapping.lookup(offset));
+        }
+        builder.setInsertionPoint(incoming);
+        auto loc = incoming.getLoc();
+        const auto constant = [&](uint64_t number) -> mlir::Value {
+            return builder.create<mlir::arith::ConstantIntOp>(loc, number, 64);
+        };
+        if (!dominance.dominates(bound, incoming))
+            bound = builder.create<gloin::SliceLengthOp>(loc, builder.getI64Type(),
+                bound_length.getBase(), bound_length.getSourceType(), bound_length.getLayoutType());
+        auto groups = builder.create<mlir::arith::DivUIOp>(loc, bound, constant(*stride));
+        // The original header evaluates i+S once more after the last group.
+        // Exclude the overflowing final test, even if every access would fit.
+        mlir::Value fits = builder.create<mlir::arith::CmpIOp>(loc,
+            mlir::arith::CmpIPredicate::ule, groups, constant((UINT64_MAX - *stride) / *stride));
+        for (auto *access : capacities) {
+            auto length = builder.create<gloin::SliceLengthOp>(loc, builder.getI64Type(),
+                access->op.getBase(), access->op.getSourceType(), access->op.getLayoutType());
+            auto available = builder.create<mlir::arith::DivUIOp>(loc, length, constant(access->counter->step));
+            auto enough = builder.create<mlir::arith::CmpIOp>(loc,
+                mlir::arith::CmpIPredicate::ule, groups, available);
+            fits = builder.create<mlir::arith::AndIOp>(loc, fits, enough);
+        }
+        builder.create<mlir::cf::CondBranchOp>(loc, fits, mapping.lookup(header),
+            incoming.getDestOperands(), header, incoming.getDestOperands());
+        incoming.erase();
+        dominance.invalidate();
+    }
+}
+
 // Version only small, straight-line counted loops. A failed entry predicate
 // selects the original loop, rather than trapping early: calls, stores and
 // arithmetic failures must still occur in their original order. The fast copy
@@ -96,6 +296,7 @@ void version_slice_loops(mlir::func::FuncOp function, GloinRangeProofs &proofs) 
         return attr && attr.getValue() == expected;
     };
     for (auto *header : headers) {
+        if (proofs.versioned_reductions.contains(header)) continue;
         auto branch = mlir::dyn_cast<mlir::cf::CondBranchOp>(header->getTerminator());
         if (!branch || header->getOperations().size() != 2) continue;
         auto compare = branch.getCondition().getDefiningOp<gloin::CheckedIntegerCompareOp>();
@@ -420,7 +621,9 @@ GloinRangeProofs prove_gloin_ranges(mlir::ModuleOp module) {
         mlir::DominanceInfo dominance(function);
         (void)mlir::tryToPromoteMemorySlots(allocations, builder, mlir::DataLayout(module), dominance);
         FunctionProofs(function).run(proofs);
+        version_gloin_float_reductions(function, proofs);
         version_slice_loops(function, proofs);
+        version_strided_slice_loops(function, proofs);
     }
     return proofs;
 }

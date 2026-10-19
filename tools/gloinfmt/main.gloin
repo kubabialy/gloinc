@@ -1,4 +1,5 @@
 // Gloin source formatter, checker and checked in-place writer.
+import "@std";
 import "./format";
 import "./tokens";
 import "./git";
@@ -15,31 +16,38 @@ def struct Counts {
 }
 
 def report(message: string) -> void {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut output: io.Stream = io.stderr();
 
-    output.write_line(message);
+    report_io_failure(output.write_line(message, &io_progress));
 }
 
 def close_file(file: &io.File) -> void {
-    if file.is_open() { file.close(); }
+    if file.is_open() { report_io_failure(file.close()); }
 }
 
 def close_directory(directory: &fs.Directory) -> void {
-    if directory.is_open() { directory.close(); }
+    if directory.is_open() {
+        def closed: result<void> = directory.close();
+        if closed.erroneous { report(closed.error.message); }
+    }
 }
 
 def read_source(memory: &arena.GeneralArena, path: string) -> result<string> {
-    def opened: io.FileResult = io.File.open_read(memory, path);
-    if opened.status != status.OK { return error("cannot open source file"); }
+    def opened: result<io.File> = io.File.open_read(memory, path);
+    if opened.erroneous { return error("cannot open source file"); }
 
     def mut file: io.File = opened.value;
     defer close_file(&file);
 
-    def read: io.ReadResult = file.read_all(memory, 8388608);
-    if read.status != status.OK { return error("cannot read source file or it exceeds 8 MiB"); }
+    def mut read: io.ReadState    = io.ReadState.empty();
+    def read_result: result<void> = file.read_all(memory, 8388608, &read);
 
-    def closed: io.IoResult = file.close();
-    if closed.status != status.OK { return error("cannot close source file"); }
+    if read_result.erroneous { return error("cannot read source file or it exceeds 8 MiB"); }
+
+    def closed: result<void> = file.close();
+    if closed.erroneous { return error("cannot close source file"); }
 
     return read.value;
 }
@@ -61,22 +69,24 @@ def format_file(path: string, changes: &Counts, print_text: bool, write: bool) -
     if !strings.equal(formatted.value, repeated.value) { return error("formatting is not idempotent"); }
 
     if print_text {
-        def mut output: io.Stream   = io.stdout();
-        def written: io.WriteResult = output.write_all(formatted.value);
+        def mut output: io.Stream        = io.stdout();
+        def mut written: io.WriteState   = io.WriteState.empty();
+        def written_result: result<void> = output.write_all(formatted.value, &written);
 
-        if written.status != status.OK { return error("cannot write formatted source"); }
-        if output.flush().status != status.OK { return error("cannot flush formatted source"); }
+        if written_result.erroneous { return error("cannot write formatted source"); }
+        if !io_succeeded(output.flush()) { return error("cannot flush formatted source"); }
     } else if !strings.equal(read.value, formatted.value) {
         if write {
             def replaced: result<void> = fs.replace_file(path, read.value, formatted.value);
             if replaced.erroneous { report(path); return replaced.error; }
         }
 
-        def mut output: io.Stream   = io.stdout();
-        def written: io.WriteResult = output.write_line(path);
+        def mut output: io.Stream        = io.stdout();
+        def mut written: io.WriteState   = io.WriteState.empty();
+        def written_result: result<void> = output.write_line(path, &written);
 
-        if written.status != status.OK { return error("cannot print changed path"); }
-        if output.flush().status != status.OK { return error("cannot flush changed path"); }
+        if written_result.erroneous { return error("cannot print changed path"); }
+        if !io_succeeded(output.flush()) { return error("cannot flush changed path"); }
 
         changes.changed = changes.changed + 1;
     }
@@ -114,10 +124,12 @@ def sort_names(names: &vector.Vector<string>) -> void {
 def visit_path(path: string, changes: &Counts, explicit: bool, write: bool, depth: u64) -> result<void> {
     if depth == 0 { return error("directory traversal exceeds 64 levels"); }
 
-    def metadata: fs.MetadataResult = fs.metadata(path);
-    if metadata.status != status.OK { return error("cannot inspect input path"); }
+    def metadata: result<fs.Metadata> = fs.metadata(path);
+    if metadata.erroneous {
+        return error("cannot inspect input path", metadata.error.code, metadata.error.os_error);
+    }
 
-    if metadata.kind == fs.FILE {
+    if metadata.value.kind == fs.FILE {
         if explicit || strings.ends_with(path, ".gloin") {
             def checked: result<void> = format_file(path, changes, false, write);
             if checked.erroneous { return checked.error; }
@@ -126,7 +138,7 @@ def visit_path(path: string, changes: &Counts, explicit: bool, write: bool, dept
         return;
     }
 
-    if metadata.kind != fs.DIRECTORY {
+    if metadata.value.kind != fs.DIRECTORY {
         if explicit { return error("input is not a regular file or directory"); }
 
         return;
@@ -138,8 +150,8 @@ def visit_path(path: string, changes: &Counts, explicit: bool, write: bool, dept
     def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
     defer scratch.free();
 
-    def opened: fs.DirectoryResult = fs.Directory.open(&owner, path);
-    if opened.status != status.OK { return error("cannot open input directory"); }
+    def opened: result<fs.Directory> = fs.Directory.open(&owner, path);
+    if opened.erroneous { return opened.error; }
 
     def mut directory: fs.Directory = opened.value;
     defer close_directory(&directory);
@@ -149,31 +161,36 @@ def visit_path(path: string, changes: &Counts, explicit: bool, write: bool, dept
 
     while scanning {
         scratch.reset();
-        def entry: fs.DirectoryEntryResult = directory.next(&scratch);
+        def entry: result<fs.DirectoryRead> = directory.next(&scratch);
 
-        if entry.status == status.END {
+        if entry.erroneous {
+            return entry.error;
+        }
+
+        if entry.value.end {
             scanning = false;
-        } else if entry.status != status.OK {
-            return error("cannot read input directory");
-        } else if !skip_directory(entry.name) {
-            def copied: strings.StringResult = strings.copy(&owner, entry.name);
-            if copied.status != status.OK || !names.push(copied.value) {
+        } else if !skip_directory(entry.value.name) {
+            def copied: result<string> = strings.copy(&owner, entry.value.name);
+            if copied.erroneous {
+                return error("cannot retain directory entry name");
+            }
+            if !names.push(copied.value) {
                 return error("cannot retain directory entry name");
             }
         }
     }
 
-    def closed: fs.FsResult = directory.close();
-    if closed.status != status.OK { return error("cannot close input directory"); }
+    def closed: result<void> = directory.close();
+    if closed.erroneous { return closed.error; }
 
     sort_names(&names);
 
     for def mut index: i64 = 0; index < names.len(); index = index + 1 {
         scratch.reset();
-        def name: *string        = names.get_mut(index);
-        def child: fs.PathResult = fs.join(&scratch, path, *name, 65536);
+        def name: *string         = names.get_mut(index);
+        def child: result<string> = fs.join(&scratch, path, *name, 65536);
 
-        if child.status != status.OK { return error("input path exceeds 65536 bytes"); }
+        if child.erroneous { return child.error; }
 
         def visited: result<void> = visit_path(child.value, changes, false, write, depth - 1);
         if visited.erroneous { return visited.error; }
@@ -192,8 +209,8 @@ def main() -> i32 {
         return 2;
     }
 
-    def first: process.TextResult = process.arg(&owner, 1);
-    if first.status != status.OK { return 2; }
+    def first: result<string> = process.arg(&owner, 1);
+    if first.erroneous { return 2; }
 
     def mut changes: Counts = Counts { changed: 0 };
 
@@ -201,8 +218,8 @@ def main() -> i32 {
 
     if strings.equal(first.value, "--check") || write {
         for def mut index: u64 = 2; index < count; index = index + 1 {
-            def argument: process.TextResult = process.arg(&owner, index);
-            if argument.status != status.OK { return 2; }
+            def argument: result<string> = process.arg(&owner, index);
+            if argument.erroneous { return 2; }
             if strings.equal(argument.value, "--git") && count != 3 {
                 report("--git cannot be combined with paths"); return 2;
             }
@@ -213,8 +230,8 @@ def main() -> i32 {
             if checked.erroneous { report(checked.error.message); return 2; }
         } else {
             for def mut index: u64 = 2; index < count; index = index + 1 {
-                def path: process.TextResult = process.arg(&owner, index);
-                if path.status != status.OK { return 2; }
+                def path: result<string> = process.arg(&owner, index);
+                if path.erroneous { return 2; }
 
                 if strings.equal(path.value, "--git") {
                     if count != 3 { report("--git cannot be combined with paths"); return 2; }
@@ -229,14 +246,14 @@ def main() -> i32 {
                     def mut previous: string = "";
 
                     for def mut item: i64 = 0; item < names.len(); item = item + 1 {
-                        def name: string            = *names.get_mut(item);
-                        def info: fs.MetadataResult = fs.metadata(name);
+                        def name: string              = *names.get_mut(item);
+                        def info: result<fs.Metadata> = fs.metadata(name);
 
-                        if info.status != status.OK && info.status != status.NOT_FOUND {
-                            report(name); report("cannot inspect Git input"); return 2;
-                        }
-
-                        if info.status == status.OK && info.kind == fs.FILE && !strings.equal(name, previous) {
+                        if info.erroneous {
+                            if info.error.code != status.NOT_FOUND {
+                                report(name); report(info.error.message); return 2;
+                            }
+                        } else if info.value.kind == fs.FILE && !strings.equal(name, previous) {
                             def checked: result<void> = format_file(name, &changes, false, write);
                             if checked.erroneous { report(checked.error.message); return 2; }
                         }
@@ -264,4 +281,16 @@ def main() -> i32 {
     if printed.erroneous { report(printed.error.message); return 2; }
 
     return 0;
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// Report cleanup/diagnostic failures without recursively writing to a failed stream.
+def report_io_failure(outcome: result<void>) -> void {
+    if outcome.erroneous { std.println(outcome.error.message); }
 }

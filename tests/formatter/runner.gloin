@@ -25,7 +25,12 @@ def cleanup_cases(work: string) -> result<void> {
 
     def tree: result<string> = tool_runner.joined(&memory, work, "cleanup-probe");
     if tree.erroneous { return tree.error; }
-    if fs.mkdir(keep.value).status != status.OK || fs.mkdir(tree.value).status != status.OK { return error("cannot create cleanup probe"); }
+
+    def kept: result<void> = fs.mkdir(keep.value);
+    if kept.erroneous { return kept.error; }
+
+    def created: result<void> = fs.mkdir(tree.value);
+    if created.erroneous { return created.error; }
 
     def saved: result<void> = tool_runner.record(&memory, keep.value, "sentinel", "", "untouched");
     if saved.erroneous { return saved.error; }
@@ -52,8 +57,9 @@ def cleanup_cases(work: string) -> result<void> {
     def sentinel: result<string> = tool_runner.joined(&memory, keep_path, "sentinel");
     if sentinel.erroneous { return sentinel.error; }
 
-    def info: fs.MetadataResult = fs.metadata(sentinel.value);
-    if info.status != status.OK || info.kind != fs.FILE || info.size != 9 { return error("cleanup followed a symlink"); }
+    def info: result<fs.Metadata> = fs.metadata(sentinel.value);
+    if info.erroneous { return error("cleanup followed a symlink"); }
+    if info.value.kind != fs.FILE || info.value.size != 9 { return error("cleanup followed a symlink"); }
 
     return;
 }

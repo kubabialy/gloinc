@@ -1,6 +1,16 @@
 import "@std";
 import "@arena";
 
+// Formatting can fail before output. Keep the formatted bytes live until println finishes.
+def print_number(memory: &arena.GeneralArena, number: i32) -> result<void> {
+    def text: result<string> = std.to_string(memory, number);
+    if text.erroneous { return text.error; }
+
+    std.println(text.value);
+
+    return;
+}
+
 // One decimal i32 per line. Input text and formatted output share this arena.
 // Reset only after every view from the previous line has been consumed.
 def main() -> i32 {
@@ -14,21 +24,21 @@ def main() -> i32 {
     std.println("Enter decimal i32 values, one per line; EOF finishes:");
 
     while reading {
-        def line: std.InputResult = std.input(&memory, 128);
-
-        if line.status == std.END {
-            reading = false;
-        } else if line.status == std.NO_MEMORY {
-            // Reporting allocation failure must not require another allocation.
-            std.println("input error: 6");
-            return 2;
-        } else if line.status != std.OK {
+        def input: result<std.InputLine> = std.input(&memory, 128);
+        if input.erroneous {
+            // Static diagnostics still work when the arena cannot allocate.
             std.print("input error: ");
-            std.println(std.to_string(&memory, line.status));
+            std.println(input.error.message);
 
             return 2;
+        }
+
+        def line: std.InputLine = input.value;
+
+        if line.end {
+            reading = false;
         } else {
-            def parsed: result<i32> = std.parse_i32_checked(line.value);
+            def parsed: result<i32> = std.parse_i32(line.value);
             if parsed.erroneous {
                 std.print("conversion error: ");
                 std.println(parsed.error.message);
@@ -39,16 +49,23 @@ def main() -> i32 {
             total = total + parsed.value;
             count = count + 1;
             std.print("accepted: ");
-            std.println(std.to_string(&memory, parsed.value));
+
+            def printed: result<void> = print_number(&memory, parsed.value);
+            if printed.erroneous { std.println(printed.error.message); return 4; }
         }
 
         memory.reset();
     }
 
     std.print("count: ");
-    std.println(std.to_string(&memory, count));
+
+    def printed_count: result<void> = print_number(&memory, count);
+    if printed_count.erroneous { std.println(printed_count.error.message); return 4; }
+
     std.print("sum: ");
-    std.println(std.to_string(&memory, total));
+
+    def printed_sum: result<void> = print_number(&memory, total);
+    if printed_sum.erroneous { std.println(printed_sum.error.message); return 4; }
 
     return 0;
 }

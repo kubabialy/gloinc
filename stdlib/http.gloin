@@ -59,7 +59,7 @@ def body_frame(bytes: string, header_bytes: u64, content_length: u64,
     return Frame {
         complete: true,
         consumed: header_bytes + content_length,
-        body: strings.slice_bytes(bytes, header_bytes, content_length).value
+        body: slice_or_empty(bytes, header_bytes, content_length)
     };
 }
 
@@ -86,8 +86,8 @@ def equals_header_name(name: string, expected: string) -> bool {
     if count != strings.byte_length(expected) { return false; }
 
     for def mut index: u64 = 0; index < count; index = index + 1 {
-        if ascii_lower(strings.byte_at(name, index).value) !=
-        ascii_lower(strings.byte_at(expected, index).value) {
+        if ascii_lower(byte_or_zero(name, index)) !=
+        ascii_lower(byte_or_zero(expected, index)) {
             return false;
         }
     }
@@ -99,7 +99,7 @@ def token(text: string) -> bool {
     if strings.is_empty(text) { return false; }
 
     for def mut index: u64 = 0; index < strings.byte_length(text); index = index + 1 {
-        def byte: u8 = strings.byte_at(text, index).value;
+        def byte: u8 = byte_or_zero(text, index);
         if !((byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122)
                 || (byte >= 48 && byte <= 57) || byte == 33 || byte == 35 || byte == 36
                 || byte == 37 || byte == 38 || byte == 39 || byte == 42 || byte == 43
@@ -114,7 +114,7 @@ def token(text: string) -> bool {
 
 def header_value(text: string) -> bool {
     for def mut index: u64 = 0; index < strings.byte_length(text); index = index + 1 {
-        def byte: u8 = strings.byte_at(text, index).value;
+        def byte: u8 = byte_or_zero(text, index);
         if byte != 9 && (byte < 32 || byte == 127) { return false; }
     }
 
@@ -125,7 +125,7 @@ def request_target(text: string) -> bool {
     if !strings.starts_with(text, "/") { return false; }
 
     for def mut index: u64 = 0; index < strings.byte_length(text); index = index + 1 {
-        def byte: u8 = strings.byte_at(text, index).value;
+        def byte: u8 = byte_or_zero(text, index);
         if byte < 33 || byte > 126 || byte == 35 { return false; }
     }
 
@@ -140,7 +140,7 @@ def parse_head(bytes: string, max_header_bytes: u64) -> HeadResult {
     if inspected > max_header_bytes { inspected = max_header_bytes; }
 
     def marker: strings.FindResult = strings.find(
-        strings.slice_bytes(bytes, 0, inspected).value, "\r\n\r\n");
+        slice_or_empty(bytes, 0, inspected), "\r\n\r\n");
 
     if !marker.found {
         if strings.byte_length(bytes) > max_header_bytes {
@@ -155,14 +155,14 @@ def parse_head(bytes: string, max_header_bytes: u64) -> HeadResult {
 
     // Reject lone line breaks, NUL, and other control bytes in the head.
     for def mut i: u64 = 0; i < end; i = i + 1 {
-        def byte: u8 = strings.byte_at(bytes, i).value;
+        def byte: u8 = byte_or_zero(bytes, i);
 
         if byte == 13 {
-            if i + 1 >= end || strings.byte_at(bytes, i + 1).value != 10 {
+            if i + 1 >= end || byte_or_zero(bytes, i + 1) != 10 {
                 return empty_head(status.INVALID);
             }
         } else if byte == 10 {
-            if i == 0 || strings.byte_at(bytes, i - 1).value != 13 {
+            if i == 0 || byte_or_zero(bytes, i - 1) != 13 {
                 return empty_head(status.INVALID);
             }
         } else if byte != 9 && (byte < 32 || byte == 127) {
@@ -171,10 +171,10 @@ def parse_head(bytes: string, max_header_bytes: u64) -> HeadResult {
     }
 
     def first_end: strings.FindResult = strings.find(
-        strings.slice_bytes(bytes, 0, end).value, "\r\n");
+        slice_or_empty(bytes, 0, end), "\r\n");
     if !first_end.found || first_end.offset == 0 { return empty_head(status.INVALID); }
 
-    def first: string        = strings.slice_bytes(bytes, 0, first_end.offset).value;
+    def first: string        = slice_or_empty(bytes, 0, first_end.offset);
     def mut cursor: u64      = first_end.offset + 2;
     def mut length: u64      = 0;
     def mut has_length: bool = false;
@@ -182,19 +182,19 @@ def parse_head(bytes: string, max_header_bytes: u64) -> HeadResult {
     def mut host: string     = "";
 
     while cursor < marker.offset + 2 {
-        def remaining: string            = strings.slice_bytes(bytes, cursor, end - cursor).value;
+        def remaining: string            = slice_or_empty(bytes, cursor, end - cursor);
         def line_end: strings.FindResult = strings.find(remaining, "\r\n");
 
         if !line_end.found || line_end.offset == 0 { return empty_head(status.INVALID); }
 
-        def line: string              = strings.slice_bytes(remaining, 0, line_end.offset).value;
+        def line: string              = slice_or_empty(remaining, 0, line_end.offset);
         def colon: strings.FindResult = strings.find(line, ":");
 
         if !colon.found { return empty_head(status.INVALID); }
 
-        def name: string = strings.slice_bytes(line, 0, colon.offset).value;
-        def value: string = strings.trim_ascii(strings.slice_bytes(
-            line, colon.offset + 1, strings.byte_length(line) - colon.offset - 1).value);
+        def name: string = slice_or_empty(line, 0, colon.offset);
+        def value: string = strings.trim_ascii(slice_or_empty(
+            line, colon.offset + 1, strings.byte_length(line) - colon.offset - 1));
 
         if !token(name) || !header_value(value) { return empty_head(status.INVALID); }
 
@@ -210,12 +210,12 @@ def parse_head(bytes: string, max_header_bytes: u64) -> HeadResult {
             if strings.is_empty(value) { return empty_head(status.INVALID); }
 
             for def mut digit: u64 = 0; digit < strings.byte_length(value); digit = digit + 1 {
-                def byte: u8 = strings.byte_at(value, digit).value;
+                def byte: u8 = byte_or_zero(value, digit);
                 if byte < 48 || byte > 57 { return empty_head(status.INVALID); }
             }
 
-            def parsed: std.U64Result = std.parse_u64(value);
-            if parsed.status != status.OK { return empty_head(parsed.status); }
+            def parsed: result<u64> = std.parse_u64(value);
+            if parsed.erroneous { return empty_head(parsed.error.code); }
             if has_length && length != parsed.value { return empty_head(status.INVALID); }
 
             length     = parsed.value;
@@ -269,16 +269,16 @@ def pub parse_request(bytes: string, max_header_bytes: u64) -> result<RequestHea
     def first_space: strings.FindResult = strings.find(head.start_line, " ");
     if !first_space.found { return error("invalid HTTP request line"); }
 
-    def method: string = strings.slice_bytes(head.start_line, 0, first_space.offset).value;
-    def rest: string = strings.slice_bytes(head.start_line, first_space.offset + 1,
-        strings.byte_length(head.start_line) - first_space.offset - 1).value;
+    def method: string = slice_or_empty(head.start_line, 0, first_space.offset);
+    def rest: string = slice_or_empty(head.start_line, first_space.offset + 1,
+        strings.byte_length(head.start_line) - first_space.offset - 1);
     def second_space: strings.FindResult = strings.find(rest, " ");
 
     if !second_space.found { return error("invalid HTTP request line"); }
 
-    def target: string = strings.slice_bytes(rest, 0, second_space.offset).value;
-    def version: string = strings.slice_bytes(rest, second_space.offset + 1,
-        strings.byte_length(rest) - second_space.offset - 1).value;
+    def target: string = slice_or_empty(rest, 0, second_space.offset);
+    def version: string = slice_or_empty(rest, second_space.offset + 1,
+        strings.byte_length(rest) - second_space.offset - 1);
 
     if !token(method) || !request_target(target) || !strings.equal(version, "HTTP/1.1")
         || strings.is_empty(head.host) {
@@ -316,19 +316,20 @@ def pub parse_response(bytes: string, max_header_bytes: u64) -> result<ResponseH
         return error("invalid HTTP response line");
     }
 
-    def rest: string = strings.slice_bytes(head.start_line, 9,
-        strings.byte_length(head.start_line) - 9).value;
+    def rest: string = slice_or_empty(head.start_line, 9,
+        strings.byte_length(head.start_line) - 9);
     if strings.byte_length(rest) < 3 { return error("invalid HTTP response code"); }
 
-    def digits: string = strings.slice_bytes(rest, 0, 3).value;
+    def digits: string = slice_or_empty(rest, 0, 3);
 
     for def mut index: u64 = 0; index < 3; index = index + 1 {
-        def digit: u8 = strings.byte_at(digits, index).value;
+        def digit: u8 = byte_or_zero(digits, index);
         if digit < 48 || digit > 57 { return error("invalid HTTP response code"); }
     }
 
-    def parsed: std.IntResult = std.parse_i32(digits);
-    if parsed.status != status.OK || parsed.value < 100 || parsed.value > 599 {
+    def parsed: result<i32> = std.parse_i32(digits);
+    if parsed.erroneous { return error("invalid HTTP response code"); }
+    if parsed.value < 100 || parsed.value > 599 {
         return error("invalid HTTP response code");
     }
     if (parsed.value < 200 || parsed.value == 204)
@@ -338,8 +339,8 @@ def pub parse_response(bytes: string, max_header_bytes: u64) -> result<ResponseH
     if strings.byte_length(rest) < 4 { return error("invalid HTTP response reason separator"); }
 
     if strings.byte_length(rest) > 3 {
-        if strings.byte_at(rest, 3).value != 32
-            || !header_value(strings.slice_bytes(rest, 4, strings.byte_length(rest) - 4).value) {
+        if byte_or_zero(rest, 3) != 32
+            || !header_value(slice_or_empty(rest, 4, strings.byte_length(rest) - 4)) {
             return error("invalid HTTP response reason");
         }
     }
@@ -408,7 +409,7 @@ def valid_host(text: string) -> bool {
     if !valid_field(text) { return false; }
 
     for def mut index: u64 = 0; index < strings.byte_length(text); index = index + 1 {
-        def byte: u8 = strings.byte_at(text, index).value;
+        def byte: u8 = byte_or_zero(text, index);
         if byte <= 32 || byte == 127 { return false; }
     }
 
@@ -441,19 +442,19 @@ def pub format_get(memory: &arena.GeneralArena, host: string,
 
     remaining = remaining - target_bytes;
 
-    def made: strings.BuilderResult = strings.StringBuilder.create(memory, max_bytes - remaining);
-    if made.status != status.OK { return error("HTTP request buffer allocation failed"); }
+    def made: result<strings.StringBuilder> = strings.StringBuilder.create(memory, max_bytes - remaining);
+    if made.erroneous { return error("HTTP request buffer allocation failed"); }
 
     def mut builder: strings.StringBuilder = made.value;
-    if builder.append("GET ") != status.OK || builder.append(target) != status.OK
-        || builder.append(" HTTP/1.1\r\nHost: ") != status.OK
-        || builder.append(host) != status.OK
-        || builder.append("\r\nConnection: close\r\n\r\n") != status.OK {
+    if !append_succeeded(builder.append("GET ")) || !append_succeeded(builder.append(target))
+        || !append_succeeded(builder.append(" HTTP/1.1\r\nHost: "))
+        || !append_succeeded(builder.append(host))
+        || !append_succeeded(builder.append("\r\nConnection: close\r\n\r\n")) {
         return error("HTTP request head exceeds output limit");
     }
 
-    def completed: strings.StringResult = builder.to_string(memory);
-    if completed.status != status.OK { return error("HTTP request copy failed"); }
+    def completed: result<string> = builder.to_string(memory);
+    if completed.erroneous { return error("HTTP request copy failed"); }
 
     return completed.value;
 }
@@ -470,11 +471,11 @@ def pub format_response(memory: &arena.GeneralArena, code: i32, reason: string,
         return error("invalid HTTP response fields");
     }
 
-    def number: std.FormatResult = std.format_i32(memory, code);
-    if number.status != status.OK { return error("HTTP status formatting failed"); }
+    def number: result<string> = std.format_i32(memory, code);
+    if number.erroneous { return error("HTTP status formatting failed"); }
 
-    def size: std.FormatResult = std.format_u64(memory, content_length);
-    if size.status != status.OK { return error("HTTP body length formatting failed"); }
+    def size: result<string> = std.format_u64(memory, content_length);
+    if size.erroneous { return error("HTTP body length formatting failed"); }
 
     def fixed: u64 = strings.byte_length("HTTP/1.1 ") + strings.byte_length(" ") +
     strings.byte_length("\r\nContent-Type: ") +
@@ -504,23 +505,23 @@ def pub format_response(memory: &arena.GeneralArena, code: i32, reason: string,
 
     remaining = remaining - size_bytes;
 
-    def made: strings.BuilderResult = strings.StringBuilder.create(memory, max_bytes - remaining);
-    if made.status != status.OK { return error("HTTP response buffer allocation failed"); }
+    def made: result<strings.StringBuilder> = strings.StringBuilder.create(memory, max_bytes - remaining);
+    if made.erroneous { return error("HTTP response buffer allocation failed"); }
 
     def mut builder: strings.StringBuilder = made.value;
-    if builder.append("HTTP/1.1 ") != status.OK
-        || builder.append(number.value) != status.OK || builder.append(" ") != status.OK
-        || builder.append(reason) != status.OK
-        || builder.append("\r\nContent-Type: ") != status.OK
-        || builder.append(content_type) != status.OK
-        || builder.append("\r\nContent-Length: ") != status.OK
-        || builder.append(size.value) != status.OK
-        || builder.append("\r\nConnection: close\r\n\r\n") != status.OK {
+    if !append_succeeded(builder.append("HTTP/1.1 "))
+        || !append_succeeded(builder.append(number.value)) || !append_succeeded(builder.append(" "))
+        || !append_succeeded(builder.append(reason))
+        || !append_succeeded(builder.append("\r\nContent-Type: "))
+        || !append_succeeded(builder.append(content_type))
+        || !append_succeeded(builder.append("\r\nContent-Length: "))
+        || !append_succeeded(builder.append(size.value))
+        || !append_succeeded(builder.append("\r\nConnection: close\r\n\r\n")) {
         return error("HTTP response head exceeds output limit");
     }
 
-    def completed: strings.StringResult = builder.to_string(memory);
-    if completed.status != status.OK { return error("HTTP response copy failed"); }
+    def completed: result<string> = builder.to_string(memory);
+    if completed.erroneous { return error("HTTP response copy failed"); }
 
     return completed.value;
 }
@@ -594,28 +595,28 @@ def pub format_request(memory: &arena.GeneralArena, method: string, host: string
         remaining = remaining - value_bytes;
     }
 
-    def made: strings.BuilderResult = strings.StringBuilder.create(memory, max_bytes - remaining);
-    if made.status != status.OK { return error("HTTP request buffer allocation failed"); }
+    def made: result<strings.StringBuilder> = strings.StringBuilder.create(memory, max_bytes - remaining);
+    if made.erroneous { return error("HTTP request buffer allocation failed"); }
 
     def mut builder: strings.StringBuilder = made.value;
-    if builder.append(method) != status.OK || builder.append(" ") != status.OK
-        || builder.append(target) != status.OK || builder.append(" HTTP/1.1\r\nHost: ") != status.OK
-        || builder.append(host) != status.OK || builder.append("\r\nContent-Length: ") != status.OK
-        || builder.append(size_text) != status.OK || builder.append("\r\nConnection: close\r\n") != status.OK {
+    if !append_succeeded(builder.append(method)) || !append_succeeded(builder.append(" "))
+        || !append_succeeded(builder.append(target)) || !append_succeeded(builder.append(" HTTP/1.1\r\nHost: "))
+        || !append_succeeded(builder.append(host)) || !append_succeeded(builder.append("\r\nContent-Length: "))
+        || !append_succeeded(builder.append(size_text)) || !append_succeeded(builder.append("\r\nConnection: close\r\n")) {
         return error("HTTP request formatting failed");
     }
 
     for def mut i: u64 = 0; i < headers.len; i = i + 1 {
-        if builder.append(headers[i].name) != status.OK || builder.append(": ") != status.OK
-            || builder.append(headers[i].value) != status.OK || builder.append("\r\n") != status.OK {
+        if !append_succeeded(builder.append(headers[i].name)) || !append_succeeded(builder.append(": "))
+            || !append_succeeded(builder.append(headers[i].value)) || !append_succeeded(builder.append("\r\n")) {
             return error("HTTP request formatting failed");
         }
     }
 
-    if builder.append("\r\n") != status.OK { return error("HTTP request formatting failed"); }
+    if !append_succeeded(builder.append("\r\n")) { return error("HTTP request formatting failed"); }
 
-    def completed: strings.StringResult = builder.to_string(memory);
-    if completed.status != status.OK { return error("HTTP request copy failed"); }
+    def completed: result<string> = builder.to_string(memory);
+    if completed.erroneous { return error("HTTP request copy failed"); }
 
     return completed.value;
 }
@@ -631,8 +632,8 @@ def pub struct Headers {
     def mut offset: u64,
 
     def pub next(self: &Headers) -> HeaderItem {
-        def rest: string = strings.slice_bytes(self.text, self.offset,
-            strings.byte_length(self.text) - self.offset).value;
+        def rest: string = slice_or_empty(self.text, self.offset,
+            strings.byte_length(self.text) - self.offset);
         def line_end: strings.FindResult = strings.find(rest, "\r\n");
 
         if !line_end.found || line_end.offset == 0 {
@@ -645,16 +646,16 @@ def pub struct Headers {
             };
         }
 
-        def line: string              = strings.slice_bytes(rest, 0, line_end.offset).value;
+        def line: string              = slice_or_empty(rest, 0, line_end.offset);
         def colon: strings.FindResult = strings.find(line, ":");
         self.offset = self.offset + line_end.offset + 2;
 
         return HeaderItem {
             available: true,
             field: Header {
-                name: strings.slice_bytes(line, 0, colon.offset).value,
-                value: strings.trim_ascii(strings.slice_bytes(line, colon.offset + 1,
-                    strings.byte_length(line) - colon.offset - 1).value)
+                name: slice_or_empty(line, 0, colon.offset),
+                value: strings.trim_ascii(slice_or_empty(line, colon.offset + 1,
+                    strings.byte_length(line) - colon.offset - 1))
             }
         };
     }
@@ -668,7 +669,7 @@ def pub headers(bytes: string, max_header_bytes: u64) -> result<Headers> {
     if parsed.status != status.OK { return error("HTTP headers require a valid complete head"); }
 
     return Headers {
-        text: strings.slice_bytes(bytes, 0, parsed.header_bytes).value,
+        text: slice_or_empty(bytes, 0, parsed.header_bytes),
         offset: strings.byte_length(parsed.start_line) + 2
     };
 }
@@ -707,7 +708,7 @@ def const ZERO: u64 = 0;
 
 def hex_digit(byte: u8) -> u64 {
     for def mut digit: u64 = 0; digit < 16; digit = digit + 1 {
-        if ascii_lower(byte) == strings.byte_at("0123456789abcdef", digit).value { return digit; }
+        if ascii_lower(byte) == byte_or_zero("0123456789abcdef", digit) { return digit; }
     }
 
     return 16;
@@ -720,8 +721,8 @@ def chunk_length(line: string) -> result<u64> {
     def mut cursor: u64 = 0;
     def mut value: u64  = 0;
 
-    while cursor < length && hex_digit(strings.byte_at(line, cursor).value) < 16 {
-        def number: u64 = hex_digit(strings.byte_at(line, cursor).value);
+    while cursor < length && hex_digit(byte_or_zero(line, cursor)) < 16 {
+        def number: u64 = hex_digit(byte_or_zero(line, cursor));
         if value > (18446744073709551615 - number) / 16 {
             return error("HTTP chunk size overflows u64");
         }
@@ -734,32 +735,32 @@ def chunk_length(line: string) -> result<u64> {
 
     // Validate extensions, including quoted strings, before ignoring their values.
     while cursor < length {
-        while cursor < length && space(strings.byte_at(line, cursor).value) { cursor = cursor + 1; }
-        if cursor == length || strings.byte_at(line, cursor).value != 59 {
+        while cursor < length && space(byte_or_zero(line, cursor)) { cursor = cursor + 1; }
+        if cursor == length || byte_or_zero(line, cursor) != 59 {
             return error("invalid HTTP chunk extension");
         }
 
         cursor = cursor + 1;
-        while cursor < length && space(strings.byte_at(line, cursor).value) { cursor = cursor + 1; }
+        while cursor < length && space(byte_or_zero(line, cursor)) { cursor = cursor + 1; }
 
         def start: u64 = cursor;
 
-        while cursor < length && token(strings.slice_bytes(line, cursor, 1).value) { cursor = cursor + 1; }
+        while cursor < length && token(slice_or_empty(line, cursor, 1)) { cursor = cursor + 1; }
         if cursor == start { return error("invalid HTTP chunk extension name"); }
 
-        while cursor < length && space(strings.byte_at(line, cursor).value) { cursor = cursor + 1; }
-        if cursor < length && strings.byte_at(line, cursor).value == 61 {
+        while cursor < length && space(byte_or_zero(line, cursor)) { cursor = cursor + 1; }
+        if cursor < length && byte_or_zero(line, cursor) == 61 {
             cursor = cursor + 1;
-            while cursor < length && space(strings.byte_at(line, cursor).value) { cursor = cursor + 1; }
+            while cursor < length && space(byte_or_zero(line, cursor)) { cursor = cursor + 1; }
             if cursor == length { return error("missing HTTP chunk extension value"); }
 
-            if strings.byte_at(line, cursor).value == 34 {
+            if byte_or_zero(line, cursor) == 34 {
                 cursor = cursor + 1;
 
                 def mut closed: bool = false;
 
                 while cursor < length && !closed {
-                    def byte: u8 = strings.byte_at(line, cursor).value;
+                    def byte: u8 = byte_or_zero(line, cursor);
                     cursor = cursor + 1;
 
                     if byte == 34 {
@@ -767,7 +768,7 @@ def chunk_length(line: string) -> result<u64> {
                     } else if byte == 92 {
                         if cursor == length { return error("invalid HTTP chunk quoted escape"); }
 
-                        def escaped: u8 = strings.byte_at(line, cursor).value;
+                        def escaped: u8 = byte_or_zero(line, cursor);
                         if escaped != 9 && (escaped < 32 || escaped == 127) {
                             return error("invalid HTTP chunk quoted escape");
                         }
@@ -782,7 +783,7 @@ def chunk_length(line: string) -> result<u64> {
             } else {
                 def start_value: u64 = cursor;
 
-                while cursor < length && token(strings.slice_bytes(line, cursor, 1).value) { cursor = cursor + 1; }
+                while cursor < length && token(slice_or_empty(line, cursor, 1)) { cursor = cursor + 1; }
                 if cursor == start_value { return error("invalid HTTP chunk extension value"); }
             }
         }
@@ -853,7 +854,7 @@ def pub struct ResponseDecoder {
         def mut cursor: u64   = 0;
 
         while cursor < strings.byte_length(bytes) && self.state != READ_DONE {
-            def byte: u8 = strings.byte_at(bytes, cursor).value;
+            def byte: u8 = byte_or_zero(bytes, cursor);
 
             if self.state == READ_FIXED || self.state == READ_CLOSE || self.state == READ_DATA {
                 if self.body_used == self.body_limit || self.code == 205 {
@@ -974,9 +975,9 @@ def pub struct ResponseDecoder {
                             def colon: strings.FindResult = strings.find(line, ":");
                             if !colon.found { return error("invalid HTTP trailer"); }
 
-                            def name: string = strings.slice_bytes(line, 0, colon.offset).value;
-                            def value: string = strings.slice_bytes(line, colon.offset + 1,
-                                strings.byte_length(line) - colon.offset - 1).value;
+                            def name: string = slice_or_empty(line, 0, colon.offset);
+                            def value: string = slice_or_empty(line, colon.offset + 1,
+                                strings.byte_length(line) - colon.offset - 1);
 
                             if !token(name) || !header_value(value)
                                 || equals_header_name(name, "Content-Length")
@@ -1077,7 +1078,7 @@ def pub struct ResponseReader {
 
         while again {
             def decoded: result<StreamProgress> = self.decoder.feed(
-                strings.slice_bytes(bytes, cursor, strings.byte_length(bytes) - cursor).value,
+                slice_or_empty(bytes, cursor, strings.byte_length(bytes) - cursor),
                 eof, self.body_storage[self.body_used..]);
             if decoded.erroneous { return decoded.error; }
 
@@ -1107,4 +1108,29 @@ def pub struct ResponseReader {
         };
     }
 
+}
+
+// A failed range produces empty text under this caller's existing policy.
+// The returned view still borrows the source bytes.
+def slice_or_empty(text: string, start: u64, length: u64) -> string {
+    def view: result<string> = strings.slice_bytes(text, start, length);
+    if view.erroneous { return ""; }
+
+    return view.value;
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
+}
+
+// Keep append chains short-circuiting while explicitly handling every result.
+def append_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
 }

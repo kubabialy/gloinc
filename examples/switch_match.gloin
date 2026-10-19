@@ -1,0 +1,58 @@
+// switch performs actions; match produces a value and must cover every outcome.
+import "@std";
+
+def enum Command { Ping, Quit, Unknown }
+
+def parse_command(text: string) -> Command {
+    return match text {
+        case "PING" => Command.Ping;
+        case "QUIT" => Command.Quit;
+        default => Command.Unknown;
+    };
+}
+
+def reply(command: Command) -> string {
+    // Adding another Command variant requires updating this exhaustive match.
+    return match command {
+        case Command.Ping => "PONG";
+        case Command.Quit => "BYE";
+        case Command.Unknown => "ERR unknown command";
+    };
+}
+
+def checked_answer(valid: bool) -> result<i32> {
+    if !valid { return error("answer unavailable"); }
+
+    return 42;
+}
+
+def answer_or_zero(outcome: result<i32>) -> i32 {
+    // Only this arm receives the success payload. Matching handles the result.
+    return match outcome {
+        case value(answer) => answer;
+        case error(problem) => 0;
+    };
+}
+
+def main() -> i32 {
+    def command: Command = parse_command("PING");
+
+    switch command {
+        case Command.Ping {
+            std.println(reply(command));
+        }
+
+        case Command.Quit {
+            std.println("closing");
+        }
+
+        default {
+            std.println("unsupported command");
+        }
+    }
+
+    if answer_or_zero(checked_answer(true)) != 42 { return 1; }
+    if answer_or_zero(checked_answer(false)) != 0 { return 2; }
+
+    return 0;
+}

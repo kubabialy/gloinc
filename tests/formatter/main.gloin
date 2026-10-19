@@ -13,68 +13,77 @@ import "../../tools/gloinfmt/tokens.gloin";
 import "./runner.gloin";
 
 def report(path: string, message: string) -> void {
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
     def mut output: io.Stream = io.stderr();
 
-    output.write_all(path);
-    output.write_all(": ");
-    output.write_line(message);
+    report_io_failure(output.write_all(path, &io_progress));
+    report_io_failure(output.write_all(": ", &io_progress));
+    report_io_failure(output.write_line(message, &io_progress));
 }
 
 def close_file(file: &io.File) -> void {
-    if file.is_open() { file.close(); }
+    if file.is_open() { report_io_failure(file.close()); }
 }
 
 def close_directory(directory: &fs.Directory) -> void {
-    if directory.is_open() { directory.close(); }
+    if directory.is_open() {
+        def closed: result<void> = directory.close();
+        if closed.erroneous { report("directory cleanup", closed.error.message); }
+    }
 }
 
 def joined(memory: &arena.GeneralArena, left: string, right: string) -> result<string> {
-    def path: fs.PathResult = fs.join(memory, left, right, 65536);
-    if path.status != status.OK { return error("cannot join fixture path"); }
+    def path: result<string> = fs.join(memory, left, right, 65536);
+    if path.erroneous { return path.error; }
 
     return path.value;
 }
 
 def read_file(memory: &arena.GeneralArena, path: string) -> result<string> {
-    def opened: io.FileResult = io.File.open_read(memory, path);
-    if opened.status != status.OK { return error("cannot open fixture"); }
+    def opened: result<io.File> = io.File.open_read(memory, path);
+    if opened.erroneous { return error("cannot open fixture"); }
 
     def mut file: io.File = opened.value;
     defer close_file(&file);
 
-    def read: io.ReadResult = file.read_all(memory, 8388608);
-    if read.status != status.OK { return error("cannot read fixture"); }
-    if file.close().status != status.OK { return error("cannot close fixture"); }
+    def mut read: io.ReadState    = io.ReadState.empty();
+    def read_result: result<void> = file.read_all(memory, 8388608, &read);
+
+    if read_result.erroneous { return error("cannot read fixture"); }
+    if !io_succeeded(file.close()) { return error("cannot close fixture"); }
 
     return read.value;
 }
 
 def write_file(memory: &arena.GeneralArena, path: string, text: string) -> bool {
-    def opened: io.FileResult = io.File.create_new(memory, path);
-    if opened.status != status.OK { return false; }
+    def mut io_progress: io.WriteState = io.WriteState.empty();
+
+    def opened: result<io.File> = io.File.create_new(memory, path);
+    if opened.erroneous { return false; }
 
     def mut file: io.File = opened.value;
     defer close_file(&file);
 
-    if file.write_all(text).status != status.OK { return false; }
+    if !io_succeeded(file.write_all(text, &io_progress)) { return false; }
 
-    return file.close().status == status.OK;
+    return io_succeeded(file.close());
 }
 
 def crlf(memory: &arena.GeneralArena, text: string) -> result<string> {
-    def made: strings.BuilderResult = strings.StringBuilder.create(memory, strings.byte_length(text) * 2 + 1);
-    if made.status != status.OK { return error("cannot allocate CRLF fixture"); }
+    def made: result<strings.StringBuilder> = strings.StringBuilder.create(memory, strings.byte_length(text) * 2 + 1);
+    if made.erroneous { return error("cannot allocate CRLF fixture"); }
 
     def mut output: strings.StringBuilder = made.value;
 
     for def mut i: u64 = 0; i < strings.byte_length(text); i = i + 1 {
-        def byte: u8 = strings.byte_at(text, i).value;
-        if byte == 10 && output.append("\r") != status.OK { return error("cannot build CRLF fixture"); }
-        if output.append_byte(byte) != status.OK { return error("cannot build CRLF fixture"); }
+        def byte: u8 = byte_or_zero(text, i);
+        if byte == 10 && !append_succeeded(output.append("\r")) { return error("cannot build CRLF fixture"); }
+        if !append_succeeded(output.append_byte(byte)) { return error("cannot build CRLF fixture"); }
     }
 
-    def made_text: strings.StringResult = output.to_string(memory);
-    if made_text.status != status.OK { return error("cannot copy CRLF fixture"); }
+    def made_text: result<string> = output.to_string(memory);
+    if made_text.erroneous { return error("cannot copy CRLF fixture"); }
 
     return made_text.value;
 }
@@ -83,8 +92,8 @@ def fixture(memory: &arena.GeneralArena, root: string, name: string, suffix: str
     def directory: result<string> = joined(memory, root, "tests/fixtures/formatter");
     if directory.erroneous { return directory.error; }
 
-    def leaf: strings.StringResult = strings.concat(memory, name, suffix, 4096);
-    if leaf.status != status.OK { return error("cannot build fixture name"); }
+    def leaf: result<string> = strings.concat(memory, name, suffix, 4096);
+    if leaf.erroneous { return error("cannot build fixture name"); }
 
     def path: result<string> = joined(memory, directory.value, leaf.value);
     if path.erroneous { return path.error; }
@@ -111,7 +120,9 @@ def prepare(root: string, work: string) -> bool {
     for def mut i: u64 = 0; i < 5; i = i + 1 {
         def path: result<string> = joined(&memory, work, directories[i]);
         if path.erroneous { return false; }
-        if fs.mkdir(path.value).status != status.OK { return false; }
+
+        def created: result<void> = fs.mkdir(path.value);
+        if created.erroneous { return false; }
     }
 
     def link_path: result<string> = joined(&memory, work, "tree/linked");
@@ -187,9 +198,9 @@ def golden_cases(root: string) -> bool {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def names: [string; 8] = {"indentation", "simple", "function", "groups", "lexical", "generics", "guards", "assignments"};
+    def names: [string; 9] = {"indentation", "simple", "function", "groups", "lexical", "generics", "guards", "assignments", "selection"};
 
-    for def mut i: u64 = 0; i < 8; i = i + 1 {
+    for def mut i: u64 = 0; i < 9; i = i + 1 {
         memory.reset();
         def input: result<string> = fixture(&memory, root, names[i], ".input");
         if input.erroneous { report(names[i], input.error.message); return false; }
@@ -221,11 +232,14 @@ def same_file(memory: &arena.GeneralArena, work: string, name: string, expected:
 }
 
 def captured(memory: &arena.GeneralArena, work: string, name: string, code: string, output: string) -> bool {
-    def status_name: strings.StringResult = strings.concat(memory, name, ".status", 4096);
-    def output_name: strings.StringResult = strings.concat(memory, name, ".out", 4096);
-    def error_name: strings.StringResult  = strings.concat(memory, name, ".err", 4096);
+    def status_name: result<string> = strings.concat(memory, name, ".status", 4096);
+    if status_name.erroneous { return false; }
 
-    if status_name.status != status.OK || output_name.status != status.OK || error_name.status != status.OK { return false; }
+    def output_name: result<string> = strings.concat(memory, name, ".out", 4096);
+    if output_name.erroneous { return false; }
+
+    def error_name: result<string> = strings.concat(memory, name, ".err", 4096);
+    if error_name.erroneous { return false; }
 
     return same_file(memory, work, status_name.value, code)
         && same_file(memory, work, output_name.value, output)
@@ -236,13 +250,13 @@ def cli_cases(root: string, work: string) -> bool {
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def names: [string; 3]          = {"indentation", "simple", "function"};
-    def files: [string; 3]          = {"tree/a.gloin", "tree/nested/b.gloin", "tree/z.gloin"};
-    def captures: [string; 3]       = {"native-a", "native-b", "native-z"};
-    def repeats: [string; 3]        = {"repeat-a", "repeat-b", "repeat-z"};
-    def made: strings.BuilderResult = strings.StringBuilder.create(&memory, 262144);
+    def names: [string; 3]                  = {"indentation", "simple", "function"};
+    def files: [string; 3]                  = {"tree/a.gloin", "tree/nested/b.gloin", "tree/z.gloin"};
+    def captures: [string; 3]               = {"native-a", "native-b", "native-z"};
+    def repeats: [string; 3]                = {"repeat-a", "repeat-b", "repeat-z"};
+    def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory, 262144);
 
-    if made.status != status.OK { return false; }
+    if made.erroneous { return false; }
 
     def mut changed: strings.StringBuilder = made.value;
 
@@ -273,20 +287,20 @@ def cli_cases(root: string, work: string) -> bool {
 
         def path: result<string> = joined(&memory, work, files[i]);
         if path.erroneous { return false; }
-        if changed.append(path.value) != status.OK || changed.append("\n") != status.OK { return false; }
+        if !append_succeeded(changed.append(path.value)) || !append_succeeded(changed.append("\n")) { return false; }
         if i == 0 && !captured(&memory, work, "jit-file", "0\n", after) { return false; }
     }
 
-    def changed_text: strings.StringResult = changed.to_string(&memory);
-    if changed_text.status != status.OK { return false; }
+    def changed_text: result<string> = changed.to_string(&memory);
+    if changed_text.erroneous { return false; }
     if !captured(&memory, work, "check-tree", "1\n", changed_text.value) { return false; }
     if !captured(&memory, work, "check-clean", "0\n", "") { return false; }
 
     def path: result<string> = joined(&memory, work, "unaligned.gloin");
     if path.erroneous { return false; }
 
-    def path_line: strings.StringResult = strings.concat(&memory, path.value, "\n", 65537);
-    if path_line.status != status.OK { return false; }
+    def path_line: result<string> = strings.concat(&memory, path.value, "\n", 65537);
+    if path_line.erroneous { return false; }
     if !captured(&memory, work, "check-style", "1\n", path_line.value) { return false; }
 
     def aligned: result<string> = fixture(&memory, root, "groups", ".expected");
@@ -349,10 +363,10 @@ def sort_names(names: &vector.Vector<string>) -> void {
 }
 
 def corpus(path: string, checked: &i32) -> bool {
-    def metadata: fs.MetadataResult = fs.metadata(path);
-    if metadata.status != status.OK { report(path, "cannot inspect corpus path"); return false; }
+    def metadata: result<fs.Metadata> = fs.metadata(path);
+    if metadata.erroneous { report(path, "cannot inspect corpus path"); return false; }
 
-    if metadata.kind == fs.FILE {
+    if metadata.value.kind == fs.FILE {
         if strings.ends_with(path, ".gloin") {
             if !check_source(path) { return false; }
 
@@ -362,13 +376,13 @@ def corpus(path: string, checked: &i32) -> bool {
         return true;
     }
 
-    if metadata.kind != fs.DIRECTORY { return true; }
+    if metadata.value.kind != fs.DIRECTORY { return true; }
 
     def mut memory: arena.GeneralArena = arena.GeneralArena.create();
     defer memory.free();
 
-    def opened: fs.DirectoryResult = fs.Directory.open(&memory, path);
-    if opened.status != status.OK { return false; }
+    def opened: result<fs.Directory> = fs.Directory.open(&memory, path);
+    if opened.erroneous { return false; }
 
     def mut directory: fs.Directory = opened.value;
     defer close_directory(&directory);
@@ -377,19 +391,22 @@ def corpus(path: string, checked: &i32) -> bool {
     def mut scanning: bool               = true;
 
     while scanning {
-        def entry: fs.DirectoryEntryResult = directory.next(&memory);
+        def entry: result<fs.DirectoryRead> = directory.next(&memory);
 
-        if entry.status == status.END {
-            scanning = false;
-        } else if entry.status != status.OK {
+        if entry.erroneous {
             return false;
-        } else if !strings.equal(entry.name, ".git") && !strings.equal(entry.name, "build")
-            && !strings.starts_with(entry.name, "build-") {
-            if !names.push(entry.name) { return false; }
+        }
+
+        if entry.value.end {
+            scanning = false;
+        } else if !strings.equal(entry.value.name, ".git") && !strings.equal(entry.value.name, "build")
+            && !strings.starts_with(entry.value.name, "build-") {
+            if !names.push(entry.value.name) { return false; }
         }
     }
 
-    if directory.close().status != status.OK { return false; }
+    def closed: result<void> = directory.close();
+    if closed.erroneous { return false; }
 
     sort_names(&names);
 
@@ -407,27 +424,40 @@ def main() -> i32 {
     defer memory.free();
 
     if process.arg_count() == 7 {
-        def run_mode: process.TextResult    = process.arg(&memory, 1);
-        def compiler: process.TextResult    = process.arg(&memory, 2);
-        def formatter: process.TextResult   = process.arg(&memory, 3);
-        def harness: process.TextResult     = process.arg(&memory, 4);
-        def source_root: process.TextResult = process.arg(&memory, 5);
-        def parent: process.TextResult      = process.arg(&memory, 6);
+        def run_mode: result<string> = process.arg(&memory, 1);
+        if run_mode.erroneous { return 2; }
 
-        if run_mode.status != status.OK || !strings.equal(run_mode.value, "--run")
-            || compiler.status != status.OK || formatter.status != status.OK || harness.status != status.OK
-            || source_root.status != status.OK || parent.status != status.OK { return 2; }
+        def compiler: result<string> = process.arg(&memory, 2);
+        if compiler.erroneous { return 2; }
+
+        def formatter: result<string> = process.arg(&memory, 3);
+        if formatter.erroneous { return 2; }
+
+        def harness: result<string> = process.arg(&memory, 4);
+        if harness.erroneous { return 2; }
+
+        def source_root: result<string> = process.arg(&memory, 5);
+        if source_root.erroneous { return 2; }
+
+        def parent: result<string> = process.arg(&memory, 6);
+        if parent.erroneous { return 2; }
+
+        if !strings.equal(run_mode.value, "--run") { return 2; }
 
         return runner.execute_suite(compiler.value, formatter.value, harness.value, source_root.value, parent.value);
     }
 
     if process.arg_count() != 4 { report("usage", "formatter-tests --prepare|--verify ROOT WORK"); return 2; }
 
-    def mode: process.TextResult = process.arg(&memory, 1);
-    def root: process.TextResult = process.arg(&memory, 2);
-    def work: process.TextResult = process.arg(&memory, 3);
+    def mode: result<string> = process.arg(&memory, 1);
+    if mode.erroneous { return 2; }
 
-    if mode.status != status.OK || root.status != status.OK || work.status != status.OK { return 2; }
+    def root: result<string> = process.arg(&memory, 2);
+    if root.erroneous { return 2; }
+
+    def work: result<string> = process.arg(&memory, 3);
+
+    if work.erroneous { return 2; }
 
     if strings.equal(mode.value, "--prepare") {
         if !prepare(root.value, work.value) { report("prepare", "fixture setup failed"); return 1; }
@@ -451,11 +481,42 @@ def main() -> i32 {
 
     if checked == 0 { report("corpus", "no Gloin source files found"); return 1; }
 
-    def count: string = std.to_string(&memory, checked);
+    def formatted: result<string> = std.to_string(&memory, checked);
+    if formatted.erroneous { return 1; }
+
+    def count: string = formatted.value;
 
     std.print("Gloin formatter tests passed; ");
     std.print(count);
     std.println(" source files preserve tokens and are idempotent");
 
     return 0;
+}
+
+// These callers need success/failure only; transfer state retains partial progress.
+def io_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
+}
+
+// Report cleanup/diagnostic failures without recursively writing to a failed stream.
+def report_io_failure(outcome: result<void>) -> void {
+    if outcome.erroneous { std.println(outcome.error.message); }
+}
+
+// Parser/lookahead policy: an out-of-range byte is the zero sentinel.
+// Preserve this caller policy explicitly; public string access returns a result.
+def byte_or_zero(text: string, index: u64) -> u8 {
+    def byte: result<u8> = strings.byte_at(text, index);
+    if byte.erroneous { return 0; }
+
+    return byte.value;
+}
+
+// Keep append chains short-circuiting while explicitly handling every result.
+def append_succeeded(outcome: result<void>) -> bool {
+    if outcome.erroneous { return false; }
+
+    return true;
 }

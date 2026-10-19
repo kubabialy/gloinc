@@ -17,18 +17,19 @@ def main() -> i32 {
 
     while reading {
         memory.reset();
-        def line: std.InputResult = std.input(&memory, 128);
+        def line: result<std.InputLine> = std.input(&memory, 128);
 
-        if line.status == status.END {
+        if line.erroneous {
+            std.println("input failed");
+            return 1;
+        }
+
+        if line.value.end {
             reading = false;
         } else {
-            if line.status != status.OK {
-                std.println("input failed");
-                return 1;
-            }
 
-            def measurement: std.F64Result = std.parse_f64(strings.trim_ascii(line.value));
-            if measurement.status != status.OK {
+            def measurement: result<f64> = std.parse_f64(strings.trim_ascii(line.value.value));
+            if measurement.erroneous {
                 std.println("invalid number");
                 return 2;
             }
@@ -44,23 +45,23 @@ def main() -> i32 {
 
             count = count + 1;
 
-            def denominator: std.F64Result = std.f64_from_i64_exact(count);
-            if denominator.status != status.OK { return 5; }
+            def denominator: result<f64> = std.f64_from_i64_exact(count);
+            if denominator.erroneous { return 5; }
 
             mean = mean + (measurement.value - mean) / denominator.value;
         }
     }
 
     memory.reset();
-    def total: std.FormatResult = std.format_i64(&memory, count);
-    if total.status != status.OK { return 6; }
+    def total: result<string> = std.format_i64(&memory, count);
+    if total.erroneous { return 6; }
 
     std.print("count=");
     std.println(total.value);
 
     if count != 0 {
-        def average: std.FormatResult = std.format_f64_fixed(&memory, mean, 2);
-        if average.status != status.OK { return 7; }
+        def average: result<string> = std.format_f64_fixed(&memory, mean, 2);
+        if average.erroneous { return 7; }
 
         std.print("mean=");
         std.println(average.value);

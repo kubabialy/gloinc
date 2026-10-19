@@ -3,8 +3,9 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h" // Added for DialectAsmParser/Printer
-#include "llvm/ADT/TypeSwitch.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include <vector>
 
 using namespace mlir;
@@ -67,9 +68,9 @@ bool matches_storage(mlir::Type source, mlir::Type storage) {
   }
   if (mlir::isa<gloin::GloinErrorType>(source)) {
     auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(storage);
-    return record && !record.isOpaque() && record.getBody().size() == 2 &&
-           mlir::isa<mlir::LLVM::LLVMPointerType>(record.getBody()[0]) &&
-           record.getBody()[1].isInteger(64);
+    return record && !record.isOpaque() && record.getBody().size() == 3 &&
+           matches_storage(gloin::GloinStringType::get(source.getContext()), record.getBody()[0]) &&
+           record.getBody()[1].isInteger(32) && record.getBody()[2].isInteger(32);
   }
   if (auto result = mlir::dyn_cast<gloin::GloinResultType>(source)) {
     auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(storage);
@@ -151,7 +152,8 @@ mlir::LogicalResult ErrorLiteralOp::verify() {
   if ((!source && getValue().getType() != getLayoutType()) ||
       !matches_storage(gloin::GloinErrorType::get(getContext()), getLayoutType()) ||
       (source && !mlir::isa<gloin::GloinStringType>(getMessage().getType())) ||
-      (!source && getMessage().getType() != getLayoutType()))
+      (!source && !matches_storage(gloin::GloinStringType::get(getContext()),
+                                   getMessage().getType())))
     return emitOpError("requires a checked string message and error layout");
   return mlir::success();
 }
@@ -162,12 +164,25 @@ mlir::LogicalResult ErrorMessageOp::verify() {
   if (mlir::isa<gloin::GloinErrorType>(getError().getType())) {
     if (!mlir::isa<gloin::GloinStringType>(getMessage().getType()))
       return emitOpError("requires a source string result");
-  } else if (getError().getType() != getMessage().getType() ||
-             getMessage().getType() != getLayoutType() ||
+  } else if (getMessage().getType() != getLayoutType() ||
              !matches_storage(gloin::GloinErrorType::get(getContext()),
                               getError().getType())) {
-    return emitOpError("requires matching error and string storage layouts");
+    return emitOpError("requires error storage and a matching string result layout");
   }
+  return mlir::success();
+}
+
+mlir::LogicalResult ErrorCodeOp::verify() {
+  if (!mlir::isa<gloin::GloinErrorType>(getError().getType()) &&
+      !matches_storage(gloin::GloinErrorType::get(getContext()), getError().getType()))
+    return emitOpError("requires a source error or its diagnostic storage layout");
+  return mlir::success();
+}
+
+mlir::LogicalResult ErrorOsErrorOp::verify() {
+  if (!mlir::isa<gloin::GloinErrorType>(getError().getType()) &&
+      !matches_storage(gloin::GloinErrorType::get(getContext()), getError().getType()))
+    return emitOpError("requires a source error or its diagnostic storage layout");
   return mlir::success();
 }
 
@@ -319,6 +334,12 @@ mlir::LogicalResult CheckedFloatBinaryOp::verify() {
   auto kind = getKind();
   if (kind != "+" && kind != "-" && kind != "*" && kind != "/")
     return emitOpError("has an unsupported floating operator");
+  return mlir::success();
+}
+
+mlir::LogicalResult RequireFiniteOp::verify() {
+  if (!getValue().getType().isF32() && !getValue().getType().isF64())
+    return emitOpError("requires an f32 or f64 value");
   return mlir::success();
 }
 
@@ -755,4 +776,119 @@ mlir::LogicalResult ConstantOp::verify() {
       value.getType() != getResult().getType())
     return emitOpError("requires a matching integer or floating attribute");
   return mlir::success();
+}
+
+namespace {
+bool case_key_matches(mlir::Type source, mlir::Attribute key) {
+    if (mlir::isa<gloin::GloinStringType>(source))
+        return mlir::isa<mlir::StringAttr>(key);
+    auto integer = mlir::dyn_cast<mlir::IntegerAttr>(key);
+    if (!integer)
+        return false;
+    if (mlir::isa<gloin::GloinEnumType>(source))
+        return integer.getType().isInteger(32);
+    if (mlir::isa<gloin::GloinResultType>(source))
+        return integer.getType().isInteger(1);
+    auto type = mlir::dyn_cast<mlir::IntegerType>(source);
+    return type && type.isSignless() &&
+           (type.getWidth() == 1 || type.getWidth() == 8 || type.getWidth() == 16 ||
+            type.getWidth() == 32 || type.getWidth() == 64) &&
+           integer.getType() == type;
+}
+
+mlir::LogicalResult verify_cases(mlir::Operation *op, mlir::Type source, mlir::Value subject,
+                                 mlir::ArrayAttr keys, uint64_t domain, bool exhaustive) {
+    auto scalar = mlir::dyn_cast<mlir::IntegerType>(source);
+    if (!mlir::isa<gloin::GloinEnumType, gloin::GloinResultType, gloin::GloinStringType>(source) &&
+        (!scalar || !scalar.isSignless() ||
+         (scalar.getWidth() != 1 && scalar.getWidth() != 8 && scalar.getWidth() != 16 &&
+          scalar.getWidth() != 32 && scalar.getWidth() != 64)))
+        return op->emitOpError("unsupported selection subject type");
+    if (subject.getType() != source && !matches_storage(source, subject.getType()))
+        return op->emitOpError("requires a source-typed subject or its matching layout");
+    bool finite =
+        source.isInteger(1) || mlir::isa<gloin::GloinResultType, gloin::GloinEnumType>(source);
+    if ((!finite && domain != 0) || (finite && domain == 0) ||
+        (!mlir::isa<gloin::GloinEnumType>(source) && finite && domain != 2) || domain > UINT32_MAX)
+        return op->emitOpError("has an invalid selection domain");
+    llvm::SmallDenseSet<mlir::Attribute> seen;
+    bool fallback = false;
+    for (auto key : keys) {
+        if (fallback)
+            return op->emitOpError("default must be last");
+        if (mlir::isa<mlir::UnitAttr>(key)) {
+            if (domain && seen.size() == domain)
+                return op->emitOpError("has an unreachable default");
+            fallback = true;
+            continue;
+        }
+        if (!case_key_matches(source, key))
+            return op->emitOpError("case key does not match subject type");
+        if (finite && mlir::cast<mlir::IntegerAttr>(key).getValue().getZExtValue() >= domain)
+            return op->emitOpError("case key is outside the selection domain");
+        if (!seen.insert(key).second)
+            return op->emitOpError("has duplicate case keys");
+    }
+    if (exhaustive && !fallback && (!domain || seen.size() != domain))
+        return op->emitOpError("requires exhaustive case coverage");
+    return mlir::success();
+}
+} // namespace
+
+mlir::LogicalResult CaseTestOp::verify() {
+    if (!case_key_matches(getSourceType(), getKey()) ||
+        (getSubject().getType() != getSourceType() &&
+         !matches_storage(getSourceType(), getSubject().getType())))
+        return emitOpError("requires a matching subject and case key");
+    return mlir::success();
+}
+
+mlir::LogicalResult SwitchOp::verify() {
+    if (mlir::isa<gloin::GloinResultType>(getSourceType()))
+        return emitOpError("result dispatch requires match");
+    if (getDestinations().size() != getKeys().size() + 1)
+        return emitOpError("requires one successor per key and an unmatched successor");
+    for (auto *block : getDestinations())
+        if (block->getNumArguments())
+            return emitOpError("successors must have no arguments");
+    return verify_cases(*this, getSourceType(), getSubject(), getKeys(), getDomainSize(), false);
+}
+
+void MatchOp::getEffects(llvm::SmallVectorImpl<mlir::MemoryEffects::EffectInstance> &effects) {
+    // The descriptor is an SSA value, but dispatch reads its borrowed bytes.
+    // RecursiveMemoryEffects accounts separately for effects in selected arms.
+    if (mlir::isa<gloin::GloinStringType>(getSourceType()))
+        effects.emplace_back(mlir::MemoryEffects::Read::get());
+}
+
+mlir::LogicalResult MatchOp::verify() {
+    if (getArms().size() < 2 || getArms().size() != getKeys().size())
+        return emitOpError("requires at least two arms and one key per arm");
+    if (mlir::isa<mlir::NoneType>(getValueType()) ||
+        !matches_storage(getValueType(), getLayoutType()) ||
+        (getValue().getType() != getValueType() && getValue().getType() != getLayoutType()))
+        return emitOpError("requires a non-void matching source result and layout");
+    for (auto &region : getArms()) {
+        if (region.empty() || region.front().getNumArguments())
+            return emitOpError("requires nonempty arms without entry arguments");
+        for (auto &block : region) {
+            if (block.empty())
+                return emitOpError("requires terminated arm blocks");
+            auto *end = block.getTerminator();
+            if (auto yield = mlir::dyn_cast<gloin::MatchYieldOp>(end)) {
+                if (yield.getValue().getType() != getValue().getType())
+                    return emitOpError("arm yield type must match the result type");
+            } else if (!end->getNumSuccessors() && !mlir::isa<mlir::LLVM::UnreachableOp>(end)) {
+                return emitOpError("arm exits must produce a match value");
+            }
+        }
+    }
+    return verify_cases(*this, getSourceType(), getSubject(), getKeys(), getDomainSize(), true);
+}
+
+mlir::LogicalResult MatchYieldOp::verify() {
+    auto matching = mlir::dyn_cast_or_null<gloin::MatchOp>((*this)->getParentOp());
+    if (!matching || getValue().getType() != matching.getValue().getType())
+        return emitOpError("requires a matching parent match result type");
+    return mlir::success();
 }
