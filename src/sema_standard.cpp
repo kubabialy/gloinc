@@ -2,12 +2,46 @@
 
 std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
                                                      StandardPrimitive kind) {
+    if (kind == StandardPrimitive::HashmapWord || kind == StandardPrimitive::HashmapEqual ||
+        kind == StandardPrimitive::HashmapString || kind == StandardPrimitive::HashmapStringEqual) {
+        const bool equal = kind == StandardPrimitive::HashmapEqual ||
+                           kind == StandardPrimitive::HashmapStringEqual;
+        if (call->arguments.size() != (equal ? 2u : 1u)) {
+            log_error("Incorrect number of hashmap primitive arguments");
+            return nullptr;
+        }
+        auto key = check_expression(call->arguments[0].get());
+        auto core = key ? resolve_core_type(key->to_string()) : std::nullopt;
+        if (!core || !(core_type_info(*core).is_integer || *core == CoreType::Bool ||
+                       *core == CoreType::String)) {
+            log_error("HashMap keys must be integers, bool, or string");
+            return nullptr;
+        }
+        if ((kind == StandardPrimitive::HashmapString || kind == StandardPrimitive::HashmapStringEqual) &&
+            *core != CoreType::String) {
+            log_error("Hashmap string primitive requires string keys");
+            return nullptr;
+        }
+        if (equal) {
+            auto other = check_typed_expression(call->arguments[1].get(), key);
+            if (!other || !other->equals(*key)) {
+                log_error("Hashmap equality requires matching key types");
+                return nullptr;
+            }
+        }
+        recording->standard_calls.emplace(call, *core == CoreType::String
+            ? (equal ? StandardPrimitive::HashmapStringEqual : StandardPrimitive::HashmapString)
+            : (equal ? StandardPrimitive::HashmapEqual : StandardPrimitive::HashmapWord));
+        return get_builtin_type(equal ? "bool" : "i64");
+    }
     auto reference = [&](const char *name) {
         return std::make_shared<PointerType>(get_builtin_type(name), false, false);
     };
     std::vector<std::shared_ptr<Type>> parameters;
     auto byte_pointer = std::make_shared<PointerType>(get_builtin_type("u8"), true, false);
-    if (kind == StandardPrimitive::TimeMonotonic)
+    if (kind == StandardPrimitive::HashmapMask)
+        parameters = {get_builtin_type("i64"), get_builtin_type("i64")};
+    else if (kind == StandardPrimitive::TimeMonotonic)
         parameters = {reference("u64"), reference("i32")};
     else if (kind == StandardPrimitive::RandomSplitMix64)
         parameters = {reference("u64")};
@@ -218,6 +252,7 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
         (kind == StandardPrimitive::StringLength || kind == StandardPrimitive::ProcessCount ||
          kind == StandardPrimitive::RandomSplitMix64)
             ? "u64"
+        : kind == StandardPrimitive::HashmapMask ? "i64"
         : kind == StandardPrimitive::StringByte ? "u8"
         : kind == StandardPrimitive::StringCopy || kind == StandardPrimitive::StringSlice ||
                 kind == StandardPrimitive::StringView ||

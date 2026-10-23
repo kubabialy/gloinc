@@ -103,6 +103,9 @@ enum class StandardPrimitive {
     MathBinaryF64,
     TimeMonotonic,
     RandomSplitMix64,
+    HashmapWord,
+    HashmapString,
+    HashmapStringEqual,
     ProcessStringView,
     FsStringView,
     IoStringView,
@@ -112,9 +115,11 @@ enum class StandardPrimitive {
     StringSlice,
     StringBufferView,
     StringStore,
-    StringWrite
+    StringWrite,
+    HashmapEqual,
+    HashmapMask
 };
-inline constexpr std::array<std::string_view, 108> standard_primitive_names{"__std_parse_i32",
+inline constexpr std::array<std::string_view, 113> standard_primitive_names{"__std_parse_i32",
                                                                            "__std_format_i32",
                                                                            "__std_input",
                                                                            "__strings_copy",
@@ -212,6 +217,9 @@ inline constexpr std::array<std::string_view, 108> standard_primitive_names{"__s
                                                                            "__math_binary_f64",
                                                                            "__time_monotonic",
                                                                            "__random_splitmix64",
+                                                                           "__hashmap_hash",
+                                                                           "__hashmap_hash_string",
+                                                                           "__hashmap_string_equal",
                                                                            "__process_string_view",
                                                                            "__fs_string_view",
                                                                            "__io_string_view",
@@ -221,8 +229,10 @@ inline constexpr std::array<std::string_view, 108> standard_primitive_names{"__s
                                                                            "__strings_slice",
                                                                            "__strings_buffer_view",
                                                                            "__strings_store",
-                                                                           "__strings_write"};
-inline constexpr std::array<std::string_view, 98> standard_runtime_names{
+                                                                           "__strings_write",
+                                                                           "__hashmap_equal",
+                                                                           "__hashmap_mask"};
+inline constexpr std::array<std::string_view, 101> standard_runtime_names{
     "gloin_std_parse_i32",
     "gloin_std_format_i32",
     "gloin_std_input",
@@ -320,8 +330,14 @@ inline constexpr std::array<std::string_view, 98> standard_runtime_names{
     "gloin_math_binary_f32",
     "gloin_math_binary_f64",
     "gloin_time_monotonic",
-    "gloin_random_splitmix64"};
+    "gloin_random_splitmix64",
+    "gloin_hashmap_word",
+    "gloin_hashmap_string",
+    "gloin_hashmap_string_equal"};
 inline bool standard_primitive_allowed(StandardPrimitive kind, std::string_view module) {
+    if ((kind >= StandardPrimitive::HashmapWord && kind <= StandardPrimitive::HashmapStringEqual) ||
+        kind == StandardPrimitive::HashmapEqual || kind == StandardPrimitive::HashmapMask)
+        return module == "hashmap";
     if (kind == StandardPrimitive::TimeMonotonic)
         return module == "time";
     if (kind == StandardPrimitive::RandomSplitMix64)

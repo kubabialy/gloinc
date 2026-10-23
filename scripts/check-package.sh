@@ -38,7 +38,7 @@ mkdir -p "$2"
 report_dir=$(cd "$2" && pwd)
 work_dir=$(mktemp -d "$report_dir/work.XXXXXX")
 cmake --install "$build_dir" --prefix "$work_dir/install prefix"
-[[ "$("$work_dir/install prefix/bin/gloinc" --version)" == "gloinc 0.2.0 (LLVM/MLIR $llvm_version)" ]]
+[[ "$("$work_dir/install prefix/bin/gloinc" --version)" == "gloinc 0.2.1 (LLVM/MLIR $llvm_version)" ]]
 "$build_dir/gloin-check-docs" "$work_dir/install prefix/share/doc/gloinc/docs/site"
 [[ -x "$work_dir/install prefix/bin/gloinfmt" ]]
 "$work_dir/install prefix/bin/gloinfmt" --check "$work_dir/install prefix/share/gloinc/examples/hello_world.gloin"
@@ -46,7 +46,7 @@ cmake -E env "GLOIN_TEST_CLI=$work_dir/install prefix/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$work_dir/install prefix/share/gloinc/core-fixtures" \
   "GLOIN_TEST_ARENA_RUNTIME=$work_dir/install prefix/lib/libgloin_runtime.$runtime_suffix" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|SelectionTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|SelectionTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/installed.xml"
 "$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-tls-test" "$source_root/tests/tls/main.gloin"
 "$work_dir/installed-tls-test" "$work_dir/install prefix/bin/gloinc" "$source_root" "$work_dir" "$openssl_command"
@@ -69,7 +69,7 @@ archives=("$work_dir/packages/"*.tar.gz)
 [[ ${#archives[@]} == 1 && -f "${archives[0]}" ]]
 archive=${archives[0]}
 archive_name=$(basename "$archive" .tar.gz)
-[[ "$archive_name" == "gloinc-0.2.0-$package_platform" ]]
+[[ "$archive_name" == "gloinc-0.2.1-$package_platform" ]]
 if tar -tzf "$archive" | grep -F '/.DS_Store'; then
   echo "Package contains Finder metadata" >&2
   exit 1
@@ -86,7 +86,7 @@ cmake -E env "GLOIN_TEST_CLI=$package_root/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$package_root/share/gloinc/core-fixtures" \
   "GLOIN_TEST_ARENA_RUNTIME=$package_root/lib/libgloin_runtime.$runtime_suffix" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|SelectionTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|SelectionTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/extracted.xml"
 "$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-tls-test" "$source_root/tests/tls/main.gloin"
 "$work_dir/relocated-tls-test" "$package_root/bin/gloinc" "$source_root" "$work_dir" "$openssl_command"
@@ -116,17 +116,19 @@ result=$("$package_root/bin/gloinc" --jit "$package_root/share/gloinc/examples/m
 [[ "$result" == 'module discovery: ok' ]]
 [[ -f "$package_root/lib/libgloin_runtime.a" && -f "$package_root/include/gloin/arena_runtime.h" && -f "$package_root/include/gloin/memory_runtime.h" && -f "$package_root/include/gloin/stdlib_runtime.h" && -f "$package_root/include/gloin/io_runtime.h" && -f "$package_root/include/gloin/net_runtime.h" && -f "$package_root/include/gloin/context_runtime.h" && -f "$package_root/include/gloin/math_runtime.h" && -f "$package_root/include/gloin/time_runtime.h" && -f "$package_root/include/gloin/random_runtime.h" ]]
 [[ -f "$package_root/share/doc/gloinc/third_party/fast_float/LICENSE-MIT" && -f "$package_root/share/doc/gloinc/third_party/fast_float/README.md" ]]
-[[ -f "$package_root/share/doc/gloinc/docs/site/0.2.0/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/site/0.2.1/index.html" && -f "$package_root/share/doc/gloinc/CONTRIBUTING.md" ]]
 [[ -f "$package_root/share/gloinc/scripts/install-llvm.sh" && -f "$package_root/share/gloinc/scripts/install-llvm-linux.sh" && -f "$package_root/share/gloinc/examples/fixed_arrays.gloin" && -f "$package_root/share/gloinc/examples/pointer_offsets.gloin" ]]
 [[ -f "$package_root/share/gloinc/stdlib/vector.gloin" ]]
+[[ -f "$package_root/share/gloinc/stdlib/hashmap.gloin" && -f "$package_root/include/gloin/hashmap_runtime.h" ]]
+[[ -f "$package_root/share/gloinc/examples/hashmap.gloin" && -f "$package_root/share/doc/gloinc/docs/hashmaps.md" ]]
 [[ -f "$package_root/share/gloinc/stdlib/slices.gloin" ]]
 [[ -f "$package_root/share/gloinc/stdlib/memory.gloin" ]]
 [[ -f "$package_root/share/gloinc/stdlib/net.gloin" && -f "$package_root/share/gloinc/stdlib/http.gloin" ]]
 [[ -f "$package_root/share/doc/gloinc/docs/results.md" && -f "$package_root/share/doc/gloinc/docs/raw-memory.md" ]]
 [[ -f "$package_root/share/doc/gloinc/docs/networking.md" ]]
 [[ -f "$package_root/share/doc/gloinc/docs/site/development/index.html" ]]
-[[ -f "$package_root/share/doc/gloinc/docs/release-0.2.0.md" ]]
-[[ -f "$package_root/share/doc/gloinc/docs/release-notes-0.2.0.md" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/release-0.2.1.md" ]]
+[[ -f "$package_root/share/doc/gloinc/docs/release-notes-0.2.1.md" ]]
 [[ -f "$package_root/share/doc/gloinc/tests/README.md" ]]
 "$package_root/bin/gloinc" --check "$package_root/share/gloinc/examples/strip_nuls.gloin"
 for example in generic_structs generic_functions generic_methods enums slices vector fixed_vector custom_arena; do
@@ -155,7 +157,7 @@ mkdir "$work_dir/scan entries"
 : > "$work_dir/scan entries/beta.gloin"
 directory_output=$("$package_root/bin/gloinc" --jit "$directory_example" -- "$work_dir/scan entries")
 [[ "$(printf '%s\n' "$directory_output" | LC_ALL=C sort)" == $'alpha.gloin\nbeta.gloin' ]]
-[[ "$("$package_root/bin/gloinc" --version)" == "gloinc 0.2.0 (LLVM/MLIR $llvm_version)" ]]
+[[ "$("$package_root/bin/gloinc" --version)" == "gloinc 0.2.1 (LLVM/MLIR $llvm_version)" ]]
 for prefix in "$work_dir/install prefix" "$package_root"; do
   selection_source="$prefix/share/gloinc/examples/switch_match.gloin"
   [[ "$("$prefix/bin/gloinc" --jit "$selection_source")" == 'PONG' ]]

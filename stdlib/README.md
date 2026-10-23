@@ -54,6 +54,12 @@ has `Vector<T>.empty(&memory, capacity)` so a dummy `T` value is unnecessary.
 `import "@slices";` provides generic fill, reverse, and nonoverlapping copy on
 borrowed slices. See [slices and vectors](../docs/slices-vectors.md).
 
+Version 0.2.1 adds `import "@hashmap";` and
+`hashmap.HashMap<K, V>` for integer, boolean, and string keys. It supports
+fallible construction, growth and insertion, borrowed lookup, removal, and
+iteration over arena-owned entries. Copies share the complete map state.
+See [hash maps](../docs/hashmaps.md) for the API, failures, ownership, and costs.
+
 Native primitives are deliberately limited: `__write_stdout(value: string)` is
 available inside standard modules for exact byte output and flushing. `println`
 adds its newline in Gloin by calling `print` twice. The arena module additionally

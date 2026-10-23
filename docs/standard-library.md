@@ -4,7 +4,8 @@ This guide describes the implemented SPEC-030 input and integer conversion API.
 The later modules have dedicated guides for [strings](strings.md),
 [text construction](text-construction.md), [numbers](numbers.md), [I/O](io.md),
 [filesystem and processes](filesystem-process.md), [math](math.md), and
-[time and randomness](time-random.md).
+[time and randomness](time-random.md). Version 0.2.1 additionally
+provides [arena hash maps](hashmaps.md) with built-in keys and generic values.
 
 The public API lives in [stdlib/std.gloin](../stdlib/std.gloin). These are ordinary
 Gloin functions compiled from source. Input, parsing and formatting return

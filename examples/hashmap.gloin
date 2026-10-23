@@ -1,0 +1,51 @@
+import "@arena";
+import "@hashmap";
+import "@std";
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def made: result<hashmap.HashMap<string, i32>> = hashmap.HashMap<string, i32>.create(&memory, 0);
+    if made.erroneous { return 1; }
+
+    def mut counts: hashmap.HashMap<string, i32> = made.value;
+    def words: [string; 5]                       = {"apple", "pear", "apple", "plum", "pear"};
+    def mut index: u64                           = 0;
+
+    while index < 5 {
+        def count: *i32 = counts.get_mut(words[index]);
+
+        if count != null {
+            *count = *count + 1;
+        } else {
+            def inserted: result<bool> = counts.insert(words[index], 1);
+            if inserted.erroneous { return 2; }
+        }
+
+        index = index + 1;
+    }
+
+    def apples: *const i32 = counts.get("apple");
+    if apples == null { return 3; }
+
+    def text: result<string> = std.to_string(&memory, *apples);
+    if text.erroneous { return 4; }
+
+    std.print("apple=");
+    std.println(text.value);
+
+    def mut entries: hashmap.Cursor<string, i32>     = counts.entries();
+    def mut entry: *const hashmap.Entry<string, i32> = entries.next();
+    def mut total: i32                               = 0;
+
+    while entry != null {
+        total = total + entry.value;
+        entry = entries.next();
+    }
+
+    if total != 5 || counts.len() != 3 { return 5; }
+    if !counts.remove("plum") || counts.contains("plum") { return 6; }
+
+    return 0;
+}

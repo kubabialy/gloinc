@@ -13,9 +13,9 @@ the release build. Add it to the version selector. At publication, remove the
 candidate label, select it as `latestVersion` and update the root redirect.
 The old numbered pages remain unchanged.
 
-`0.2.0/` describes the latest release. The root redirect and `latestVersion`
-select 0.2.0; older numbered pages retain their release content. Platform
-validation is recorded in [the release guide](../release-0.2.0.md).
+`0.2.1/` describes the latest release. The root redirect and `latestVersion`
+select 0.2.1; older numbered pages retain their release content. Platform
+validation is recorded in [the release guide](../release-0.2.1.md).
 
 For a new patch, minor, or major release, update its title, feature boundary,
 examples, and version selector's selected value, then append the version to

@@ -1,0 +1,298 @@
+import "@arena";
+import "@memory";
+import "@status";
+
+// Entries are borrowed through const pointers; keys cannot be changed in place.
+def pub struct Entry<K, V> {
+    def pub key: K,
+    def pub mut value: V,
+}
+
+def struct Slot<K, V> {
+    def hash: i64,
+    def mut entry: Entry<K, V>,
+}
+
+def struct State<K, V> {
+    def mut slots: *Slot<K, V>,
+    def mut flags: *u8,
+    def mut buckets: i64,
+    def mut length: i64,
+    def memory: &arena.GeneralArena,
+}
+
+// No allocation. Mutation through any map alias invalidates the cursor.
+def pub struct Cursor<K, V> {
+    def slots: *const Slot<K, V>,
+    def flags: *const u8,
+    def buckets: i64,
+    def mut index: i64,
+
+    // O(buckets) for a complete traversal; null marks exhaustion.
+    def pub next(self: &Cursor<K, V>) -> *const Entry<K, V> {
+        while self.index < self.buckets {
+            def index: i64 = self.index;
+            self.index = self.index + 1;
+
+            if *(self.flags + index) == 1 {
+                def slot: *const Slot<K, V> = self.slots + index;
+
+                return &slot.entry;
+            }
+        }
+
+        return null;
+    }
+}
+
+// Open addressing with linear probing and at most 75% live entries.
+// Removal closes probe-chain gaps in place, without tombstones or allocation.
+// Copies alias the complete state. Arena reset/free invalidates all aliases.
+// Keys: integers, bool, or counted-byte string. Values are shallow copies.
+def pub struct HashMap<K, V> {
+    def state: *State<K, V>,
+
+    // Example: HashMap<string, i32>.create(&memory, 16).
+    // capacity is an entry count; zero is valid. INVALID/OVERFLOW/NO_MEMORY.
+    def pub static create(owner: &arena.GeneralArena, capacity: i64) -> result<HashMap<K, V>> {
+        if capacity < 0 { return error("negative hashmap capacity", status.INVALID, 0); }
+
+        def state: *State<K, V> = owner.try_alloc(State<K, V> {
+            slots: null,
+            flags: null,
+            buckets: 0,
+            length: 0,
+            memory: owner
+        });
+        if state == null { return error("cannot allocate hashmap state", status.NO_MEMORY, 0); }
+
+        def mut map: HashMap<K, V> = HashMap<K, V> {
+            state: state
+        };
+
+        def reserved: result<void> = map.reserve(capacity);
+        if reserved.erroneous { return reserved.error; }
+
+        return map;
+    }
+
+    // O(1), no allocation. Copies observe the same length and capacity.
+    def pub len(self: &const HashMap<K, V>) -> i64 {
+        return self.state.length;
+    }
+
+    // Entry capacity, not bucket count. O(1), no allocation.
+    def pub cap(self: &const HashMap<K, V>) -> i64 {
+        return self.state.buckets - self.state.buckets / 4;
+    }
+
+    // Rebuild transactionally. Only occupied slots ever contain initialized K/V.
+    def rehash(self: &HashMap<K, V>, buckets: i64) -> result<void> {
+        def size: i64 = memory.size_of<Slot<K, V>>();
+        if buckets > 9223372036854775807 / size {
+            return error("hashmap storage size overflow", status.OVERFLOW, 0);
+        }
+
+        def slots: *Slot<K, V> = self.state.memory.try_reserve_typed<Slot<K, V>>(buckets);
+        if slots == null { return error("cannot allocate hashmap slots", status.NO_MEMORY, 0); }
+
+        def flags: *u8 = self.state.memory.try_reserve_typed<u8>(buckets);
+        if flags == null { return error("cannot allocate hashmap flags", status.NO_MEMORY, 0); }
+
+        def mut index: i64 = 0;
+
+        while index < buckets {
+            *(flags + index) = 0;
+            index = index + 1;
+        }
+
+        index = 0;
+
+        while index < self.state.buckets {
+            if *(self.state.flags + index) == 1 {
+                def old: *Slot<K, V> = self.state.slots + index;
+                def mut target: i64  = __hashmap_mask(old.hash, buckets - 1);
+
+                while *(flags + target) == 1 {
+                    target = target + 1;
+                    if target == buckets { target = 0; }
+                }
+
+                *(slots + target) = *old;
+                *(flags + target) = 1;
+            }
+
+            index = index + 1;
+        }
+
+        self.state.slots   = slots;
+        self.state.flags   = flags;
+        self.state.buckets = buckets;
+
+        return;
+    }
+
+    // Reserve total entry capacity. Expected O(n), worst O(n^2) on collisions.
+    // Failure preserves contents/capacity; attempted arena allocations remain owned.
+    def pub reserve(self: &HashMap<K, V>, capacity: i64) -> result<void> {
+        if capacity < 0 { return error("negative hashmap capacity", status.INVALID, 0); }
+        if capacity <= self.cap() { return; }
+
+        def mut buckets: i64 = 8;
+
+        while capacity > buckets - buckets / 4 {
+            if buckets > 4611686018427387903 {
+                return error("hashmap capacity overflow", status.OVERFLOW, 0);
+            }
+
+            buckets = buckets * 2;
+        }
+
+        def rebuilt: result<void> = self.rehash(buckets);
+        if rebuilt.erroneous { return rebuilt.error; }
+
+        return;
+    }
+
+    // Nonnegative: existing entry. Negative: encode the first empty slot as
+    // -index - 1 so insertion can reuse the same probe. Zero buckets encode 0.
+    def find(self: &const HashMap<K, V>, key: K, hash: i64) -> i64 {
+        if self.state.buckets == 0 { return -1; }
+
+        def mut index: i64  = __hashmap_mask(hash, self.state.buckets - 1);
+        def mut probes: i64 = 0;
+
+        while probes < self.state.buckets {
+            def flag: u8 = *(self.state.flags + index);
+            if flag == 0 { return -index - 1; }
+
+            def slot: *Slot<K, V> = self.state.slots + index;
+            if slot.hash == hash && __hashmap_equal(slot.entry.key, key) { return index; }
+
+            index = index + 1;
+            if index == self.state.buckets { index = 0; }
+
+            probes = probes + 1;
+        }
+
+        return -1;
+    }
+
+    // Example: map.insert("count", 1). True inserts, false replaces only the value.
+    // Expected amortized O(1); a collision-heavy rebuild can take O(n^2).
+    // String hashing/equality adds byte work.
+    // OVERFLOW/NO_MEMORY preserve all existing entries. No dummy K/V is required.
+    def pub insert(self: &HashMap<K, V>, key: K, value: V) -> result<bool> {
+        def hash: i64     = __hashmap_hash(key);
+        def existing: i64 = self.find(key, hash);
+
+        if existing >= 0 {
+            def slot: *Slot<K, V> = self.state.slots + existing;
+            slot.entry.value = value;
+
+            return false;
+        }
+
+        def mut index: i64 = -existing - 1;
+
+        if self.state.length == self.cap() {
+            def reserved: result<void> = self.reserve(self.state.length + 1);
+            if reserved.erroneous { return reserved.error; }
+
+            index = -self.find(key, hash) - 1;
+        }
+
+        *(self.state.slots + index) = Slot<K, V> {
+            hash: hash,
+            entry: Entry<K, V> {
+                key: key,
+                value: value
+            }
+        };
+        *(self.state.flags + index) = 1;
+        self.state.length = self.state.length + 1;
+
+        return true;
+    }
+
+    // Null means absent. Borrow expires on any mutation through any map alias.
+    // Expected O(1), worst O(n), plus string byte work; no allocation/failure.
+    def pub get(self: &const HashMap<K, V>, key: K) -> *const V {
+        def index: i64 = self.find(key, __hashmap_hash(key));
+        if index < 0 { return null; }
+
+        def slot: *const Slot<K, V> = self.state.slots + index;
+
+        return &slot.entry.value;
+    }
+
+    // Same lookup/borrow contract as get, with writable value access.
+    def pub get_mut(self: &HashMap<K, V>, key: K) -> *V {
+        def index: i64 = self.find(key, __hashmap_hash(key));
+        if index < 0 { return null; }
+
+        def slot: *Slot<K, V> = self.state.slots + index;
+
+        return &slot.entry.value;
+    }
+
+    // Same lookup cost as get; no allocation.
+    def pub contains(self: &const HashMap<K, V>, key: K) -> bool {
+        return self.find(key, __hashmap_hash(key)) >= 0;
+    }
+
+    // True iff present. Close the gap by moving later entries whose probe path
+    // crosses it. Stop at the first empty bucket; no allocation or destruction.
+    def pub remove(self: &HashMap<K, V>, key: K) -> bool {
+        def index: i64 = self.find(key, __hashmap_hash(key));
+        if index < 0 { return false; }
+
+        def mut hole: i64 = index;
+        def mut next: i64 = index + 1;
+
+        if next == self.state.buckets { next = 0; }
+
+        while *(self.state.flags + next) == 1 {
+            def slot: *Slot<K, V> = self.state.slots + next;
+            def home: i64         = __hashmap_mask(slot.hash, self.state.buckets - 1);
+
+            // The cyclic interval from home to next contains hole. An entry
+            // already at home must be skipped, but does not end the scan.
+            if (hole < next && (home <= hole || home > next))
+                || (hole > next && home <= hole && home > next) {
+                *(self.state.slots + hole) = *slot;
+                hole = next;
+            }
+
+            next = next + 1;
+            if next == self.state.buckets { next = 0; }
+        }
+
+        *(self.state.flags + hole) = 0;
+        self.state.length = self.state.length - 1;
+
+        return true;
+    }
+
+    // O(buckets), no allocation; retain capacity.
+    def pub clear(self: &HashMap<K, V>) -> void {
+        def mut index: i64 = 0;
+
+        while index < self.state.buckets {
+            *(self.state.flags + index) = 0;
+            index = index + 1;
+        }
+
+        self.state.length = 0;
+    }
+
+    // O(1), no allocation. Order is unspecified; mutation invalidates the cursor.
+    def pub entries(self: &const HashMap<K, V>) -> Cursor<K, V> {
+        return Cursor<K, V> {
+            slots: self.state.slots,
+            flags: self.state.flags,
+            buckets: self.state.buckets,
+            index: 0
+        };
+    }
+}

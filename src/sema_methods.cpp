@@ -336,9 +336,11 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
         return std::make_shared<PointerType>(value, false, false);
     }
     if (structure->owner && structure->owner->standard_name == "arena" &&
-        structure->name == "GeneralArena" && method_name == "reserve_typed") {
-        if (!current_module || current_module->standard_name != "vector") {
-            log_error("Typed arena reservation is internal to @vector");
+        structure->name == "GeneralArena" &&
+        (method_name == "reserve_typed" || method_name == "try_reserve_typed")) {
+        if (!current_module || (current_module->standard_name != "vector" &&
+                                current_module->standard_name != "hashmap")) {
+            log_error("Typed arena reservation is internal to @vector and @hashmap");
             return nullptr;
         }
         auto bytes = std::make_shared<PointerType>(get_builtin_type("u8"), true, false);
@@ -359,7 +361,7 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
             return nullptr;
         recording->arena_typed_reservations.insert(call);
         recording->bindings[name] = symbol;
-        return std::make_shared<PointerType>(element, false, false);
+        return std::make_shared<PointerType>(element, method_name == "try_reserve_typed", false);
     }
     if (call->arguments.size() != signature->param_types.size() - offset) {
         log_error("Incorrect number of method arguments");

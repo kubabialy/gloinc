@@ -20,6 +20,12 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
         return mlir::LLVM::LLVMFunctionType::get(i32, args, false);
     }
     switch (kind) {
+    case StandardPrimitive::HashmapWord:
+        return mlir::LLVM::LLVMFunctionType::get(i64, {i64}, false);
+    case StandardPrimitive::HashmapString:
+        return mlir::LLVM::LLVMFunctionType::get(i64, {pointer, i64}, false);
+    case StandardPrimitive::HashmapStringEqual:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, i64}, false);
     case StandardPrimitive::NetOpen:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false);
     case StandardPrimitive::NetFinishConnect:

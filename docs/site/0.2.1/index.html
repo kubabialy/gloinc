@@ -1,0 +1,905 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gloin 0.2.1 — Guide and language reference</title><link rel="stylesheet" href="../style.css"><script src="../versions.js"></script></head><body>
+<header><h1>Gloin 0.2.1</h1><p>Guide and language reference · macOS and Ubuntu Linux</p><label>Documentation version <select id="version" aria-label="Documentation version"></select></label></header>
+<main><nav aria-label="Contents"><a href="#start">First program</a><a href="#cli">Compile and run</a><a href="#syntax">Source and declarations</a><a href="#types">Types and expressions</a><a href="#arrays">Fixed arrays</a><a href="#slices">Slices and vectors</a><a href="#hashmaps">Hash maps</a><a href="#generics">Generics and enums</a><a href="#flow">Functions and control flow</a><a href="#selection">Switch and match</a><a href="#data">Structs and methods</a><a href="#references">Pointers and references</a><a href="#memory">Raw memory</a><a href="#results">Results and errors</a><a href="#modules">Modules</a><a href="#library">Input and standard library</a><a href="#strings">Strings and text construction</a><a href="#io">Streams and progress</a><a href="#filesystem-mutations">Files and directories</a><a href="#symlinks">Symbolic links</a><a href="#workspaces">Filesystem workspaces</a><a href="#processes">Child processes</a><a href="#json">JSON</a><a href="#network">Networking</a><a href="#limits">Limits</a><a href="#reference">Further reference</a></nav><article>
+<section id="start"><h2>Get started</h2>
+<p>This guide covers Gloin 0.2.1, including arena hash maps. Work through the programs in order: write a source file, check it, run it, then build a native executable. The later sections explain values, arrays, slices, vectors, generics, enums, control flow, structs, pointers, raw memory, results, imports, input, and networking. Links at the end give full API contracts.</p>
+<p>On Apple Silicon macOS, install Xcode Command Line Tools, CMake 3.28+, Ninja, OpenSSL 3, and LLVM/MLIR 21.1.6. From a source checkout:</p>
+<pre><code>brew install cmake ninja openssl@3
+bash scripts/install-llvm.sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir
+cmake --build build -j 2</code></pre>
+<p>On Ubuntu 24.04 ARM64 or x86_64, install CMake 3.28+, Ninja, a C++23 compiler, OpenSSL 3, and the shared LLVM/MLIR 21.1.8 packages:</p>
+<pre><code>sudo apt-get update
+sudo apt-get install -y cmake ninja-build g++ openssl libssl-dev
+bash scripts/install-llvm-linux.sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLLVM_DIR=/usr/lib/llvm-21/lib/cmake/llvm \
+  -DMLIR_DIR=/usr/lib/llvm-21/lib/cmake/mlir
+cmake --build build -j 2</code></pre>
+<p>Install with <code>cmake --install build --prefix "$HOME/.local"</code> if you want a reusable compiler and standard modules. A packaged <code>gloinc</code> needs the matching platform toolchain to start: LLVM/MLIR 21.1.6 on macOS or 21.1.8 on Ubuntu. The archive does not bundle it. Run the matching <code>install-llvm.sh</code> or <code>install-llvm-linux.sh</code> under <code>share/gloinc/scripts/</code> before invoking <code>bin/gloinc</code>. Executables produced by Gloin do not need LLVM at runtime.</p>
+<p>Save this as <code>hello.gloin</code>:</p>
+<pre><code>import "@std";
+
+def main() -&gt; i32 {
+    std.println("Hello World!");
+    return 0;
+}</code></pre>
+<pre><code>./build/gloinc --check hello.gloin
+./build/gloinc --jit hello.gloin
+./build/gloinc hello.gloin
+./a.out
+./build/gloinc -o hello hello.gloin
+./hello</code></pre></section>
+<section id="cli"><h2>Compiler and native output</h2>
+<p>Run the following commands from the directory containing your source file. By default, the compiler builds a standalone executable for the current supported host named <code>a.out</code>; use <code>-o PATH</code> to choose its name. <code>--jit</code> or its alias <code>--run</code> executes the source immediately. <code>--check</code> validates a file without running it.</p>
+<pre><code>gloinc [--jit | --run | --check | --emit-ir | --emit-llvm | --emit-object | --emit-exe] \
+       [-O0 | -O2] [-o PATH] [--stdlib-dir DIR] [--time-compilation] [--] FILE [-- ARG...]
+gloinc --help
+gloinc --version</code></pre>
+<table><tr><th>Mode</th><th>Behavior</th></tr>
+<tr><td>default / <code>--emit-exe</code></td><td>Link a standalone host executable with the static Gloin runtime. Output is <code>a.out</code> unless <code>-o PATH</code> is supplied. Pass arguments directly to the executable.</td></tr>
+<tr><td><code>--jit</code> / <code>--run</code></td><td>JIT runs <code>main() -&gt; i32</code>. Its low eight bits become the compiler process exit status. A program returning 42 exits with status 42; that alone does not print <code>42</code>. Use <code>FILE -- ARG...</code> for program arguments.</td></tr>
+<tr><td><code>--check</code></td><td>Parse, type check, and verify without running. Main is optional.</td></tr>
+<tr><td><code>--emit-ir</code>, <code>--emit-llvm</code></td><td>Print verified high level or LLVM dialect MLIR for inspection.</td></tr>
+<tr><td><code>--emit-object -o PATH</code></td><td>Write a native object with a process entry point. Link it with <code>libgloin_runtime.a</code> using the pinned <code>clang++</code>.</td></tr>
+<tr><td><code>--emit-exe</code></td><td>Explicit spelling for the default executable mode.</td></tr></table>
+<p>The <code>--time-compilation</code> option reports compiler stage times, IR counts and peak compiler memory as one prefixed JSON line on stderr. For example, <code>gloinc --time-compilation -O2 -o hello hello.gloin</code> separates GIR work, lowering, LLVM optimization, object generation and linking. Normal stdout and exit status are preserved. JIT compilation timing stops before program execution; a trapping or non-returning program may leave no report. See the <a href="../../compilation-timings.md">measurement guide</a> for exact boundaries, overhead and memory scope.</p>
+<p>Native object and executable output default to <code>-O0</code>. Add <code>-O2</code> to run LLVM's O2 IR pipeline before native code generation, for example <code>gloinc -O2 -o hello hello.gloin</code>. Optimization flags apply only to native output, not JIT or inspection modes. They do not change the language's checked arithmetic and pointer rules. Source, output, and link errors go to stderr and exit 1. Usage errors exit 2. Successful checks and emission exit 0. Runtime arithmetic traps terminate the program. Quote paths with spaces. <code>--stdlib-dir DIR</code> selects a directory of <code>@</code> modules. The compiler reports source locations for rejected code.</p></section>
+<section id="syntax"><h2>Source and declarations</h2>
+<p>Source is UTF-8; identifiers use ASCII letters, digits, and underscores. Comments start with <code>//</code>. Bindings, assignments, call statements, returns, imports, and defer statements end in <code>;</code>. Function and control flow bodies use braces with no trailing semicolon. Declarations start with <code>def</code>; <code>pub</code> or <code>priv</code> follows <code>def</code>, with private as the default across modules.</p>
+<pre><code>def const LIMIT: i32 = 42;
+def pub calculate(x: i32) -&gt; i32 { return x + LIMIT; }
+// Inside a function:
+def count: i32 = 0;      // Binding cannot be reassigned.
+def mut total: i32 = 0;  // Binding can be reassigned.
+total = total + count;</code></pre>
+<p>All bindings, parameters, fields, and return types need explicit types. A local may be declared without an initializer, then assigned before use. <code>def const</code> defines a compile time value; its expression cannot call a runtime function. Names in an inner block can shadow outer names. Assignments are statements, not expressions. There are no implicit numeric conversions or overloads.</p></section>
+<section id="types"><h2>Types and expressions</h2>
+<table><tr><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>bool</code></td><td><code>true</code> or <code>false</code>; conditions require bool.</td></tr>
+<tr><td><code>i8 i16 i32 i64</code>, <code>u8 u16 u32 u64</code></td><td>Fixed width signed and unsigned integers. <code>int</code> aliases <code>i32</code>; <code>usize</code> aliases <code>u64</code> on the supported 64-bit targets.</td></tr>
+<tr><td><code>f32 f64</code></td><td>IEEE binary floating point. Checked arithmetic traps on non-finite results.</td></tr>
+<tr><td><code>string</code></td><td>A counted, immutable byte view. Escapes include <code>\n</code>, <code>\t</code>, and <code>\0</code>; embedded NUL is data. The bytes may be borrowed from another value or arena.</td></tr>
+<tr><td><code>*T</code>, <code>&amp;T</code>, <code>*const T</code>, <code>&amp;const T</code></td><td>Typed nullable pointers and non-null references, with writable or read-only pointees. See <a href="#references">pointers and references</a>.</td></tr>
+<tr><td><code>struct</code></td><td>Named fields and value copying. Methods belong to a struct.</td></tr>
+<tr><td><code>[T; N]</code></td><td>A fixed array of exactly <code>N</code> values of <code>T</code>. See <a href="#arrays">fixed arrays</a>.</td></tr>
+<tr><td><code>[T]</code>, <code>[const T]</code></td><td>Writable or read-only borrowed slices. See <a href="#slices">slices and vectors</a>.</td></tr>
+<tr><td><code>vector.Vector&lt;T; N&gt;</code>, <code>vector.Vector&lt;T&gt;</code></td><td>Inline fixed-capacity and growable arena vectors, respectively.</td></tr>
+<tr><td><code>enum</code></td><td>Nominal, payloadless variants with checked equality. See <a href="#generics">generics and enums</a>.</td></tr>
+<tr><td><code>result&lt;T&gt;</code>, <code>error</code></td><td>Built-in success or failure values with mandatory checking. See <a href="#results">results and errors</a>.</td></tr>
+<tr><td><code>void</code></td><td>Function return type or the success type in <code>result&lt;void&gt;</code>.</td></tr></table>
+<p>Integer literals accept decimal, <code>0x</code> hexadecimal, and <code>0b</code> binary spelling. Floating literals use decimal spelling and a type context. The context of a binding, parameter, field, or return can select a literal's type. Gloin does not implicitly convert one typed numeric value to another.</p>
+<p>Expressions have unary <code>-</code> and <code>!</code>; arithmetic <code>+ - * / %</code> (remainder is integer only); comparisons <code>== != &lt; &lt;= &gt; &gt;=</code>; and boolean <code>&amp;&amp; ||</code>. Parentheses control grouping. Arithmetic binds before comparisons, and comparisons before boolean operators. <code>&amp;&amp;</code> and <code>||</code> short circuit; other operands and call arguments evaluate left to right. Integer overflow, division by zero, and non-finite floating results trap at runtime; invalid constant expressions fail during checking.</p></section>
+<section id="arrays"><h2>Fixed arrays</h2>
+<p>A fixed array has an element type and a length known when you compile. Write its type as <code>[T; N]</code> and initialize it with exactly <code>N</code> values in braces. Indexes start at zero. This complete program prints <code>sum = 42</code>:</p>
+<pre><code>import "@std";
+
+def sum(values: [i32; 4]) -&gt; i32 {
+    def mut total: i32 = 0;
+    for def mut i: usize = 0; i &lt; 4; i = i + 1 {
+        total = total + values[i];
+    }
+    return total;
+}
+
+def main() -&gt; i32 {
+    def mut values: [i32; 4] = {8, 13, 7, 10};
+    values[3] = 14;
+    if sum(values) != 42 { return 1; }
+    std.println("sum = 42");
+    return 0;
+}</code></pre>
+<p>An array is a value: assigning it, passing it to a function, or returning it copies its elements. <code>[i32; 2]</code> and <code>[i32; 3]</code> are different types. An array literal needs a type context from a binding, parameter, field, or return; <code>[1, 2]</code> is not an array literal. Nested arrays use nested braces, such as <code>def grid: [[i32; 2]; 2] = {{1, 2}, {3, 4}};</code>. Empty arrays use <code>[i32; 0] = {}</code>.</p>
+<p>Every indexed read or write checks <code>0 &lt;= index &lt; N</code> and traps on failure, including any access to a zero-length array. Writing an element requires writable storage. <code>&amp;values[0]</code> borrows a live element; it does not extend that element's lifetime. A pointer to an array points to the whole array, not its first element. Fixed arrays support checked slice ranges such as <code>values[1..3]</code>. A nullable pointer to an element can use <a href="#references">signed element offsets</a>; pointer offsets do not carry the array's bounds check. A declared array may use <code>zeroed</code> when its element type has a zero value: integer 0, float 0.0, false, null nullable pointer, empty string, or recursively zeroed nested array. It still allocates its full storage. <code>{value; N}</code> evaluates one value and copies it into all N elements. Arrays of non-null references, structs, and enums cannot use <code>zeroed</code>. See the <a href="../../fixed-arrays.md">detailed guide</a> and the packaged <code>fixed_arrays.gloin</code> example.</p><p>The 0.2.0 compiler avoids temporary whole-array copies when storing repeated byte initializers, including uniform nested repeats. Other element types retain typed value stores. The initializer still runs once for an empty array, and once per executed declaration inside a loop. Large by-value arguments, returns and other aggregate copies keep their existing costs. See the <a href="../../fixed-arrays.md#compilation-cost-after-010">compilation-cost notes</a> for the scope of this 0.2.0 improvement.</p></section>
+<section id="slices"><h2>Borrowed slices and vectors</h2>
+<p>A <code>[T]</code> slice is a pointer and length view of existing contiguous storage. It does not own or copy elements. A writable array can produce <code>values[..]</code>, <code>values[1..]</code>, or <code>values[1..3]</code>; the end is exclusive. The same ranges work on slices. The compiler checks range and index bounds. <code>.len</code> is a read-only <code>u64</code>. A <code>[const T]</code> slice permits reads only. Keep the underlying array or arena alive while using a slice.</p>
+<pre><code>def main() -&gt; i32 {
+    def mut values: [i32; 4] = {1, 2, 3, 4};
+    def middle: [i32] = values[1..3];
+    middle[0] = 20;
+    return values[1] + middle[1]; // 23
+}</code></pre>
+<p>Import <code>@vector</code> to use one of two vector types. <code>vector.Vector&lt;T; N&gt;</code> stores N initialized slots inline and a logical length. It has no arena allocation; <code>push</code> returns false when full. <code>vector.Vector&lt;T&gt;</code> stores elements in a caller-owned <code>GeneralArena</code> and grows its capacity when pushed. Use <code>Vector&lt;T&gt;.empty(&amp;memory, capacity)</code> to reserve uninitialized spare slots, including for struct or enum elements with no zero value. The older <code>create(&amp;memory, capacity, fill)</code> remains available; it evaluates but no longer stores the fill value in spare slots. Both forms provide <code>len()</code>, <code>cap()</code>, <code>push(value)</code>, <code>get(index)</code>, <code>get_mut(index)</code>, and <code>clear()</code>. Get methods return nullable pointers; check for null before dereferencing.</p>
+<pre><code>import "@vector";
+
+def main() -&gt; i32 {
+    def mut values: vector.Vector&lt;i32; 2&gt; = vector.Vector&lt;i32; 2&gt;.create(0);
+    if !values.push(20) || !values.push(22) { return 1; }
+    if values.push(99) { return 2; }
+    def first: *const i32 = values.get(0);
+    if first == null { return 3; }
+    return *first + 22;
+}</code></pre>
+<p>For a growable vector, create an arena and call <code>vector.Vector&lt;i32&gt;.empty(&amp;memory, 2)</code>. Growth allocates a new buffer in that arena. Both vector forms now support <code>as_slice()</code> and <code>as_const_slice()</code> over live elements, plus <code>append_from</code>, <code>insert</code>, <code>remove</code>, <code>truncate</code>, and <code>pop</code>. The growable form also supports <code>reserve</code>. A view captures the current length; it never exposes spare capacity. Treat pointers and views as invalid after growth or a moving reserve; arena reset/free invalidates all arena vector storage. Copying a growable vector copies its descriptor, so copies can disagree about length and capacity. Copying a fixed vector copies its entire inline buffer. <code>@slices</code> adds generic <code>fill</code>, <code>reverse</code>, and nonoverlapping copy helpers. See the <a href="../../slices-vectors.md">ownership and API guide</a> and packaged examples.</p></section>
+<section id="hashmaps"><h2>Hash maps (0.2.1)</h2>
+<p>Import <code>@hashmap</code> for <code>hashmap.HashMap&lt;K, V&gt;</code>. Keys may be integers, booleans, or counted-byte strings. Values use ordinary shallow copies. Construct with <code>HashMap&lt;K, V&gt;.create(&amp;memory, capacity)</code> and handle its result. <code>insert(key, value)</code> returns a result whose boolean distinguishes a new key from replacement; <code>get</code> and <code>get_mut</code> return borrowed nullable pointers. <code>remove</code>, <code>clear</code>, <code>reserve</code>, and <code>entries</code> provide deletion, capacity management, and iteration.</p>
+<p>Copies share all map state. Arena reset/free invalidates every alias and borrowed entry; mutation invalidates cursors and value borrows. Keep string key bytes alive and unchanged. See the <a href="../../hashmaps.md">API, failure, ownership, and cost contract</a> and <a href="../../../examples/hashmap.gloin">word-count example</a>.</p></section>
+<section id="generics"><h2>Generics and enums</h2>
+<p>Generic structs, functions, and methods use explicit type arguments. A generic struct can also take a compile-time size parameter after a semicolon. The size becomes part of its type and layout; it may size a fixed array field. The compiler specializes checked bodies for concrete arguments. There is no inference for generic function or method calls.</p>
+<pre><code>def struct Box&lt;T&gt; {
+    def pub value: T,
+    def pub static create(value: T) -&gt; Box&lt;T&gt; {
+        return Box&lt;T&gt; { value: value };
+    }
+}
+
+def identity&lt;T&gt;(value: T) -&gt; T { return value; }
+
+def main() -&gt; i32 {
+    def box: Box&lt;i32&gt; = Box&lt;i32&gt;.create(42);
+    return identity&lt;i32&gt;(box.value);
+}</code></pre>
+<p>A type such as <code>Buffer&lt;i32; 16&gt;</code> supplies one type and one compile-time capacity. A method may declare its own type parameters and is called with explicit arguments, for example <code>pair.with_third&lt;bool&gt;(true)</code>. See the <a href="../../generics.md">generic rules and limits</a>.</p>
+<p>Enums currently carry no payload. Declare <code>def enum Direction { North, East, South, West }</code>, construct <code>Direction.North</code>, and compare variants of the same enum with <code>==</code> or <code>!=</code>. Export with <code>def pub enum</code> across modules. Use switch or exhaustive match to select a variant. Variant payloads, integer conversion, and a guaranteed foreign ABI remain unavailable. See the <a href="../../enums.md">enum guide</a>.</p></section>
+<section id="flow"><h2>Functions and control flow</h2>
+<p>Functions declare the type of every parameter and an explicit return type. The root source file needs <code>def main() -&gt; i32</code> to run or emit native output. Other functions may return <code>void</code>. This program returns 42 as its exit status:</p>
+<pre><code>def add(a: i32, b: i32) -&gt; i32 { return a + b; }
+def main() -&gt; i32 {
+    def mut total: i32 = 0;
+    for def mut i: i32 = 0; i &lt; 3; i = i + 1 {
+        if i == 1 { total = add(total, 20); }
+        else { total = add(total, 11); }
+    }
+    return total;
+}</code></pre>
+<p>Use <code>if</code>/<code>else</code>, <code>unless</code> (run a body when its condition is false), <code>while</code>, and C style <code>for</code> with braced bodies. <code>break</code> and <code>continue</code> are not part of this release. Functions may call later declarations and recurse. A non-<code>void</code> function must return a value on every reachable path. An early <code>return</code> exits the function.</p>
+<p><code>defer call(...);</code> schedules a function call for normal function exit. Its arguments are evaluated and captured when execution reaches the defer; deferred calls run in reverse registration order. A runtime trap does not run them. Use this for cleanup such as <code>defer memory.free();</code>.</p></section>
+<section id="selection"><h2>Switch and match</h2>
+<p>Version 0.2.0 adds these constructs. <code>switch</code> executes statements; <code>match</code> produces a value. Both evaluate the subject once and execute only the selected arm. There is no fallthrough. This complete program prints <code>PONG</code>:</p>
+<pre><code>import "@std";
+
+def reply(command: string) -&gt; string {
+    return match command {
+        case "PING" =&gt; "PONG";
+        case "QUIT" =&gt; "BYE";
+        default =&gt; "ERR unknown command";
+    };
+}
+
+def main() -&gt; i32 {
+    def command: string = "PING";
+
+    switch command {
+        case "PING" {
+            std.println(reply(command));
+        }
+
+        case "QUIT" {
+            return 0;
+        }
+
+        default {
+            std.println(reply(command));
+        }
+    }
+
+    return 0;
+}</code></pre>
+<p>A switch accepts integers, booleans, strings and payloadless enums. Each case has a scoped block. Its <code>default</code> is optional; without one, an unmatched value continues after the switch. <code>return</code> exits the enclosing function. An exhaustive switch can establish that a variable is initialized or that every path returns.</p>
+<p>A match must have <strong>at least two arms</strong> and <strong>cover every possible outcome</strong>; otherwise compilation fails. Every arm has the form <code>case pattern =&gt; expression;</code>, or <code>default =&gt; expression;</code>. The surrounding declaration or return still needs its own semicolon. Arms may call functions or contain nested matches. Unselected expressions do not execute, but every arm must pass type checking.</p>
+<table><thead><tr><th>Subject</th><th>Required match coverage</th></tr></thead><tbody>
+<tr><td><code>bool</code></td><td>Both values, or an explicit case plus default.</td></tr>
+<tr><td>Enum</td><td>All variants, or explicit variants plus default.</td></tr>
+<tr><td><code>result&lt;T&gt;</code></td><td>Success and failure, or one outcome plus default.</td></tr>
+<tr><td>Integer or string</td><td>Explicit cases plus a required default.</td></tr>
+</tbody></table>
+<p>A default must be last. Duplicate case values and defaults covering no remaining outcome are errors. Labels are typed compile-time constants or qualified enum variants such as <code>Command.Ping</code>. Strings compare exact bytes and length, including embedded NUL bytes. A one-arm match is rejected even for a single-variant enum.</p>
+<p>Every arm must produce a value of a compatible type. The surrounding binding, argument or return supplies that type when available; otherwise the first arm establishes it. Existing literal and pointer/slice conversion rules apply. Contextual array literals and <code>zeroed</code> work inside arms. Void calls cannot supply an arm value.</p>
+<p>Match can also handle a result directly. This example returns 42 on success or zero on failure:</p>
+<pre><code>def checked_answer(valid: bool) -&gt; result&lt;i32&gt; {
+    if !valid { return error("answer unavailable"); }
+    return 42;
+}
+
+def answer_or_zero(valid: bool) -&gt; i32 {
+    return match checked_answer(valid) {
+        case value(answer) =&gt; answer;
+        case error(problem) =&gt; 0;
+    };
+}</code></pre>
+<p><code>value(answer)</code> and <code>error(problem)</code> bind immutable payloads only inside their respective arms. <code>result&lt;void&gt;</code> success uses <code>value()</code>. Matching handles the subject result. With a named subject, an explicit pattern also proves the corresponding <code>.value</code> or <code>.error</code> access inside that arm. Default creates no binding or proof. Handling does not prove success after the match; reassigning a result requires another check. Borrowed payloads keep their existing lifetime rules.</p>
+<p>This implementation has no grouped cases, ranges, guards or multi-statement match arms. Match is a runtime expression, unavailable in constant initializers. Floats, pointers and aggregates cannot be subjects, though they may be output values. See the <a href="../../switch-match.md">full contract and lowering notes</a> and <a href="../../../examples/switch_match.gloin">runnable string/enum/result example</a>.</p></section>
+<section id="data"><h2>Structs and methods</h2>
+<p>A struct groups named, typed fields. Struct values copy by value. Separate a struct's fields with commas and construct a value with every required field. A field can be reassigned only if its declaration uses <code>def mut</code>. Methods declare a typed <code>self</code> parameter; static methods have no <code>self</code>. This complete program also returns 42:</p>
+<pre><code>def struct Counter {
+    def mut value: i32,
+    def static make(value: i32) -&gt; Counter {
+        return Counter { value: value };
+    }
+    def add(self: &amp;Counter, amount: i32) -&gt; void {
+        self.value = self.value + amount;
+    }
+    def read(self: &amp;const Counter) -&gt; i32 { return self.value; }
+}
+
+def main() -&gt; i32 {
+    def mut counter: Counter = Counter.make(40);
+    counter.add(2);
+    return counter.read();
+}</code></pre>
+<p>Inside its declaring module, a method can read private fields. Other modules can use only <code>pub</code> members. A method receiver may be a struct value, reference, or pointer of the declared kind. The compiler checks whether writes through <code>self</code> are allowed. Recursive structures use pointer or reference fields; by-value recursive layout is rejected.</p></section>
+<section id="references"><h2>Pointers, references, and <code>&amp;*p</code></h2>
+<p>Gloin makes nullability visible in the type. <code>*T</code> is a pointer that may hold <code>null</code>. <code>&amp;T</code> is a reference to an existing initialized <code>T</code> and cannot be null. Adding <code>const</code> after <code>*</code> or <code>&amp;</code> makes the pointee read-only. Neither form allocates or owns memory.</p>
+<table><tr><th>Source</th><th>Meaning</th></tr>
+<tr><td><code>def mut x: i32 = 41;</code><br><code>def r: &amp;i32 = &amp;x;</code></td><td><code>&amp;x</code> takes the address of an initialized, writable place. <code>r</code> cannot be rebound, but <code>*r = 42;</code> can change <code>x</code>.</td></tr>
+<tr><td><code>def mut p: *i32 = r;</code></td><td>A non-null reference can weaken to a nullable pointer. The reverse conversion is never implicit.</td></tr>
+<tr><td><code>if p != null { add_one(&amp;*p); }</code></td><td><code>&amp;*p</code> is an <em>expression</em>: dereference <code>p</code>, check it for null, and create a non-null reference. If <code>p</code> is null, evaluation traps. The check does not prove the storage is still alive.</td></tr>
+<tr><td><code>def slot: &amp;*i32 = &amp;p;</code></td><td><code>&amp;*i32</code> is a <em>type</em>: a non-null reference to a nullable <code>*i32</code> variable. It is not a nullable reference. <code>*slot = null;</code> changes the pointer stored in <code>p</code>.</td></tr></table>
+<p>The same characters mean different things in a type and in an expression: <code>&amp;*i32</code> nests the reference and pointer types, while <code>&amp;*p</code> takes a reference through the pointer value named <code>p</code>. There is no nullable reference type in the current language. Use <code>*T</code> for an optional address, and <code>&amp;*T</code> when a function needs to rebind an existing optional pointer slot.</p>
+<p>This complete program exercises both forms and returns 42. <code>set_slot</code> receives a non-null reference to the nullable pointer variable. <code>add_one</code> receives a non-null reference to the integer behind that pointer.</p>
+<pre><code>def add_one(value: &amp;i32) -&gt; void { *value = *value + 1; }
+def set_slot(slot: &amp;*i32, value: *i32) -&gt; void { *slot = value; }
+
+def main() -&gt; i32 {
+    def mut answer: i32 = 41;
+    def reference: &amp;i32 = &amp;answer;
+    def mut pointer: *i32 = null;
+    set_slot(&amp;pointer, reference);
+    if pointer == null { return 1; }
+    add_one(&amp;*pointer);
+    return answer;
+}</code></pre>
+<p>Dereferencing a null pointer, using <code>p.field</code> when <code>p</code> is null, or evaluating <code>&amp;*p</code> when <code>p</code> is null traps. <code>null</code> needs a pointer type from context; it cannot initialize <code>&amp;T</code>. A pointer is not a boolean: compare it with <code>null</code>. Pointer comparisons compare addresses, not values. There is no arbitrary pointer cast.</p>
+<p>A nullable data pointer <code>*T</code> can advance by a signed <code>i64</code> number of elements: <code>p + offset</code>. This complete program returns 32:</p>
+<pre><code>def main() -&gt; i32 {
+    def mut values: [i32; 3] = {10, 20, 12};
+    def first: *i32 = &amp;values[0];
+    def second: *i32 = first + 1;
+    return *second + *(second + 1);
+}</code></pre>
+<p>Run the packaged <code>pointer_offsets.gloin</code> with <code>gloinc --jit</code>, or build it with <code>gloinc -O2 -o pointer-offsets pointer_offsets.gloin</code>. Adding any offset to null traps, including zero. Pointer offsets do not check allocation bounds: keep both addresses within the same live allocation or one past its end, and never dereference one past. <code>&amp;T</code>, void and function pointers cannot be offset; pointer subtraction, ordering, and indexing remain unsupported. Fixed-array indexing retains its runtime bounds check. See the <a href="../../pointer-offsets.md">full pointer-offset contract</a>.</p>
+<p>Only the outer pointer layer may weaken from writable to read-only or from reference to pointer. Binding mutability and pointee mutability differ: <code>def p: &amp;i32</code> cannot rebind <code>p</code> but can write <code>*p</code>; <code>def mut p: *const i32</code> can rebind <code>p</code> but cannot write <code>*p</code>. You may take an address only of initialized, addressable storage, not a literal or temporary.</p>
+<p>Memory management is manual. Gloin has no borrow checker or lifetime tracking. A reference must still point to live storage after a null check; copying or returning an address does not extend the value's life. <code>@arena</code> provides <code>GeneralArena</code> for initialized typed allocation. <code>reset()</code> invalidates all values in that arena while retaining blocks; <code>free()</code> releases them. See the <a href="../../arenas.md">arena guide</a> for allocation and failure behavior.</p></section>
+<section id="memory"><h2>Raw memory and custom arenas</h2>
+<p>Import <code>@memory</code> when a custom allocator needs an individual native block. <code>memory.alloc(bytes, alignment)</code> returns a nullable <code>*u8</code> over uninitialized bytes; invalid sizes or alignment and allocation failure return null. <code>memory.free(pointer)</code> accepts null, or the original pointer returned by <code>alloc</code> exactly once. <code>size_of&lt;T&gt;()</code>, <code>align_of&lt;T&gt;()</code>, and <code>padding&lt;T&gt;(pointer)</code> expose target layout. <code>place&lt;T&gt;(pointer, available, value)</code> checks null, alignment, and the stated available byte count, then writes a copy of the value and returns <code>*T</code>; failure returns null without writing.</p>
+<pre><code>import "@memory";
+
+def main() -&gt; i32 {
+    def block: *u8 = memory.alloc(64, 16);
+    if block == null { return 1; }
+    defer memory.free(block);
+    def number: *i32 = memory.place&lt;i32&gt;(block, 64, 42);
+    if number == null { return 2; }
+    return *number;
+}</code></pre>
+<p>The caller must provide the true remaining writable byte count, keep the block live, and never read uninitialized bytes. <code>free</code> does not destroy placed values; pointers into the block become invalid after free. Runtime traps do not run defers. See the <a href="../../raw-memory.md">raw memory contract</a> and the packaged <code>custom_arena.gloin</code> example for a complete bump arena.</p></section>
+<section id="results"><h2>Results and errors</h2>
+<p><code>result&lt;T&gt;</code> and <code>error</code> are built-in lowercase types and reserved words. These types were introduced in 0.1.0; 0.2.0 adds diagnostic codes and result matching. A <code>result&lt;T&gt;</code> holds exactly one success value or one error. <code>result&lt;void&gt;</code> allows a success without a value; <code>result&lt;error&gt;</code> is invalid. Returning a <code>T</code> or an <code>error</code> from a function declared <code>result&lt;T&gt;</code> wraps that branch automatically. Construct an error with <code>error("invalid input")</code>, or with <code>error("invalid input", code, os_error)</code> to include two <code>i32</code> diagnostic codes. The message must be a string literal. Its read-only fields are <code>.message: string</code>, <code>.code: i32</code>, and <code>.os_error: i32</code>. The one-argument form sets both codes to zero (unspecified); even then it is an error. Only the result variant determines success. Codes are evaluated once in argument order and preserved when copying, forwarding or matching. There is no source-location or stack-trace payload yet.</p>
+<p>Diagnostic categories belong to the API that supplies them. Migrated filesystem operations use <code>@status</code> categories and captured native errno; native errno numbers vary by OS. Error fields are immutable, messages use static storage and copying allocates nothing. Partial I/O progress belongs in explicit I/O state, never on <code>error</code>. See the <a href="../../results.md#error-values-and-diagnostic-codes">full error contract</a>.</p>
+<pre><code>import "@std";
+
+def increment(text: string) -&gt; result&lt;i32&gt; {
+    def number: result&lt;i32&gt; = std.parse_i32_checked(text);
+    if number.erroneous { return number.error; }
+    return number.value + 1;
+}
+
+def main() -&gt; i32 {
+    def answer: result&lt;i32&gt; = increment("41");
+    if answer.erroneous {
+        std.println(answer.error.message);
+        return 1;
+    }
+    return answer.value;
+}</code></pre>
+<p>Every result binding, including a parameter, must be checked with <code>.erroneous</code> or handled by exhaustive match on every path that leaves its scope. The compiler permits <code>.value</code> only on a proven success path and <code>.error</code> only on a proven failure path. Direct <code>if r.erroneous</code>, <code>if !r.erroneous</code>, and <code>unless r.erroneous</code> establish proofs; a branch that returns can establish the opposite proof afterward. Reassigning a mutable result requires a new check. A result call cannot be discarded. Propagation is explicit: return the checked <code>.error</code>; a whole result cannot be returned directly.</p>
+<p>Errors currently contain a static message only. They have no source location, stack trace, or debug payload. Results cannot currently be stored as struct fields or behind pointers, arrays, or slices; member access requires a named binding; match can handle a call directly. A successful pointer or borrowed string payload keeps its ordinary lifetime rules. The <a href="../../results.md">complete result contract</a> explains flow checks and GloinIR lowering. The packaged <code>result_handling.gloin</code> example demonstrates success and forwarding.</p></section>
+<section id="modules"><h2>Modules</h2>
+<p>Put these two files in one directory. The imported file gives an ordinary function public visibility. The root file calls it through the module name:</p>
+<p><code>guide_utils.gloin</code></p>
+<pre><code>def pub twice(x: i32) -&gt; i32 { return x + x; }</code></pre>
+<p><code>main.gloin</code></p>
+<pre><code>import "./guide_utils";
+
+def main() -&gt; i32 { return guide_utils.twice(21); }</code></pre>
+<p><code>gloinc --jit main.gloin</code> exits with status 42; <code>gloinc main.gloin</code> writes <code>a.out</code>. <code>@name</code> loads <code>name.gloin</code> from the standard library directory. Relative imports resolve from the importing source file. <code>import "./foo";</code> loads <code>foo.gloin</code> when there is no <code>foo/</code> directory; if the directory exists, it collects its immediate <code>.gloin</code> files into one <code>foo</code> namespace. Use <code>./foo.gloin</code> to choose the file when both exist. <code>import "#foo";</code> collects <code>packages/foo/*.gloin</code> beside the root source file. Directory imports need no entry file and do not download packages. A module exposes its <code>pub</code> declarations through its namespace. Only the root file supplies <code>main</code>; imports have no runtime initialization. Import cycles, missing files, duplicate declarations, and private access produce diagnostics. See the <a href="../../modules.md">module guide</a> and <a href="../../../examples/module_discovery.gloin">runnable example</a>.</p></section>
+<section id="library"><h2>Input and standard library</h2>
+<p>Standard modules use the same import and namespace rules. Output is explicit: a return value sets the exit status but does not print. <code>std.print</code> writes bytes without a newline and <code>std.println</code> adds one. Input, parsing and numeric formatting return built-in results. This program reads and prints one decimal integer. Try <code>printf '42\n' | gloinc --jit number.gloin</code>.</p>
+<pre><code>import &quot;@std&quot;;
+import &quot;@arena&quot;;
+
+def main() -&gt; i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+    std.print(&quot;number: &quot;);
+    def input: result&lt;std.InputLine&gt; = std.input(&amp;memory, 128);
+    if input.erroneous {
+        std.println(input.error.message);
+        return 1;
+    }
+    def line: std.InputLine = input.value;
+    if line.end { return 0; }
+    def number: result&lt;i32&gt; = std.parse_i32(line.value);
+    if number.erroneous {
+        std.println(number.error.message);
+        return 2;
+    }
+    def text: result&lt;string&gt; = std.to_string(&amp;memory, number.value);
+    if text.erroneous {
+        std.println(text.error.message);
+        return 3;
+    }
+    std.println(text.value);
+    return 0;
+}</code></pre>
+<p>Input returns <code>result&lt;std.InputLine&gt;</code>. Check the result, then the successful line's <code>end</code> flag: EOF is a normal outcome; an empty line has <code>end = false</code>. Input still allocates before reading and drains oversized lines. Errors carry <code>@status</code> categories and OS code zero because this stdin ABI does not capture errno. <code>to_int</code>, <code>parse_i32</code> and <code>parse_i32_checked</code> return equivalent checked results. <code>to_string</code> now returns <code>result&lt;string&gt;</code>; allocation failure is recoverable. Use the text before arena reset/free. The <a href="../../standard-library.md">input guide</a> documents exact failures, limits and migration.</p>
+<table><tr><th>Import</th><th>Contents and detailed guide</th></tr>
+<tr><td><code>@std</code></td><td>Byte output, bounded line input with successful EOF, checked i32 parsing and formatting. <a href="../../standard-library.md">Guide</a></td></tr>
+<tr><td><code>@hashmap</code></td><td>Arena hash maps with built-in keys and generic values (0.2.1). <a href="../../hashmaps.md">Guide</a></td></tr>
+<tr><td><code>@vector</code></td><td>Inline and arena-backed vectors. <a href="../../slices-vectors.md">Guide</a></td></tr>
+<tr><td><code>@arena</code></td><td>Typed allocation and explicit memory lifecycle. <a href="../../arenas.md">Guide</a></td></tr>
+<tr><td><code>@memory</code></td><td>Raw native blocks, target layout queries, and checked typed placement. <a href="../../raw-memory.md">Guide</a></td></tr>
+<tr><td><code>@slices</code></td><td>Generic fill, reverse, and nonoverlapping copy on borrowed slices. <a href="../../slices-vectors.md">Guide</a></td></tr>
+<tr><td><code>@strings</code>, <code>@status</code></td><td>Counted bytes, borrowed cursors, bounded transformations and builders. Fallible calls use built-in results; cursor end is an ordinary outcome. <a href="#strings">Overview</a> and <a href="../../strings.md">API guide</a></td></tr>
+<tr><td><code>@std</code> numeric APIs</td><td>Built-in results for parsing, formatting and fallible conversions; plain numbers for infallible conversions. <a href="../../numbers.md">Guide and migration</a></td></tr>
+<tr><td><code>@io</code></td><td>Streams, files, bounded reads, direct byte slice I/O, counted writes, OS errors. <a href="../../io.md">Guide</a></td></tr>
+<tr><td><code>@net</code>, <code>@http</code>, <code>@http_client</code></td><td>Nonblocking IPv4 TCP, verified client TLS, and bounded HTTP/HTTPS exchanges, with built-in <code>result&lt;T&gt;</code> errors. <a href="../../networking.md">Guide</a></td></tr>
+<tr><td><code>@json</code></td><td>Bounded JSON events, validation, Unicode strings, and writing with built-in <code>result&lt;T&gt;</code>. <a href="../../json.md">Guide</a></td></tr>
+<tr><td><code>@fs</code>, <code>@process</code></td><td>Paths, metadata, directory iteration, symlinks, mutations, arguments, environment, cwd and child processes. <a href="../../filesystem-process.md">Guide</a></td></tr>
+<tr><td><code>@math</code></td><td>Concrete numerical utilities, domain checks, rounding. All fallible operations use built-in <code>result&lt;T&gt;</code>. <a href="../../math.md">Guide and migration table</a></td></tr>
+<tr><td><code>@time</code>, <code>@random</code></td><td>Monotonic time, checked durations, seeded SplitMix64. Bounded random sampling and fallible timing APIs use built-in results. Clock errors preserve native errno. <a href="../../time-random.md">Guide</a></td></tr></table>
+<h3>Checked numbers</h3>
+<p>Numeric parsers and formatters now use built-in results. The old numeric status structs are removed. <code>i64_from_i32</code> returns plain i64 through GloinIR exact widening; <code>f64_from_i64_rounded</code> and <code>f64_from_u64_rounded</code> return plain f64 because all their inputs are representable with the rounding they promise. Other conversions retain checked results, including native nonfinite rejection for float widening. Decimal grammar, ties-to-even rounding, signed zero, subnormals and arena lifetimes retain their documented behavior. See the <a href="../../numbers.md">complete numeric reference</a>.</p>
+<p>The 37 fallible math functions and <code>SplitMix64.below</code> now return built-in results. Their old numeric status structs are removed. Check each operation before starting the next one, so an early return cannot leave another result unhandled:</p>
+<pre><code>import "@math";
+import "@random";
+import "@std";
+
+def main() -&gt; i32 {
+    def length: result&lt;f64&gt; = math.hypot_f64(3.0, 4.0);
+    if length.erroneous {
+        std.println(length.error.message);
+        return 1;
+    }
+    if length.value != 5.0 { return 2; }
+
+    def mut rng: random.SplitMix64 = random.SplitMix64.seeded(42);
+    def draw: result&lt;u64&gt; = rng.below(6);
+    if draw.erroneous {
+        std.println(draw.error.message);
+        return 3;
+    }
+    if draw.value &gt;= 6 { return 4; }
+    std.println("checked math and randomness: ok");
+    return 0;
+}</code></pre>
+<p>A failed operation has an error, with no readable dummy zero. Math domain, overflow and underflow failures have distinct static messages; these functions currently leave <code>.code</code> and <code>.os_error</code> at zero (unspecified). Bound zero fails without advancing the random generator. Successful numeric behavior and seeded sequences are unchanged. These signatures require 0.2.0; the numbered 0.1.0 guide retains the earlier API.</p>
+<h3 id="timing">Timing with checked results</h3>
+<p><code>time.monotonic_now()</code> returns <code>result&lt;time.Instant&gt;</code>. <code>time.elapsed</code>, checked duration constructors and addition/subtraction return <code>result&lt;time.Duration&gt;</code>. Check each result before reading its payload. Zero ticks and zero durations are valid successes; backwards elapsed time is an error. Instants must share a clock domain, and nanosecond units do not promise nanosecond resolution. This program prints a measured interval:</p>
+<pre><code>import &quot;@time&quot;;
+import &quot;@std&quot;;
+import &quot;@arena&quot;;
+
+def main() -&gt; i32 {
+    def first: result&lt;time.Instant&gt; = time.monotonic_now();
+    if first.erroneous { std.println(first.error.message); return 1; }
+
+    def start: time.Instant = first.value;
+    // Put the work to measure here. Equal readings are valid for a short interval.
+    def last: result&lt;time.Instant&gt; = time.monotonic_now();
+    if last.erroneous { std.println(last.error.message); return 2; }
+
+    def measured: result&lt;time.Duration&gt; = time.elapsed(start, last.value);
+    if measured.erroneous { std.println(measured.error.message); return 3; }
+
+    // Formatting owns separate storage and happens after the measured interval.
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def text: result&lt;string&gt; = std.format_u64(&amp;memory, measured.value.nanoseconds);
+    if text.erroneous { std.println(text.error.message); return 4; }
+
+    std.print(&quot;elapsed_ns=&quot;);
+    std.println(text.value);
+
+    return 0;
+}
+</code></pre>
+<p>Clock failures carry <code>@status</code> categories and native errno in <code>.error.code</code>/<code>.error.os_error</code>; arithmetic failures have OS code zero. Time values and errors require no arena; only the printed number above needs formatting storage. Whole microsecond/millisecond accessors return u64, and <code>seconds_f64_rounded()</code> returns an approximate f64. Extract a checked instant before carrying it through a loop. The <a href="../../time-random.md">timing guide</a> lists exact signatures, diagnostics, limits and deterministic injected-clock testing. The old <code>InstantResult</code> and <code>DurationResult</code> wrappers are removed in 0.2.0.</p>
+<p>Modules live in <code>stdlib/</code> in a build and <code>share/gloinc/stdlib/</code> after installation. Arena-backed strings borrow caller-owned storage. Direct <code>io.File.read_into([u8], &amp;state)</code> writes into an existing mutable byte slice, and <code>write_bytes([const u8], &amp;state)</code> writes counted bytes without string conversion; see the packaged <code>strip_nuls.gloin</code> example. The linked guides give signatures, ownership, errors, and costs. The <a href="../../integrated-examples.md">integrated examples</a> combine modules for file processing, statistics, and simulation.</p></section>
+<section id="strings"><h2>Strings, cursors and bounded construction</h2>
+<p>A string is an immutable view of counted bytes. NUL and invalid UTF-8 are ordinary data. Lengths, indexes, slices and search offsets count bytes; slicing can split a UTF-8 character. Import <code>@strings</code> for these operations:</p>
+<table><thead><tr><th>Operation</th><th>Result and storage</th></tr></thead><tbody>
+<tr><td><code>byte_length</code>, <code>is_empty</code>, <code>equal</code>, <code>compare</code>, prefix/suffix tests</td><td>Scalar queries; no allocation. Ordering compares unsigned bytes.</td></tr>
+<tr><td><code>byte_at(text, index)</code></td><td><code>result&lt;u8&gt;</code>; out-of-range access is an error.</td></tr>
+<tr><td><code>slice_bytes(text, start, length)</code></td><td><code>result&lt;string&gt;</code>; borrows the original bytes. Empty slices at the end are valid.</td></tr>
+<tr><td><code>trim_ascii</code>, <code>trim_start_ascii</code>, <code>trim_end_ascii</code></td><td>Borrowed strings; remove ASCII whitespace without allocating.</td></tr>
+<tr><td><code>find(text, needle)</code></td><td>Ordinary <code>FindResult { found, offset }</code>. An absent match and a match at byte zero are distinguished by <code>found</code>.</td></tr>
+<tr><td><code>copy(&amp;memory, text)</code></td><td><code>result&lt;string&gt;</code>; an independent copy in the caller's arena.</td></tr>
+<tr><td><code>concat</code>, <code>repeat</code>, <code>replace_all</code>, <code>lower_ascii</code>, <code>upper_ascii</code></td><td><code>result&lt;string&gt;</code>; each takes an arena and a final <code>max_bytes</code> limit. Nonempty output is independently allocated even when unchanged.</td></tr>
+</tbody></table>
+<p>Check <code>.erroneous</code> or match each fallible call before accessing its active payload. Failures have static messages, <code>@status</code> categories in <code>.error.code</code>, and zero <code>.error.os_error</code>. Categories are <code>OUT_OF_RANGE</code> for bounds, <code>INVALID</code> for empty split delimiters/replacement needles, <code>TOO_LONG</code> for output limits or builder capacity, and <code>NO_MEMORY</code> for allocation. A failed result provides no readable zero byte, empty string or dummy handle. <code>byte_at_checked</code> and <code>slice_bytes_checked</code> remain aliases with the same behavior.</p>
+<p><code>SplitCursor.create(text, delimiter)</code> returns <code>result&lt;SplitCursor&gt;</code>. Once created, <code>next()</code> cannot fail: it returns <code>TextItem { end: bool, value: string }</code>. Adjacent or trailing delimiters produce empty items with <code>end = false</code>; exhaustion repeatedly returns <code>end = true</code> and empty text. <code>LineCursor.create(text)</code> is infallible and its <code>next()</code> returns the same item type. It removes LF and one preceding CR; empty input has no lines, and a terminal LF adds no extra line. Both cursors borrow bytes, allocate nothing and copy their positions independently. The compiler does not require checking <code>end</code>, since the empty text at exhaustion is valid.</p>
+<p><code>StringBuilder.create(&amp;memory, capacity)</code> returns <code>result&lt;StringBuilder&gt;</code>. Capacity is fixed. <code>append(text)</code> and <code>append_byte(byte)</code> return <code>result&lt;void&gt;</code>, allocate nothing and leave both bytes and length unchanged on insufficient capacity. An empty append succeeds even when full. Each append is atomic; a later failure does not roll back earlier appends. Copies of a builder alias its storage and length. <code>clear()</code> resets that shared length without freeing or securely erasing bytes. <code>to_string(&amp;memory)</code> returns an independent snapshot as <code>result&lt;string&gt;</code>.</p>
+<p>This complete program skips empty comma-separated fields, uppercases the others, and prints <code>ONE | TWO | THREE</code>. The report is limited to 64 bytes; larger input can produce a checked error. Save it as <code>report.gloin</code> and run <code>gloinc --jit report.gloin</code>:</p>
+<pre><code>import &quot;@arena&quot;;
+import &quot;@strings&quot;;
+import &quot;@std&quot;;
+
+// Borrow the input while traversing it; allocate the report in the caller&#39;s arena.
+def report(memory: &amp;arena.GeneralArena, text: string) -&gt; result&lt;string&gt; {
+    def split: result&lt;strings.SplitCursor&gt; = strings.SplitCursor.create(text, &quot;,&quot;);
+    if split.erroneous { return split.error; }
+
+    def mut cursor: strings.SplitCursor     = split.value;
+    def made: result&lt;strings.StringBuilder&gt; = strings.StringBuilder.create(memory, 64);
+
+    if made.erroneous { return made.error; }
+
+    def mut builder: strings.StringBuilder = made.value;
+    def mut item: strings.TextItem         = cursor.next();
+
+    while !item.end {
+        def token: string = strings.trim_ascii(item.value);
+
+        if !strings.is_empty(token) {
+            def upper: result&lt;string&gt; = strings.upper_ascii(memory, token, 64);
+            if upper.erroneous { return upper.error; }
+
+            def label: string = upper.value;
+
+            if builder.byte_length() &gt; 0 {
+                def separator: result&lt;void&gt; = builder.append(&quot; | &quot;);
+                if separator.erroneous { return separator.error; }
+            }
+
+            def appended: result&lt;void&gt; = builder.append(label);
+            if appended.erroneous { return appended.error; }
+        }
+
+        item = cursor.next();
+    }
+
+    // An independent copy: subsequent builder changes cannot alter the report.
+    def saved: result&lt;string&gt; = builder.to_string(memory);
+    if saved.erroneous { return saved.error; }
+
+    return saved.value;
+}
+
+def main() -&gt; i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def rendered: result&lt;string&gt; = report(&amp;memory, &quot;one, , two,three,&quot;);
+    if rendered.erroneous {
+        std.println(rendered.error.message);
+        return 1;
+    }
+
+    std.println(rendered.value);
+
+    return 0;
+}</code></pre>
+<p>Borrowed slices, cursor items and trimmed strings require their original bytes to stay live and unchanged. Resetting or freeing an arena invalidates all its text and builders; results do not extend these lifetimes. In this program, transformations, builder state and the final snapshot share one arena, which remains live until after printing. Use a separate destination arena when a snapshot must survive the builder's arena. Repeated copies and snapshots retain space until reset/free. The <a href="../../strings.md">byte-string guide</a> and <a href="../../text-construction.md">text construction guide</a> record signatures, exact diagnostics, costs and the changes from 0.1.0.</p>
+</section>
+<section id="io"><h2>Streams and transfer progress</h2>
+<p>In 0.2.0, file opening returns <code>result&lt;io.File&gt;</code>; close, flush, reads and writes return <code>result&lt;void&gt;</code>. Transfers take a final mutable state argument. Check the result, then inspect progress. The old six I/O result structs are removed.</p>
+<table><thead><tr><th>State</th><th>Fields</th><th>Failure behavior</th></tr></thead><tbody>
+<tr><td><code>io.ReadState</code></td><td><code>value</code>, <code>end</code></td><td>Chunk/all reads retain a valid received prefix; line failures expose empty text</td></tr>
+<tr><td><code>io.ByteReadState</code></td><td><code>read</code>, <code>end</code></td><td>Received bytes stay in the caller's buffer</td></tr>
+<tr><td><code>io.WriteState</code></td><td><code>written</code></td><td>Accepted bytes cannot be rolled back</td></tr>
+</tbody></table>
+<p>Every call resets state before validation. Empty EOF succeeds with <code>end = true</code> for line, chunk and direct reads. A final partial read succeeds with <code>end = false</code>; the next empty read reports end. <code>read_all</code> completes at EOF with <code>end = false</code>, even for an empty file. State is per call, so save progress before reusing it. The compiler enforces handling of the result; progress fields are readable independently and do not prove success.</p>
+<p>This program echoes one line. An empty line is echoed, while empty EOF finishes normally. Save it as <code>echo.gloin</code> and run <code>gloinc --jit echo.gloin</code>:</p>
+<pre><code>import &quot;@io&quot;;
+import &quot;@arena&quot;;
+
+def main() -&gt; i32 {
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+    def mut input: io.Stream = io.stdin();
+    def mut output: io.Stream = io.stdout();
+    def mut line: io.ReadState = io.ReadState.empty();
+    def read: result&lt;void&gt; = input.read_line(&amp;scratch, 128, &amp;line);
+    if read.erroneous { return 1; }
+    if line.end { return 0; }
+    def mut progress: io.WriteState = io.WriteState.empty();
+    def written: result&lt;void&gt; = output.write_line(line.value, &amp;progress);
+    if written.erroneous { return 2; }
+    def flushed: result&lt;void&gt; = output.flush();
+    if flushed.erroneous { return 3; }
+    return 0;
+}
+</code></pre>
+<p>For a file, first bind <code>io.File.open_read(&amp;owner, path)</code>, check failure, then copy its <code>.value</code> into a mutable File. Keep the owner arena live until after close. Use separate scratch storage for repeated reads. A deferred helper must handle the close result; a bare <code>defer file.close()</code> is rejected. Close explicitly before reporting successful output.</p>
+<p>Errors retain <code>.code</code> and native <code>.os_error</code>. A failed <code>write_all</code> can still have accepted <code>state.written</code> bytes: retrying the full input can duplicate them. An oversized <code>read_all</code> retains its bounded prefix and leaves the next byte unread. An oversized line is drained and returns empty text. See the <a href="../../io.md">full I/O contract</a> and <a href="../../../examples/io_copy.gloin">binary copy example</a> for ownership, recovery and cleanup.</p>
+<p><code>process.arg</code>, <code>process.env</code> and <code>process.cwd</code> now return <code>result&lt;string&gt;</code>. An absent environment value fails with <code>NOT_FOUND</code>; an existing empty value succeeds with empty text. A missing argument fails with <code>OUT_OF_RANGE</code>. Their successful copies borrow the supplied arena. See <a href="../../filesystem-process.md#argument-environment-and-cwd-functions">process-context details</a>.</p>
+</section>
+<section id="filesystem-mutations"><h2>Files and directories</h2>
+<p>Every fallible filesystem API uses a built-in result in 0.2.0. Bind and check the result before accessing its payload or error. Failures preserve <code>@status</code> categories in <code>.error.code</code> and captured native errno in <code>.error.os_error</code>. A missing path is a <code>NOT_FOUND</code> error that callers can handle explicitly.</p>
+<table><thead><tr><th>Operation</th><th>Return type</th><th>Success</th></tr></thead><tbody>
+<tr><td><code>basename</code>, <code>dirname</code>, <code>join</code></td><td><code>result&lt;string&gt;</code></td><td>Path text</td></tr>
+<tr><td><code>metadata</code></td><td><code>result&lt;fs.Metadata&gt;</code></td><td><code>kind</code> and <code>size</code></td></tr>
+<tr><td><code>Directory.open</code></td><td><code>result&lt;fs.Directory&gt;</code></td><td>Open directory cursor</td></tr>
+<tr><td><code>Directory.next</code></td><td><code>result&lt;fs.DirectoryRead&gt;</code></td><td><code>end</code> and <code>name</code></td></tr>
+<tr><td>Mutations and <code>Directory.close</code></td><td><code>result&lt;void&gt;</code></td><td>No payload</td></tr>
+</tbody></table>
+<p>All five former filesystem result structs are removed. Directory close invalidates all aliases even when the OS reports failure. See the <a href="../../filesystem-process.md#mutation-migration-from-010">migration table and ownership rules</a>.</p>
+<pre><code>import "@fs";
+import "@status";
+
+def main() -&gt; i32 {
+    def created: result&lt;void&gt; = fs.mkdir("output");
+    if created.erroneous {
+        if created.error.code == status.ALREADY_EXISTS { return 2; }
+        return 1;
+    }
+    return 0;
+}</code></pre>
+<p>This program requires a fresh directory. An existing regular file also produces <code>ALREADY_EXISTS</code>; inspect metadata if accepting an existing directory is appropriate for your program. To forward a failure from a result-returning function, use <code>return created.error;</code> inside the error branch.</p>
+<h3>Read a directory</h3>
+<p><code>Directory.next</code> returns <code>result&lt;fs.DirectoryRead&gt;</code>. Check failure first, then <code>.value.end</code>. End is normal success with an empty name; an entry has <code>end = false</code> and a nonempty name. The compiler enforces the result check, while the program distinguishes these two successful states. Names are copied into the supplied arena. Reset scratch storage only after using its current name. Copy failure can consume an entry, and retrying does not recover it. Directory order is unspecified.</p>
+<p>Save this as <code>walk.gloin</code> and run <code>gloinc --jit walk.gloin -- .</code>. The owner arena outlives the native cursor; the deferred helper reports any close failure on an early return:</p>
+<pre><code>// Print the immediate names of a directory in host iteration order.
+// build/gloinc --jit examples/directory_walk.gloin -- .
+import &quot;@arena&quot;;
+import &quot;@fs&quot;;
+import &quot;@process&quot;;
+import &quot;@status&quot;;
+import &quot;@std&quot;;
+
+def close_if_open(directory: &amp;fs.Directory) -&gt; void {
+    if directory.is_open() {
+        def closed: result&lt;void&gt; = directory.close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+def main() -&gt; i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mut scratch: arena.GeneralArena = arena.GeneralArena.create();
+    defer scratch.free();
+
+    if process.arg_count() != 2 {
+        std.println(&quot;usage: directory_walk DIRECTORY&quot;);
+        return 2;
+    }
+
+    def path: result&lt;string&gt; = process.arg(&amp;owner, 1);
+    if path.erroneous { return 1; }
+
+    def opened: result&lt;fs.Directory&gt; = fs.Directory.open(&amp;owner, path.value);
+    if opened.erroneous {
+        std.println(&quot;cannot open directory&quot;);
+        return 1;
+    }
+
+    def mut directory: fs.Directory = opened.value;
+    defer close_if_open(&amp;directory);
+
+    def mut scanning: bool = true;
+
+    while scanning {
+        scratch.reset();
+        def entry: result&lt;fs.DirectoryRead&gt; = directory.next(&amp;scratch);
+
+        if entry.erroneous {
+            std.println(&quot;directory read failed&quot;);
+            return 1;
+        }
+
+        if entry.value.end {
+            scanning = false;
+        } else {
+            std.println(entry.value.name);
+        }
+    }
+
+    def closed: result&lt;void&gt; = directory.close();
+    if closed.erroneous { std.println(closed.error.message); return 1; }
+
+    return 0;
+}
+</code></pre>
+<p>Use <code>fs.join</code> to combine a parent with a name, then <code>fs.metadata</code> to inspect its kind. Both return results. A failed metadata query must not be treated as a missing path unless its error code is <code>status.NOT_FOUND</code>. Closing the cursor invalidates its aliases but does not invalidate copied names; resetting their arena does. See the <a href="../../filesystem-process.md#directory-iteration">full ownership and iteration contract</a>.</p>
+</section>
+<section id="symlinks"><h2>Symbolic links</h2>
+<p><code>fs.symlink(target, link_path) -&gt; result&lt;void&gt;</code> creates a new link and never replaces an existing entry. It stores the target text verbatim; a relative target resolves from the link's containing directory when followed. The target may be absent or cyclic.</p>
+<p><code>fs.read_link(&amp;memory, path, max_bytes) -&gt; result&lt;string&gt;</code> reads the immediate link's stored text into caller-owned arena storage. Check <code>.erroneous</code> before using the value. An exact byte limit succeeds; longer text fails without truncation. It allocates <code>max_bytes + 1</code> bytes, retained until arena reset/free even on a host error. Errors currently provide static messages, without errno.</p>
+<p><code>fs.metadata</code> reports the final link, and <code>fs.remove_file</code> removes it while leaving its target untouched. Directory components still follow ordinary host resolution rules; these operations do not confine paths. Read the <a href="../../filesystem-process.md#symbolic-links">complete contract</a> and run the <a href="../../../examples/symlinks.gloin">example</a>:</p>
+<pre><code>./build/gloinc --jit examples/symlinks.gloin -- absent ./demo-link</code></pre>
+<p>This creates a new broken link, prints <code>Stored target: absent</code>, and removes the link. An existing <code>./demo-link</code> is preserved and reported as an error.</p></section>
+<section id="workspaces"><h2>Filesystem workspaces</h2>
+<p><code>@fs</code> provides filesystem operations with built-in <code>result&lt;T&gt;</code> errors:</p>
+<table><tr><th>API</th><th>Meaning</th></tr>
+<tr><td><code>canonical_path(&amp;memory, path, max_bytes) -&gt; result&lt;string&gt;</code></td><td>Resolve an existing path, following links, to an absolute arena-owned string. Missing/broken/cyclic paths and oversized results fail.</td></tr>
+<tr><td><code>temp_dir(&amp;memory, parent, prefix, max_bytes) -&gt; result&lt;string&gt;</code></td><td>Exclusively create a private directory beneath an existing explicit parent and return its absolute path. All output allocation happens before creation.</td></tr>
+<tr><td><code>remove_dir(path) -&gt; result&lt;void&gt;</code></td><td>Remove one empty directory. Files, final symlinks, nonempty directories, root and final dot components are rejected.</td></tr></table>
+<p>Check <code>.erroneous</code> before using a returned path. Freeing the arena releases path storage; it does not remove the directory. Close handles, unlink files/links, remove the empty directory, then free the path arena. Generated suffixes vary between calls. Canonical paths are snapshots and do not reserve filesystem objects or confine later operations.</p>
+<pre><code>./build/gloinc --jit examples/temporary_workspace.gloin -- ./build</code></pre>
+<p>The <a href="../../../examples/temporary_workspace.gloin">complete example</a> writes a file in a unique directory and uses <code>defer</code> to clean up in reverse order. Read the <a href="../../filesystem-process.md#canonical-paths-and-temporary-directories">full bounds, cost and ownership contract</a>. The formatter test driver uses these APIs and process capture in Gloin; its private recursive cleanup assumes a stable owned fixture tree.</p></section>
+<section id="file-replacement"><h2>Checked file replacement</h2>
+<p><code>fs.replace_file(path, expected, replacement) -&gt; result&lt;void&gt;</code> checks an existing regular file against previously read bytes, stages new contents in an exclusive sibling file, preserves uid/gid and ordinary Unix permissions, and renames it over the source. Final symlinks, hard links, non-owner files and special mode bits are rejected. Errors before rename preserve the original.</p>
+<p>The caller must have exclusive editing access: the last comparison and rename are separate calls. ACLs, extended attributes and timestamps are not copied, and crash durability is not promised. Read the <a href="../../filesystem-process.md#checked-file-replacement">full contract</a> before using it. <code>gloinfmt --write --git</code> uses this API after checking token preservation and idempotence; see the <a href="../../gloinfmt.md">formatter guide</a>.</p></section>
+<section id="processes"><h2>Child processes</h2>
+<p><code>@process</code> launches an explicit executable with a slice of arguments and built-in <code>result&lt;T&gt;</code> errors. Arguments remain separate and literal. The child inherits standard streams, cwd and environment; other file descriptors are closed. There is no implicit shell or PATH lookup.</p>
+<pre><code>import "@arena";
+import "@process";
+import "@std";
+
+def cleanup(child: &amp;process.Child) -&gt; void {
+    def closed: result&lt;void&gt; = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def main() -&gt; i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def arguments: [string; 2]         = {"Hello from Gloin", "$HOME stays literal"};
+    def started: result&lt;process.Child&gt; = process.start(&amp;owner, "/bin/echo", arguments[..]);
+
+    if started.erroneous {
+        std.println(started.error.message);
+        return 1;
+    }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&amp;child);
+
+    def finished: result&lt;process.ExitStatus&gt; = child.wait();
+    if finished.erroneous {
+        std.println(finished.error.message);
+        return 2;
+    }
+
+    def closed: result&lt;void&gt; = child.close();
+    if closed.erroneous {
+        std.println(closed.error.message);
+        return 3;
+    }
+
+    def exit_status: process.ExitStatus = finished.value;
+    if !exit_status.success() { return 4; }
+
+    std.println("Child exited successfully");
+
+    return 0;
+}
+</code></pre>
+<p>This prints <code>Hello from Gloin $HOME stays literal</code>, followed by <code>Child exited successfully</code>. Normal nonzero exits and signal termination are values in <code>ExitStatus</code>; launch and wait failures are errors. <code>poll()</code> observes without blocking, <code>wait()</code> reaps and caches status, and <code>terminate()</code>/<code>kill()</code> request termination. Copies share state. <code>close()</code> kills an unfinished child, waits, and invalidates all aliases; call it before resetting the owner arena.</p>
+<h3>Pipes and bounded capture</h3>
+<p><code>start_piped</code> connects independent stdin, stdout and stderr pipes. <code>communicate</code> feeds input while draining both outputs into caller-owned buffers, closes stdin, and waits for EOF and child exit. All fallible calls use built-in <code>result&lt;T&gt;</code>.</p>
+<pre><code class="language-gloin">// Binary stdin and bounded stdout/stderr capture with a five-second deadline.
+import &quot;@arena&quot;;
+import &quot;@process&quot;;
+import &quot;@std&quot;;
+import &quot;@strings&quot;;
+import &quot;@time&quot;;
+
+def cleanup(child: &amp;process.Child) -&gt; void {
+    def closed: result&lt;void&gt; = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def main() -&gt; i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def arguments: [string; 0]         = {};
+    def started: result&lt;process.Child&gt; = process.start_piped(&amp;owner, &quot;/bin/cat&quot;, arguments[..]);
+
+    if started.erroneous { std.println(started.error.message); return 1; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&amp;child);
+
+    // 72, 105, 10 are the counted bytes of &quot;Hi\n&quot;. NUL bytes are supported too.
+    def input: [u8; 3]         = {72, 105, 10};
+    def mut output: [u8; 1024] = zeroed;
+    def mut errors: [u8; 1024] = zeroed;
+    def captured: result&lt;process.Output&gt; = child.communicate(input[..], output[..], errors[..],
+        time.Duration { nanoseconds: 5000000000 });
+
+    if captured.erroneous { std.println(captured.error.message); return 2; }
+
+    // communicate closed the pipes, reaped the child and invalidated its aliases.
+    // These views still borrow our buffers; they do not borrow the child handle.
+    def outcome: process.Output = captured.value;
+
+    std.print(strings.view_bytes(outcome.stdout));
+
+    if !outcome.status.success() { return 3; }
+    if outcome.stdin_written != input[..].len { return 4; }
+
+    return 0;
+}
+</code></pre>
+<p>This prints <code>Hi</code>. Input and output buffers must be separate and remain live; returned slices borrow the output buffers. Bytes including NUL are preserved. Each buffer is a strict limit: exact-length output succeeds, overflow is an error. A child may close stdin early; <code>stdin_written</code> records bytes accepted by the pipe, not proof they were read. Nonzero exits remain ordinary <code>ExitStatus</code> values.</p>
+<p>The duration begins at communication entry. Expiration or failure closes pipes and kills/reaps the direct child; cleanup can outlast the deadline. Successful communication also closes the handle and its aliases. <code>wait_timeout</code> instead returns <code>ready = false</code> on expiration and leaves the child owned. For manual streaming use <code>write_stdin</code>, <code>close_stdin</code>, <code>read_stdout</code>, <code>read_stderr</code> and <code>wait_io</code>. Never wait indefinitely on a child whose output pipes you are not draining.</p>
+<h3>Child settings and group cleanup</h3>
+<p><strong>Current policy: group cleanup is opt-in.</strong> <code>start</code>, <code>start_piped</code> and default <code>Options</code> manage only the direct child. Set <code>new_process_group = true</code> to give a tool and its ordinary workers a separate cleanup group. Set <code>piped = true</code> independently when capture is needed. Pipes and communication deadlines do not automatically enable group cleanup.</p>
+<p>We chose process groups as a common macOS/Linux mechanism for foreground tools and test servers, using ordinary process permissions. Defaults preserve inherited-group behavior and cleanup never targets the parent's inherited group. Descendants may create another group/session and survive; scanning the process tree would still race with forks, exits and reparenting. Full containment would require separately implemented platform support. <a href="../../child-processes.md#current-setup-and-design-rationale">Read the setup sequence, behavior table, reasoning and future strict-mode policy.</a></p>
+<p><code>start_with</code> accepts <code>process.Options.defaults()</code>. Set <code>cwd</code> to change only the child directory; relative executables resolve there. With <code>inherit_environment = false</code>, <code>environment</code> supplies the complete environment as unique <code>NAME=value</code> strings. Empty values are valid; NUL bytes, missing names/separators and duplicates are rejected. Supplying entries while inheriting is also an error. The parent settings remain unchanged.</p>
+<p><code>stack_limit_bytes</code> defaults to zero (inherit). Set <code>2097152</code> for a 2 MiB child soft stack limit before execution. The hard limit and parent settings remain unchanged. Invalid or unsupported requests return a built-in error; they do not silently inherit instead.</p>
+<pre><code class="language-gloin">// Child cwd, environment, pipes, process-group cleanup and a 2 MiB soft stack limit.
+import &quot;@arena&quot;;
+import &quot;@process&quot;;
+import &quot;@std&quot;;
+import &quot;@strings&quot;;
+import &quot;@time&quot;;
+
+def cleanup(child: &amp;process.Child) -&gt; void {
+    def closed: result&lt;void&gt; = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def main() -&gt; i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def environment: [string; 1]     = {&quot;GLOIN_GREETING=Hello from a child&quot;};
+    def mut options: process.Options = process.Options.defaults();
+    options.cwd                 = &quot;/&quot;;
+    options.inherit_environment = false;
+    options.environment         = environment[..];
+    options.piped               = true;
+    options.new_process_group   = true;
+    options.stack_limit_bytes   = 2097152;
+
+    // A shell runs only because we explicitly launch it. No implicit expansion.
+    def arguments: [string; 2]         = {&quot;-c&quot;, &quot;printf &#x27;%s\n&#x27; \&quot;$GLOIN_GREETING\&quot;; pwd -P&quot;};
+    def started: result&lt;process.Child&gt; = process.start_with(&amp;owner, &quot;/bin/sh&quot;, arguments[..], options);
+
+    if started.erroneous { std.println(started.error.message); return 1; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup(&amp;child);
+
+    def input: [u8; 0]         = {};
+    def mut output: [u8; 1024] = zeroed;
+    def mut errors: [u8; 1024] = zeroed;
+    def captured: result&lt;process.Output&gt; = child.communicate(input[..], output[..], errors[..],
+        time.Duration { nanoseconds: 5000000000 });
+
+    if captured.erroneous { std.println(captured.error.message); return 2; }
+
+    def outcome: process.Output = captured.value;
+
+    std.print(strings.view_bytes(outcome.stdout));
+
+    if !outcome.status.success() { return 3; }
+
+    return 0;
+}
+</code></pre>
+<p>This prints the greeting and <code>/</code>. <code>new_process_group = true</code> gives the command its own cleanup group. <code>terminate</code>, <code>kill</code> and <code>close</code> target that group and the direct child, even after the leader exits. For grouped handles, <code>poll</code>/<code>wait</code> cache exit status but retain the native leader until <code>close</code>; close promptly to release that wait status. Retaining the leader prevents reuse of its ID before cleanup. Successful communication also performs group cleanup.</p>
+<p>A nonzero stack limit uses a child-only fork/setup/exec path; zero keeps the default spawn path. On <strong>macOS it requires the host's original main thread</strong>: ordinary Gloin main works, but a worker-thread embedder receives an error. Linux supports either thread and requires descriptor range closure. Launch itself has no deadline. The soft stack limit does not cap heap usage or provide containment, and the program can raise it again up to its inherited hard ceiling. Read the <a href="../../child-processes.md#child-stack-limits">platform rules, launch rationale and costs</a>.</p>
+<p>Group cleanup is not process-tree containment: descendants can leave the group, and host permissions apply. Only the direct child is reaped by this handle. Default <code>start</code>/<code>start_piped</code> still affect only the direct child. Resource limits other than stack, explicit search paths and individual stream redirection remain pending. See the <a href="../../child-processes.md">complete API, ownership and limits</a> and <a href="../../../examples/child_options.gloin">runnable options example</a>.</p></section>
+<section id="json"><h2>Bounded JSON</h2>
+<p><code>import "@json";</code> adds a reader and writer implemented in Gloin. Both use built-in <code>result&lt;T&gt;</code> for errors, caller-owned byte storage, and an explicit nesting limit up to 64. The reader consumes a complete input string and produces structural, key, and scalar events. It checks UTF-8 and Unicode escapes while keeping number tokens exact until you request a native numeric conversion.</p>
+<h3>Read strings from a document</h3>
+<pre><code>import &quot;@json&quot;;
+import &quot;@std&quot;;
+
+def main() -&gt; i32 {
+    def made: result&lt;json.Reader&gt; = json.Reader.create(
+        &quot;{\&quot;message\&quot;:\&quot;Hello, \\u4e16\\u754c!\&quot;}&quot;, 256, 8
+    );
+    if made.erroneous { return 1; }
+    def mut reader: json.Reader = made.value;
+    def mut storage: [u8; 64] = zeroed;
+    def mut complete: bool = false;
+    while !complete {
+        def next: result&lt;json.Event&gt; = reader.next();
+        if next.erroneous {
+            std.println(next.error.message);
+            return 2;
+        }
+        def event: json.Event = next.value;
+        if event.kind == json.DONE {
+            complete = true;
+        } else if event.kind == json.STRING {
+            def decoded: result&lt;string&gt; = event.as_string(storage[..]);
+            if decoded.erroneous { return 3; }
+            std.println(decoded.value);
+        }
+    }
+    return 0;
+}</code></pre>
+<p>This prints <code>Hello, 世界!</code>. A <code>KEY</code> event precedes its value; decode keys before comparing them so escaped spellings are handled correctly. Decoded text borrows <code>storage</code> until its next modification. <code>event.raw</code> borrows the original token, and <code>event.offset</code> gives its byte position. Object and array begin/end events let you track a nested schema.</p>
+<p>Consume <code>DONE</code> to validate the whole input. Earlier events can precede a later syntax error. Use <code>json.validate(text, max_bytes, max_depth)</code> first when application changes must wait for a valid document. Duplicate keys remain separate events in input order; enforce uniqueness in the application if required.</p>
+<h3>Build a request body</h3>
+<pre><code>import &quot;@json&quot;;
+import &quot;@std&quot;;
+
+def main() -&gt; i32 {
+    def mut bytes: [u8; 128] = zeroed;
+    def made: result&lt;json.Writer&gt; = json.Writer.create(bytes[..], 4);
+    if made.erroneous { return 1; }
+    def mut writer: json.Writer = made.value;
+    def opened: result&lt;void&gt; = writer.begin_object();
+    if opened.erroneous { return 2; }
+    def key: result&lt;void&gt; = writer.key(&quot;message&quot;);
+    if key.erroneous { return 3; }
+    def value: result&lt;void&gt; = writer.string_value(&quot;Hello\nworld&quot;);
+    if value.erroneous { return 4; }
+    def closed: result&lt;void&gt; = writer.end_object();
+    if closed.erroneous { return 5; }
+    def finished: result&lt;string&gt; = writer.finish();
+    if finished.erroneous { return 6; }
+    std.println(finished.value);
+    return 0;
+}</code></pre>
+<p>The writer inserts commas, colons and escapes. It also provides arrays, <code>number(text)</code>, <code>boolean(value)</code>, and <code>null_value()</code>. Number text is validated without conversion through floating point. For a typed integer, use <code>std.to_string_&lt;width&gt;</code>, check its result, then pass the text to <code>number</code>.</p>
+<p>Only publish a successful <code>finish()</code> value. A failed operation poisons the writer and may leave partial output; create a new writer to retry. Writer copies share bytes but copy counters, so pass one owner through <code>&amp;json.Writer</code>. Reader copies advance independently over shared immutable input. No automatic object tree or struct serialization is provided.</p>
+<p>A finished writer view can be an HTTP request body with <code>Content-Type: application/json</code>. Keep its storage live until upload finishes. JSON reading requires a complete buffered body even when HTTP transport is streaming. The <a href="../../json.md">full JSON guide</a> specifies grammar, Unicode policy, limits, ownership, and exact numeric conversions. The <a href="../../../examples/json.gloin">packaged example</a> builds and reads a nested payload, including the largest <code>u64</code>.</p></section>
+<section id="network"><h2>Nonblocking TCP, TLS, and HTTP</h2>
+<p>Version 0.1.0 adds <code>@net</code> for IPv4 TCP and verified client TLS, and <code>@http</code> for bounded HTTP/1.1 request and response heads. Socket operations return built-in <code>result&lt;T&gt;</code>; inspect <code>.erroneous</code> before reading a success value. Ordinary network states stay in the success payload: a pending connection is <code>false</code>, an unavailable accept has <code>available == false</code>, a read can report <code>status.WOULD_BLOCK</code> or <code>status.END</code>, and a timed readiness wait returns zero bits. Socket copies share ownership state, so close a socket before freeing its arena.</p>
+<pre><code>import "@arena";
+import "@net";
+
+def cleanup(socket: &amp;net.Socket) -&gt; void {
+    if !socket.is_open() { return; }
+    def closed: result&lt;void&gt; = socket.close();
+    if closed.erroneous { return; }
+}
+
+def main() -&gt; i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def opened: result&lt;net.Socket&gt; = net.Socket.open(&amp;owner);
+    if opened.erroneous { return 1; }
+    def mut socket: net.Socket = opened.value;
+    defer cleanup(&amp;socket);
+    def started: result&lt;bool&gt; = socket.connect(net.Address.loopback(8080));
+    if started.erroneous { return 2; }
+    if !started.value {
+        def ready: result&lt;i32&gt; = socket.wait(net.WRITABLE, 1000);
+        if ready.erroneous { return 3; }
+        if ready.value == 0 { return 4; }
+        def finished: result&lt;bool&gt; = socket.finish_connect();
+        if finished.erroneous { return 5; }
+        if !finished.value { return 6; }
+    }
+    def closed: result&lt;void&gt; = socket.close();
+    if closed.erroneous { return 7; }
+    return 0;
+}</code></pre>
+<p>This sketch expects a listener on localhost:8080; its deferred cleanup closes the socket before freeing its arena. The packaged <code>network_http.gloin</code> example creates its own listener, cleans up on every path, and completes a local HTTP exchange. It is runnable with <code>gloinc --jit examples/network_http.gloin</code> or as a native executable.</p>
+<p><code>Socket.read([u8])</code> and <code>write([const u8])</code>/<code>write_text(string)</code> each make one nonblocking call. Check the returned byte count and retry after readiness; a successful write may be short. <code>strings.view_bytes(buffer[0..count])</code> borrows received bytes as counted text. Pass that view to <code>http.parse_request</code> or <code>http.parse_response</code>, append more bytes while the successful payload has <code>complete == false</code>, then use <code>header_bytes</code> to locate the body. <code>http.frame_request</code> and <code>http.frame_response</code> report when a bounded fixed-length body is complete and return its borrowed view. <code>http.format_get</code> and <code>http.format_response</code> build heads in a caller-owned arena and return <code>result&lt;string&gt;</code>. The incremental <code>http.ResponseReader</code> also decodes chunked and clean-EOF response bodies and handles HEAD, bodyless statuses, and informational responses. Chunked requests, asynchronous DNS, IPv6, and UDP remain pending. The <a href="../../networking.md">networking guide</a> gives the exact ownership, framing, and error rules.</p>
+<p><code>@http_client</code> provides a streaming <code>Exchange</code> state machine and a synchronous <code>request</code> wrapper over it. Both accept an explicit address, verified TLS settings, validated headers, caller-owned buffers, and an overall deadline. HTTP 4xx/5xx statuses are response values; transport, framing, and limit failures return <code>error</code>. Each exchange closes on completion, failure, or explicit cancellation. URL parsing, redirects, decompression, connection pooling, and unknown-length uploads remain future work. The separate <a href="../../json.md">JSON module</a> handles bounded request construction and complete buffered response bodies. See the <a href="../../http-client.md">complete client guide</a> and <a href="../../../examples/http_client.gloin">JSON POST example</a>.</p>
+<p>Run <code>gloinc --jit examples/http_echo_server.gloin</code> in one terminal and <code>gloinc --jit examples/http_client.gloin</code> in another. The <a href="../../../examples/http_echo_server.gloin">Gloin fixture server</a> handles one loopback POST with bounded buffers and a 30-second deadline, then exits; restart it for another request. Repository HTTP/HTTPS acceptance also runs in Gloin, with independent wire expectations, delayed responses and 32 concurrent connections in JIT, <code>-O0</code> and <code>-O2</code>. All repository-owned Python tooling has been migrated; see the <a href="../../tooling-roadmap.md">validation record</a>.</p>
+<h3>Streaming several HTTP exchanges</h3>
+<p>Create each <code>Exchange</code> with a <code>StreamingRequest</code> containing a known <code>content_length</code>, four disjoint <code>Buffers</code> (<code>head</code>, <code>receive</code>, <code>send</code>, <code>body</code>), and <code>Limits</code> for request head, total response metadata/body, and timeout. The total body limit is independent of the reusable body-buffer size. Keep all buffers and the arena live until cleanup; copies of an exchange share one state.</p>
+<table><thead><tr><th><code>step(ready)</code> state</th><th>What the program does next</th></tr></thead><tbody>
+<tr><td><code>PROGRESS</code></td><td>Give other exchanges a turn, then call <code>step(0)</code> again.</td></tr>
+<tr><td><code>WAIT</code></td><td>Watch the borrowed socket with <code>net.wait_many</code>, then pass returned readiness bits to <code>step</code>.</td></tr>
+<tr><td><code>NEED_INPUT</code></td><td>Call <code>supply(bytes)</code> and advance by its accepted byte count. If input is paused, keep watching for early responses and schedule the deadline.</td></tr>
+<tr><td><code>HAVE_OUTPUT</code></td><td>Process the borrowed <code>output()</code> bytes and call <code>consume(count)</code>. Unconsumed output pauses socket I/O for this exchange.</td></tr>
+<tr><td><code>COMPLETE</code></td><td>Framing succeeded and the connection closed; inspect <code>head()</code> for status and headers.</td></tr>
+</tbody></table>
+<p>Use a zero-timeout poll while any exchange can run; otherwise wait until the nearest active deadline. Deadlines include pauses for input and output, but require the program to call <code>step</code> when they expire. A final response stops further upload bytes. <code>cancel()</code> closes resources and affects every alias; defer it before freeing the arena. Output can precede a later truncation or TLS error, so treat only <code>COMPLETE</code> as a successful response. The <a href="../../../examples/http_stream.gloin">32-connection example</a> validates large binary bodies through 1 KiB output buffers while a stalled peer remains open, then cancels it. The <a href="../../http-client.md#streaming-exchanges">streaming guide</a> explains ownership, scheduling, and exact limits. For custom transports, <code>http.ResponseDecoder</code> exposes the same framing logic with consumed/produced byte counts and no I/O.</p>
+<p>A listener can call <code>set_reuse_address(true)</code> before binding. To print an OS-assigned <code>u16</code> port, use <code>std.to_string_u16(&amp;memory, address.port)</code> and check the returned <code>result&lt;string&gt;</code>. The <a href="../../networking-roadmap.md">networking milestones</a> cover concurrent servers, DNS, outbound HTTPS, and WebSocket support.</p>
+<p><code>net.wait_many</code> watches several sockets with caller-owned output and scratch arrays; <code>Socket.shutdown_write()</code> sends an orderly TCP FIN. <code>net.resolve_ipv4</code> resolves hostnames synchronously and may block on DNS. On a connected socket, <code>start_tls_client(&amp;owner, hostname, trust_file)</code> begins a verified TLS client session. Call <code>handshake()</code> until it returns zero, waiting for the returned readiness bit between attempts; use <code>TlsClient.read</code> and <code>write</code> for encrypted bytes. See the <a href="../../networking.md">TLS client contract</a>.</p>
+<h3>Server TLS and authenticated shutdown</h3>
+<p>Load one <code>net.TlsServerConfig</code> from a PEM certificate chain and unencrypted private key, then start a session on each accepted socket. Loading checks the key matches and reads files synchronously; it never prompts for a password. TLS 1.2 and 1.3 are supported. Sessions retain their own native configuration reference, so existing connections survive configuration closure. There is no client-certificate authentication, ALPN or automatic certificate reload.</p>
+<pre><code class="language-gloin">// Inside a result-returning function; socket is an accepted TCP connection.
+def loaded: result&lt;net.TlsServerConfig&gt; =
+    net.TlsServerConfig.load(&amp;owner, "chain.pem", "key.pem");
+if loaded.erroneous { return loaded.error; }
+def mut config: net.TlsServerConfig = loaded.value;
+
+def started: result&lt;net.TlsServer&gt; = socket.start_tls_server(&amp;owner, &amp;config);
+if started.erroneous { return started.error; }
+def mut tls: net.TlsServer = started.value;
+// Drive handshake, read/write and shutdown with readiness waits and a deadline.
+// Close tls before socket; close config before freeing its arena.
+</code></pre>
+<p><code>TlsServer</code> and <code>TlsClient</code> share the same handshake/read/write contract. For a blocked write, retry the same bytes and length; advance only by the returned count. Drain expected application data before calling <code>shutdown()</code>. It returns <code>result&lt;i32&gt;</code>: zero only after both authenticated close alerts have been exchanged, otherwise the readiness event to wait for. Starting shutdown prohibits further writes. A peer that closes TCP without its TLS alert produces an error, not <code>status.END</code>. Shutdown has no automatic deadline; the caller supplies one.</p>
+<p>Successful shutdown still owns native resources. Call <code>tls.close()</code>, then <code>socket.close()</code>, before freeing the arena. Copies share ownership and closure affects all aliases. Close after fatal errors too; <code>close</code> provides cleanup and only a best-effort alert. A socket that has carried TLS cannot resume plaintext traffic or start another TLS session.</p>
+<p>The <a href="../../../examples/tls_server.gloin">runnable TLS server</a> accepts one loopback connection, exchanges fixed PING/PONG bytes and closes gracefully under a 30-second deadline. The <a href="../../server-tls.md">complete server guide</a> includes OpenSSL client commands, ownership, native memory costs, platform behavior and limitations. A reusable HTTP server framework, IPv6, WebSockets and complete Slack integrations remain future work.</p></section>
+<section id="limits"><h2>Support and limits</h2>
+<p>Gloin 0.2.1 targets Apple Silicon macOS and Ubuntu 24.04 Linux on ARM64 and x86_64. The <a href="../../release-0.2.1.md#verification-boundary">release validation record</a> records local checks and the hosted publication gates. Windows support is not planned; contributions are welcome. Cross compilation and Intel macOS are outside the validated target. Custom hash-map keys, enum payloads, packed bitfields, external packages, and concurrency remain future work. Results require direct checks on named bindings or exhaustive match; errors contain a static message and two diagnostic codes, without a stack trace or source-location payload.</p>
+<p>Native objects and executables target the current supported host. Executables do not need LLVM at runtime. The compiler and native linking step require the pinned toolchain. Objects require the static Gloin runtime at link time.</p>
+<p>The 0.2.0 compiler checks all loaded source, then removes unreachable source functions through GloinIR when building an executable or running the JIT. This applies at both native optimization levels. Inspection and object output retain their function definitions; unused invalid source still produces errors. See the <a href="../../lowering.md#executable-reachability-020-perf-004">reachability contract</a> and <a href="../../compilation-timings.md">compilation timing reports</a>.</p></section>
+<section id="reference"><h2>Further reference</h2><p>The <a href="https://github.com/kubabialy/gloinc/wiki/Language-Spec">language specification</a> includes future designs; use this page for the implemented 0.2.1 feature boundary. The <a href="../../release-0.2.1.md">0.2.1 release guide</a> covers builds, packages and validation. The <a href="../../../examples/README.md">examples guide</a> lists runnable programs, and the <a href="../../../tests/fixtures/core/README.md">acceptance matrix</a> maps features to source tests. Use <a href="../../gloinfmt.md">the formatter guide</a> and <a href="../../gloin-style.md">source style guide</a> when editing Gloin source.</p></section>
+</article></main><footer>Gloin 0.2.1 documentation</footer>
+<script>const select=document.getElementById('version');for(const version of window.gloinDocs.versions){const option=document.createElement('option');option.value=version;option.textContent=version==='development'?'Development':version;option.selected=version==='development';select.append(option)}select.addEventListener('change',()=>{location.href='../'+encodeURIComponent(select.value)+'/'})</script>
+</body></html>

@@ -131,7 +131,7 @@ make clean BUILD_DIR=build-no-tests
 arguments. `check-core` requires a build with tests enabled and runs the required
 language, standard-library, runtime and tooling checks. Installation, CPack
 archives and external dependencies are described in the
-[0.2.0 guide](release-0.2.0.md).
+[0.2.1 guide](release-0.2.1.md).
 `make clean` invokes CMake's clean target in an already configured directory,
 removing build products while retaining the configuration and downloaded sources.
 

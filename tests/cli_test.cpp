@@ -243,7 +243,7 @@ TEST_F(CliTest, HelpAndVersionAreStandaloneSuccessfulCommands) {
             EXPECT_NE(result.out.find(word), std::string::npos);
     }
     for (const std::string option : {"--version", "-V"})
-        expect_success(invoke({option}), "gloinc 0.2.0 (LLVM/MLIR " LLVM_VERSION_STRING ")\n");
+        expect_success(invoke({option}), "gloinc 0.2.1 (LLVM/MLIR " LLVM_VERSION_STRING ")\n");
 }
 
 TEST_F(CliTest, NativeExecutableRunsWithoutJitAndReceivesArguments) {

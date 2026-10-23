@@ -2,6 +2,13 @@
 #include "stdlib_lowering.h"
 
 mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::ValueRange arguments) {
+    // Private bit-mask operation: @hashmap maintains power-of-two bucket
+    // counts and passes buckets - 1. No runtime ABI or checked division.
+    if (kind == StandardPrimitive::HashmapMask)
+        return builder.create<mlir::arith::AndIOp>(location(), arguments[0], arguments[1]);
+    if (kind == StandardPrimitive::HashmapEqual)
+        return builder.create<mlir::arith::CmpIOp>(
+            location(), mlir::arith::CmpIPredicate::eq, arguments[0], arguments[1]);
     if (kind == StandardPrimitive::I32ToI64) {
         // Sema selected the private primitive and checked i32 plus writable &i64.
         // Retain the out-parameter/status contract, but make the exact conversion
@@ -89,7 +96,19 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
     }
     std::vector<mlir::Value> native_arguments;
     const auto numeric = numeric_signature(kind);
-    if (kind == StandardPrimitive::FsMetadata || kind == StandardPrimitive::FsMkdir ||
+    if (kind == StandardPrimitive::HashmapWord) {
+        mlir::Value word = arguments[0];
+        if (word.getType() != builder.getI64Type())
+            word = builder.create<mlir::arith::ExtUIOp>(location(), builder.getI64Type(), word);
+        native_arguments.push_back(word);
+    } else if (kind == StandardPrimitive::HashmapString || kind == StandardPrimitive::HashmapStringEqual) {
+        for (auto argument : arguments) {
+            native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
+                location(), argument, llvm::ArrayRef<int64_t>{0}));
+            native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(
+                location(), argument, llvm::ArrayRef<int64_t>{1}));
+        }
+    } else if (kind == StandardPrimitive::FsMetadata || kind == StandardPrimitive::FsMkdir ||
         kind == StandardPrimitive::FsRemoveFile || kind == StandardPrimitive::FsRenameReplace ||
         kind == StandardPrimitive::FsDirOpen || kind == StandardPrimitive::FsReadLink ||
         kind == StandardPrimitive::FsSymlink || kind == StandardPrimitive::FsCanonicalPath ||
@@ -165,6 +184,10 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
                                                           standard_runtime_type(context, kind));
     }
     auto call = emit_abi_call(function, native_arguments);
+    if (kind == StandardPrimitive::HashmapStringEqual)
+        return builder.create<mlir::arith::CmpIOp>(
+            location(), mlir::arith::CmpIPredicate::ne, call,
+            builder.create<mlir::arith::ConstantIntOp>(location(), 0, 32));
     if (kind == StandardPrimitive::StringCopy)
         return emit_standard_primitive(StandardPrimitive::StringView,
                                        mlir::ValueRange{arguments[1], native_arguments[1]});

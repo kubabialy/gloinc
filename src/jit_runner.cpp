@@ -20,6 +20,7 @@
 #include "math_runtime.h"
 #include "time_runtime_internal.h"
 #include "random_runtime.h"
+#include "hashmap_runtime.h"
 #include "context_runtime_internal.h"
 #include "target_layout.h"
 #include "llvm/IR/Module.h"
@@ -340,6 +341,9 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::str
             symbols[mangle("gloin_math_binary_f64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_math_binary_f64), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_time_monotonic")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_time_monotonic), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_random_splitmix64")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_random_splitmix64), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_hashmap_word")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_hashmap_word), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_hashmap_string")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_hashmap_string), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_hashmap_string_equal")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_hashmap_string_equal), llvm::JITSymbolFlags::Exported);
             return symbols;
         });
     }

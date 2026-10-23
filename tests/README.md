@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1125 tests**:
+The current source definitions and CTest discovery contain **1134 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -66,6 +66,7 @@ The current source definitions and CTest discovery contain **1125 tests**:
 | MathLibraryTest | 14 |
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 18 |
+| HashmapLibraryTest | 9 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -217,8 +218,8 @@ still run. The expanded 0.2.0 workflows have a 90-minute overall budget for
 fresh builds, package matrices and full-suite audits; individual test and
 child-process deadlines are unchanged.
 
-Those counts describe 0.1.0. Current 0.2.0 results are recorded in the
-[release guide](../docs/release-0.2.0.md#verification-boundary).
+Those counts describe 0.1.0. Current release validation is recorded in the
+[release guide](../docs/release-0.2.1.md#verification-boundary).
 
 The [HTTP acceptance runner](http/README.md) verifies the streaming example
 against a concurrent Gloin peer in JIT, native `-O0` and `-O2`, over HTTP and
@@ -304,6 +305,22 @@ and sanitizer gates. The larger [Gloin stress driver](integrated/README.md)
 checks all three programs at one million records/samples with a 2 MiB soft stack
 limit, including rejection of one-over-limit inputs. It is required by `check-core`
 and installed/relocated package checks. See [the guide](../docs/integrated-examples.md).
+
+## Hash maps (0.2.1)
+
+Twelve `HashmapLibraryTest` cases cover growth, colliding probe chains and wraparound,
+backward-shift deletion, shared aliases, mutable lookup, clear, and iteration.
+Every integer width, boolean keys, counted-byte string keys, aggregate values,
+and stored null pointers run through JIT and native `-O0`/`-O2` execution.
+External LLVM execution verifies the shared runtime ABI. Allocation injection
+checks constructor/growth rollback and retry. Repeated replacement and churn
+through distinct keys within capacity must never allocate. Deletion tests skip
+entries at their home buckets while repairing wrapped chains; a 12,000-operation
+mixed workload checks every lookup against an independent array model. Bucket
+masking is checked against remainder across power-of-two capacities.
+Rejection cases cover unsupported keys, private storage/primitives, receiver
+mutability, and discarded results. The suite also checks canonical module identity,
+replaceable library source, malformed native signatures, and the packaged example.
 
 ## Timing and seeded randomness (SPEC-030g)
 

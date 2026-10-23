@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gloinc VERSION 0.2.0)
+project(gloinc VERSION 0.2.1)
 
 option(GLOIN_ENABLE_SANITIZERS "Instrument project C++ code with AddressSanitizer and UBSan" OFF)
 if(GLOIN_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -89,8 +89,8 @@ add_public_tablegen_target(GloinOpsIncGen)
 
 # LLVM-independent runtime. The JIT links it statically; external runners load
 # the shared variant, which is also shipped for emitted LLVM programs.
-add_library(gloin_runtime STATIC src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/fs_replace_runtime.cpp src/process_runtime.cpp src/process_limits_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
-add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/fs_replace_runtime.cpp src/process_runtime.cpp src/process_limits_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp)
+add_library(gloin_runtime STATIC src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/fs_replace_runtime.cpp src/process_runtime.cpp src/process_limits_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp src/hashmap_runtime.cpp)
+add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/fs_replace_runtime.cpp src/process_runtime.cpp src/process_limits_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp src/hashmap_runtime.cpp)
 foreach(runtime_target gloin_runtime gloin_runtime_shared)
     target_include_directories(${runtime_target} SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fast_float/include")
     target_link_libraries(${runtime_target} PUBLIC OpenSSL::SSL OpenSSL::Crypto)
@@ -297,6 +297,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/context_library_test.cpp
         tests/math_library_test.cpp
         tests/time_random_library_test.cpp
+        tests/hashmap_library_test.cpp
         tests/integrated_examples_test.cpp
         tests/module_test.cpp
         tests/ordinary_struct_test.cpp
@@ -364,8 +365,11 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     # a busy macOS host also exceeded the ordinary 30-second test timeout. Keep
     # each launch's 10-second deadline and allow the aggregate matrix to finish.
     set(GLOIN_ARITHMETIC_MATRIX_TIMEOUT 360)
+    # Hosted macOS package validation also hit a child compile timeout when
+    # this matrix competed with three other compiler processes. Serialize it
+    # on every platform without changing deadlines or assertions.
     gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_ARITHMETIC_MATRIX_TEST}"
-        PROPERTIES TIMEOUT ${GLOIN_ARITHMETIC_MATRIX_TIMEOUT} ${GLOIN_SIGNAL_MATRIX_PROPERTIES})
+        PROPERTIES TIMEOUT ${GLOIN_ARITHMETIC_MATRIX_TIMEOUT} RUN_SERIAL TRUE)
     # This matrix launches 143 compiler processes. Instrumented startup alone
     # took 120 seconds locally; keep headroom for the four-worker sanitizer gate.
     set(GLOIN_SIGNATURE_MATRIX_TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
@@ -474,7 +478,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         PROPERTIES TIMEOUT 90)
 
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure
@@ -510,7 +514,7 @@ install(TARGETS gloin_runtime gloin_runtime_shared
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES src/arena_runtime.h src/memory_runtime.h src/stdlib_runtime.h src/io_runtime.h src/net_runtime.h src/context_runtime.h src/math_runtime.h src/time_runtime.h src/random_runtime.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gloin)
+install(FILES src/arena_runtime.h src/memory_runtime.h src/stdlib_runtime.h src/io_runtime.h src/net_runtime.h src/context_runtime.h src/math_runtime.h src/time_runtime.h src/random_runtime.h src/hashmap_runtime.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gloin)
 install(DIRECTORY stdlib/ DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/stdlib
     FILES_MATCHING PATTERN "*.gloin")
 install(FILES scripts/install-llvm.sh scripts/install-llvm-linux.sh
@@ -529,7 +533,7 @@ install(FILES tests/fixtures/core/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/
 install(FILES tests/README.md DESTINATION ${CMAKE_INSTALL_DOCDIR}/tests)
 install(FILES third_party/fast_float/LICENSE-MIT third_party/fast_float/README.md third_party/fast_float/SHA256SUMS
     DESTINATION ${CMAKE_INSTALL_DOCDIR}/third_party/fast_float)
-install(FILES examples/switch_match.gloin examples/http_echo_server.gloin examples/tls_server.gloin examples/child_process.gloin examples/child_capture.gloin examples/child_options.gloin examples/symlinks.gloin examples/temporary_workspace.gloin examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/pointer_offsets.gloin examples/arena_lab.gloin examples/custom_arena.gloin examples/result_handling.gloin examples/network_http.gloin examples/http_client.gloin examples/http_stream.gloin examples/json.gloin examples/directory_walk.gloin examples/module_discovery.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/strip_nuls.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin examples/generic_structs.gloin examples/generic_functions.gloin examples/generic_methods.gloin examples/enums.gloin examples/slices.gloin examples/vector.gloin examples/fixed_vector.gloin
+install(FILES examples/switch_match.gloin examples/http_echo_server.gloin examples/tls_server.gloin examples/child_process.gloin examples/child_capture.gloin examples/child_options.gloin examples/symlinks.gloin examples/temporary_workspace.gloin examples/core_counter.gloin examples/hello_world.gloin examples/fixed_arrays.gloin examples/pointer_offsets.gloin examples/arena_lab.gloin examples/custom_arena.gloin examples/result_handling.gloin examples/network_http.gloin examples/http_client.gloin examples/http_stream.gloin examples/json.gloin examples/directory_walk.gloin examples/module_discovery.gloin examples/module_lab.gloin examples/standard_library.gloin examples/strings_lab.gloin examples/text_lab.gloin examples/numbers_lab.gloin examples/io_copy.gloin examples/io_filter.gloin examples/strip_nuls.gloin examples/file_tool.gloin examples/math_lab.gloin examples/simulation_lab.gloin examples/config_reader.gloin examples/statistics_tool.gloin examples/generic_structs.gloin examples/generic_functions.gloin examples/generic_methods.gloin examples/enums.gloin examples/slices.gloin examples/vector.gloin examples/fixed_vector.gloin examples/hashmap.gloin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/data DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples)
 install(DIRECTORY examples/modules DESTINATION ${CMAKE_INSTALL_DATADIR}/gloinc/examples

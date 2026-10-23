@@ -59,7 +59,7 @@ def pub struct GeneralArena {
         return storage;
     }
 
-    // Internal @vector bridge. The compiler supplies the layout for T and
+    // Internal collection bridge. The compiler supplies the layout for T and
     // checks capacity; user code cannot expose its uninitialized slots.
     def pub reserve_typed<T>(self: &GeneralArena, size: u64, alignment: u64) -> *u8 {
         __arena_require(self.state);
@@ -69,6 +69,14 @@ def pub struct GeneralArena {
         __arena_require(storage);
 
         return storage;
+    }
+
+    // Internal collection bridge with recoverable allocation failure. The
+    // caller checks capacity * sizeof(T) before requesting uninitialized slots.
+    def pub try_reserve_typed<T>(self: &GeneralArena, size: u64, alignment: u64) -> *u8 {
+        __arena_require(self.state);
+
+        return __arena_general_alloc(self.state, size, alignment);
     }
 
     // Variable-length storage is initialized to zero before it is exposed.

@@ -1,7 +1,8 @@
 # Language examples
 
-These sources match the 0.2.0 and its built-in result APIs. With a
+These sources match 0.2.1 and its built-in result APIs. With a
 published 0.1.0 compiler, use the examples bundled in that release or its tag.
+`hashmap.gloin` requires the 0.2.1 compiler and standard library.
 
 `core_counter.gloin` is a runnable core example, tested through the actual CLI.
 After building, run `./build/gloinc --jit examples/core_counter.gloin`: it exits 42
@@ -13,6 +14,7 @@ arguments to run successfully.
 
 | Files | Intended subject | Current follow-up |
 | --- | --- | --- |
+| `hashmap.gloin` | Arena hash maps (0.2.1) | Word counts, writable lookup, iteration, removal, and checked allocation. See [hash maps](../docs/hashmaps.md). |
 | `core_counter.gloin` | Scalar core execution | Verified by the CLI tests; broader runnable fixtures are in [core acceptance](../tests/fixtures/core/README.md). |
 | `hello_world.gloin` | Standard output | Runnable with SPEC-022/SPEC-023. |
 | `fixed_arrays.gloin` | Fixed arrays | Version 0.0.3: initializes, indexes, copies, updates, and sums a `[i32; 4]` array. See [the guide](../docs/fixed-arrays.md). |
