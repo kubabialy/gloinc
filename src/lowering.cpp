@@ -1577,11 +1577,27 @@ struct LowerGloinCorePass
             return;
         }
         const IntegerRepresentation representation{data_layout->isLittleEndian()};
-        const auto proofs = prove_gloin_ranges(getOperation());
+        auto proofs = prove_gloin_ranges(getOperation());
+        // This combines only floating operations, leaving the integer/address
+        // operations referenced by the proofs alive and unchanged.
         combine_gloin_float_checks(getOperation());
+        // Rewriting can erase a proven operation and allocate a new checked
+        // operation at the same address (notably exact-width arithmetic).
+        // Never let the new operation inherit the old operation's proof.
+        struct ProofListener : mlir::RewriterBase::Listener {
+            GloinRangeProofs &proofs;
+            explicit ProofListener(GloinRangeProofs &proofs) : proofs(proofs) {}
+            void notifyOperationErased(mlir::Operation *op) override {
+                proofs.arithmetic.erase(op);
+                proofs.bounds.erase(op);
+            }
+            void notifyOperationModified(mlir::Operation *op) override {
+                notifyOperationErased(op);
+            }
+        } listener(proofs);
         mlir::RewritePatternSet patterns(&getContext());
         populate_selection_lowering(patterns);
-        populate_packed_lowering(patterns);
+        populate_packed_lowering(patterns, data_layout->isLittleEndian());
         patterns.add<LowerCheckedIntegerBinary, LowerArrayElementAddress,
                      LowerSliceElementAddress>(&getContext(), proofs);
         patterns.add<LowerLoad, LowerStore, LowerArrayFill, LowerArenaFill,
@@ -1600,7 +1616,9 @@ struct LowerGloinCorePass
                  LowerPointerCompare, LowerSliceFromArray, LowerSliceFromPointer,
                  LowerSliceSubrange, LowerSliceLength, LowerStackAlloc, LowerFieldAddress,
                  LowerEnumConstant, LowerEnumCompare>(&getContext());
-        if (mlir::failed(mlir::applyPatternsGreedily(getOperation(), std::move(patterns))))
+        mlir::GreedyRewriteConfig config;
+        config.setListener(&listener);
+        if (mlir::failed(mlir::applyPatternsGreedily(getOperation(), std::move(patterns), config)))
             signalPassFailure();
         for (auto definition : llvm::make_early_inc_range(module.getOps<gloin::StructDefinitionOp>()))
             definition.erase();

@@ -174,6 +174,55 @@ TEST_F(PackedTest, NarrowValuesWorkThroughArithmeticArraysGenericsAndResults) {
     }
 }
 
+TEST_F(PackedTest, NarrowSignedArithmeticCannotInheritErasedUnsignedRangeProofs) {
+    std::string text = R"(
+        def packed struct(msb_first) P {
+            def mut prefix: u7, def mut wide: u64, def mut signed: i13,
+            def mut flags: u4, def sequence: be_u32, def check: le_u16, def tail: u3,
+        }
+    )";
+    // Lowering a proven unsigned operation frees its address. New exact-width
+    // operations must not inherit its proof when the allocator reuses that
+    // address. Multiple functions exercise reuse within a single compilation.
+    for (unsigned i = 0; i < 64; ++i)
+        text += "def changed" + std::to_string(i) + R"((p: &P) -> void {
+            p.prefix = p.prefix % 119 + 3;
+            p.wide = p.wide / 3 + 17;
+            p.signed = p.signed / 2;
+            p.flags = p.flags % 13 + 1;
+        })";
+    text += "def main() -> i32 {";
+    for (unsigned i = 0; i < 64; ++i) {
+        auto name = "p" + std::to_string(i);
+        text += "def mut " + name + R"(: P = P {
+            prefix: 0, wide: 9259542123273814144, signed: -4080,
+            flags: 1, sequence: 16843009, check: 257, tail: 0
+        }; changed)" +
+                std::to_string(i) + "(&" + name + "); if " + name +
+                ".signed != -2040 { return 1; }";
+    }
+    text += "return 42; }";
+    mlir::MLIRContext context;
+    auto compiled = compile_source(text, "proof-lifetime.gloin", context,
+                                   CompilationMode::Executable, CompilationOutput::LLVM);
+    ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+    unsigned signed_divisions = 0;
+    compiled.module->walk([&](mlir::LLVM::SDivOp op) {
+        if (op.getType().isInteger(13))
+            ++signed_divisions;
+    });
+    EXPECT_EQ(signed_divisions, 64u);
+    compiled.module->walk([&](mlir::LLVM::UDivOp op) { EXPECT_FALSE(op.getType().isInteger(13)); });
+    auto path = source(text);
+    expect_run(invoke({path}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        auto executable = directory + "/proof-lifetime";
+        auto built = invoke_raw({optimization, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
 TEST_F(PackedTest, PackedIrRetainsSchemaAndRejectsForgedOffsetsAndAddresses) {
     mlir::MLIRContext context;
     auto compiled = compile_source(R"(
@@ -262,12 +311,71 @@ TEST_F(PackedTest, CopiesStayBytewiseAndPackedAccessDoesNotDependOnTargetByteOrd
         unsigned copies = 0;
         lowered->walk([&](mlir::LLVM::MemmoveOp) { ++copies; });
         EXPECT_EQ(copies, 1u);
-        lowered->walk([&](mlir::LLVM::ByteSwapOp) {
-            ADD_FAILURE() << "byte-based access should not depend on host order";
+        auto copy = lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>("copy");
+        copy.walk([&](mlir::LLVM::ByteSwapOp) { ADD_FAILURE() << "copies must preserve bytes"; });
+        auto read = lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>("read");
+        unsigned swaps = 0;
+        read.walk([&](mlir::LLVM::ByteSwapOp) { ++swaps; });
+        EXPECT_EQ(swaps, little ? 1u : 0u);
+        read.walk([&](mlir::LLVM::LoadOp op) {
+            EXPECT_TRUE(op.getType().isInteger(32));
+            EXPECT_EQ(op.getAlignment(), 1u);
         });
-        lowered->walk([&](mlir::LLVM::LoadOp op) { EXPECT_TRUE(op.getType().isInteger(8)); });
-        lowered->walk(
-            [&](mlir::LLVM::StoreOp op) { EXPECT_TRUE(op.getValue().getType().isInteger(8)); });
+        auto write = lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>("write");
+        write.walk([&](mlir::LLVM::LoadOp op) {
+            EXPECT_TRUE(op.getType().isInteger(16));
+            EXPECT_EQ(op.getAlignment(), 1u);
+        });
+        write.walk([&](mlir::LLVM::StoreOp op) {
+            EXPECT_TRUE(op.getValue().getType().isInteger(16));
+            EXPECT_EQ(op.getAlignment(), 1u);
+        });
+    }
+}
+
+TEST_F(PackedTest, NineByteFieldsUseBoundedChunksWithExplicitTargetByteOrder) {
+    for (bool little : {false, true}) {
+        for (bool msb : {false, true}) {
+            SCOPED_TRACE(little);
+            SCOPED_TRACE(msb);
+            mlir::MLIRContext context;
+            auto compiled =
+                compile_source("def packed struct(" + std::string(msb ? "msb_first" : "lsb_first") +
+                                   ") Wide { def prefix: u7, def mut value: u64, } "
+                                   "def read(p: &const Wide) -> u64 { return p.value; } "
+                                   "def write(p: &Wide, value: u64) -> void { p.value = value; }",
+                               "wide.gloin", context);
+            ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+            auto layout = (*compiled.module)
+                              ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
+                              .getValue()
+                              .str();
+            layout[0] = little ? 'e' : 'E';
+            (*compiled.module)
+                ->setAttr("llvm.data_layout", mlir::StringAttr::get(&context, layout));
+            auto lowered = lower_to_llvm(std::move(compiled.module), *compiled.diagnostics);
+            ASSERT_TRUE(lowered) << errors(*compiled.diagnostics);
+            for (const auto *name : {"read", "write"}) {
+                auto function = lowered->lookupSymbol<mlir::LLVM::LLVMFuncOp>(name);
+                std::vector<unsigned> loads, stores;
+                unsigned swaps = 0;
+                function.walk([&](mlir::LLVM::LoadOp op) {
+                    loads.push_back(mlir::cast<mlir::IntegerType>(op.getType()).getWidth());
+                    EXPECT_EQ(op.getAlignment(), 1u);
+                });
+                function.walk([&](mlir::LLVM::StoreOp op) {
+                    stores.push_back(
+                        mlir::cast<mlir::IntegerType>(op.getValue().getType()).getWidth());
+                    EXPECT_EQ(op.getAlignment(), 1u);
+                });
+                function.walk([&](mlir::LLVM::ByteSwapOp) { ++swaps; });
+                EXPECT_EQ(loads, (std::vector<unsigned>{64, 8}));
+                bool writing = std::string(name) == "write";
+                EXPECT_EQ(stores,
+                          (writing ? std::vector<unsigned>{64, 8} : std::vector<unsigned>{}));
+                EXPECT_EQ(swaps, msb == little ? (writing ? 2u : 1u) : 0u);
+            }
+        }
     }
 }
 
@@ -284,7 +392,7 @@ TEST_F(PackedTest, FieldsAcrossBytesAndWordsStayInsideGuardPagesAndPreserveOther
     )";
     std::ostringstream cases;
     unsigned count = 0;
-    for (unsigned width : {1, 3, 7, 8, 9, 13, 31, 32, 33, 63, 64}) {
+    for (unsigned width : {1, 3, 7, 8, 9, 13, 17, 25, 31, 32, 33, 41, 49, 63, 64}) {
         for (unsigned offset = 0; offset < 8; ++offset) {
             for (bool msb : {false, true}) {
                 for (bool sign : {false, true}) {

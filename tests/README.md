@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1144 tests**:
+The current source definitions and CTest discovery contain **1156 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -20,6 +20,7 @@ The current source definitions and CTest discovery contain **1144 tests**:
 | VariablesTest | 17 |
 | NumericTest | 12 |
 | EndianTest | 6 |
+| PackedTest | 11 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
 | ControlFlowTest | 12 |
@@ -77,7 +78,7 @@ The current source definitions and CTest discovery contain **1144 tests**:
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 179 |
+| CoreAcceptanceTest | 180 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -606,16 +607,49 @@ parameters/returns, field writes, strings and empty records, literal evaluation
 order, signedness and floating fields, exact initialization, and loop-local
 storage. Negative cases cover unknown/duplicate/missing/private fields,
 recursive layouts, wrong nominal types, uninitialized reads/writes, immutable
-roots and nested fields, temporary receivers, invalid method receivers, and deferred packed
-forms. Context reuse checks prevent backend type names leaking between programs.
+roots and nested fields, temporary receivers, invalid method receivers, and legacy
+packed forms without explicit bit order. Context reuse checks prevent backend
+type names leaking between programs.
 Layout tests assert padding, field offsets, and ABI alignment using both the
 native layout and explicit 32/64-bit pointer layouts. An external LLVM runner
 independently executes an aggregate call and field mutation.
 
 The required gate and package checks include this suite and the maintained
 `run/ordinary_struct.gloin` source fixture. Prior ordinary-struct rejection
-fixtures now cover packed structs; invalid member access on a function remains
-an error. These updates preserve deferred-feature rejection coverage.
+fixtures now reject packed declarations without explicit bit order; invalid
+member access on a function remains an error.
+
+## Packed memory layouts and exact-width integers (0.3.0)
+
+Eleven `PackedTest` cases cover all native integer widths from 1 through 64,
+constant conversion bounds across every native/endian width and sign pair,
+runtime narrowing and arithmetic traps, generic arithmetic, arrays, and results.
+IR checks retain nominal packed schemas, reject forged offsets and ordinary
+scalar-field addresses, enforce the foreign ABI policy, and verify bytewise
+copies under synthetic little- and big-endian target layouts. Nine-byte field
+checks require bounded eight-byte/one-byte accesses with alignment one and the
+appropriate target-dependent byte swaps.
+
+A regression lowers 64 functions mixing proven unsigned arithmetic with signed
+`i13` division. It checks signed LLVM operations and JIT/native results so newly
+allocated operations cannot inherit proofs belonging to erased operations.
+
+Native guard-page tests compare 480 combinations of field width, starting bit,
+signedness, and record order against an independent per-bit C oracle. Each
+combination runs 70 inputs at both edges of a writable page, at `-O0` and `-O2`.
+These checks catch out-of-object memory accesses and changes to neighboring bits.
+
+The required core gate also runs `run/packed.gloin` in JIT and native modes. It
+exhausts all 65,536 `u13`/`u3` combinations in each bit order and checks six-byte
+stride, unaligned placement, nested and generic records, field updates, and
+representation preservation through copies, calls, result payloads, argument
+capture, and deferred mutations. The independent lab in
+`../gloin_examples/packed_lab` extends these checks with runtime binary input,
+schema conversion, and overlapping copies against a Python oracle.
+
+See the [packed layout contract](../docs/packed-layout.md) for supported field
+types and reference restrictions, and the [0.3.0 draft](../docs/release-0.3.0-draft.md)
+for measured results and remaining platform validation.
 
 ## Standard modules and output (SPEC-023)
 

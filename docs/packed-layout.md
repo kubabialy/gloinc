@@ -215,10 +215,18 @@ numeric/representation boundary. `gloin.packed_address` is restricted to
 byte-aligned aggregate fields. Verifiers check these operations against the
 nominal schema and reject using ordinary `gloin.field_address` for packed fields.
 
-`packed_ir.cpp` lowers scalar access into byte-sized segments, masks, and shifts.
-Each memory operation stays within the field's containing bytes with alignment
-one. A 64-bit field can span nine bytes. Construction zeroes fresh storage before
-writing fields; partial-byte writes preserve every bit outside the field.
+`packed_ir.cpp` lowers scalar memory access into bounded 1-, 2-, 4-, or 8-byte
+chunks, masks, and shifts. Each memory operation stays within the field's
+containing bytes with alignment one. Chunks swap bytes when the field's order
+differs from the target's. A 64-bit field spanning nine bytes uses an eight-byte
+chunk and one byte, without reading or writing beyond those nine bytes.
+
+Construction zeroes fresh storage before writing fields; masked writes preserve
+every bit outside the field. Fresh aggregate construction keeps direct byte
+encoding: LLVM splits its byte-array SSA representation into bytes, and wider
+temporary writes can leave redundant swaps. This distinction avoids that measured
+regression while accelerating access to materialized records. See the
+[packed performance record](packed-performance.md).
 Temporaries live in the function entry block rather than growing the stack on
 every loop iteration. LLVM may combine accesses when equivalent and safe.
 
@@ -238,7 +246,7 @@ Rebuild Gloin objects together; this internal convention is not a foreign ABI.
 
 The compiler's `PackedTest` suite and `run/packed.gloin` acceptance fixture check
 integer identities and bounds, exact bytes, storage copies, and malformed IR.
-Native guard-page tests use an independent C bit oracle, covering 352
+Native guard-page tests use an independent C bit oracle, covering 480
 width/offset/sign/order combinations at both `-O0` and `-O2`. The sibling packed
 lab supplies runtime binary inputs and uses a separate Python bit oracle. The
 following cases define the maintained regression coverage:
@@ -247,7 +255,7 @@ following cases define the maintained regression coverage:
   exact six bytes, decoded values, and unchanged sequence bytes.
 - Update each field independently over arbitrary initialized bytes. Check
   adjacent fields, unused tail bits, nested record tail bits, and canaries.
-- Cover widths 1, 3, 7, 8, 9, 13, 31, 32, 33, 63, and 64, signed boundaries,
+- Cover widths 1, 3, 7, 8, 9, 13, 17, 25, 31, 32, 33, 41, 49, 63, and 64, signed boundaries,
   every starting position within a byte, and fields crossing machine words.
 - Test every constructor width/sign direction at the source and destination
   bounds, including negative-to-unsigned and unsigned-to-signed conversions,
@@ -266,9 +274,9 @@ following cases define the maintained regression coverage:
   field writes preserve other bits; unaligned accesses make no stronger alignment
   claim than the schema permits; failing conversions survive optimization.
 
-Synthetic little- and big-endian module layouts check that packed access uses
-byte operations independent of host byte order. Execution evidence is currently
-from macOS ARM64; big-endian hardware execution is not claimed. The independent
+Synthetic little- and big-endian module layouts check bounded access widths,
+alignment one, and the byte swaps required to preserve field order. Execution
+evidence is currently from macOS ARM64; big-endian hardware execution is not claimed. The independent
 lab is in `../gloin_examples/packed_lab`; run it from the compiler checkout with:
 
 ```sh

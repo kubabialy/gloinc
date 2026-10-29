@@ -5,7 +5,8 @@
 
 // Internal, transient proofs over GIR after source layouts have been resolved.
 // Nothing in textual IR can request an unchecked operation. The lowering
-// patterns consume these sets immediately, before the analyzed operations die.
+// patterns consume these sets with a rewrite listener that invalidates entries
+// when analyzed operations change or die; operation addresses can be reused.
 // Analysis also versions eligible counted slice loops, retaining a checked
 // fallback. Arithmetic proofs include counted-loop increments and the guarded
 // unsigned strides/offsets of complete-group loops.

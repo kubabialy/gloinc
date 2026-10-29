@@ -5,6 +5,6 @@
 #include "mlir/IR/PatternMatch.h"
 
 mlir::LogicalResult verify_packed_definition(gloin::StructDefinitionOp definition);
-void populate_packed_lowering(mlir::RewritePatternSet &patterns);
+void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian);
 
 #endif

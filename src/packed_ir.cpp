@@ -5,6 +5,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "numeric.h"
 #include "llvm/ADT/DenseSet.h"
+#include <bit>
 #include <functional>
 
 namespace {
@@ -127,6 +128,8 @@ struct Access {
     mlir::PatternRewriter &rewriter;
     mlir::Location loc;
     mlir::Value base;
+    bool little;
+    bool combine_bytes = true;
 
     mlir::Value constant(mlir::Type type, uint64_t value) {
         return rewriter.create<mlir::arith::ConstantOp>(loc, rewriter.getIntegerAttr(type, value));
@@ -151,20 +154,38 @@ struct Access {
             return rewriter.create<mlir::arith::ExtUIOp>(loc, type, value);
         return rewriter.create<mlir::arith::TruncIOp>(loc, type, value);
     }
+    static uint64_t low_mask(unsigned bits) {
+        return llvm::APInt::getLowBitsSet(64, bits).getZExtValue();
+    }
+    // Consume a power-of-two number of bytes entirely inside the field's
+    // containing bytes. A 64-bit field crossing nine bytes uses 8 + 1, never
+    // an oversized access to a backing word. All accesses retain alignment one.
+    unsigned chunk_bits(const Field &field, uint64_t done) const {
+        if (!combine_bytes)
+            return 8;
+        auto remaining = ((field.offset + done) % 8 + field.bits - done + 7) / 8;
+        return 8 * std::bit_floor(remaining);
+    }
+    mlir::Value order(mlir::Value value, bool msb) {
+        if (!value.getType().isInteger(8) && msb == little)
+            return rewriter.create<mlir::LLVM::ByteSwapOp>(loc, value);
+        return value;
+    }
     mlir::Value read(const Field &field) {
         if (!field.scalar)
             return load(field.layout, field.offset / 8);
         mlir::Value value = constant(field.layout, 0);
         for (uint64_t done = 0; done < field.bits;) {
             auto bit = field.offset + done;
-            unsigned count = std::min<uint64_t>(field.bits - done, 8 - bit % 8);
-            unsigned physical = field.msb ? 8 - bit % 8 - count : bit % 8;
+            unsigned width = chunk_bits(field, done);
+            unsigned count = std::min<uint64_t>(field.bits - done, width - bit % 8);
+            unsigned physical = field.msb ? width - bit % 8 - count : bit % 8;
             unsigned numeric = field.msb ? field.bits - done - count : done;
-            auto byte = load(rewriter.getI8Type(), bit / 8);
+            auto word = order(load(rewriter.getIntegerType(width), bit / 8), field.msb);
             mlir::Value part = rewriter.create<mlir::arith::ShRUIOp>(
-                loc, byte, constant(byte.getType(), physical));
-            part = rewriter.create<mlir::arith::AndIOp>(
-                loc, part, constant(byte.getType(), (1u << count) - 1));
+                loc, word, constant(word.getType(), physical));
+            part = rewriter.create<mlir::arith::AndIOp>(loc, part,
+                                                        constant(word.getType(), low_mask(count)));
             part = resize(part, field.layout);
             part = rewriter.create<mlir::arith::ShLIOp>(loc, part, constant(field.layout, numeric));
             value = rewriter.create<mlir::arith::OrIOp>(loc, value, part);
@@ -185,23 +206,24 @@ struct Access {
         }
         for (uint64_t done = 0; done < field.bits;) {
             auto bit = field.offset + done;
-            unsigned count = std::min<uint64_t>(field.bits - done, 8 - bit % 8);
-            unsigned physical = field.msb ? 8 - bit % 8 - count : bit % 8;
+            unsigned width = chunk_bits(field, done);
+            unsigned count = std::min<uint64_t>(field.bits - done, width - bit % 8);
+            unsigned physical = field.msb ? width - bit % 8 - count : bit % 8;
             unsigned numeric = field.msb ? field.bits - done - count : done;
-            unsigned mask = ((1u << count) - 1) << physical;
+            uint64_t mask = low_mask(count) << physical;
             mlir::Value part = rewriter.create<mlir::arith::ShRUIOp>(
                 loc, value, constant(value.getType(), numeric));
-            part = resize(part, rewriter.getI8Type());
+            part = resize(part, rewriter.getIntegerType(width));
             part =
                 rewriter.create<mlir::arith::ShLIOp>(loc, part, constant(part.getType(), physical));
             part = rewriter.create<mlir::arith::AndIOp>(loc, part, constant(part.getType(), mask));
-            if (mask != 255) {
-                auto old = load(rewriter.getI8Type(), bit / 8);
+            if (mask != low_mask(width)) {
+                auto old = order(load(rewriter.getIntegerType(width), bit / 8), field.msb);
                 auto kept = rewriter.create<mlir::arith::AndIOp>(
-                    loc, old, constant(old.getType(), 255 ^ mask));
+                    loc, old, constant(old.getType(), low_mask(width) ^ mask));
                 part = rewriter.create<mlir::arith::OrIOp>(loc, kept, part);
             }
-            store(part, bit / 8);
+            store(order(part, field.msb), bit / 8);
             done += count;
         }
     }
@@ -219,12 +241,21 @@ mlir::Value temporary(mlir::PatternRewriter &rewriter, mlir::Location loc, mlir:
         loc, mlir::LLVM::LLVMPointerType::get(rewriter.getContext()), type, one, 1);
 }
 
-struct LowerLiteral : mlir::OpRewritePattern<gloin::PackedLiteralOp> {
-    using OpRewritePattern::OpRewritePattern;
+template <typename Op> struct PackedPattern : mlir::OpRewritePattern<Op> {
+    bool little;
+    PackedPattern(mlir::MLIRContext *context, bool little)
+        : mlir::OpRewritePattern<Op>(context), little(little) {}
+};
+
+struct LowerLiteral : PackedPattern<gloin::PackedLiteralOp> {
+    using PackedPattern::PackedPattern;
     mlir::LogicalResult matchAndRewrite(gloin::PackedLiteralOp op,
                                         mlir::PatternRewriter &rewriter) const override {
         auto storage = temporary(rewriter, op.getLoc(), op.getLayoutType());
-        Access access{rewriter, op.getLoc(), storage};
+        // Aggregate SSA storage is an array of bytes. LLVM SROA splits writes
+        // to this temporary back into bytes; wide encoding here can leave
+        // redundant swaps/extractions instead of the direct byte construction.
+        Access access{rewriter, op.getLoc(), storage, little, false};
         auto count = access.constant(rewriter.getI64Type(), *byte_size(op.getLayoutType()));
         rewriter.create<mlir::LLVM::MemsetOp>(
             op.getLoc(), storage, access.constant(rewriter.getI8Type(), 0), count, false);
@@ -234,41 +265,41 @@ struct LowerLiteral : mlir::OpRewritePattern<gloin::PackedLiteralOp> {
         return mlir::success();
     }
 };
-struct LowerExtract : mlir::OpRewritePattern<gloin::PackedExtractOp> {
-    using OpRewritePattern::OpRewritePattern;
+struct LowerExtract : PackedPattern<gloin::PackedExtractOp> {
+    using PackedPattern::PackedPattern;
     mlir::LogicalResult matchAndRewrite(gloin::PackedExtractOp op,
                                         mlir::PatternRewriter &rewriter) const override {
         auto storage = temporary(rewriter, op.getLoc(), op.getAggregate().getType());
-        Access access{rewriter, op.getLoc(), storage};
+        Access access{rewriter, op.getLoc(), storage, little};
         access.store(op.getAggregate(), 0);
         rewriter.replaceOp(op, access.read(*field_at(op, op.getSourceType(), op.getIndex())));
         return mlir::success();
     }
 };
-struct LowerLoad : mlir::OpRewritePattern<gloin::PackedLoadOp> {
-    using OpRewritePattern::OpRewritePattern;
+struct LowerLoad : PackedPattern<gloin::PackedLoadOp> {
+    using PackedPattern::PackedPattern;
     mlir::LogicalResult matchAndRewrite(gloin::PackedLoadOp op,
                                         mlir::PatternRewriter &rewriter) const override {
-        Access access{rewriter, op.getLoc(), op.getAddress()};
+        Access access{rewriter, op.getLoc(), op.getAddress(), little};
         rewriter.replaceOp(op, access.read(*field_at(op, op.getSourceType(), op.getIndex())));
         return mlir::success();
     }
 };
-struct LowerStore : mlir::OpRewritePattern<gloin::PackedStoreOp> {
-    using OpRewritePattern::OpRewritePattern;
+struct LowerStore : PackedPattern<gloin::PackedStoreOp> {
+    using PackedPattern::PackedPattern;
     mlir::LogicalResult matchAndRewrite(gloin::PackedStoreOp op,
                                         mlir::PatternRewriter &rewriter) const override {
-        Access access{rewriter, op.getLoc(), op.getAddress()};
+        Access access{rewriter, op.getLoc(), op.getAddress(), little};
         access.write(*field_at(op, op.getSourceType(), op.getIndex()), op.getValue());
         rewriter.eraseOp(op);
         return mlir::success();
     }
 };
-struct LowerAddress : mlir::OpRewritePattern<gloin::PackedAddressOp> {
-    using OpRewritePattern::OpRewritePattern;
+struct LowerAddress : PackedPattern<gloin::PackedAddressOp> {
+    using PackedPattern::PackedPattern;
     mlir::LogicalResult matchAndRewrite(gloin::PackedAddressOp op,
                                         mlir::PatternRewriter &rewriter) const override {
-        Access access{rewriter, op.getLoc(), op.getBase()};
+        Access access{rewriter, op.getLoc(), op.getBase(), little};
         rewriter.replaceOp(
             op, access.pointer(field_at(op, op.getSourceType(), op.getIndex())->offset / 8));
         return mlir::success();
@@ -378,7 +409,7 @@ mlir::LogicalResult gloin::PackedAddressOp::verify() {
     return emitOpError("requires a matching aggregate pointer without strengthening access");
 }
 
-void populate_packed_lowering(mlir::RewritePatternSet &patterns) {
+void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian) {
     patterns.add<LowerLiteral, LowerExtract, LowerLoad, LowerStore, LowerAddress>(
-        patterns.getContext());
+        patterns.getContext(), little_endian);
 }

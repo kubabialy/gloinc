@@ -17,6 +17,7 @@ release assets, and numbered guides will be updated when the release is cut.
 | Aggregate representation | Implemented: copies preserve all bytes, including padding; Gloin by-value arguments and returns retain that representation. |
 | GloinIR and LLVM lowering | Implemented: typed numeric SSA values, explicit conversion/copy operations, target-dependent scalar encoding, and explicit padding in internal LLVM aggregate layouts. |
 | Packed memory layouts | Implemented: explicit bit order, exact byte layout, endian-qualified byte fields, masked updates, and representation-preserving copies/calls. See the [packed layout contract](packed-layout.md). |
+| Packed access performance | Bounded word loads/stores with alignment one, field masks, and explicit target byte order. Construction keeps direct byte encoding. See the [measurement report](packed-performance.md). |
 | Exact-width integer values | Implemented: `u1`–`u64` and `i1`–`i64`, with arithmetic checked at their declared widths and separate native storage slots. |
 | Checked integer constructors | Implemented: `T(value)` permits width/sign changes with range checks; same-width/sign endian conversion remains a numeric identity. |
 | Validation | macOS ARM64 core, focused regressions, and independent endian and packed torture labs pass. Final release/platform/package validation remains pending. |
@@ -187,7 +188,7 @@ validation.
 | Endian regression lab | The million-comparison corpus and 272 native traps pass; the rejection matrix now has 226 cases because width/sign constructors are supported and checked for range. |
 
 The independent packed lab lives at `../gloin_examples/packed_lab`. Its Python
-oracle uses individual bits; the compiler lowers byte-sized segments. Raw inputs
+oracle uses individual bits; scalar lowering now uses bounded word-sized chunks. Raw inputs
 include arbitrary unused bits and 64-bit fields crossing machine-word boundaries.
 Reports record compiler/source hashes and output hashes. The compiler's core gate
 also includes `PackedTest` and `run/packed.gloin`, including generic packed methods,
@@ -196,6 +197,34 @@ arrays, malformed IR, and foreign ABI policy checks.
 ```sh
 python3 ../gloin_examples/packed_lab/verify.py --compiler build/gloinc
 ```
+
+## Packed optimization validation, 2026-10-29
+
+The performance follow-up to `c25c8f6` uses bounded 1-, 2-, 4-, or 8-byte field
+accesses with alignment one and explicit target byte swaps. Fresh construction
+retains byte encoding; aggregate copies retain representation-preserving copy
+operations. The [performance report](packed-performance.md) records paired native
+measurements against the original compiler and a C control, including raw samples,
+assembly, source/compiler hashes, uncertainty, and code-size tradeoffs.
+
+The independent packed lab exposed a range-proof lifetime bug: a newly allocated
+signed operation could reuse an erased unsigned operation's address and receive
+its unchecked unsigned-division shortcut. A rewrite listener now invalidates
+stale proofs. A regression checks signed LLVM division and JIT/native results
+across 64 functions, while existing floating-point optimization checks continue
+to pass.
+
+| Check on the optimized macOS ARM64 compiler | Result |
+| --- | --- |
+| Full `check-core` gate | 1,109/1,109 passed. |
+| Guard-page matrix | 480 layouts, 70 inputs at both page edges and `-O0`/`-O2`: 134,400 executions passed. |
+| Target-layout inspection | Bounded eight-byte/one-byte accesses for nine-byte fields; alignment one and correct swapping under synthetic little-/big-endian layouts. |
+| Packed torture lab | 2,880 frames per mode; 20,528,640 exact output bytes across JIT/`-O0`/`-O2`. |
+| Endian torture lab | 1,008,768 byte-sequence comparisons, 226 rejected programs, and 272 expected native traps passed. |
+
+The reproducible benchmark and saved evidence live in
+`../gloin_examples/packed_bench`. These are development results on Apple M2;
+other-platform and final release validation remain pending.
 
 ## Remaining release validation
 
