@@ -121,6 +121,11 @@ std::shared_ptr<Type> Sema::get_builtin_type(const std::string &name) {
     if (it != builtin_types.end()) {
         return it->second;
     }
+    if (auto type = resolve_core_type(name)) {
+        auto result = std::make_shared<PrimitiveType>(std::string(core_type_info(*type).name));
+        builtin_types[name] = result;
+        return result;
+    }
     return nullptr;
 }
 
@@ -902,7 +907,7 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
     if (recording) {
         if (const auto *call = dynamic_cast<const CallExpression *>(expr)) {
             bool handled = false;
-            auto type = check_endian_conversion(call, handled);
+            auto type = check_integer_conversion(call, handled);
             if (handled)
                 return type;
         }

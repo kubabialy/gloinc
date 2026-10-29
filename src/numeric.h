@@ -11,9 +11,37 @@
 // Language identities retain signedness even though MLIR uses signless integer storage.
 enum class ByteOrder { Native, Big, Little };
 enum class CoreType {
-    Void, Bool, I8, I16, I32, I64, U8, U16, U32, U64, F32, F64, String,
-    BeI8, BeI16, BeI32, BeI64, BeU8, BeU16, BeU32, BeU64,
-    LeI8, LeI16, LeI32, LeI64, LeU8, LeU16, LeU32, LeU64
+    Void,
+    Bool,
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F32,
+    F64,
+    String,
+    BeI8,
+    BeI16,
+    BeI32,
+    BeI64,
+    BeU8,
+    BeU16,
+    BeU32,
+    BeU64,
+    LeI8,
+    LeI16,
+    LeI32,
+    LeI64,
+    LeU8,
+    LeU16,
+    LeU32,
+    LeU64,
+    NativeSignedBase = 64,
+    NativeUnsignedBase = 128
 };
 struct CoreTypeInfo {
     CoreType id;
@@ -54,8 +82,10 @@ inline constexpr std::array core_types = {
     CoreTypeInfo{CoreType::LeU32, "le_u32", 32, true, false, ByteOrder::Little},
     CoreTypeInfo{CoreType::LeU64, "le_u64", 64, true, false, ByteOrder::Little},
 };
-inline const CoreTypeInfo &core_type_info(CoreType type) {
-    return core_types.at(static_cast<size_t>(type));
+const CoreTypeInfo &core_type_info(CoreType type);
+CoreType native_integer_type(unsigned bits, bool is_signed);
+inline unsigned integer_storage_bits(unsigned bits) {
+    return bits <= 8 ? 8 : bits <= 16 ? 16 : bits <= 32 ? 32 : 64;
 }
 
 // This is the selected release target, independent of the compiler process's pointer size.
@@ -70,6 +100,17 @@ inline std::optional<CoreType> resolve_core_type(std::string_view name, TargetIn
     for (const auto &type : core_types)
         if (type.name == name)
             return type.id;
+    if (name.size() >= 2 && name.size() <= 3 && (name[0] == 'u' || name[0] == 'i') &&
+        name[1] >= '1' && name[1] <= '9') {
+        unsigned bits = name[1] - '0';
+        if (name.size() == 3) {
+            if (name[2] < '0' || name[2] > '9')
+                return std::nullopt;
+            bits = bits * 10 + name[2] - '0';
+        }
+        if (bits <= 64)
+            return native_integer_type(bits, name[0] == 'i');
+    }
     return std::nullopt;
 }
 
@@ -77,6 +118,7 @@ struct ConstantValue {
     CoreType type;
     std::variant<llvm::APInt, llvm::APFloat, bool, std::string> value;
 };
+std::optional<ConstantValue> convert_integer_constant(const ConstantValue &value, CoreType target);
 
 const llvm::fltSemantics &float_semantics(CoreType type);
 std::optional<ConstantValue> parse_numeric_literal(std::string_view spelling, bool floating,

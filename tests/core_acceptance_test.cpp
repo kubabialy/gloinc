@@ -53,6 +53,16 @@ class CoreAcceptanceTest : public gloin_test::CliFixture {
 
 TEST_F(CoreAcceptanceTest, RunMinimal) { runs("run/minimal.gloin", "42"); }
 
+TEST_F(CoreAcceptanceTest, PackedBytesAndSpareBitsSurviveUpdatesCopiesAndCallsInAllModes) {
+    runs("run/packed.gloin", "42");
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/packed";
+        auto built = invoke_raw({optimization, "-o", executable, fixture("run/packed.gloin")});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+
 TEST_F(CoreAcceptanceTest, EndianBytesAndPaddingSurviveCopiesAndCallsInAllModes) {
     runs("run/endian.gloin", "42");
     for (const auto *optimization : {"-O0", "-O2"}) {
@@ -893,7 +903,7 @@ TEST_F(CoreAcceptanceTest, RejectChainedAssignment) {
 }
 
 TEST_F(CoreAcceptanceTest, RejectNumericCast) {
-    rejects("reject/numeric_cast.gloin", "same integer width and signedness");
+    rejects("reject/numeric_cast.gloin", "out of range");
 }
 
 TEST_F(CoreAcceptanceTest, RejectMalformedNumber) {
@@ -1054,8 +1064,8 @@ TEST_F(CoreAcceptanceTest, RejectDeferredTypeChar) {
     rejects("reject/deferred_type_char.gloin", "Unknown or unsupported core type");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredTypeI4) {
-    rejects("reject/deferred_type_i4.gloin", "Unknown or unsupported core type");
+TEST_F(CoreAcceptanceTest, RejectInvalidTypeI65) {
+    rejects("reject/invalid_type_i65.gloin", "Unknown or unsupported core type");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredTypeBeU128) {

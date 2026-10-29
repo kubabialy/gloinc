@@ -110,6 +110,9 @@ struct CheckedField {
 struct CheckedStruct {
     std::string name;
     std::vector<CheckedField> fields;
+    PackedBitOrder bit_order = PackedBitOrder::None;
+    std::vector<int64_t> bit_offsets;
+    uint64_t byte_size = 0;
 };
 struct ResolvedSymbol {
     SymbolId id;
@@ -134,7 +137,7 @@ struct SemanticData {
     std::unordered_map<const CallExpression *, std::pair<MemoryIntrinsic, ValueType>> memory_intrinsics;
     std::unordered_map<const CallExpression *, StandardPrimitive> standard_calls;
     std::unordered_set<const CallExpression *> error_constructors;
-    std::unordered_set<const CallExpression *> endian_conversions;
+    std::unordered_set<const CallExpression *> integer_conversions;
     // Typed allocation calls target a checked library layout method. true is try_alloc.
     std::unordered_map<const CallExpression *, bool> arena_allocations;
     std::unordered_set<const CallExpression *> arena_many_allocations;

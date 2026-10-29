@@ -723,14 +723,22 @@ std::unique_ptr<ExpressionStatement> GloinParser::parse_expression_statement_imp
 }
 
 std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed) {
-    if (packed)
-        require_extended("Packed structs");
     expect(GLOIN_TOKEN_STRUCT, "Expected 'struct'");
     std::unique_ptr<Identifier> backing;
+    PackedBitOrder bit_order = PackedBitOrder::None;
     if (packed && accept(GLOIN_TOKEN_LPAREN)) {
-        backing = parse_type();
-        expect(GLOIN_TOKEN_RPAREN, "Expected ')' after backing type");
+        if (current_token.literal == "msb_first" || current_token.literal == "lsb_first") {
+            bit_order = current_token.literal == "msb_first" ? PackedBitOrder::MsbFirst
+                                                             : PackedBitOrder::LsbFirst;
+            advance_token();
+        } else {
+            require_extended("Packed structs require msb_first or lsb_first bit order");
+            backing = parse_type();
+        }
+        expect(GLOIN_TOKEN_RPAREN, "Expected ')' after packed bit order");
     }
+    if (packed && bit_order == PackedBitOrder::None)
+        require_extended("Packed structs require explicit msb_first or lsb_first bit order");
     auto name = parse_name();
     auto generics = parse_generic_params();
     expect(GLOIN_TOKEN_LBRACE, "Expected '{' after struct name");
@@ -766,6 +774,7 @@ std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed
             auto type = parse_type();
             int offset = -1;
             if (accept(GLOIN_TOKEN_KEYWORD_AT)) {
+                require_extended("Explicit packed field offsets are not supported");
                 if (!packed)
                     fail("Field offsets require a packed struct");
                 if (current_token.type != GLOIN_TOKEN_NUMBER)
@@ -780,9 +789,11 @@ std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed
         }
     }
     expect(GLOIN_TOKEN_RBRACE, "Expected closing struct brace");
-    return std::make_unique<StructDefinition>(std::move(name), std::move(fields),
-                                              std::move(methods), packed, std::move(backing),
-                                              std::move(generics));
+    auto definition =
+        std::make_unique<StructDefinition>(std::move(name), std::move(fields), std::move(methods),
+                                           packed, std::move(backing), std::move(generics));
+    definition->bit_order = bit_order;
+    return definition;
 }
 
 std::unique_ptr<Statement> GloinParser::parse_enum_definition_impl() {

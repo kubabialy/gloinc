@@ -3,6 +3,8 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h" // Added for DialectAsmParser/Printer
+#include "numeric.h"
+#include "packed_ir.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -42,7 +44,7 @@ bool is_payloadless_enum_storage(mlir::Type type) {
 
 bool matches_storage(mlir::Type source, mlir::Type storage) {
   if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(source))
-    return storage.isSignlessInteger(integer.getWidth());
+      return storage.isSignlessInteger(integer_storage_bits(integer.getWidth()));
   if (mlir::isa<gloin::GloinPointerType>(source))
     return mlir::isa<mlir::LLVM::LLVMPointerType>(storage);
   if (auto array = mlir::dyn_cast<gloin::GloinArrayType>(source)) {
@@ -102,15 +104,18 @@ gloin::StructDefinitionOp struct_definition(mlir::Operation *operation,
 mlir::LogicalResult gloin::GloinIntegerType::verify(
     llvm::function_ref<mlir::InFlightDiagnostic()> error, unsigned width,
     gloin::Endianness order, gloin::IntegerSignedness signedness) {
-  if (width != 8 && width != 16 && width != 32 && width != 64)
-    return error() << "requires an 8, 16, 32 or 64-bit integer";
-  if (order != gloin::Endianness::Native && order != gloin::Endianness::Big &&
-      order != gloin::Endianness::Little)
-    return error() << "requires a supported byte order";
-  if (signedness != gloin::IntegerSignedness::Signed &&
-      signedness != gloin::IntegerSignedness::Unsigned)
-    return error() << "requires integer signedness";
-  return mlir::success();
+    if (width < 1 || width > 64 ||
+        (order != gloin::Endianness::Native && width != 8 && width != 16 && width != 32 &&
+         width != 64))
+        return error() << "requires a 1 through 64-bit native integer or 8, 16, 32 or 64-bit "
+                          "endian integer";
+    if (order != gloin::Endianness::Native && order != gloin::Endianness::Big &&
+        order != gloin::Endianness::Little)
+        return error() << "requires a supported byte order";
+    if (signedness != gloin::IntegerSignedness::Signed &&
+        signedness != gloin::IntegerSignedness::Unsigned)
+        return error() << "requires integer signedness";
+    return mlir::success();
 }
 
 bool gloin::canWeakenSourceValue(mlir::Type actual, mlir::Type requested) {
@@ -133,16 +138,16 @@ bool gloin::matchesSourceStorage(mlir::Type source, mlir::Type storage) {
 }
 
 mlir::LogicalResult StructDefinitionOp::verify() {
-  auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getLayoutType());
-  if (!record || record.isOpaque() ||
-      getFieldSourceTypes().size() != record.getBody().size())
-    return emitOpError("requires one source field type per struct layout field");
-  for (auto [source_field, layout_field] :
-       llvm::zip(getFieldSourceTypes(), record.getBody())) {
-    auto type = mlir::dyn_cast<mlir::TypeAttr>(source_field);
-    if (!type || !matches_storage(type.getValue(), layout_field))
-      return emitOpError("has a field source type incompatible with its layout");
-  }
+    if ((*this)->hasAttr("packed_order"))
+        return verify_packed_definition(*this);
+    auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getLayoutType());
+    if (!record || record.isOpaque() || getFieldSourceTypes().size() != record.getBody().size())
+        return emitOpError("requires one source field type per struct layout field");
+    for (auto [source_field, layout_field] : llvm::zip(getFieldSourceTypes(), record.getBody())) {
+        auto type = mlir::dyn_cast<mlir::TypeAttr>(source_field);
+        if (!type || !matches_storage(type.getValue(), layout_field))
+            return emitOpError("has a field source type incompatible with its layout");
+    }
   return mlir::success();
 }
 
@@ -331,6 +336,13 @@ mlir::LogicalResult ExactIntegerWidenOp::verify() {
 }
 
 mlir::LogicalResult CheckedIntegerBinaryOp::verify() {
+    if (auto width = (*this)->getAttrOfType<mlir::IntegerAttr>("gloin.logical_width")) {
+        auto type = mlir::dyn_cast<mlir::IntegerType>(getLhs().getType());
+        auto module = (*this)->getParentOfType<mlir::ModuleOp>();
+        if (!type || width.getInt() < 1 || width.getInt() >= type.getWidth() ||
+            (module && module->hasAttr("gloin.checked")))
+            return emitOpError("logical width is only valid on a lowered narrow integer operation");
+    }
   if (auto type = mlir::dyn_cast<gloin::GloinIntegerType>(getLhs().getType())) {
     if (type != getRhs().getType() || type != getResult().getType() ||
         getIsSigned() != (type.getSignedness() == gloin::IntegerSignedness::Signed))
@@ -341,10 +353,9 @@ mlir::LogicalResult CheckedIntegerBinaryOp::verify() {
     return mlir::success();
   }
   auto type = mlir::dyn_cast<mlir::IntegerType>(getLhs().getType());
-  if (!type || type != getRhs().getType() || type != getResult().getType() ||
-      (type.getWidth() != 8 && type.getWidth() != 16 && type.getWidth() != 32 &&
-       type.getWidth() != 64))
-    return emitOpError("requires matching supported integer operands and result");
+  if (!type || type != getRhs().getType() || type != getResult().getType() || type.getWidth() < 1 ||
+      type.getWidth() > 64)
+      return emitOpError("requires matching supported integer operands and result");
   auto kind = getKind();
   if (kind != "+" && kind != "-" && kind != "*" && kind != "/" && kind != "%")
     return emitOpError("has an unsupported integer operator");
@@ -763,41 +774,40 @@ mlir::LogicalResult CopyOp::verify() {
 }
 
 mlir::LogicalResult FieldAddressOp::verify() {
-  auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getStructType());
-  auto base = mlir::dyn_cast<gloin::GloinPointerType>(getBase().getType());
-  auto address = mlir::dyn_cast<gloin::GloinPointerType>(getAddress().getType());
-  bool typed_address = base && address &&
-                       base.getPointee() == getSourceType() &&
-                       address.getPointee() == getFieldSourceType() &&
-                       !base.getNullable() && !address.getNullable() &&
-                       (!base.getReadOnly() || address.getReadOnly()) && record &&
-                       !record.isOpaque() && getIndex() >= 0 &&
-                       static_cast<size_t>(getIndex()) < record.getBody().size() &&
-                       matches_storage(getFieldSourceType(), record.getBody()[getIndex()]);
-  bool layout_address = mlir::isa<mlir::LLVM::LLVMPointerType>(getBase().getType()) &&
-                        getAddress().getType() == getBase().getType();
-  if (!mlir::isa<gloin::GloinStructType>(getSourceType()) || !record ||
-      record.isOpaque() || getIndex() < 0 ||
-      static_cast<size_t>(getIndex()) >= record.getBody().size() ||
-      !matches_storage(getSourceType(), record) ||
-      !matches_storage(getFieldSourceType(), record.getBody()[getIndex()]) ||
-      (!typed_address && !layout_address))
-    return emitOpError("requires a valid struct field index and matching pointer types");
-  if (base || address) {
-    auto definition = struct_definition(getOperation(), getSourceType());
-    if (!definition)
-      return emitOpError("has no nominal struct definition for ") << getSourceType();
-    if (getStructType() != definition.getLayoutType())
-      return emitOpError("disagrees with its nominal struct definition layout for ")
-             << getSourceType();
-    auto expected =
-        mlir::cast<mlir::TypeAttr>(definition.getFieldSourceTypes()[getIndex()])
-            .getValue();
-    if (!canWeakenSourceValue(expected, getFieldSourceType()))
-      return emitOpError("disagrees with its nominal struct definition: field ")
-             << getIndex() << " of " << getSourceType() << " is " << expected
-             << ", but the address uses " << getFieldSourceType();
-  }
+    if (auto definition = struct_definition(getOperation(), getSourceType());
+        definition && definition->hasAttr("packed_order"))
+        return emitOpError("packed fields require packed access operations");
+    auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getStructType());
+    auto base = mlir::dyn_cast<gloin::GloinPointerType>(getBase().getType());
+    auto address = mlir::dyn_cast<gloin::GloinPointerType>(getAddress().getType());
+    bool typed_address = base && address && base.getPointee() == getSourceType() &&
+                         address.getPointee() == getFieldSourceType() && !base.getNullable() &&
+                         !address.getNullable() && (!base.getReadOnly() || address.getReadOnly()) &&
+                         record && !record.isOpaque() && getIndex() >= 0 &&
+                         static_cast<size_t>(getIndex()) < record.getBody().size() &&
+                         matches_storage(getFieldSourceType(), record.getBody()[getIndex()]);
+    bool layout_address = mlir::isa<mlir::LLVM::LLVMPointerType>(getBase().getType()) &&
+                          getAddress().getType() == getBase().getType();
+    if (!mlir::isa<gloin::GloinStructType>(getSourceType()) || !record || record.isOpaque() ||
+        getIndex() < 0 || static_cast<size_t>(getIndex()) >= record.getBody().size() ||
+        !matches_storage(getSourceType(), record) ||
+        !matches_storage(getFieldSourceType(), record.getBody()[getIndex()]) ||
+        (!typed_address && !layout_address))
+        return emitOpError("requires a valid struct field index and matching pointer types");
+    if (base || address) {
+        auto definition = struct_definition(getOperation(), getSourceType());
+        if (!definition)
+            return emitOpError("has no nominal struct definition for ") << getSourceType();
+        if (getStructType() != definition.getLayoutType())
+            return emitOpError("disagrees with its nominal struct definition layout for ")
+                   << getSourceType();
+        auto expected =
+            mlir::cast<mlir::TypeAttr>(definition.getFieldSourceTypes()[getIndex()]).getValue();
+        if (!canWeakenSourceValue(expected, getFieldSourceType()))
+            return emitOpError("disagrees with its nominal struct definition: field ")
+                   << getIndex() << " of " << getSourceType() << " is " << expected
+                   << ", but the address uses " << getFieldSourceType();
+    }
   return mlir::success();
 }
 
@@ -847,8 +857,18 @@ mlir::LogicalResult EndianConvertOp::verify() {
     return emitOpError("requires integer types with equal width and signedness");
   if ((getInput().getType() != source && !matches_storage(source, getInput().getType())) ||
       (getResult().getType() != target && !matches_storage(target, getResult().getType())))
-    return emitOpError("requires operands matching the declared integer types");
+      return emitOpError("requires operands matching the declared integer types");
   return mlir::success();
+}
+
+mlir::LogicalResult IntegerConvertOp::verify() {
+    auto source = mlir::dyn_cast<gloin::GloinIntegerType>(getSourceType());
+    auto target = mlir::dyn_cast<gloin::GloinIntegerType>(getTargetType());
+    if (!source || !target ||
+        (getInput().getType() != source && !matches_storage(source, getInput().getType())) ||
+        (getResult().getType() != target && !matches_storage(target, getResult().getType())))
+        return emitOpError("requires operands matching the declared integer types");
+    return mlir::success();
 }
 
 namespace {

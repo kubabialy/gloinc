@@ -108,11 +108,15 @@ std::optional<ConstantValue> Sema::evaluate_constant(const Expression *expressio
     if (auto found = recording->literals.find(expression); found != recording->literals.end())
         return found->second;
     if (const auto *call = dynamic_cast<const CallExpression *>(expression);
-        call && recording->endian_conversions.contains(call)) {
+        call && recording->integer_conversions.contains(call)) {
         auto value = evaluate_constant(call->arguments.front().get());
-        if (value)
-            value->type = type;
-        return value;
+        if (!value)
+            return std::nullopt;
+        auto converted = convert_integer_constant(*value, type);
+        if (!converted)
+            log_error("Integer conversion is out of range for " +
+                      std::string(core_type_info(type).name));
+        return converted;
     }
     if (const auto *boolean = dynamic_cast<const BooleanLiteral *>(expression))
         return ConstantValue{type, boolean->value};

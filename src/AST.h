@@ -509,12 +509,15 @@ struct StructField {
         : is_public(pub), name(std::move(n)), type(std::move(t)), offset(off) {}
 };
 
+enum class PackedBitOrder { None, MsbFirst, LsbFirst };
+
 struct StructDefinition : public Statement {
     bool is_public = false;
     std::unique_ptr<Identifier> name;
     std::vector<StructField> fields;
     std::vector<std::unique_ptr<FunctionDefinition>> methods;
     bool is_packed;
+    PackedBitOrder bit_order = PackedBitOrder::None;
     std::vector<std::string> generic_params;
     std::unique_ptr<Identifier> backing_type; // For packed structs
 
@@ -528,7 +531,9 @@ struct StructDefinition : public Statement {
     std::string to_string() const override {
         std::stringstream ss;
         ss << "def " << (is_public ? "pub " : "") << (is_packed ? "packed " : "") << "struct";
-        if (backing_type) {
+        if (bit_order != PackedBitOrder::None) {
+            ss << (bit_order == PackedBitOrder::MsbFirst ? "(msb_first)" : "(lsb_first)");
+        } else if (backing_type) {
             ss << "(" << backing_type->to_string() << ")";
         }
         ss << " " << name->to_string() << " { ";

@@ -153,6 +153,13 @@ struct LowerCaseTest : mlir::OpRewritePattern<gloin::CaseTestOp> {
                                                                   llvm::ArrayRef<int64_t>{0});
         }
         auto key = mlir::cast<mlir::IntegerAttr>(op.getKey());
+        if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(op.getSourceType())) {
+            auto width = mlir::cast<mlir::IntegerType>(subject.getType()).getWidth();
+            auto value = integer.getSignedness() == gloin::IntegerSignedness::Signed
+                             ? key.getValue().sextOrTrunc(width)
+                             : key.getValue().zextOrTrunc(width);
+            key = rewriter.getIntegerAttr(subject.getType(), value);
+        }
         auto constant = rewriter.create<mlir::arith::ConstantOp>(loc, key);
         rewriter.replaceOpWithNewOp<mlir::arith::CmpIOp>(op, mlir::arith::CmpIPredicate::eq,
                                                          subject, constant);

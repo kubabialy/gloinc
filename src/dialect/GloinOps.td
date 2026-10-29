@@ -18,6 +18,36 @@ def StructDefinitionOp : Gloin_Op<"struct_definition", [Symbol]> {
     let hasVerifier = 1;
 }
 
+def PackedLiteralOp : Gloin_Op<"packed_literal", [Pure]> {
+    let arguments = (ins Variadic<AnyType>:$fields, DenseI64ArrayAttr:$indices,
+                         TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+def PackedExtractOp : Gloin_Op<"packed_extract", [Pure]> {
+    let arguments = (ins AnyType:$aggregate, I64Attr:$index,
+                         TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+def PackedLoadOp : Gloin_Op<"packed_load", [MemoryEffects<[MemRead]>]> {
+    let arguments = (ins AnyType:$address, I64Attr:$index,
+                         TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+// Boundary bytes are read before the field's bits are replaced.
+def PackedStoreOp : Gloin_Op<"packed_store", [MemoryEffects<[MemRead, MemWrite]>]> {
+    let arguments = (ins AnyType:$address, AnyType:$value, I64Attr:$index,
+                         TypeAttr:$source_type);
+    let hasVerifier = 1;
+}
+def PackedAddressOp : Gloin_Op<"packed_address", [Pure]> {
+    let arguments = (ins AnyType:$base, I64Attr:$index, TypeAttr:$source_type);
+    let results = (outs AnyType:$address);
+    let hasVerifier = 1;
+}
+
 // Checked function boundaries retain source identity in func signatures while
 // the existing function bodies still work with their LLVM-compatible layout.
 def FromLayoutOp : Gloin_Op<"from_layout", [Pure]> {
@@ -117,6 +147,14 @@ def ExactIntegerWidenOp : Gloin_Op<"exact_int_widen", [Pure]> {
 
 def EndianConvertOp : Gloin_Op<"endian_convert", [Pure]> {
     let summary = "Preserve an integer's numeric value while changing its byte-order type";
+    let arguments = (ins AnyType:$input, TypeAttr:$source_type, TypeAttr:$target_type);
+    let results = (outs AnyType:$result);
+    let hasVerifier = 1;
+}
+
+// Failure is observable even if the resulting value is unused.
+def IntegerConvertOp : Gloin_Op<"integer_convert"> {
+    let summary = "Checked numeric integer conversion across width and signedness";
     let arguments = (ins AnyType:$input, TypeAttr:$source_type, TypeAttr:$target_type);
     let results = (outs AnyType:$result);
     let hasVerifier = 1;

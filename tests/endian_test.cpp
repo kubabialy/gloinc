@@ -47,8 +47,6 @@ TEST_F(EndianTest, RejectsImplicitMixingAndRepresentationReinterpretation) {
          {"def f(x: be_u32) -> le_u32 { return x; }", "def f(x: be_u32) -> u32 { return x; }",
           "def f(x: le_u32) -> u32 { return x; }",
           "def f(x: be_u32, y: le_u32) -> bool { return x == y; }",
-          "def f(x: be_u32) -> le_u16 { return le_u16(x); }",
-          "def f(x: be_u32) -> le_i32 { return le_i32(x); }",
           "def f(x: &be_u32) -> &le_u32 { return x; }",
           "def f(x: [be_u32]) -> [le_u32] { return x; }",
           "def f(x: &be_u32) -> le_u32 { return le_u32(x); }",

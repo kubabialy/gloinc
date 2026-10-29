@@ -19,6 +19,8 @@ The [0.3.0 draft](docs/release-0.3.0-draft.md) introduces
 and aggregate copies that preserve padding through Gloin calls. See the
 [development guide](docs/site/development/index.html); this feature is not
 included in the published 0.2.1 binaries.
+Development also implements [packed memory layouts](docs/packed-layout.md),
+native integer widths from 1 through 64 bits, and checked integer constructors.
 
 ## Get started
 
@@ -72,8 +74,8 @@ TLS need OpenSSL. See the [CLI reference](docs/cli.md) for all options.
   and pipes, JSON, nonblocking TCP, client/server TLS, and streaming HTTP/HTTPS.
 - **Tools:** `gloinfmt`, written in Gloin, formats files and checks source trees.
 
-Gloin is in early development and is not ready for production use. Enum payloads,
-packed structs and async/spawn remain unsupported.
+Gloin is in early development and is not ready for production use. Enum payloads
+and async/spawn remain unsupported. Packed layouts require the development compiler.
 Windows support is not planned; contributions are welcome.
 
 ## Documentation
@@ -112,7 +114,8 @@ failures; `check-core` is the required passing gate.
 ## Development and contributing
 
 The [0.3.0 draft](docs/release-0.3.0-draft.md) records the endianness feature,
-compatibility rules, completed development checks, and remaining release gates.
+packed layouts, compatibility rules, completed development checks, and
+remaining release gates.
 The [0.2.0 development record](docs/release-0.2.0-draft.md) preserves the earlier
 switch/match, `result<T>` migration, and compiler validation work. The
 [compiler validation record](docs/compiler-validation.md) documents correctness

@@ -136,6 +136,12 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
         }
         const auto &field = recording->structures.at(*base_type.structure)
                                 .fields.at(recording->field_indices.at(member));
+        if (take_address &&
+            recording->structures.at(*base_type.structure).bit_order != PackedBitOrder::None &&
+            !field.type.structure && !field.type.is_array()) {
+            log_error("Cannot take an ordinary reference to a packed scalar field");
+            return {};
+        }
         return {type, base.writable && field.is_mutable, base.addressable};
     }
     log_error(

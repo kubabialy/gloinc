@@ -1,8 +1,10 @@
 # Gloin 0.3.0 draft
 
-**Status: unreleased development draft.** The first included feature is
-first-class integer endianness, with representation-preserving aggregate copies
-and Gloin calls. This is a minor release because it adds source-language behavior.
+**Status: unreleased development draft.** First-class integer endianness, with
+representation-preserving aggregate copies and Gloin calls, is implemented.
+Packed memory layouts, exact-width integers, and checked integer constructors
+are implemented as the second feature.
+This is a minor release because it adds source-language behavior.
 The published baseline remains [0.2.1](release-notes-0.2.1.md); the compiler version,
 release assets, and numbered guides will be updated when the release is cut.
 
@@ -11,13 +13,53 @@ release assets, and numbered guides will be updated when the release is cut.
 | Area | Status |
 | --- | --- |
 | Endian-qualified integers | Implemented in the development working tree: distinct `be_` and `le_` signed/unsigned 8-, 16-, 32-, and 64-bit types. |
-| Explicit value conversion | Implemented: `le_u32(value)`, `be_u32(value)`, and native equivalents preserve the number and require the same width and signedness. |
+| Explicit value conversion | Implemented: integer constructors preserve the number when it fits the destination; out-of-range constants are rejected and runtime conversions trap. |
 | Aggregate representation | Implemented: copies preserve all bytes, including padding; Gloin by-value arguments and returns retain that representation. |
 | GloinIR and LLVM lowering | Implemented: typed numeric SSA values, explicit conversion/copy operations, target-dependent scalar encoding, and explicit padding in internal LLVM aggregate layouts. |
-| Validation | macOS ARM64 core, focused regressions, and the independent endian torture lab pass. Final release/platform/package validation remains pending. |
+| Packed memory layouts | Implemented: explicit bit order, exact byte layout, endian-qualified byte fields, masked updates, and representation-preserving copies/calls. See the [packed layout contract](packed-layout.md). |
+| Exact-width integer values | Implemented: `u1`–`u64` and `i1`–`i64`, with arithmetic checked at their declared widths and separate native storage slots. |
+| Checked integer constructors | Implemented: `T(value)` permits width/sign changes with range checks; same-width/sign endian conversion remains a numeric identity. |
+| Validation | macOS ARM64 core, focused regressions, and independent endian and packed torture labs pass. Final release/platform/package validation remains pending. |
 
-The [endianness contract](endianness.md) defines the complete behavior. The
+The [endianness contract](endianness.md) defines byte-order behavior. The
 [development guide](site/development/index.html#endianness) introduces the syntax.
+
+## Packed memory layouts
+
+Packed structs describe memory through named fields with explicit bitfield
+order, independently of a field's byte order:
+
+```gloin
+def packed struct(msb_first) Header {
+    def length: u13,
+    def flags: u3,
+    def sequence: be_u32,
+}
+```
+
+For `length = 0x1234`, `flags = 5`, and `sequence = 0x01020304`, the
+layout is exactly `91 A5 01 02 03 04`, with size six and alignment one. Selecting
+`lsb_first` changes the first two bytes to `34 B2`; the big-endian sequence bytes
+stay the same. `u13` and `u3` are integer value types with checked arithmetic,
+and `u16(value)` is an explicit checked numeric conversion.
+
+The [packed layout contract](packed-layout.md) defines bit placement, field
+eligibility, construction, updates, references, and calls. Endian fields and
+nested byte-backed aggregates must begin on byte boundaries; no implicit padding
+is inserted. Scalar field references are rejected. Native narrow integer slots
+retain their spare bits during aggregate copies, including Gloin calls.
+
+Packed storage uses byte arrays with explicit GloinIR field operations. Reads
+and masked writes stay inside the object's bytes with alignment one. Construction
+zeroes unused tail bits, while copies and field updates preserve existing bits.
+Arrays of bytes and packed records can be embedded; embedded arrays of endian
+scalars and sub-byte integers remain deferred.
+
+Internal aggregate arguments and results now use private memory slots. This
+fixes byte loss found in native AArch64 `-O0` calls carrying an array of packed
+records, and preserves captured values across later argument or deferred
+mutations. Rebuild Gloin objects with a matching compiler. Foreign by-value
+packed records and custom-width integers require an explicit adapter.
 
 ## First-class endianness
 
@@ -41,8 +83,9 @@ address order, `next` occupies `01 02 03 05`, while `little` occupies
   division, remainder, and signed-negation rules apply to the numeric values.
 - Mixing native, big-endian, or little-endian values requires explicit
   conversion, including assignments, comparisons, arguments, and returns.
-- `T(value)` evaluates its argument once and preserves the number. Width/sign
-  changes and floating conversions continue to use the named numeric APIs.
+- `T(value)` evaluates its argument once and preserves the number when it fits.
+  Width/sign changes perform checked value conversion; floating conversions
+  continue to use the named numeric APIs.
 - Arrays, slices, generic specializations, and typed pointers preserve byte-order
   identity. A value conversion does not reinterpret a pointer.
 - Integer size and alignment remain those of the corresponding native type.
@@ -126,6 +169,34 @@ The compiler regressions also exercise synthetic little- and big-endian module
 layouts. Execution evidence is from a little-endian host; big-endian hardware
 execution and cross-compilation support are not claimed.
 
+## Packed development validation, 2026-10-29
+
+These are local macOS ARM64 results on the development tree following the
+endianness commit `cefc070`. They do not constitute release or other-platform
+validation.
+
+| Check | Result |
+| --- | --- |
+| Full `check-core` gate | 1,107/1,107 passed, including the packed suite and acceptance fixture. |
+| Formatting and documentation | Gloin formatter and new C++ source formatting passed; nine HTML pages and their local links passed. |
+| Exact six-byte header | All 65,536 `u13`/`u3` combinations in each bit order; JIT and native `-O0`/`-O2`. |
+| Width/offset/sign/order matrix | 352 layouts against an independent per-bit C oracle; 70 inputs each, at both guard-page edges and both native optimization levels (98,560 executions). |
+| Narrow integer bounds and conversions | All 128 native width/sign types; boundary checks for every pair of native and endian-qualified types; unused-result and arithmetic traps at native `-O0`/`-O2`. |
+| Independent packed lab | 2,880 runtime input frames per mode; 6,842,880 exact bytes per mode, 20,528,640 bytes across JIT/`-O0`/`-O2`. |
+| Packed lab copy cases | Recursive calls, returns before deferred poisoning, arguments captured before later mutation, result payloads, aggregate arrays, schema conversion, masked updates, and all overlapping offsets 0–18 in both directions. |
+| Endian regression lab | The million-comparison corpus and 272 native traps pass; the rejection matrix now has 226 cases because width/sign constructors are supported and checked for range. |
+
+The independent packed lab lives at `../gloin_examples/packed_lab`. Its Python
+oracle uses individual bits; the compiler lowers byte-sized segments. Raw inputs
+include arbitrary unused bits and 64-bit fields crossing machine-word boundaries.
+Reports record compiler/source hashes and output hashes. The compiler's core gate
+also includes `PackedTest` and `run/packed.gloin`, including generic packed methods,
+arrays, malformed IR, and foreign ABI policy checks.
+
+```sh
+python3 ../gloin_examples/packed_lab/verify.py --compiler build/gloinc
+```
+
 ## Remaining release validation
 
 Before publishing 0.3.0, follow the existing
@@ -139,6 +210,9 @@ the final committed source:
 - Freeze the release scope, prepare the numbered 0.3.0 guide and release notes,
   update version metadata, and record the release revision and asset provenance.
 
-Packed structs, bit fields, custom-width/128-bit integers, endian-qualified
-floating types, automatic aggregate schema conversion, general FFI, and
-language-level threads/async/spawn are outside the current 0.3.0 scope.
+Packed structs, bitfields, exact-width integers, and checked integer constructors
+are included in the development implementation. Final release validation must
+cover them on every maintained target. Widths above 64 bits, endian-qualified
+sub-byte integers and floating types, automatic aggregate schema conversion,
+general FFI, and language-level
+threads/async/spawn remain outside the current 0.3.0 scope.

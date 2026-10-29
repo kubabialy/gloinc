@@ -1,6 +1,6 @@
 #include "sema.h"
 
-std::shared_ptr<Type> Sema::check_endian_conversion(const CallExpression *call, bool &handled) {
+std::shared_ptr<Type> Sema::check_integer_conversion(const CallExpression *call, bool &handled) {
     const auto *name = dynamic_cast<const Identifier *>(call->function.get());
     auto target = name ? resolve_core_type(name->value) : std::nullopt;
     if (!target && name)
@@ -11,20 +11,52 @@ std::shared_ptr<Type> Sema::check_endian_conversion(const CallExpression *call, 
     handled = true;
     const auto &destination = core_type_info(*target);
     if (!destination.is_integer || call->arguments.size() != 1) {
-        log_error("Endian conversion requires an integer type and exactly one argument");
+        log_error("Integer conversion requires an integer type and exactly one argument");
         return nullptr;
     }
     auto argument = check_expression(call->arguments.front().get(), *target);
     if (!argument)
         return nullptr;
     auto source = resolve_core_type(argument->to_string());
-    if (!source || !core_type_info(*source).is_integer ||
-        core_type_info(*source).bits != destination.bits ||
-        core_type_info(*source).is_signed != destination.is_signed) {
-        log_error("Endian conversion requires the same integer width and signedness");
+    if (!source || !core_type_info(*source).is_integer) {
+        log_error("Integer conversion requires an integer argument");
         return nullptr;
     }
-    recording->endian_conversions.insert(call);
+    recording->integer_conversions.insert(call);
+    if (core_type_info(*source).bits != destination.bits ||
+        core_type_info(*source).is_signed != destination.is_signed) {
+        auto known = [&](auto &&self, const Expression *expression) -> bool {
+            if (recording->literals.contains(expression))
+                return true;
+            if (const auto *identifier = dynamic_cast<const Identifier *>(expression)) {
+                auto binding = recording->bindings.find(identifier);
+                return binding != recording->bindings.end() &&
+                       recording->constants.contains(binding->second);
+            }
+            if (const auto *member = dynamic_cast<const MemberAccessExpression *>(expression))
+                return recording->module_constants.contains(member);
+            if (const auto *unary = dynamic_cast<const PrefixExpression *>(expression))
+                return self(self, unary->right.get());
+            if (const auto *binary = dynamic_cast<const InfixExpression *>(expression))
+                return self(self, binary->left.get()) && self(self, binary->right.get());
+            if (const auto *nested = dynamic_cast<const CallExpression *>(expression))
+                return recording->integer_conversions.contains(nested) &&
+                       self(self, nested->arguments.front().get());
+            return false;
+        };
+        if (known(known, call->arguments.front().get())) {
+            auto value = evaluate_constant(call->arguments.front().get());
+            if (!value)
+                return nullptr;
+            auto converted = convert_integer_constant(*value, *target);
+            if (!converted) {
+                log_error("Integer conversion is out of range for " +
+                          std::string(destination.name));
+                return nullptr;
+            }
+            recording->literals.insert_or_assign(call, std::move(*converted));
+        }
+    }
     return get_builtin_type(std::string(destination.name));
 }
 

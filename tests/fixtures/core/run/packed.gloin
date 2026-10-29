@@ -1,0 +1,177 @@
+import "@memory";
+
+def packed struct(msb_first) Header {
+    def mut length: u13,
+    def mut flags: u3,
+    def mut sequence: be_u32,
+}
+
+def packed struct(lsb_first) Little {
+    def mut length: u13,
+    def mut flags: u3,
+    def mut sequence: be_u32,
+}
+
+def packed struct(msb_first) Tail {
+    def mut value: i3,
+}
+
+def packed struct(lsb_first) Nested {
+    def mut head: Header,
+    def mut tail: Tail,
+    def mut bytes: [u8; 2],
+}
+
+def struct Slot {
+    def mut value: i13,
+}
+
+def packed struct(lsb_first) Bits<T> {
+    def mut number: T,
+
+    def set(self: &Bits<T>, value: T) -> void { self.number = value; }
+}
+
+def packed struct(msb_first) PacketArray {
+    def mut data: [Header; 2],
+}
+
+def identity<T>(value: T) -> T { return value; }
+
+def result_tail(value: Tail) -> result<Tail> { return value; }
+
+def signed_result(value: i13) -> result<i13> { return value; }
+
+def poison_after(value: Tail, raw: *u8) -> Tail {
+    defer poison(raw);
+
+    return value;
+}
+
+def poison(raw: *u8) -> void { *raw = 0; }
+
+def consume(value: Tail, ignored: i32) -> Tail { return value; }
+
+def poison_argument(raw: *u8) -> i32 { *raw = 0; return 0; }
+
+def main() -> i32 {
+    if memory.size_of<Header>() != 6 || memory.align_of<Header>() != 1 { return 1; }
+    if memory.size_of<Little>() != 6 || memory.size_of<Nested>() != 9 { return 2; }
+    if memory.size_of<u13>() != 2 || memory.size_of<u24>() != 4 { return 3; }
+
+    def raw: *u8 = memory.alloc(256, 16);
+    if raw == null { return 4; }
+    defer memory.free(raw);
+
+    *raw       = 0xCA;
+    *(raw + 7) = 0xFE;
+
+    def header: *Header = memory.place<Header>(raw + 1, 6, Header { length: 0, flags: 0, sequence: 0x01020304 });
+    def little: *Little = memory.place<Little>(raw + 9, 6, Little { length: 0, flags: 0, sequence: 0x01020304 });
+
+    if header == null || little == null { return 5; }
+
+    for def mut length: u32 = 0; length < 8192; length = length + 1 {
+        for def mut flags: u32 = 0; flags < 8; flags = flags + 1 {
+            header.length = u13(length);
+            header.flags  = u3(flags);
+            little.length = u13(length);
+            little.flags  = u3(flags);
+
+            def msb: u32 = length * 8 + flags;
+            def lsb: u32 = length + flags * 8192;
+
+            if *(raw + 1) != u8(msb / 256) || *(raw + 2) != u8(msb % 256) { return 6; }
+            if *(raw + 9) != u8(lsb % 256) || *(raw + 10) != u8(lsb / 256) { return 7; }
+            if header.length != u13(length) || little.flags != u3(flags) { return 8; }
+            if header.sequence != 0x01020304 || little.sequence != 0x01020304 { return 9; }
+        }
+    }
+
+    if *raw != 0xCA || *(raw + 7) != 0xFE { return 10; }
+    if *(raw + 3) != 1 || *(raw + 4) != 2 || *(raw + 5) != 3 || *(raw + 6) != 4 { return 11; }
+
+    header.sequence = be_u32(0xA1B2C3D4);
+
+    if *(raw + 3) != 0xA1 || *(raw + 6) != 0xD4 || header.flags != 7 { return 12; }
+
+    def tail: *Tail = memory.place<Tail>(raw + 32, 1, Tail { value: -1 });
+    def copy: *Tail = memory.place<Tail>(raw + 33, 1, Tail { value: 0 });
+
+    if tail == null || copy == null { return 13; }
+    if *(raw + 32) != 0xE0 { return 14; }
+
+    *(raw + 32) = 0xFF;
+    tail.value = -2;
+
+    if *(raw + 32) != 0xDF || tail.value != -2 { return 15; }
+
+    *copy = identity<Tail>(*tail);
+
+    if *(raw + 33) != 0xDF { return 16; }
+
+    *copy = poison_after(*tail, raw + 32);
+
+    if *(raw + 33) != 0xDF || *(raw + 32) != 0 { return 17; }
+
+    *(raw + 32) = 0xBF;
+    *copy       = consume(*tail, poison_argument(raw + 32));
+
+    if *(raw + 33) != 0xBF { return 18; }
+
+    def outcome: result<Tail> = result_tail(*copy);
+    if outcome.erroneous { return 19; }
+
+    *tail = outcome.value;
+
+    if *(raw + 32) != 0xBF { return 20; }
+
+    def nested: *Nested = memory.place<Nested>(raw + 41, 9, Nested { head: *header, tail: *tail, bytes: {0x12, 0x34} });
+    if nested == null { return 21; }
+
+    nested.head.flags = 2;
+    nested.tail.value = -1;
+    nested.bytes[1]   = 0x56;
+
+    if nested.head.flags != 2 || *(raw + 47) != 0xFF || *(raw + 49) != 0x56 { return 22; }
+
+    def pair: *[Header; 2] = memory.place<[Header; 2]>(raw + 65, 12, {*header; 2});
+    if pair == null { return 23; }
+
+    (*pair)[1].flags = 1;
+
+    if *(raw + 72) != 0xF9 || (*pair)[0].flags != 7 { return 24; }
+
+    def slot: *Slot       = memory.place<Slot>(raw + 96, 2, Slot { value: -1 });
+    def other_slot: *Slot = memory.place<Slot>(raw + 98, 2, Slot { value: 0 });
+
+    if slot == null || other_slot == null { return 25; }
+
+    *(raw + 96) = 0xFF;
+    *(raw + 97) = 0xFF;
+    *other_slot = identity<Slot>(*slot);
+
+    if *(raw + 98) != 0xFF || *(raw + 99) != 0xFF || other_slot.value != -1 { return 26; }
+
+    def signed: result<i13> = signed_result(slot.value);
+    if signed.erroneous { return 27; }
+    if signed.value != -1 || i16(signed.value) != -1 { return 28; }
+
+    def selected: u13 = match header.length { case 8191 => 13; default => 0; };
+    if selected != 13 { return 29; }
+
+    def mut generic: Bits<i13> = Bits<i13> { number: -1 };
+
+    generic.set(-2);
+
+    if generic.number != -2 { return 30; }
+
+    def packed_array: *PacketArray = memory.place<PacketArray>(raw + 128, 12, PacketArray { data: *pair });
+    if packed_array == null { return 31; }
+
+    packed_array.data[0].flags = 4;
+
+    if packed_array.data[0].flags != 4 || *(raw + 129) != 0xFC || (*pair)[0].flags != 7 { return 32; }
+
+    return 42;
+}
