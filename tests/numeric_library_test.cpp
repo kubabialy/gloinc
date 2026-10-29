@@ -4,6 +4,7 @@
 #include "support/cli_fixture.h"
 #include "support/external_runner.h"
 #include <filesystem>
+#include <set>
 #ifdef __APPLE__
 #include <dlfcn.h>
 #endif
@@ -105,6 +106,107 @@ TEST_F(NumericLibraryTest, EveryFormatterAndSignedZeroRoundTrip) {
         return 0;)")}),
                0);
 }
+TEST_F(NumericLibraryTest,
+       IntegerConstructorsCheckEveryWidthAndEndianBoundaryInEveryExecutionMode) {
+    // Each compiler invocation handles 1296 functions; retain headroom under
+    // parallel CTest load and sanitizer instrumentation.
+    timeout_seconds *= 6;
+    struct Integer {
+        std::string name;
+        bool is_signed;
+        unsigned width;
+        __int128 minimum, maximum;
+    };
+    std::vector<Integer> types;
+    for (bool sign : {true, false})
+        for (unsigned width = 1; width <= 64; ++width) {
+            __int128 extent = __int128{1} << (width - (sign ? 1 : 0));
+            types.push_back({std::string(sign ? "i" : "u") + std::to_string(width), sign, width,
+                             sign ? -extent : 0, extent - 1});
+            if (width == 8 || width == 16 || width == 32 || width == 64)
+                for (const auto *order : {"be_", "le_"})
+                    types.push_back(
+                        {std::string(order) + (sign ? "i" : "u") + std::to_string(width), sign,
+                         width, sign ? -extent : 0, extent - 1});
+        }
+    auto decimal = [](__int128 number) {
+        return number < 0 ? std::to_string(static_cast<int64_t>(number))
+                          : std::to_string(static_cast<uint64_t>(number));
+    };
+    std::string text = "import \"@std\"; import \"@status\"; import \"@strings\";\n";
+    std::string main = "def main() -> i32 {\n";
+    unsigned pairs = 0;
+    for (const auto &from : types) {
+        for (const auto &to : types) {
+            bool conventional =
+                (from.width == 8 || from.width == 16 || from.width == 32 || from.width == 64) &&
+                (to.width == 8 || to.width == 16 || to.width == 32 || to.width == 64);
+            bool native =
+                from.name.find('_') == std::string::npos && to.name.find('_') == std::string::npos;
+            if (!conventional &&
+                !(native && (from.width == 64 || to.width == 64 || from.width == to.width)))
+                continue;
+            auto name = to.name + "_from_" + from.name;
+            std::set<__int128> values;
+            for (auto boundary : {__int128{0}, from.minimum, from.maximum, to.minimum, to.maximum})
+                for (int delta : {-1, 0, 1}) {
+                    auto number = boundary + delta;
+                    if (number >= from.minimum && number <= from.maximum)
+                        values.insert(number);
+                }
+            std::string inputs, expected, valid;
+            for (auto number : values) {
+                bool fits = number >= to.minimum && number <= to.maximum;
+                inputs += "\"" + decimal(number) + "\",";
+                expected += decimal(fits ? number : 0) + ",";
+                valid += fits ? "true," : "false,";
+            }
+            auto count = std::to_string(values.size());
+            auto parsed_type = from.is_signed ? "i64" : "u64";
+            text += "def check_" + name + "() -> i32 {\n";
+            text += "def inputs: [string; " + count + "] = {" + inputs + "};\n";
+            text += "def expected: [" + to.name + "; " + count + "] = {" + expected + "};\n";
+            text += "def valid: [bool; " + count + "] = {" + valid + "};\n";
+            text += "for def mut i: u64 = 0; i < " + count + "; i = i + 1 {\n";
+            // Native parsing keeps the values dynamic even in optimized builds.
+            text += "def parsed: result<" + std::string(parsed_type) + "> = std.parse_" +
+                    parsed_type + "(inputs[i]); if parsed.erroneous { return 1; }\n";
+            text += "def input: result<" + from.name + "> = " + from.name +
+                    "(parsed.value); "
+                    "if input.erroneous { return 7; }\n";
+            text += "def converted: result<" + to.name + "> = " + to.name + "(input.value);\n";
+            text += R"(
+                    if valid[i] {
+                        if converted.erroneous { return 2; }
+                        if converted.value != expected[i] { return 3; }
+                    } else {
+                        if !converted.erroneous { return 4; }
+                        if converted.error.code != status.OVERFLOW || converted.error.os_error != 0 {
+                            return 5;
+                        }
+                        if !strings.equal(converted.error.message, "numeric conversion is out of range") {
+                            return 6;
+                        }
+                    }
+                )";
+            text += "} return 0; }\n";
+            main += "if check_" + name + "() != 0 { std.println(\"" + name +
+                    " failed\"); return 1; }\n";
+            ++pairs;
+        }
+    }
+    ASSERT_EQ(pairs, 1296u);
+    auto file = source(text + main + "return 0; }");
+    expect_run(invoke({file}), 0);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        SCOPED_TRACE(mode);
+        auto executable = directory + "/integer-matrix";
+        auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 20), 0);
+    }
+}
+
 TEST_F(NumericLibraryTest, AllFifteenNamedConversionsExecuteWithTheirDeclaredTypes) {
     expect_run(
         invoke({program(
@@ -242,6 +344,8 @@ TEST_F(NumericLibraryTest, AllocationFailureAndInvalidPrecisionAreRecoverable) {
         def checked: result<string> = std.to_string_u16(&memory,port);
         if !checked.erroneous { return 4; }
         memory.free();
+        if !succeeds<u8>(u8(255), 255) || !fails<u8>(u8(256), status.OVERFLOW)
+            || !succeeds<be_u32>(be_u32(42), 42) { return 5; }
         if !fails<string>(std.format_f32_fixed(&memory,1.0,19),status.INVALID) || !fails<string>(std.format_f64_fixed(&memory,1.0,4294967295),status.INVALID) { return 2; }
         if !succeeds<f64>(std.parse_f64("1.25"),1.25) || !succeeds<f64>(std.f64_from_i64_exact(42),42.0) || !strings.equal(std.format_bool(true),"true") { return 3; }
         return 0;)";
@@ -358,7 +462,7 @@ TEST_F(NumericLibraryTest, PackagedExampleAndGuideProgramsRunAsWritten) {
         pos = end + 3;
         ++blocks;
     }
-    EXPECT_EQ(blocks, 2u);
+    EXPECT_EQ(blocks, 3u);
 }
 
 TEST_F(NumericLibraryTest, JitRejectsIncorrectNumericRuntimeAbis) {
@@ -441,5 +545,101 @@ TEST_F(NumericLibraryTest, ScalarRoundingAndErrorCodesSurviveGIRJitAndNativeOutp
         const auto executable = directory + "/numeric-results";
         expect_success(invoke_raw({optimization, "-o", executable, file}), "");
         EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
+TEST_F(NumericLibraryTest, IntegerConstructorsHandleLiteralsGenericsAndEffectsAsResults) {
+    auto file = source(R"(
+        import "@status";
+        def counted(counter: &i32, value: i64) -> i64 { *counter = *counter + 1; return value; }
+        def converted<T, U>(value: U) -> result<T> {
+            def outcome: result<T> = T(value);
+            if outcome.erroneous { return outcome.error; }
+            return outcome.value;
+        }
+        def next(counter: &i32) -> i32 { *counter = *counter + 1; return *counter; }
+        def ordered(first: result<u8>, second: result<u8>) -> bool {
+            def a: u8 = match first { case value(n) => n; case error(e) => 0; };
+            def b: u8 = match second { case value(n) => n; case error(e) => 0; };
+            return a == 4 && b == 5;
+        }
+        def main() -> i32 {
+            def mut calls: i32 = 0;
+            def bad: result<u8> = u8(counted(&calls, -1));
+            if !bad.erroneous { return 1; }
+            if calls != 1 { return 1; }
+            if bad.error.code != status.OVERFLOW || bad.error.os_error != 0 { return 2; }
+            def good: result<u8> = u8(counted(&calls, 255));
+            if good.erroneous { return 3; }
+            if calls != 2 { return 3; }
+            if good.value != 255 { return 4; }
+            def too_big: result<u8> = u8(256);
+            if !too_big.erroneous { return 5; }
+            def negative: result<u8> = u8(-1);
+            if !negative.erroneous { return 5; }
+            def signed: result<i64> = i64(18446744073709551615);
+            if !signed.erroneous { return 5; }
+            def const source: u64 = 18446744073709551615;
+            def constant: result<i64> = i64(source);
+            if !constant.erroneous { return 6; }
+            def max: result<u64> = u64(18446744073709551615);
+            if max.erroneous { return 7; }
+            def min: result<i64> = i64(-9223372036854775808);
+            if min.erroneous { return 7; }
+            if max.value != 18446744073709551615 || min.value != -9223372036854775808 { return 8; }
+            def expression: result<u8> = u8(1000 - 745);
+            if expression.erroneous { return 9; }
+            if expression.value != 255 { return 9; }
+            def wire: result<be_u32> = converted<be_u32, u8>(good.value);
+            if wire.erroneous { return 10; }
+            def little: result<le_u32> = le_u32(wire.value);
+            if little.erroneous { return 11; }
+            if little.value != 255 { return 11; }
+            def narrow: result<u13> = converted<u13, le_u32>(little.value);
+            if narrow.erroneous { return 12; }
+            if narrow.value != 255 { return 12; }
+            def identity: result<u13> = u13(narrow.value);
+            if identity.erroneous { return 13; }
+            if identity.value != 255 { return 13; }
+            def chosen: u8 = match u8(counted(&calls, 42)) {
+                case value(number) => number;
+                case error(problem) => 0;
+            };
+            if chosen != 42 || calls != 3 { return 14; }
+            if !ordered(u8(next(&calls)), u8(next(&calls))) { return 15; }
+            if calls != 5 { return 16; }
+            return 0;
+        }
+    )");
+    expect_run(invoke({file}), 0);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        auto executable = directory + "/constructor-results";
+        auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 0);
+    }
+}
+
+TEST_F(NumericLibraryTest, IntegerConstructorsRequireHandledResultsAndIntegerSources) {
+    for (const std::string body :
+         {"u8(1);", "def r: result<u64> = u64(1);", "def x: u8 = u8(1);",
+          "def r: result<u8> = u8(1); return r.value;",
+          "def r: result<le_u32> = le_u32(1); return r.value;", "def r: result<u8> = u8(true);",
+          "def r: result<u8> = u8(1.0);", "def r: result<u8> = u8(\"1\");",
+          "def r: result<u8> = u8(u16(1));", "def r: result<u8> = u8();",
+          "def r: result<u8> = u8(1, 2);", "def const x: u8 = u8(1);",
+          "def const r: result<u8> = u8(1);", "def x: u8 = 256;", "def x: i13 = 4096;",
+          "def r: result<u8> = u8(-1); if r.erroneous { return r.value; } return 0;",
+          "def r: result<u64> = u64(1); if !r.erroneous { return r.error.code; } return 0;"}) {
+        SCOPED_TRACE(body);
+        auto file = source("def main() -> i32 { " + body + " return 0; }");
+        for (const std::vector<std::string> &mode :
+             {std::vector<std::string>{"--check"}, {"--emit-ir"}, {"--jit"}}) {
+            auto args = mode;
+            args.push_back(file);
+            auto result = invoke_raw(args);
+            EXPECT_NE(result.status, 0) << result.out;
+            EXPECT_NE(result.err.find("error:"), std::string::npos) << result.err;
+        }
     }
 }

@@ -992,17 +992,22 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         if (checked_data && checked_data->integer_conversions.contains(call)) {
             auto input = gen_expression(call->arguments.front().get());
             auto source = checked_data->types.at(call->arguments.front().get()).builtin();
-            auto target = checked_data->types.at(call).builtin();
-            if (core_type_info(source).bits != core_type_info(target).bits ||
-                core_type_info(source).is_signed != core_type_info(target).is_signed)
-                return builder.create<gloin::IntegerConvertOp>(
-                    location(), source_type(target), input,
-                    mlir::TypeAttr::get(integer_type(source)),
-                    mlir::TypeAttr::get(integer_type(target)));
-            return builder.create<gloin::EndianConvertOp>(
-                location(), source_type(target), input,
+            const auto &result = checked_data->types.at(call);
+            auto target = result.result_value->builtin();
+            auto error_type = ValueType::error();
+            auto message = as_source_value(
+                emit_constant(ConstantValue{CoreType::String,
+                                            std::string("numeric conversion is out of range")}),
+                source_type(CoreType::String));
+            auto error = builder.create<gloin::ErrorLiteralOp>(
+                location(), source_type(error_type), message,
+                emit_constant(ConstantValue{CoreType::I32, llvm::APInt(32, 3)}),
+                emit_constant(ConstantValue{CoreType::I32, llvm::APInt(32, 0)}),
+                mlir::TypeAttr::get(lower_type(error_type)));
+            return builder.create<gloin::IntegerConvertOp>(
+                location(), source_type(result), input, error,
                 mlir::TypeAttr::get(integer_type(source)),
-                mlir::TypeAttr::get(integer_type(target)));
+                mlir::TypeAttr::get(integer_type(target)), mlir::TypeAttr::get(lower_type(result)));
         }
         if (checked_data && checked_data->error_constructors.contains(call)) {
             auto message = gen_expression(call->arguments.front().get());

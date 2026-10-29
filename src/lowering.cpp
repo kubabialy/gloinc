@@ -411,6 +411,9 @@ struct LowerGloinSignaturesPass
         module.walk([](gloin::ErrorMessageOp message) {
             message.getMessage().setType(message.getLayoutType());
         });
+        module.walk([](gloin::IntegerConvertOp conversion) {
+            conversion.getResult().setType(conversion.getLayoutType());
+        });
         module.walk([](gloin::ResultSuccessOp success) {
             success.getValue().setType(success.getLayoutType());
         });
@@ -539,9 +542,25 @@ struct LowerIntegerConvert : mlir::OpRewritePattern<gloin::IntegerConvertOp> {
             rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sge, wide, low);
         auto below =
             rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sle, wide, high);
-        rewriter.create<gloin::AssertOp>(loc,
-                                         rewriter.create<mlir::arith::AndIOp>(loc, above, below));
-        rewriter.replaceOpWithNewOp<mlir::arith::TruncIOp>(op, op.getType(), wide);
+        auto within = rewriter.create<mlir::arith::AndIOp>(loc, above, below);
+        auto conditional =
+            rewriter.create<mlir::scf::IfOp>(loc, mlir::TypeRange{op.getType()}, within, true);
+        {
+            mlir::OpBuilder::InsertionGuard guard(rewriter);
+            rewriter.setInsertionPointToStart(&conditional.getThenRegion().front());
+            auto layout = mlir::cast<mlir::LLVM::LLVMStructType>(op.getLayoutType());
+            auto converted = rewriter.create<mlir::arith::TruncIOp>(loc, layout.getBody()[1], wide);
+            auto success = rewriter.create<gloin::ResultSuccessOp>(
+                loc, op.getType(), mlir::ValueRange{converted},
+                mlir::TypeAttr::get(op.getLayoutType()));
+            success->setAttr("gloin.payload_source", mlir::TypeAttr::get(target));
+            rewriter.create<mlir::scf::YieldOp>(loc, success.getResult());
+            rewriter.setInsertionPointToStart(&conditional.getElseRegion().front());
+            auto failure = rewriter.create<gloin::ResultFailureOp>(
+                loc, op.getType(), op.getOverflowError(), mlir::TypeAttr::get(op.getLayoutType()));
+            rewriter.create<mlir::scf::YieldOp>(loc, failure.getResult());
+        }
+        rewriter.replaceOp(op, conditional.getResults());
         return mlir::success();
     }
 };
@@ -1912,11 +1931,22 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                                ? actual.isSignlessInteger(integer.getWidth())
                                : actual == descriptor;
                 };
+                bool result_matches;
+                if (auto conversion = mlir::dyn_cast<gloin::IntegerConvertOp>(op)) {
+                    auto result = mlir::dyn_cast<gloin::GloinResultType>(conversion.getType());
+                    result_matches =
+                        result && matches(result.getValueType(), conversion.getTargetType()) &&
+                        mlir::isa<gloin::GloinErrorType>(conversion.getOverflowError().getType());
+                } else {
+                    result_matches =
+                        matches(op->getResult(0).getType(),
+                                op->getAttrOfType<mlir::TypeAttr>("target_type").getValue());
+                }
                 if (!matches(op->getOperand(0).getType(),
                              op->getAttrOfType<mlir::TypeAttr>("source_type").getValue()) ||
-                    !matches(op->getResult(0).getType(),
-                             op->getAttrOfType<mlir::TypeAttr>("target_type").getValue())) {
-                    op->emitError("checked endian conversion requires source-typed operands and result");
+                    !result_matches) {
+                    op->emitError(
+                        "checked integer conversion requires source-typed operands and result");
                     valid = false;
                 }
             }

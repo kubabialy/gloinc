@@ -119,6 +119,44 @@ decimal values of `0`, `30000`, and `65535`. Gloin does not implicitly widen
 
 ## Explicit conversion
 
+In the 0.3.0 development compiler, `T(value)` converts any integer directly to
+any other supported integer type. Every constructor returns `result<T>`, even
+safe widening, identity, and endian-only conversions. This includes `i1`–`i64`,
+`u1`–`u64`, and `be_`/`le_` types of 8, 16, 32, and 64 bits. No intermediate
+`i64` or named function for each source/destination pair is needed.
+
+An out-of-range input returns `status.OVERFLOW`, OS error 0, and
+`numeric conversion is out of range`; it never wraps or traps. Constructors
+allocate no heap storage and evaluate their argument once. Use `.erroneous` or
+`match` before accessing the payload. Unsupported source kinds such as strings,
+floats, booleans, and results are type errors, not conversion failures.
+
+```gloin
+import "@std";
+
+def main() -> i32 {
+    def value: u13 = 42;
+    def byte: result<u8> = u8(value);
+    if byte.erroneous {
+        std.println(byte.error.message);
+        return 1;
+    }
+    if byte.value != 42 { return 2; }
+    std.println("42");
+    return 0;
+}
+```
+
+`u8(256)` and `u8(-1)` return errors. Typed literals retain static checks:
+`def byte: u8 = 256` is invalid. Constructor inputs use their own source type;
+unanchored literal expressions use `i64`, or `u64` for larger positive literals.
+Use typed literals in `def const` initializers; constructors produce runtime
+results. Integer arithmetic retains its existing overflow traps.
+
+The named APIs below remain available with their existing signatures for
+compatibility. Floating conversions and text parsing still use these explicit
+APIs; the integer-constructor rule does not change their return types.
+
 Every conversion below is O(1) and performs no allocation. Fallible conversions
 return built-in results; failure has no readable numeric payload. Floating input
 must be finite; native nonfinite input gives `INVALID`. Successful floating zeros

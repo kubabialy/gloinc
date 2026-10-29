@@ -13,13 +13,13 @@ release assets, and numbered guides will be updated when the release is cut.
 | Area | Status |
 | --- | --- |
 | Endian-qualified integers | Implemented in the development working tree: distinct `be_` and `le_` signed/unsigned 8-, 16-, 32-, and 64-bit types. |
-| Explicit value conversion | Implemented: integer constructors preserve the number when it fits the destination; out-of-range constants are rejected and runtime conversions trap. |
+| Explicit value conversion | Implemented: integer constructors preserve the number when it fits the destination; every constructor returns `result<T>`, with `OVERFLOW` for out-of-range inputs. |
 | Aggregate representation | Implemented: copies preserve all bytes, including padding; Gloin by-value arguments and returns retain that representation. |
 | GloinIR and LLVM lowering | Implemented: typed numeric SSA values, explicit conversion/copy operations, target-dependent scalar encoding, and explicit padding in internal LLVM aggregate layouts. |
 | Packed memory layouts | Implemented: explicit bit order, exact byte layout, endian-qualified byte fields, masked updates, and representation-preserving copies/calls. See the [packed layout contract](packed-layout.md). |
 | Packed access performance | Bounded word loads/stores with alignment one, field masks, and explicit target byte order. Construction keeps direct byte encoding. See the [measurement report](packed-performance.md). |
 | Exact-width integer values | Implemented: `u1`–`u64` and `i1`–`i64`, with arithmetic checked at their declared widths and separate native storage slots. |
-| Checked integer constructors | Implemented: `T(value)` permits width/sign changes with range checks; same-width/sign endian conversion remains a numeric identity. |
+| Checked integer constructors | Implemented: `T(value)` always returns `result<T>`, including widening and endian-only changes; callers handle errors through `.erroneous` or `match`. |
 | Validation | macOS ARM64 core, focused regressions, and independent endian and packed torture labs pass. Final release/platform/package validation remains pending. |
 
 The [endianness contract](endianness.md) defines byte-order behavior. The
@@ -71,11 +71,14 @@ types whose storage order happens to match the host.
 ```gloin
 def big: be_u32 = 0x01020304;
 def next: be_u32 = big + 1;
-def little: le_u32 = le_u32(next);
-def native: u32 = u32(little);
+def converted: result<le_u32> = le_u32(next);
+if converted.erroneous { return converted.error; }
+def little: le_u32 = converted.value;
+def native: result<u32> = u32(little);
+if native.erroneous { return native.error; }
 ```
 
-`next`, `little`, and `native` all have numeric value `0x01020305`. In increasing
+`next`, `little`, and `native.value` all have numeric value `0x01020305`. In increasing
 address order, `next` occupies `01 02 03 05`, while `little` occupies
 `05 03 02 01`. The native representation follows the target.
 
@@ -85,7 +88,8 @@ address order, `next` occupies `01 02 03 05`, while `little` occupies
 - Mixing native, big-endian, or little-endian values requires explicit
   conversion, including assignments, comparisons, arguments, and returns.
 - `T(value)` evaluates its argument once and preserves the number when it fits.
-  Width/sign changes perform checked value conversion; floating conversions
+  It always returns `result<T>`, including widening and endian-only changes;
+  out-of-range inputs return `OVERFLOW`. Floating conversions
   continue to use the named numeric APIs.
 - Arrays, slices, generic specializations, and typed pointers preserve byte-order
   identity. A value conversion does not reinterpret a pointer.
@@ -110,8 +114,8 @@ native layout and are not automatically portable wire formats.
 ### Compiler representation and ABI
 
 Qualified scalars retain types such as `!gloin.int<32, Big, Unsigned>` in GloinIR.
-Their SSA values are numeric. `gloin.endian_convert` records the explicit value
-conversion and disappears during lowering. Scalar loads/stores and scalar
+Their SSA values are numeric. `gloin.integer_convert` produces a typed success
+or overflow result; guaranteed-success checks can disappear during optimization. Scalar loads/stores and scalar
 aggregate construction/extraction insert byte swaps only when required by the
 target data layout; one-byte values need none.
 
@@ -130,6 +134,45 @@ The implementation also fixes a layout-measurement cache lifetime bug: LLVM's
 struct-layout cache must not outlive the temporary LLVM context whose type
 addresses it records. A regression repeatedly measures original and explicitly
 padded layouts.
+
+## Integer constructor API update, 2026-10-29
+
+Every explicit integer constructor now returns `result<T>`, including identity,
+exact widening, and endian-only conversions. Range failures return `OVERFLOW`
+with OS error 0; unsupported source kinds remain type errors. This supersedes
+the trapping-constructor behavior in the earlier validation snapshots below.
+Typed literals retain compile-time range checks, and integer arithmetic retains
+its overflow traps. The existing named standard-library numeric APIs keep their
+signatures; no source/destination function matrix is added.
+
+GloinIR carries the conversion's result type, integer descriptors, diagnostic,
+and layout. Lowering constructs the success or error variant and encodes the
+successful payload according to its type. Checked results require the existing
+`.erroneous`/`match` handling before extraction. Safe conversions can optimize
+to ordinary machine values without changing the source return type.
+
+Validation on local macOS ARM64 with LLVM/MLIR 21.1.6:
+
+- The core run passed 1,111 of 1,113 cases. The two harness failures were a
+  10-second child compile timeout in the new large matrix and the old diagnostic
+  expectation for an unhandled conversion. Both passed targeted CTest reruns
+  after updating their timeout/expectation; compiler behavior was unchanged.
+- The new runtime matrix checks 1,296 source/destination pairs in JIT, `-O0`,
+  and `-O2`, including every native width 1–64, all conventional endian pairs,
+  signedness boundaries, identity conversions, and dynamic values. Additional
+  cases check literal failures, generic targets, evaluation order, allocation
+  independence, result handling, forged IR, and both synthetic target orders.
+- The migrated endian lab passed 35,915,376 exact output bytes, 226 rejection
+  cases, and 272 native arithmetic-trap executions. The packed lab passed
+  20,528,640 exact output bytes across the three execution modes.
+- The active packed benchmark now returns/checks conversion status in both Gloin
+  and its C reference. All 12 kernels passed output, input, and canary checks.
+  Optimized header decoding eliminates the safe conversion checks; encoding
+  retains the necessary bounds checks. Historical benchmark snapshots retain
+  their original source, ABI, and timing evidence.
+- The numeric guide programs, Gloin formatting, and nine HTML pages with local
+  links passed. The source catalog contains 1,160 tests. Final cross-platform,
+  sanitizer, and package release validation remains pending.
 
 ## Development validation, 2026-10-29
 

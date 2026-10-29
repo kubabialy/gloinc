@@ -140,7 +140,11 @@ caller-supplied arena. Three additional module-private primitives handle checked
 buffer views/stores/writes using the existing native copy ABI.
 
 SPEC-030c adds 29 concrete numeric APIs in `std.gloin`: six parsers, eight
-formatters, and fifteen explicit checked conversions. See the [numeric guide](../docs/numbers.md)
+formatters, and fifteen named numeric conversions. The 0.3.0 development compiler
+also provides `T(value)` for direct integer conversion, always returning
+`result<T>` with `OVERFLOW` on a range failure. Widening and endian-only
+constructors use the same result API; the existing named functions retain their
+signatures. See the [numeric guide](../docs/numbers.md)
 for every signature, usage example, range/rounding rule, failure, ownership, and
 cost. Numeric formatters allocate in the caller's arena and return recoverable
 results; boolean formatting returns static text. Parsing and conversion allocate

@@ -34,7 +34,8 @@ compiler emits these checked Gloin operations:
 | `gloin.abi_call` | Explicit checked call to a declared runtime ABI function with exact layout arguments and result | LLVM call after callee and signature verification |
 | `gloin.constant` | Exact checked scalar literal or folded constant value | `arith.constant` |
 | `gloin.exact_int_widen` | Exact widening of a supported integer with explicit source signedness | Sign or zero extension to the verified wider type |
-| `gloin.endian_convert` | Explicit same-width, same-signedness integer value conversion | Identity on numeric SSA values after source-type verification |
+| `gloin.endian_convert` | Internal same-width, same-signedness numeric identity | Identity on numeric SSA values after source-type verification |
+| `gloin.integer_convert` | Every source integer constructor produces `result<T>`, including widening and endian-only conversion | Compare against the destination range, then construct a success payload or `OVERFLOW` error; no conversion trap or heap allocation |
 | `gloin.copy` | Same-type materialized aggregate copy including padding, with overlap support | `llvm.memmove`, without decoding or encoding fields |
 | `gloin.assert` | Trap if a checked runtime precondition fails, including bounds, null, and arithmetic checks | Conditional branch and LLVM trap |
 | `gloin.checked_int_binary` | Signed/unsigned `+`, `-`, `*`, `/`, `%` with overflow and zero-divisor rules | Source-width LLVM overflow intrinsics or guarded division/remainder |

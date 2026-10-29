@@ -903,7 +903,7 @@ TEST_F(CoreAcceptanceTest, RejectChainedAssignment) {
 }
 
 TEST_F(CoreAcceptanceTest, RejectNumericCast) {
-    rejects("reject/numeric_cast.gloin", "out of range");
+    rejects("reject/numeric_cast.gloin", "Expected i32 but got result<i32>");
 }
 
 TEST_F(CoreAcceptanceTest, RejectMalformedNumber) {

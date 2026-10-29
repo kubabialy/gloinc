@@ -22,25 +22,34 @@ size, alignment, range, and signedness.
 ```gloin
 def big: be_u32 = 0x01020304;
 def next: be_u32 = big + 1;
-def little: le_u32 = le_u32(next);
-def native: u32 = u32(little);
+def converted: result<le_u32> = le_u32(next);
+if converted.erroneous { return converted.error; }
+def little: le_u32 = converted.value;
+def native: result<u32> = u32(little);
+if native.erroneous { return native.error; }
 ```
 
-All three results have numeric value `0x01020305`. In increasing address order,
+The successful values have numeric value `0x01020305`. In increasing address order,
 `next` occupies bytes `01 02 03 05`, and `little` occupies `05 03 02 01`.
 The native representation follows the selected target.
 
 `T(value)` is an explicit integer value conversion. It requires exactly one
-integer argument. It preserves the number when that number fits the destination;
-out-of-range constants are rejected and runtime conversions trap. Same-width/sign
-conversions change only the byte-order type and cannot fail. Identity conversions
-are allowed. A constructor never reverses the numeric bits or reinterprets a
-pointer. Floating conversions still use the existing named numeric APIs.
-Generic type parameters may name the target.
+integer argument and always returns `result<T>`, including identity, widening,
+and same-width endian conversions. Success preserves the numeric value; a value
+outside the destination range returns `OVERFLOW` (code 3), OS error 0, and
+`numeric conversion is out of range`. This applies equally to literal and runtime
+inputs. Check `.erroneous` or use `match` before extracting the payload. Unhandled
+results are compile-time errors. No conversion wraps, saturates, reinterprets a
+pointer, or swaps numeric bits. Generic type parameters may name the target.
+Floating conversions keep the existing named numeric APIs.
 
-Literals take their contextual type, including in constructors, and retain the
-existing range checks. Constant initializers can use these conversions.
-Arguments are evaluated once, and runtime evaluation order is unchanged.
+Typed literals retain contextual range checking: `def x: u8 = 256` is invalid,
+whereas `u8(256)` produces an error result. Constructor inputs are checked
+independently of the destination. Unanchored integer literal expressions use
+`i64`, or `u64` when a positive literal needs that range; typed operands supply
+their existing arithmetic context. Literals outside the supported 64-bit ranges
+remain invalid. Constants use typed literals, not result-valued constructors.
+Arguments are evaluated once in the existing left-to-right evaluation order.
 
 Arithmetic operands must have identical types. Arithmetic retains that type;
 comparisons produce `bool`. Existing checked overflow, division, remainder, and
@@ -85,13 +94,14 @@ of 8/16/32/64 bits continue to use MLIR's signless integer types with semantic
 signedness retained by the frontend and checked operations. Native narrow types
 use `!gloin.int<N, Native, Signed/Unsigned>` and separate logical width from storage.
 
-`gloin.endian_convert` records both complete integer descriptors, including
-`Native` for a native endpoint. Its verifier requires equal widths and
-signedness. Checked compilation also requires source-typed operands and results.
-The operation disappears when source types are lowered: both endpoints already
-represent the same number. Width/sign-changing constructors instead use
-`gloin.integer_convert`, whose range-check failure remains observable even when
-the result is unused.
+`gloin.integer_convert` records the source and destination integer descriptors,
+a `result<T>` type, its layout, and the overflow diagnostic. Its verifier checks
+these together; checked compilation requires source-typed inputs and results.
+Lowering compares the mathematical value against both destination bounds, then
+constructs a success or error result. Success payloads use the destination's
+representation, including byte order and narrow-integer spare bits. Conversion
+is pure; evaluating the input retains its effects. Guaranteed-success checks can
+be removed by optimization while the source API remains `result<T>`.
 
 Scalar representation changes become LLVM byte swaps only when the declared
 order differs from the module's target data layout. One-byte values need no

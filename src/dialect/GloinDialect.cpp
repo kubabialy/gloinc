@@ -865,9 +865,19 @@ mlir::LogicalResult IntegerConvertOp::verify() {
     auto source = mlir::dyn_cast<gloin::GloinIntegerType>(getSourceType());
     auto target = mlir::dyn_cast<gloin::GloinIntegerType>(getTargetType());
     if (!source || !target ||
-        (getInput().getType() != source && !matches_storage(source, getInput().getType())) ||
-        (getResult().getType() != target && !matches_storage(target, getResult().getType())))
-        return emitOpError("requires operands matching the declared integer types");
+        (getInput().getType() != source && !matches_storage(source, getInput().getType())))
+        return emitOpError("requires an input matching the declared integer source type");
+    mlir::Type payload = target;
+    if (target.getEndianness() == gloin::Endianness::Native &&
+        target.getWidth() == integer_storage_bits(target.getWidth()))
+        payload = mlir::IntegerType::get(getContext(), target.getWidth());
+    auto result = gloin::GloinResultType::get(getContext(), payload);
+    auto error = gloin::GloinErrorType::get(getContext());
+    if (!matches_storage(result, getLayoutType()) ||
+        (getResult().getType() != result && getResult().getType() != getLayoutType()) ||
+        (getOverflowError().getType() != error &&
+         !matches_storage(error, getOverflowError().getType())))
+        return emitOpError("requires a matching integer result layout and overflow error");
     return mlir::success();
 }
 

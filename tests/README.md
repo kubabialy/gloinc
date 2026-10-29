@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1156 tests**:
+The current source definitions and CTest discovery contain **1160 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -19,7 +19,7 @@ The current source definitions and CTest discovery contain **1156 tests**:
 | ScopeTest | 11 |
 | VariablesTest | 17 |
 | NumericTest | 12 |
-| EndianTest | 6 |
+| EndianTest | 7 |
 | PackedTest | 11 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
@@ -49,7 +49,7 @@ The current source definitions and CTest discovery contain **1156 tests**:
 | StandardLibraryTest | 26 |
 | StringLibraryTest | 20 |
 | TextLibraryTest | 19 |
-| NumericLibraryTest | 16 |
+| NumericLibraryTest | 19 |
 | NumericRuntimeTest | 16 |
 | IoLibraryTest | 18 |
 | IoRuntimeTest | 14 |
@@ -184,6 +184,10 @@ ctest --test-dir build -R '^GloinFormatterSmoke\.' --output-on-failure
 
 Its aggregate limit remains 90 seconds. The repository style gate is
 `build/gloinfmt --check .`.
+
+The 1,296-pair integer-constructor matrix compiles one large program in three
+modes. Its child deadlines are six times the ordinary CLI limit, and its CTest
+limit is 120 seconds on macOS or 480 seconds on Linux/sanitizer builds.
 
 Compiler CTest cases have a 30-second timeout on ordinary macOS builds and
 120 seconds on Linux or sanitizer builds. Linux trap cases take longer under
@@ -435,11 +439,14 @@ also run against installed and relocated packages.
 
 ## Numeric text and conversion (SPEC-030c)
 
-Sixteen `NumericLibraryTest` cases execute the public numeric APIs, recoverable failures,
+Nineteen `NumericLibraryTest` cases execute the public numeric APIs, recoverable failures,
 exact/rounded/truncated conversion choices, signed zero, arena allocation failure,
+and fallible integer constructors across 1,296 native/endian type pairs in JIT,
+`-O0`, and `-O2`, including all widths 1–64, dynamic boundary inputs, error
+diagnostics, literal failures, generic targets, and single evaluation,
 invalid-precision preflight, source type/privacy checks, reserved runtime-name
 collisions, malformed native ABIs, and external LLVM execution. The statistics
-example and both complete [guide](../docs/numbers.md) programs run verbatim against
+example and all three complete [guide](../docs/numbers.md) programs run verbatim against
 normal, installed, and relocated compilers.
 
 Sixteen LLVM-independent `NumericRuntimeTest` cases check integer limits, counted
@@ -623,7 +630,8 @@ member access on a function remains an error.
 
 Eleven `PackedTest` cases cover all native integer widths from 1 through 64,
 constant conversion bounds across every native/endian width and sign pair,
-runtime narrowing and arithmetic traps, generic arithmetic, arrays, and results.
+recoverable runtime narrowing failures and arithmetic traps, generic arithmetic,
+arrays, and results.
 IR checks retain nominal packed schemas, reject forged offsets and ordinary
 scalar-field addresses, enforce the foreign ABI policy, and verify bytewise
 copies under synthetic little- and big-endian target layouts. Nine-byte field

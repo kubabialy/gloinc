@@ -73,17 +73,49 @@ def main() -> i32 {
 
     for def mut length: u32 = 0; length < 8192; length = length + 1 {
         for def mut flags: u32 = 0; flags < 8; flags = flags + 1 {
-            header.length = u13(length);
-            header.flags  = u3(flags);
-            little.length = u13(length);
-            little.flags  = u3(flags);
+            def converted_1: result<u13> = u13(length);
+            if converted_1.erroneous { return 90; }
+
+            header.length = converted_1.value;
+
+            def converted_2: result<u3> = u3(flags);
+            if converted_2.erroneous { return 90; }
+
+            header.flags = converted_2.value;
+
+            def converted_3: result<u13> = u13(length);
+            if converted_3.erroneous { return 90; }
+
+            little.length = converted_3.value;
+
+            def converted_4: result<u3> = u3(flags);
+            if converted_4.erroneous { return 90; }
+
+            little.flags = converted_4.value;
 
             def msb: u32 = length * 8 + flags;
             def lsb: u32 = length + flags * 8192;
 
-            if *(raw + 1) != u8(msb / 256) || *(raw + 2) != u8(msb % 256) { return 6; }
-            if *(raw + 9) != u8(lsb % 256) || *(raw + 10) != u8(lsb / 256) { return 7; }
-            if header.length != u13(length) || little.flags != u3(flags) { return 8; }
+            def converted_5: result<u8> = u8(msb % 256);
+            if converted_5.erroneous { return 90; }
+
+            def converted_6: result<u8> = u8(msb / 256);
+            if converted_6.erroneous { return 90; }
+            if *(raw + 1) != converted_6.value || *(raw + 2) != converted_5.value { return 6; }
+
+            def converted_7: result<u8> = u8(lsb / 256);
+            if converted_7.erroneous { return 90; }
+
+            def converted_8: result<u8> = u8(lsb % 256);
+            if converted_8.erroneous { return 90; }
+            if *(raw + 9) != converted_8.value || *(raw + 10) != converted_7.value { return 7; }
+
+            def converted_9: result<u3> = u3(flags);
+            if converted_9.erroneous { return 90; }
+
+            def converted_10: result<u13> = u13(length);
+            if converted_10.erroneous { return 90; }
+            if header.length != converted_10.value || little.flags != converted_9.value { return 8; }
             if header.sequence != 0x01020304 || little.sequence != 0x01020304 { return 9; }
         }
     }
@@ -91,7 +123,10 @@ def main() -> i32 {
     if *raw != 0xCA || *(raw + 7) != 0xFE { return 10; }
     if *(raw + 3) != 1 || *(raw + 4) != 2 || *(raw + 5) != 3 || *(raw + 6) != 4 { return 11; }
 
-    header.sequence = be_u32(0xA1B2C3D4);
+    def converted_11: result<be_u32> = be_u32(0xA1B2C3D4);
+    if converted_11.erroneous { return 90; }
+
+    header.sequence = converted_11.value;
 
     if *(raw + 3) != 0xA1 || *(raw + 6) != 0xD4 || header.flags != 7 { return 12; }
 
@@ -155,7 +190,10 @@ def main() -> i32 {
 
     def signed: result<i13> = signed_result(slot.value);
     if signed.erroneous { return 27; }
-    if signed.value != -1 || i16(signed.value) != -1 { return 28; }
+
+    def converted_12: result<i16> = i16(signed.value);
+    if converted_12.erroneous { return 90; }
+    if signed.value != -1 || converted_12.value != -1 { return 28; }
 
     def selected: u13 = match header.length { case 8191 => 13; default => 0; };
     if selected != 13 { return 29; }

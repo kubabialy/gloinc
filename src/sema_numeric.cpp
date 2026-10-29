@@ -14,7 +14,33 @@ std::shared_ptr<Type> Sema::check_integer_conversion(const CallExpression *call,
         log_error("Integer conversion requires an integer type and exactly one argument");
         return nullptr;
     }
-    auto argument = check_expression(call->arguments.front().get(), *target);
+    if (checking_constant) {
+        log_error(
+            "Integer constructors return result<T>; use a typed literal in a constant initializer");
+        return nullptr;
+    }
+    // Conversion checks the source value, not a literal coerced to the destination.
+    // Unanchored literal expressions use i64, or u64 when a positive literal
+    // needs its full range. Typed operands continue to anchor their own arithmetic.
+    auto needs_unsigned = [&](auto &&self, const Expression *expression) -> bool {
+        if (const auto *literal = dynamic_cast<const IntegerLiteral *>(expression)) {
+            std::string error;
+            return !parse_numeric_literal(literal->literal, false, CoreType::I64, false, error);
+        }
+        if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expression)) {
+            if (prefix->op == "-" && dynamic_cast<const IntegerLiteral *>(prefix->right.get()))
+                return false;
+            return self(self, prefix->right.get());
+        }
+        if (const auto *binary = dynamic_cast<const InfixExpression *>(expression))
+            return self(self, binary->left.get()) || self(self, binary->right.get());
+        return false;
+    };
+    const auto *input = call->arguments.front().get();
+    auto context = numeric_anchor(input);
+    if (!context)
+        context = needs_unsigned(needs_unsigned, input) ? CoreType::U64 : CoreType::I64;
+    auto argument = check_expression(input, context);
     if (!argument)
         return nullptr;
     auto source = resolve_core_type(argument->to_string());
@@ -23,41 +49,7 @@ std::shared_ptr<Type> Sema::check_integer_conversion(const CallExpression *call,
         return nullptr;
     }
     recording->integer_conversions.insert(call);
-    if (core_type_info(*source).bits != destination.bits ||
-        core_type_info(*source).is_signed != destination.is_signed) {
-        auto known = [&](auto &&self, const Expression *expression) -> bool {
-            if (recording->literals.contains(expression))
-                return true;
-            if (const auto *identifier = dynamic_cast<const Identifier *>(expression)) {
-                auto binding = recording->bindings.find(identifier);
-                return binding != recording->bindings.end() &&
-                       recording->constants.contains(binding->second);
-            }
-            if (const auto *member = dynamic_cast<const MemberAccessExpression *>(expression))
-                return recording->module_constants.contains(member);
-            if (const auto *unary = dynamic_cast<const PrefixExpression *>(expression))
-                return self(self, unary->right.get());
-            if (const auto *binary = dynamic_cast<const InfixExpression *>(expression))
-                return self(self, binary->left.get()) && self(self, binary->right.get());
-            if (const auto *nested = dynamic_cast<const CallExpression *>(expression))
-                return recording->integer_conversions.contains(nested) &&
-                       self(self, nested->arguments.front().get());
-            return false;
-        };
-        if (known(known, call->arguments.front().get())) {
-            auto value = evaluate_constant(call->arguments.front().get());
-            if (!value)
-                return nullptr;
-            auto converted = convert_integer_constant(*value, *target);
-            if (!converted) {
-                log_error("Integer conversion is out of range for " +
-                          std::string(destination.name));
-                return nullptr;
-            }
-            recording->literals.insert_or_assign(call, std::move(*converted));
-        }
-    }
-    return get_builtin_type(std::string(destination.name));
+    return std::make_shared<ResultType>(get_builtin_type(std::string(destination.name)));
 }
 
 std::shared_ptr<Type> Sema::check_numeric_literal(const Expression *expression) {

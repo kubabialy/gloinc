@@ -18,10 +18,16 @@ std::string diagnostics(const Diagnostics &errors) {
 TEST_F(EndianTest, ArithmeticAndValueConversionsRetainTheirTypes) {
     mlir::MLIRContext context;
     auto compiled = compile_source(R"(
-        def convert(value: be_u32) -> le_u32 { return le_u32(value + 1); }
+        def convert(value: be_u32) -> result<le_u32> {
+            def converted: result<le_u32> = le_u32(value + 1);
+            if converted.erroneous { return converted.error; }
+            return converted.value;
+        }
         def constant() -> u64 {
-            def const value: be_u64 = be_u64(le_u64(18446744073709551615));
-            return u64(value);
+            def const value: be_u64 = 18446744073709551615;
+            def converted: result<u64> = u64(value);
+            if converted.erroneous { return 0; }
+            return converted.value;
         }
     )",
                                    "endian.gloin", context);
@@ -36,7 +42,10 @@ TEST_F(EndianTest, ArithmeticAndValueConversionsRetainTheirTypes) {
         EXPECT_EQ(type, op.getRhs().getType());
         ++arithmetic;
     });
-    compiled.module->walk([&](gloin::EndianConvertOp) { ++conversions; });
+    compiled.module->walk([&](gloin::IntegerConvertOp op) {
+        EXPECT_TRUE(mlir::isa<gloin::GloinResultType>(op.getType()));
+        ++conversions;
+    });
     EXPECT_EQ(arithmetic, 1u);
     EXPECT_EQ(conversions, 2u);
     EXPECT_TRUE(mlir::succeeded(mlir::verify(*compiled.module)));
@@ -88,8 +97,9 @@ TEST_F(EndianTest, LoweringUsesTargetByteOrderAndConversionsDoNotSwapValues) {
     }
     mlir::MLIRContext context;
     auto compiled =
-        compile_source("def convert(x: be_u32) -> le_u32 { return le_u32(x); }", "endian.gloin",
-                       context, CompilationMode::Module, CompilationOutput::LLVM);
+        compile_source("def convert(x: be_u32) -> le_u32 { def r: result<le_u32> = le_u32(x); if "
+                       "r.erroneous { return 0; } return r.value; }",
+                       "endian.gloin", context, CompilationMode::Module, CompilationOutput::LLVM);
     ASSERT_TRUE(compiled.success()) << diagnostics(*compiled.diagnostics);
     compiled.module->walk(
         [&](mlir::LLVM::ByteSwapOp) { ADD_FAILURE() << "value conversion swapped numeric bits"; });
@@ -160,10 +170,11 @@ TEST_F(EndianTest, GIRRejectsUnsupportedWidthsAndForgedIntegerOperations) {
         EXPECT_FALSE(mlir::parseSourceString<mlir::ModuleOp>("module { " + body + " }", &context));
     }
     mlir::MLIRContext context;
-    auto compiled = compile_source("def convert(x: be_u32) -> le_u32 { return le_u32(x); }",
+    auto compiled = compile_source("def convert(x: be_u32) -> le_u32 { def r: result<le_u32> = "
+                                   "le_u32(x); if r.erroneous { return 0; } return r.value; }",
                                    "conversion.gloin", context);
     ASSERT_TRUE(compiled.success());
-    compiled.module->walk([&](gloin::EndianConvertOp conversion) {
+    compiled.module->walk([&](gloin::IntegerConvertOp conversion) {
         mlir::OpBuilder builder(conversion);
         auto layout = builder.create<gloin::ToLayoutOp>(conversion.getLoc(), builder.getI32Type(),
                                                         conversion.getInput());
@@ -198,4 +209,52 @@ TEST_F(EndianTest, GIRRejectsUnsupportedWidthsAndForgedIntegerOperations) {
     Diagnostics errors;
     EXPECT_FALSE(lower_to_llvm(std::move(foreign), errors));
     EXPECT_NE(diagnostics(errors).find("foreign ABI"), std::string::npos);
+}
+
+TEST_F(EndianTest, FallibleConversionsVerifyResultTypesAndEncodeForBothTargets) {
+    for (const std::string type : {"be_u32", "le_u32"}) {
+        for (bool little : {false, true}) {
+            SCOPED_TRACE(type + (little ? " little target" : " big target"));
+            mlir::MLIRContext context;
+            auto compiled = compile_source(
+                "def convert(value: u64) -> result<" + type + "> { def r: result<" + type +
+                    "> = " + type + "(value); if r.erroneous { return r.error; } return r.value; }",
+                "conversion.gloin", context);
+            ASSERT_TRUE(compiled.success()) << diagnostics(*compiled.diagnostics);
+            auto layout = (*compiled.module)
+                              ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
+                              .getValue()
+                              .str();
+            layout[0] = little ? 'e' : 'E';
+            (*compiled.module)
+                ->setAttr("llvm.data_layout", mlir::StringAttr::get(&context, layout));
+            auto lowered = lower_to_llvm(std::move(compiled.module), *compiled.diagnostics);
+            ASSERT_TRUE(lowered) << diagnostics(*compiled.diagnostics);
+            unsigned swaps = 0;
+            lowered->walk([&](mlir::LLVM::ByteSwapOp) { ++swaps; });
+            // Construct the conversion result, extract its scalar, then wrap the return.
+            // LLVM optimization may cancel the intermediate encode/decode pair.
+            EXPECT_EQ(swaps, (type.starts_with("le_") != little) ? 3u : 0u);
+            lowered->walk([&](mlir::LLVM::CallOp call) {
+                if (call.getCallee())
+                    EXPECT_EQ(call.getCallee()->find("trap"), llvm::StringRef::npos);
+            });
+        }
+    }
+    for (bool erase_source : {false, true}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(
+            "def convert(x: u64) -> result<be_u32> { def r: result<be_u32> = be_u32(x); "
+            "if r.erroneous { return r.error; } return r.value; }",
+            "forged.gloin", context);
+        ASSERT_TRUE(compiled.success());
+        compiled.module->walk([&](gloin::IntegerConvertOp conversion) {
+            if (erase_source)
+                conversion.getResult().setType(conversion.getLayoutType());
+            else
+                conversion.setTargetType(gloin::GloinIntegerType::get(
+                    &context, 32, gloin::Endianness::Little, gloin::IntegerSignedness::Unsigned));
+        });
+        EXPECT_FALSE(lower_to_llvm(std::move(compiled.module), *compiled.diagnostics));
+    }
 }

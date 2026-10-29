@@ -14,8 +14,8 @@ status and the [endianness contract](endianness.md) for byte-order types.
 - `u13` and `u3` are real integer value types. Arithmetic checks their actual
   widths, including when a value is outside a packed struct.
 - Integer constructors such as `u16(value)` perform explicit value conversion.
-  Out-of-range constant conversions are rejected; out-of-range runtime
-  conversions trap. They do not silently truncate or reinterpret signedness.
+  Every constructor returns `result<T>`; out-of-range inputs return `OVERFLOW`.
+  They do not silently truncate or reinterpret signedness.
 - The existing separation between construction, typed copy, typed conversion,
   and raw copy continues to apply. Copies preserve the complete representation,
   including through Gloin by-value arguments and returns.
@@ -158,26 +158,27 @@ order. The rule covers width and signedness changes together:
 
 | Conversion | Outcome |
 | --- | --- |
-| `u16(value_of_u13)` | Always fits. |
-| `u13(value_of_u16)` | Accept 0 through 8191; otherwise reject a constant or trap at runtime. |
+| `u16(value_of_u13)` | Always returns a successful `result<u16>`. |
+| `u13(value_of_u16)` | Successful `result<u13>` for 0 through 8191; otherwise `OVERFLOW`. |
 | `i13(value_of_u13)` | Accept 0 through 4095. |
-| `u13(value_of_i13)` | Accept nonnegative values; reject negative values. |
+| `u13(value_of_i13)` | Success for nonnegative values; `OVERFLOW` for negative values. |
 | `be_u32(value_of_u13)` | Preserve the number; encode big-endian only when stored. |
 | `le_u32(value_of_be_u32)` | Preserve the number; no numeric range check is needed. |
 
-An argument is evaluated once. Runtime checks remain observable even if the
-converted result is unused. A checked conversion must not be marked as a pure,
-freely removable IR operation. Successful signed widening sign-extends; unsigned
-widening zero-extends. A failed conversion never wraps, saturates, or returns an
-error result. Existing named result-returning numeric APIs can continue serving
-callers that want recoverable conversion failures. Floating conversions are
-outside this extension.
+Every explicit constructor returns `result<T>`, including identity, exact
+widening, and endian-only conversions. An argument is evaluated once. Callers
+must check `.erroneous` or use `match`; unchecked payload reads and ignored
+results are rejected. Successful signed widening sign-extends; unsigned widening
+zero-extends. Failure returns `OVERFLOW` with OS error 0, without wrapping,
+saturating, or trapping. See [numeric conversions](numbers.md#explicit-conversion)
+for an example. Existing named numeric APIs remain compatible; floating
+conversions keep their named APIs.
 
-Constants, local arithmetic, comparisons, function parameters, returns, and
-generic specializations all retain the exact integer type. For example,
-`u13(8192)` is invalid, and adding one to a runtime `u13` value of 8191 traps
-before a packed assignment can discard the high bit. The `u1` and `i1` cases
-also have real range checks; `i1` represents only -1 and 0.
+Typed literals, local arithmetic, comparisons, function parameters, returns, and
+generic specializations retain the exact integer type. `u13(8192)` returns an
+error, while `def x: u13 = 8192` is a compile-time error. Adding one to a runtime
+`u13` value of 8191 still traps before a packed assignment can discard the high
+bit. `i1` represents only -1 and 0; `u1` represents 0 and 1.
 
 A narrow integer's standalone allocation size is a separate question from its
 numeric width. The storage rule outside packed fields is a native
@@ -203,8 +204,10 @@ Packed schemas are limited to 2^31 bits and 64 nested schema levels. The parser'
 old integer backing type and `at` forms remain rejected in checked programs.
 
 In GloinIR, narrow values use types such as `!gloin.int<13, Native, Unsigned>`.
-`gloin.integer_convert` records source/destination descriptors and observable
-range-check failure. Same-width/sign `gloin.endian_convert` remains pure.
+`gloin.integer_convert` records source/destination descriptors and a typed
+success-or-overflow result. It is pure; effects and arithmetic traps while
+evaluating its input remain observable. Same-width/sign changes use this same
+result-producing operation.
 Arithmetic retains the logical width until its exact overflow checks are
 lowered; narrowing is never implemented by an unchecked truncation.
 
@@ -259,7 +262,7 @@ following cases define the maintained regression coverage:
   every starting position within a byte, and fields crossing machine words.
 - Test every constructor width/sign direction at the source and destination
   bounds, including negative-to-unsigned and unsigned-to-signed conversions,
-  constant diagnostics, unused-result traps, and single evaluation.
+  literal failures, unhandled-result diagnostics, and single evaluation.
 - Exercise unaligned records, six-byte array stride, mixed BE/LE fields, nested
   records with different bit orders, and exact allocation boundaries. Guard-page
   tests must catch widened loads/stores that touch a byte outside an object.
@@ -272,7 +275,7 @@ following cases define the maintained regression coverage:
   and malformed or forged packed IR.
 - Inspect lowering: whole-record copies contain no field decoding/encoding;
   field writes preserve other bits; unaligned accesses make no stronger alignment
-  claim than the schema permits; failing conversions survive optimization.
+  claim than the schema permits; conversion error results survive optimization when observed.
 
 Synthetic little- and big-endian module layouts check bounded access widths,
 alignment one, and the byte swaps required to preserve field order. Execution

@@ -48,7 +48,7 @@ TEST_F(PackedTest, EveryNativeWidthHasExactConstantBoundsAndCanonicalIdentity) {
     EXPECT_EQ(resolve_core_type("u64"), CoreType::U64);
 }
 
-TEST_F(PackedTest, IntegerConstructorsCheckEveryWidthSignAndByteOrderBoundaryPair) {
+TEST_F(PackedTest, ConstantConversionHelperChecksEveryWidthSignAndByteOrderBoundaryPair) {
     std::vector<CoreType> types;
     for (unsigned width = 1; width <= 64; ++width)
         for (bool sign : {false, true})
@@ -86,7 +86,7 @@ TEST_F(PackedTest, IntegerConstructorsCheckEveryWidthSignAndByteOrderBoundaryPai
     }
 }
 
-TEST_F(PackedTest, RejectsInvalidLayoutsReferencesAndConstantConversions) {
+TEST_F(PackedTest, RejectsInvalidLayoutsReferencesAndUncheckedConversions) {
     for (const std::string text :
          {"def packed struct H { def x: u13, }", "def packed struct(native) H { def x: u13, }",
           "def packed struct(msb_first) H { def x: u13, def y: be_u32, }",
@@ -118,13 +118,8 @@ TEST_F(PackedTest, RejectsInvalidLayoutsReferencesAndConstantConversions) {
     }
 }
 
-TEST_F(PackedTest, CheckedConversionsAndExactWidthArithmeticTrapEvenWhenUnused) {
+TEST_F(PackedTest, ExactWidthArithmeticTrapsEvenWhenUnused) {
     const std::vector<std::string> programs = {
-        "def f(x: u16) -> void { u13(x); } def main() -> i32 { f(8192); return 0; }",
-        "def f(x: i16) -> void { u13(x); } def main() -> i32 { f(-1); return 0; }",
-        "def f(x: u13) -> void { i13(x); } def main() -> i32 { f(4096); return 0; }",
-        "def f(x: u64) -> void { i64(x); } def main() -> i32 { f(18446744073709551615); return 0; "
-        "}",
         "def f(x: u13) -> void { x + 1; } def main() -> i32 { f(8191); return 0; }",
         "def f(x: i13) -> void { x - 1; } def main() -> i32 { f(-4096); return 0; }",
         "def f(x: u3) -> void { x * 2; } def main() -> i32 { f(4); return 0; }",
@@ -150,18 +145,40 @@ TEST_F(PackedTest, CheckedConversionsAndExactWidthArithmeticTrapEvenWhenUnused) 
 TEST_F(PackedTest, NarrowValuesWorkThroughArithmeticArraysGenericsAndResults) {
     auto path = source(R"(
         def twice<T>(x: T) -> T { return x + x; }
-        def narrow(x: i16) -> i13 { return i13(x); }
+        def narrow(x: i16) -> result<i13> {
+            def r: result<i13> = i13(x);
+            if r.erroneous { return r.error; }
+            return r.value;
+        }
         def number(x: i13) -> result<i13> { return x; }
         def main() -> i32 {
             def mut values: [i13; 3] = {-1, -4096, 4095};
-            values[0] = twice<i13>(narrow(-2));
-            if values[0] != -4 || i64(values[1]) != -4096 || u16(values[2]) != 4095 { return 1; }
+            def narrowed: result<i13> = narrow(-2);
+            if narrowed.erroneous { return 5; }
+            values[0] = twice<i13>(narrowed.value);
+            def converted_1: result<u16> = u16(values[2]);
+            if converted_1.erroneous { return 90; }
+            def converted_2: result<i64> = i64(values[1]);
+            if converted_2.erroneous { return 90; }
+            if values[0] != -4 || converted_2.value != -4096 || converted_1.value != 4095 { return 1; }
             def value: result<i13> = number(values[1]);
             if value.erroneous { return 2; }
             if value.value != -4096 { return 3; }
-            def a: u1 = u1(u8(1));
-            def b: i1 = i1(i8(-1));
-            if u16(a) != 1 || i16(b) != -1 || !(b < 0) { return 4; }
+            def converted_3: result<u8> = u8(1);
+            if converted_3.erroneous { return 90; }
+            def converted_4: result<u1> = u1(converted_3.value);
+            if converted_4.erroneous { return 90; }
+            def a: u1 = converted_4.value;
+            def converted_5: result<i8> = i8(-1);
+            if converted_5.erroneous { return 90; }
+            def converted_6: result<i1> = i1(converted_5.value);
+            if converted_6.erroneous { return 90; }
+            def b: i1 = converted_6.value;
+            def converted_7: result<i16> = i16(b);
+            if converted_7.erroneous { return 90; }
+            def converted_8: result<u16> = u16(a);
+            if converted_8.erroneous { return 90; }
+            if converted_8.value != 1 || converted_7.value != -1 || !(b < 0) { return 4; }
             return 42;
         }
     )");
@@ -405,9 +422,13 @@ TEST_F(PackedTest, FieldsAcrossBytesAndWordsStayInsideGuardPagesAndPreserveOther
                     if (offset)
                         program += "def prefix: u" + std::to_string(offset) + ", ";
                     program += "def mut value: " + type + ", }\n";
-                    program += "def " + name + "(p: &Record" + id + ", value: " + wide + ") -> " +
-                               wide + " { p.value = " + type + "(value); return " + wide +
-                               "(p.value); }\n";
+                    program +=
+                        "def " + name + "(p: &Record" + id + ", value: " + wide + ") -> " + wide +
+                        " { def narrowed: result<" + type + "> = " + type +
+                        "(value); if narrowed.erroneous { return 0; } p.value = narrowed.value; "
+                        "def widened: result<" +
+                        wide + "> = " + wide +
+                        "(p.value); if widened.erroneous { return 0; } return widened.value; }\n";
                     harness << "extern uint64_t " << name << "(unsigned char *, uint64_t);\n";
                     cases << "{" << name << "," << width << "," << offset << "," << msb << ","
                           << sign << "},\n";

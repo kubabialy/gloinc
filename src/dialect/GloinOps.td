@@ -152,10 +152,11 @@ def EndianConvertOp : Gloin_Op<"endian_convert", [Pure]> {
     let hasVerifier = 1;
 }
 
-// Failure is observable even if the resulting value is unused.
-def IntegerConvertOp : Gloin_Op<"integer_convert"> {
-    let summary = "Checked numeric integer conversion across width and signedness";
-    let arguments = (ins AnyType:$input, TypeAttr:$source_type, TypeAttr:$target_type);
+// Conversion failure is a recoverable OVERFLOW result, never a trap.
+def IntegerConvertOp : Gloin_Op<"integer_convert", [Pure]> {
+    let summary = "Convert an integer value to a success or overflow result";
+    let arguments = (ins AnyType:$input, AnyType:$overflow_error,
+                         TypeAttr:$source_type, TypeAttr:$target_type, TypeAttr:$layout_type);
     let results = (outs AnyType:$result);
     let hasVerifier = 1;
 }
