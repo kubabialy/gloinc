@@ -509,6 +509,10 @@ std::shared_ptr<Type> Sema::expression_type_hint(const Expression *expression) {
         if (literal->name)
             return resolve_type_from_string(literal->name->value);
     } else if (const auto *call = dynamic_cast<const CallExpression *>(expression)) {
+        if (const auto *name = dynamic_cast<const Identifier *>(call->function.get())) {
+            if (auto type = resolve_core_type(name->value); type && core_type_info(*type).is_integer)
+                return get_builtin_type(std::string(core_type_info(*type).name));
+        }
         if (const auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get())) {
             if (const auto *method = method_target(member);
                 method && arena_methods.contains(method) && call->arguments.size() == 1) {

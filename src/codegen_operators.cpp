@@ -22,6 +22,9 @@ void CodeGen::require_runtime(mlir::Value condition) {
 mlir::Value CodeGen::checked_integer_arithmetic(std::string_view op, mlir::Value left,
                                                 mlir::Value right, CoreType type) {
     const auto &info = core_type_info(type);
+    auto source = source_type(type);
+    left = as_source_value(left, source);
+    right = as_source_value(right, source);
     return builder.create<gloin::CheckedIntegerBinaryOp>(
         location(), left.getType(), left, right, builder.getStringAttr(op),
         builder.getBoolAttr(info.is_signed));
@@ -107,6 +110,8 @@ mlir::Value CodeGen::gen_checked_binary(const InfixExpression *expression) {
     if (info.is_integer || type == CoreType::Bool) {
         if (arithmetic)
             return checked_integer_arithmetic(op, left, right, type);
+        left = as_source_value(left, source_type(type));
+        right = as_source_value(right, source_type(type));
         return builder.create<gloin::CheckedIntegerCompareOp>(
             location(), builder.getI1Type(), left, right,
             builder.getStringAttr(op), builder.getBoolAttr(info.is_signed));

@@ -57,7 +57,14 @@ TEST(CheckedProgramTest, EveryCoreScalarHasOneSignatureAndStorageType) {
             EXPECT_TRUE(type.isF32());
         else if (info.id == CoreType::F64)
             EXPECT_TRUE(type.isF64());
-        else
+        else if (info.byte_order != ByteOrder::Native) {
+            auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(type);
+            ASSERT_TRUE(integer);
+            EXPECT_EQ(integer.getWidth(), info.bits);
+            EXPECT_EQ(integer.getSignedness() == gloin::IntegerSignedness::Signed, info.is_signed);
+            EXPECT_EQ(integer.getEndianness(), info.byte_order == ByteOrder::Big
+                                                   ? gloin::Endianness::Big : gloin::Endianness::Little);
+        } else
             EXPECT_TRUE(type.isInteger(info.bits));
         EXPECT_EQ(type, function.getFunctionType().getResult(0));
         int loads = 0;
@@ -104,7 +111,7 @@ TEST(CheckedProgramTest, SignednessAndBooleanRemainDistinct) {
 TEST(CheckedProgramTest, UnknownAndDeferredTypesFailInEveryAnnotationPosition) {
     mlir::MLIRContext context;
     for (const std::string type :
-         {"Mystery", "String", "i128", "u128", "f128", "char", "u4", "be_u16"}) {
+         {"Mystery", "String", "i128", "u128", "f128", "char", "u4", "be_u128"}) {
         for (const std::string source :
              {"def f(x: " + type + ") -> void {}", "def f() -> " + type + " {}",
               "def f() -> void { def mut x: " + type + "; }"}) {

@@ -135,6 +135,7 @@ add_library(gloin_backend STATIC
     src/module_loader.cpp
     src/target_layout.cpp
     src/lowering.cpp
+    src/aggregate_representation.cpp
     src/gir_float_checks.cpp
     src/gir_float_reductions.cpp
     src/gir_range_proofs.cpp
@@ -263,6 +264,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/checked_program_test.cpp
         tests/parser_test.cpp
         tests/numeric_test.cpp
+        tests/endian_test.cpp
         tests/functions_test.cpp
         tests/operators_test.cpp
         tests/control_flow_test.cpp
@@ -358,13 +360,18 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     endif()
     gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}:${GLOIN_ARITHMETIC_MATRIX_TEST}:${GLOIN_OPERATOR_MATRIX_TEST}:CliTest.GIR*"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
-    gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_OPERATOR_MATRIX_TEST}:CliTest.GIR*"
+    gtest_discover_tests(gloinc_test TEST_FILTER "CliTest.GIR*"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT} ${GLOIN_SIGNAL_MATRIX_PROPERTIES})
-    # This matrix launches 584 native programs, including intentional signals.
+    # Native, big-endian and little-endian types triple the scalar matrix.
+    # Retain every assertion and each child deadline; scale only aggregate time.
+    math(EXPR GLOIN_OPERATOR_MATRIX_TIMEOUT "${GLOIN_COMPILER_TEST_TIMEOUT} * 3")
+    gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_OPERATOR_MATRIX_TEST}"
+        PROPERTIES TIMEOUT ${GLOIN_OPERATOR_MATRIX_TIMEOUT} ${GLOIN_SIGNAL_MATRIX_PROPERTIES})
+    # This matrix launches 1752 native programs, including intentional signals.
     # With Linux signal handling this took 219 seconds on the validation VM;
     # a busy macOS host also exceeded the ordinary 30-second test timeout. Keep
     # each launch's 10-second deadline and allow the aggregate matrix to finish.
-    set(GLOIN_ARITHMETIC_MATRIX_TIMEOUT 360)
+    set(GLOIN_ARITHMETIC_MATRIX_TIMEOUT 1080)
     # Hosted macOS package validation also hit a child compile timeout when
     # this matrix competed with three other compiler processes. Serialize it
     # on every platform without changing deadlines or assertions.
@@ -478,7 +485,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         PROPERTIES TIMEOUT 90)
 
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|EndianTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure

@@ -1,4 +1,5 @@
 #include "lowering.h"
+#include "aggregate_representation.h"
 #include "compilation_timings.h"
 #include "dialect/GloinDialect.h"
 #include "gir_float_checks.h"
@@ -136,6 +137,9 @@ struct SimplifyCheckedIntegerBinary : mlir::OpRewritePattern<gloin::CheckedInteg
     using OpRewritePattern::OpRewritePattern;
     mlir::LogicalResult matchAndRewrite(gloin::CheckedIntegerBinaryOp op,
                                          mlir::PatternRewriter &rewriter) const override {
+        auto source = mlir::dyn_cast<gloin::GloinIntegerType>(op.getType());
+        unsigned width = source ? source.getWidth()
+                                : mlir::cast<mlir::IntegerType>(op.getType()).getWidth();
         auto integer = [](mlir::Value value) -> mlir::IntegerAttr {
             if (auto constant = value.getDefiningOp<gloin::ConstantOp>())
                 return mlir::dyn_cast<mlir::IntegerAttr>(constant.getValueAttr());
@@ -148,7 +152,7 @@ struct SimplifyCheckedIntegerBinary : mlir::OpRewritePattern<gloin::CheckedInteg
         auto kind = op.getKind();
         auto replace_constant = [&](const llvm::APInt &value) {
             rewriter.replaceOpWithNewOp<gloin::ConstantOp>(
-                op, op.getResult().getType(), rewriter.getIntegerAttr(op.getResult().getType(), value));
+                op, op.getResult().getType(), rewriter.getIntegerAttr(rewriter.getIntegerType(width), value));
         };
         if (lhs && rhs) {
             const auto &a = lhs.getValue();
@@ -182,7 +186,7 @@ struct SimplifyCheckedIntegerBinary : mlir::OpRewritePattern<gloin::CheckedInteg
         if ((kind == "*" && ((lhs && lhs.getValue().isZero()) ||
                               (rhs && rhs.getValue().isZero()))) ||
             (kind == "%" && rhs && rhs.getValue().isOne())) {
-            replace_constant(llvm::APInt(mlir::cast<mlir::IntegerType>(op.getType()).getWidth(), 0));
+            replace_constant(llvm::APInt(width, 0));
             return mlir::success();
         }
         return mlir::failure();
@@ -206,6 +210,35 @@ struct PrepareGloinValuesPass
     }
 };
 
+// A materialized aggregate is copied as bytes. Keep source evaluation and all
+// intervening effects intact; only representation bridges may separate the read
+// and write. In particular this never forwards a stale load across a mutation.
+struct PrepareAggregateCopy : mlir::OpRewritePattern<gloin::StoreOp> {
+    using OpRewritePattern::OpRewritePattern;
+    mlir::LogicalResult matchAndRewrite(gloin::StoreOp op,
+                                         mlir::PatternRewriter &rewriter) const override {
+        if (!mlir::isa<gloin::GloinStructType, gloin::GloinArrayType,
+                       gloin::GloinResultType>(op.getSourceType()))
+            return mlir::failure();
+        auto load = op.getValue().getDefiningOp<gloin::LoadOp>();
+        if (!load || load.getSourceType() != op.getSourceType() || load->getBlock() != op->getBlock())
+            return mlir::failure();
+        auto *next = load->getNextNode();
+        while (next && next != op.getOperation()) {
+            if (!mlir::isa<gloin::FromLayoutOp, gloin::ToLayoutOp>(next))
+                return mlir::failure();
+            next = next->getNextNode();
+        }
+        if (!next)
+            return mlir::failure();
+        rewriter.replaceOpWithNewOp<gloin::CopyOp>(
+            op, load.getAddress(), op.getAddress(), op.getSourceTypeAttr(), load.getLayoutTypeAttr());
+        if (load.getValue().use_empty())
+            rewriter.eraseOp(load);
+        return mlir::success();
+    }
+};
+
 // The front end keeps checked source types in function signatures.  This pass
 // resolves their layout only once, immediately before the existing core pass.
 struct LowerGloinSignaturesPass
@@ -213,7 +246,29 @@ struct LowerGloinSignaturesPass
     MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerGloinSignaturesPass)
     void runOnOperation() override {
         auto module = getOperation();
+        mlir::RewritePatternSet copies(&getContext());
+        copies.add<PrepareAggregateCopy>(&getContext());
+        mlir::GreedyRewriteConfig config;
+        config.setRegionSimplificationLevel(mlir::GreedySimplifyRegionLevel::Disabled);
+        if (mlir::failed(mlir::applyPatternsGreedily(module, std::move(copies), config))) {
+            signalPassFailure();
+            return;
+        }
         bool failed = false;
+        module.walk([](mlir::Operation *operation) {
+            mlir::Type source;
+            if (auto success = mlir::dyn_cast<gloin::ResultSuccessOp>(operation))
+                source = success.getValue().getType();
+            if (auto value = mlir::dyn_cast<gloin::ResultValueOp>(operation))
+                source = value.getOutcome().getType();
+            if (auto result = mlir::dyn_cast_or_null<gloin::GloinResultType>(source))
+                operation->setAttr("gloin.payload_source", mlir::TypeAttr::get(result.getValueType()));
+        });
+        module.walk([](mlir::Operation *operation) {
+            for (auto result : operation->getResults())
+                if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(result.getType()))
+                    result.setType(mlir::IntegerType::get(operation->getContext(), integer.getWidth()));
+        });
         module.walk([&](mlir::func::FuncOp function) {
             auto inputs = function->getAttrOfType<mlir::ArrayAttr>("gloin.layout_inputs");
             auto results = function->getAttrOfType<mlir::ArrayAttr>("gloin.layout_results");
@@ -351,12 +406,7 @@ struct LowerGloinSignaturesPass
             op->getResult(0).replaceAllUsesWith(op->getOperand(0));
             op->erase();
         }
-        llvm::SmallVector<gloin::StructDefinitionOp> definitions;
-        module.walk([&](gloin::StructDefinitionOp definition) {
-            definitions.push_back(definition);
-        });
-        for (auto definition : definitions)
-            definition.erase();
+        // Keep nominal layouts available to memory-operation verification.
         module->removeAttr("gloin.checked");
     }
 };
@@ -378,6 +428,33 @@ struct LowerAbiCall : mlir::OpRewritePattern<gloin::AbiCallOp> {
         auto call = rewriter.create<mlir::LLVM::CallOp>(op.getLoc(), function, op.getArgs());
         rewriter.replaceOp(op, call.getResults());
         return mlir::success();
+    }
+};
+
+struct LowerEndianConvert : mlir::OpRewritePattern<gloin::EndianConvertOp> {
+    using OpRewritePattern::OpRewritePattern;
+    mlir::LogicalResult matchAndRewrite(gloin::EndianConvertOp op,
+                                        mlir::PatternRewriter &rewriter) const override {
+        if (op.getInput().getType() != op.getResult().getType())
+            return mlir::failure();
+        rewriter.replaceOp(op, op.getInput());
+        return mlir::success();
+    }
+};
+
+// Scalars are numeric SSA values. Aggregate SSA values already contain encoded
+// fields: copying/loading/storing them never decodes or re-encodes their leaves.
+// Construction and extraction cross the scalar/aggregate representation boundary.
+struct IntegerRepresentation {
+    bool little;
+    mlir::Value convert(mlir::PatternRewriter &rewriter, mlir::Location loc,
+                        mlir::Value value, mlir::Type source) const {
+        auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(source);
+        if (integer && integer.getWidth() > 8 &&
+            integer.getEndianness() != gloin::Endianness::Native &&
+            (integer.getEndianness() == gloin::Endianness::Little) != little)
+            return rewriter.create<mlir::LLVM::ByteSwapOp>(loc, value);
+        return value;
     }
 };
 
@@ -417,7 +494,9 @@ template <typename Op, int Index> struct LowerErrorCode : mlir::OpRewritePattern
 };
 
 struct LowerResultSuccess : mlir::OpRewritePattern<gloin::ResultSuccessOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerResultSuccess(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::ResultSuccessOp op,
                                          mlir::PatternRewriter &rewriter) const override {
         auto zero = rewriter.create<mlir::LLVM::ZeroOp>(op.getLoc(), op.getLayoutType());
@@ -425,8 +504,11 @@ struct LowerResultSuccess : mlir::OpRewritePattern<gloin::ResultSuccessOp> {
             rewriter.replaceOp(op, zero.getResult());
             return mlir::success();
         }
+        mlir::Value payload = op.getPayload()[0];
+        if (auto source = op->getAttrOfType<mlir::TypeAttr>("gloin.payload_source"))
+            payload = representation.convert(rewriter, op.getLoc(), payload, source.getValue());
         auto value = rewriter.create<mlir::LLVM::InsertValueOp>(
-            op.getLoc(), zero.getResult(), op.getPayload()[0], llvm::ArrayRef<int64_t>{1});
+            op.getLoc(), zero.getResult(), payload, llvm::ArrayRef<int64_t>{1});
         rewriter.replaceOp(op, value.getResult());
         return mlir::success();
     }
@@ -460,7 +542,9 @@ struct LowerResultIsError : mlir::OpRewritePattern<gloin::ResultIsErrorOp> {
 };
 
 struct LowerResultValue : mlir::OpRewritePattern<gloin::ResultValueOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerResultValue(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::ResultValueOp op,
                                          mlir::PatternRewriter &rewriter) const override {
         auto tag = rewriter.create<mlir::LLVM::ExtractValueOp>(
@@ -469,8 +553,11 @@ struct LowerResultValue : mlir::OpRewritePattern<gloin::ResultValueOp> {
         auto success = rewriter.create<mlir::arith::CmpIOp>(
             op.getLoc(), mlir::arith::CmpIPredicate::eq, tag, false_value);
         rewriter.create<gloin::AssertOp>(op.getLoc(), success);
-        rewriter.replaceOpWithNewOp<mlir::LLVM::ExtractValueOp>(
-            op, op.getOutcome(), llvm::ArrayRef<int64_t>{1});
+        mlir::Value payload = rewriter.create<mlir::LLVM::ExtractValueOp>(
+            op.getLoc(), op.getOutcome(), llvm::ArrayRef<int64_t>{1});
+        if (auto source = op->getAttrOfType<mlir::TypeAttr>("gloin.payload_source"))
+            payload = representation.convert(rewriter, op.getLoc(), payload, source.getValue());
+        rewriter.replaceOp(op, payload);
         return mlir::success();
     }
 };
@@ -752,14 +839,17 @@ struct LowerCheckedFloatCompare
 };
 
 struct LowerArrayLiteral : mlir::OpRewritePattern<gloin::ArrayLiteralOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerArrayLiteral(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::ArrayLiteralOp op,
                                          mlir::PatternRewriter &rewriter) const override {
         mlir::Value value = rewriter.create<mlir::LLVM::ZeroOp>(
             op.getLoc(), op.getValue().getType());
+        auto element_source = mlir::cast<gloin::GloinArrayType>(op.getSourceType()).getElement();
         for (auto [index, element] : llvm::enumerate(op.getElements()))
             value = rewriter.create<mlir::LLVM::InsertValueOp>(
-                op.getLoc(), value, element,
+                op.getLoc(), value, representation.convert(rewriter, op.getLoc(), element, element_source),
                 llvm::ArrayRef<int64_t>{static_cast<int64_t>(index)});
         rewriter.replaceOp(op, value);
         return mlir::success();
@@ -767,10 +857,14 @@ struct LowerArrayLiteral : mlir::OpRewritePattern<gloin::ArrayLiteralOp> {
 };
 
 struct LowerRepeatArray : mlir::OpRewritePattern<gloin::RepeatArrayOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerRepeatArray(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::RepeatArrayOp op,
                                          mlir::PatternRewriter &rewriter) const override {
         auto array = mlir::cast<mlir::LLVM::LLVMArrayType>(op.getLayoutType());
+        auto element = representation.convert(rewriter, op.getLoc(), op.getElement(),
+            mlir::cast<gloin::GloinArrayType>(op.getSourceType()).getElement());
         auto one = rewriter.create<mlir::arith::ConstantIntOp>(op.getLoc(), 1, 64);
         auto zero = rewriter.create<mlir::arith::ConstantIntOp>(op.getLoc(), 0, 64);
         auto count = rewriter.create<mlir::arith::ConstantIntOp>(
@@ -794,7 +888,7 @@ struct LowerRepeatArray : mlir::OpRewritePattern<gloin::RepeatArrayOp> {
             auto slot = rewriter.create<mlir::LLVM::GEPOp>(
                 op.getLoc(), address.getType(), op.getLayoutType(), address,
                 llvm::ArrayRef<mlir::LLVM::GEPArg>{0, loop.getInductionVar()});
-            rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), op.getElement(), slot);
+            rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), element, slot);
         }
         rewriter.replaceOpWithNewOp<mlir::LLVM::LoadOp>(
             op, op.getLayoutType(), address);
@@ -803,7 +897,9 @@ struct LowerRepeatArray : mlir::OpRewritePattern<gloin::RepeatArrayOp> {
 };
 
 struct LowerArrayFill : mlir::OpRewritePattern<gloin::ArrayFillOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerArrayFill(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::ArrayFillOp op,
                                          mlir::PatternRewriter &rewriter) const override {
         // Derive the repetition count from the verified array dimensions.
@@ -826,6 +922,8 @@ struct LowerArrayFill : mlir::OpRewritePattern<gloin::ArrayFillOp> {
             count *= dimension;
         }
         auto length = rewriter.create<mlir::arith::ConstantIntOp>(op.getLoc(), count, 64);
+        auto element = representation.convert(rewriter, op.getLoc(), op.getElement(),
+                                               op.getElementSourceType());
         // Only a byte element is a byte pattern. Wider integers, floats,
         // booleans, pointers and records use typed stores with the proper stride.
         if (op.getElementType().isInteger(8)) {
@@ -840,7 +938,7 @@ struct LowerArrayFill : mlir::OpRewritePattern<gloin::ArrayFillOp> {
             auto address = rewriter.create<mlir::LLVM::GEPOp>(
                 op.getLoc(), op.getAddress().getType(), op.getElementType(),
                 op.getAddress(), llvm::ArrayRef<mlir::LLVM::GEPArg>{loop.getInductionVar()});
-            rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), op.getElement(), address);
+            rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), element, address);
         }
         rewriter.eraseOp(op);
         return mlir::success();
@@ -848,14 +946,20 @@ struct LowerArrayFill : mlir::OpRewritePattern<gloin::ArrayFillOp> {
 };
 
 struct LowerStructLiteral : mlir::OpRewritePattern<gloin::StructLiteralOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerStructLiteral(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::StructLiteralOp op,
                                          mlir::PatternRewriter &rewriter) const override {
         mlir::Value value = rewriter.create<mlir::LLVM::ZeroOp>(
             op.getLoc(), op.getValue().getType());
-        for (auto [field, index] : llvm::zip(op.getFields(), op.getIndicesAttr().asArrayRef()))
+        for (auto [field, index, source] : llvm::zip(op.getFields(), op.getIndicesAttr().asArrayRef(),
+                                                   op.getFieldSourceTypes()))
             value = rewriter.create<mlir::LLVM::InsertValueOp>(
-                op.getLoc(), value, field, llvm::ArrayRef<int64_t>{index});
+                op.getLoc(), value,
+                representation.convert(rewriter, op.getLoc(), field,
+                                       mlir::cast<mlir::TypeAttr>(source).getValue()),
+                llvm::ArrayRef<int64_t>{index});
         rewriter.replaceOp(op, value);
         return mlir::success();
     }
@@ -912,7 +1016,9 @@ struct LowerArenaTypedPointer : mlir::OpRewritePattern<gloin::ArenaTypedPointerO
 };
 
 struct LowerRawPlace : mlir::OpRewritePattern<gloin::RawPlaceOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerRawPlace(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::RawPlaceOp op,
                                          mlir::PatternRewriter &rewriter) const override {
         auto target = native_target_layout();
@@ -955,7 +1061,9 @@ struct LowerRawPlace : mlir::OpRewritePattern<gloin::RawPlaceOp> {
         {
             mlir::OpBuilder::InsertionGuard guard(rewriter);
             rewriter.setInsertionPointToStart(conditional.thenBlock());
-            rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), op.getInitial(), selected);
+            auto initial = representation.convert(rewriter, op.getLoc(), op.getInitial(),
+                                                   op.getElementSourceType());
+            rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), initial, selected);
         }
         rewriter.replaceOp(op, selected);
         return mlir::success();
@@ -1173,9 +1281,13 @@ struct LowerSliceLength : mlir::OpRewritePattern<gloin::SliceLengthOp> {
 };
 
 struct LowerArenaFill : mlir::OpRewritePattern<gloin::ArenaFillOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerArenaFill(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::ArenaFillOp op,
                                          mlir::PatternRewriter &rewriter) const override {
+        auto fill = representation.convert(rewriter, op.getLoc(), op.getFill(),
+                                            op.getElementSourceType());
         auto zero = rewriter.create<mlir::arith::ConstantIntOp>(op.getLoc(), 0, 64);
         auto one = rewriter.create<mlir::arith::ConstantIntOp>(op.getLoc(), 1, 64);
         auto loop = rewriter.create<mlir::scf::ForOp>(op.getLoc(), zero, op.getCount(), one);
@@ -1185,7 +1297,7 @@ struct LowerArenaFill : mlir::OpRewritePattern<gloin::ArenaFillOp> {
             auto address = rewriter.create<mlir::LLVM::GEPOp>(
                 op.getLoc(), op.getBase().getType(), op.getElementType(), op.getBase(),
                 llvm::ArrayRef<mlir::LLVM::GEPArg>{loop.getInductionVar()});
-            rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), op.getFill(), address);
+            rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), fill, address);
         }
         rewriter.eraseOp(op);
         return mlir::success();
@@ -1204,18 +1316,41 @@ struct LowerStackAlloc : mlir::OpRewritePattern<gloin::StackAllocOp> {
     }
 };
 
+struct LowerCopy : mlir::OpRewritePattern<gloin::CopyOp> {
+    const llvm::DataLayout &layout;
+    LowerCopy(mlir::MLIRContext *context, const llvm::DataLayout &layout)
+        : OpRewritePattern(context), layout(layout) {}
+    mlir::LogicalResult matchAndRewrite(gloin::CopyOp op,
+                                         mlir::PatternRewriter &rewriter) const override {
+        auto measured = measure_type_layout(op.getLayoutType(), layout);
+        if (!measured)
+            return op.emitOpError(llvm::toString(measured.takeError()));
+        auto bytes = rewriter.create<mlir::arith::ConstantIntOp>(op.getLoc(), measured->size, 64);
+        rewriter.create<mlir::LLVM::MemmoveOp>(
+            op.getLoc(), op.getDestination(), op.getSource(), bytes, false);
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
 struct LowerLoad : mlir::OpRewritePattern<gloin::LoadOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerLoad(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::LoadOp op,
                                          mlir::PatternRewriter &rewriter) const override {
-        rewriter.replaceOpWithNewOp<mlir::LLVM::LoadOp>(
-            op, op.getValue().getType(), op.getAddress());
+        auto loaded = rewriter.create<mlir::LLVM::LoadOp>(
+            op.getLoc(), op.getValue().getType(), op.getAddress());
+        rewriter.replaceOp(op, representation.convert(rewriter, op.getLoc(), loaded,
+                                                       op.getSourceType()));
         return mlir::success();
     }
 };
 
 struct LowerStore : mlir::OpRewritePattern<gloin::StoreOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerStore(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::StoreOp op,
                                          mlir::PatternRewriter &rewriter) const override {
         // Do not ask SelectionDAG to split large zero aggregates into thousands
@@ -1241,7 +1376,9 @@ struct LowerStore : mlir::OpRewritePattern<gloin::StoreOp> {
             rewriter.eraseOp(op);
             return mlir::success();
         }
-        rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), op.getValue(), op.getAddress());
+        auto encoded = representation.convert(rewriter, op.getLoc(), op.getValue(),
+                                                op.getSourceType());
+        rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), encoded, op.getAddress());
         rewriter.eraseOp(op);
         return mlir::success();
     }
@@ -1259,12 +1396,16 @@ struct LowerFieldAddress : mlir::OpRewritePattern<gloin::FieldAddressOp> {
 };
 
 struct LowerExtractField : mlir::OpRewritePattern<gloin::ExtractFieldOp> {
-    using OpRewritePattern::OpRewritePattern;
+    const IntegerRepresentation &representation;
+    LowerExtractField(mlir::MLIRContext *context, const IntegerRepresentation &representation)
+        : OpRewritePattern(context), representation(representation) {}
     mlir::LogicalResult matchAndRewrite(gloin::ExtractFieldOp op,
                                          mlir::PatternRewriter &rewriter) const override {
-        rewriter.replaceOpWithNewOp<mlir::LLVM::ExtractValueOp>(
-            op, op.getAggregate(),
+        auto field = rewriter.create<mlir::LLVM::ExtractValueOp>(
+            op.getLoc(), op.getAggregate(),
             llvm::ArrayRef<int64_t>{static_cast<int64_t>(op.getIndex())});
+        rewriter.replaceOp(op, representation.convert(rewriter, op.getLoc(), field,
+                                                       op.getFieldSourceType()));
         return mlir::success();
     }
 };
@@ -1291,32 +1432,58 @@ struct LowerGloinCorePass
     : mlir::PassWrapper<LowerGloinCorePass, mlir::OperationPass<mlir::ModuleOp>> {
     MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerGloinCorePass)
     void runOnOperation() override {
+        auto module = getOperation();
+        auto layout = module->getAttrOfType<mlir::StringAttr>("llvm.data_layout");
+        std::string layout_text;
+        if (layout) {
+            layout_text = layout.getValue().str();
+        } else {
+            auto target = native_target_layout();
+            if (!target) {
+                module.emitError(llvm::toString(target.takeError()));
+                signalPassFailure();
+                return;
+            }
+            layout_text = target->data_layout;
+        }
+        auto data_layout = llvm::DataLayout::parse(layout_text);
+        if (!data_layout) {
+            module.emitError(llvm::toString(data_layout.takeError()));
+            signalPassFailure();
+            return;
+        }
+        const IntegerRepresentation representation{data_layout->isLittleEndian()};
         const auto proofs = prove_gloin_ranges(getOperation());
         combine_gloin_float_checks(getOperation());
         mlir::RewritePatternSet patterns(&getContext());
         populate_selection_lowering(patterns);
         patterns.add<LowerCheckedIntegerBinary, LowerArrayElementAddress,
                      LowerSliceElementAddress>(&getContext(), proofs);
+        patterns.add<LowerLoad, LowerStore, LowerArrayFill, LowerArenaFill,
+                     LowerRawPlace, LowerResultSuccess, LowerResultValue,
+                     LowerArrayLiteral, LowerRepeatArray, LowerStructLiteral,
+                     LowerExtractField>(&getContext(), representation);
+        patterns.add<LowerCopy>(&getContext(), *data_layout);
         patterns.add<LowerAbiCall, LowerErrorLiteral, LowerErrorMessage,
                      LowerErrorCode<gloin::ErrorCodeOp, 1>, LowerErrorCode<gloin::ErrorOsErrorOp, 2>,
-                     LowerResultSuccess, LowerResultFailure, LowerResultIsError,
-                     LowerResultValue, LowerResultError,
-                     LowerGloinConstant, LowerGloinAssert, LowerExactIntegerWiden,
+                     LowerResultFailure, LowerResultIsError, LowerResultError,
+                     LowerGloinConstant, LowerGloinAssert, LowerExactIntegerWiden, LowerEndianConvert,
                      LowerCheckedFloatBinary, LowerRequireFinite, LowerCheckedIntegerCompare,
-                     LowerCheckedFloatCompare, LowerArrayLiteral, LowerRepeatArray, LowerArrayFill,
-                     LowerStructLiteral,
+                     LowerCheckedFloatCompare,
                      LowerZeroedArray, LowerStringLiteral, LowerNull,
-                     LowerArenaTypedPointer, LowerRawPlace, LowerRawPadding,
+                     LowerArenaTypedPointer, LowerRawPadding,
                      LowerPointerOffset,
                      LowerRequireNonNull, LowerPointerCompare,
                      LowerSliceFromArray, LowerSliceFromPointer,
                      LowerSliceSubrange,
-                     LowerSliceLength, LowerArenaFill,
-                     LowerStackAlloc, LowerLoad, LowerStore,
-                     LowerFieldAddress, LowerExtractField, LowerEnumConstant,
+                     LowerSliceLength,
+                     LowerStackAlloc,
+                     LowerFieldAddress, LowerEnumConstant,
                      LowerEnumCompare>(&getContext());
         if (mlir::failed(mlir::applyPatternsGreedily(getOperation(), std::move(patterns))))
             signalPassFailure();
+        for (auto definition : llvm::make_early_inc_range(module.getOps<gloin::StructDefinitionOp>()))
+            definition.erase();
     }
 };
 
@@ -1585,11 +1752,32 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                 op->emitError("checked store requires source-typed address and value");
                 valid = false;
             }
+            if (auto copy = mlir::dyn_cast<gloin::CopyOp>(op);
+                copy && (!mlir::isa<gloin::GloinPointerType>(copy.getSource().getType()) ||
+                         !mlir::isa<gloin::GloinPointerType>(copy.getDestination().getType()))) {
+                op->emitError("checked copy requires source-typed addresses");
+                valid = false;
+            }
             if (auto fill = mlir::dyn_cast<gloin::ArrayFillOp>(op);
                 fill && (!mlir::isa<gloin::GloinPointerType>(fill.getAddress().getType()) ||
                          fill.getElement().getType() != fill.getElementSourceType())) {
                 op->emitError("checked array fill requires source-typed address and element");
                 valid = false;
+            }
+        }
+        if (checked_module) {
+            if (auto conversion = mlir::dyn_cast<gloin::EndianConvertOp>(op)) {
+                auto matches = [](mlir::Type actual, mlir::Type descriptor) {
+                    auto integer = mlir::cast<gloin::GloinIntegerType>(descriptor);
+                    return integer.getEndianness() == gloin::Endianness::Native
+                               ? actual.isSignlessInteger(integer.getWidth())
+                               : actual == descriptor;
+                };
+                if (!matches(conversion.getInput().getType(), conversion.getSourceType()) ||
+                    !matches(conversion.getResult().getType(), conversion.getTargetType())) {
+                    op->emitError("checked endian conversion requires source-typed operands and result");
+                    valid = false;
+                }
             }
         }
         bool allowed =
@@ -1600,7 +1788,7 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                 mlir::isa<gloin::StructDefinitionOp, gloin::FromLayoutOp, gloin::ToLayoutOp,
                           gloin::AbiCallOp, gloin::SwitchOp, gloin::MatchOp, gloin::MatchYieldOp,
                           gloin::CaseTestOp, gloin::ConstantOp, gloin::AssertOp,
-                          gloin::ExactIntegerWidenOp, gloin::CheckedIntegerBinaryOp,
+                          gloin::ExactIntegerWidenOp, gloin::EndianConvertOp, gloin::CheckedIntegerBinaryOp,
                           gloin::CheckedFloatBinaryOp, gloin::RequireFiniteOp, gloin::CheckedIntegerCompareOp,
                           gloin::CheckedFloatCompareOp, gloin::ArrayLiteralOp, gloin::RepeatArrayOp,
                           gloin::ArrayFillOp, gloin::StructLiteralOp, gloin::ZeroedArrayOp,
@@ -1614,7 +1802,7 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                           gloin::SliceSubrangeOp, gloin::SliceElementAddressOp,
                           gloin::SliceLengthOp, gloin::ArenaFillOp, gloin::RequireNonNullOp,
                           gloin::PointerCompareOp, gloin::StackAllocOp, gloin::LoadOp,
-                          gloin::StoreOp, gloin::FieldAddressOp, gloin::ExtractFieldOp,
+                          gloin::StoreOp, gloin::CopyOp, gloin::FieldAddressOp, gloin::ExtractFieldOp,
                           gloin::EnumConstantOp, gloin::EnumCompareOp>(op) ||
                 (op->getName().isRegistered() &&
                  (dialect == "func" || dialect == "arith" || dialect == "cf" || dialect == "scf" ||
@@ -1630,7 +1818,7 @@ bool check_legality(mlir::ModuleOp module, bool final) {
             const bool legal =
                 final ? mlir::LLVM::isCompatibleOuterType(type)
                       : ns == "builtin" || ns == "llvm" ||
-                            mlir::isa<gloin::GloinPointerType, gloin::GloinArrayType,
+                            mlir::isa<gloin::GloinIntegerType, gloin::GloinPointerType, gloin::GloinArrayType,
                                       gloin::GloinSliceType,
                                       gloin::GloinEnumType, gloin::GloinStructType,
                                       gloin::GloinStringType, gloin::GloinErrorType,
@@ -1737,6 +1925,7 @@ mlir::OwningOpRef<mlir::ModuleOp> lower_to_llvm(mlir::OwningOpRef<mlir::ModuleOp
             timings->snapshot("reachable_gir", *module);
     }
     CompilationTimings::Stage lowering(timings, "lowering");
+    const bool preserve_padding = (*module)->hasAttr("gloin.checked");
     mlir::PassManager passes(module->getContext());
     passes.enableVerifier(true);
     passes.addPass(std::make_unique<PrepareGloinValuesPass>());
@@ -1748,7 +1937,9 @@ mlir::OwningOpRef<mlir::ModuleOp> lower_to_llvm(mlir::OwningOpRef<mlir::ModuleOp
     passes.addPass(mlir::createConvertFuncToLLVMPass());
     passes.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
     passes.addPass(mlir::createReconcileUnrealizedCastsPass());
-    if (mlir::failed(passes.run(*module)) || !check_legality(*module, true) ||
+    if (mlir::failed(passes.run(*module)) ||
+        (preserve_padding && mlir::failed(preserve_aggregate_bytes(*module))) ||
+        !check_legality(*module, true) ||
         mlir::failed(mlir::verify(*module)) || diagnostics.has_errors()) {
         if (!diagnostics.has_errors())
             record_error(diagnostics, DiagnosticStage::Lowering, module->getLoc(),

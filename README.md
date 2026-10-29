@@ -14,6 +14,12 @@ with generic values, checked allocation, and allocation-free churn within capaci
 See the [migration notes](docs/release-notes-0.2.0.md#migrating-from-010)
 when updating 0.1.0 programs.
 
+The [0.3.0 draft](docs/release-0.3.0-draft.md) introduces
+[first-class endian integer types](docs/endianness.md), explicit value conversions,
+and aggregate copies that preserve padding through Gloin calls. See the
+[development guide](docs/site/development/index.html); this feature is not
+included in the published 0.2.1 binaries.
+
 ## Get started
 
 Download and extract the archive for your platform. Verify it with the attached
@@ -105,9 +111,10 @@ failures; `check-core` is the required passing gate.
 
 ## Development and contributing
 
-The [0.2.0 development record](docs/release-0.2.0-draft.md) covers switch and match,
-standard-library migration to `result<T>`, and compiler validation fixes.
-Endianness, packed structs, threads and async are outside this release. The
+The [0.3.0 draft](docs/release-0.3.0-draft.md) records the endianness feature,
+compatibility rules, completed development checks, and remaining release gates.
+The [0.2.0 development record](docs/release-0.2.0-draft.md) preserves the earlier
+switch/match, `result<T>` migration, and compiler validation work. The
 [compiler validation record](docs/compiler-validation.md) documents correctness
 and performance issues found while testing larger programs. The
 [wiki specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec)

@@ -9,13 +9,19 @@
 #include <variant>
 
 // Language identities retain signedness even though MLIR uses signless integer storage.
-enum class CoreType { Void, Bool, I8, I16, I32, I64, U8, U16, U32, U64, F32, F64, String };
+enum class ByteOrder { Native, Big, Little };
+enum class CoreType {
+    Void, Bool, I8, I16, I32, I64, U8, U16, U32, U64, F32, F64, String,
+    BeI8, BeI16, BeI32, BeI64, BeU8, BeU16, BeU32, BeU64,
+    LeI8, LeI16, LeI32, LeI64, LeU8, LeU16, LeU32, LeU64
+};
 struct CoreTypeInfo {
     CoreType id;
     std::string_view name;
     unsigned bits;
     bool is_integer;
     bool is_signed;
+    ByteOrder byte_order = ByteOrder::Native;
 };
 inline constexpr std::array core_types = {
     CoreTypeInfo{CoreType::Void, "void", 0, false, false},
@@ -31,6 +37,22 @@ inline constexpr std::array core_types = {
     CoreTypeInfo{CoreType::F32, "f32", 32, false, true},
     CoreTypeInfo{CoreType::F64, "f64", 64, false, true},
     CoreTypeInfo{CoreType::String, "string", 0, false, false},
+    CoreTypeInfo{CoreType::BeI8, "be_i8", 8, true, true, ByteOrder::Big},
+    CoreTypeInfo{CoreType::BeI16, "be_i16", 16, true, true, ByteOrder::Big},
+    CoreTypeInfo{CoreType::BeI32, "be_i32", 32, true, true, ByteOrder::Big},
+    CoreTypeInfo{CoreType::BeI64, "be_i64", 64, true, true, ByteOrder::Big},
+    CoreTypeInfo{CoreType::BeU8, "be_u8", 8, true, false, ByteOrder::Big},
+    CoreTypeInfo{CoreType::BeU16, "be_u16", 16, true, false, ByteOrder::Big},
+    CoreTypeInfo{CoreType::BeU32, "be_u32", 32, true, false, ByteOrder::Big},
+    CoreTypeInfo{CoreType::BeU64, "be_u64", 64, true, false, ByteOrder::Big},
+    CoreTypeInfo{CoreType::LeI8, "le_i8", 8, true, true, ByteOrder::Little},
+    CoreTypeInfo{CoreType::LeI16, "le_i16", 16, true, true, ByteOrder::Little},
+    CoreTypeInfo{CoreType::LeI32, "le_i32", 32, true, true, ByteOrder::Little},
+    CoreTypeInfo{CoreType::LeI64, "le_i64", 64, true, true, ByteOrder::Little},
+    CoreTypeInfo{CoreType::LeU8, "le_u8", 8, true, false, ByteOrder::Little},
+    CoreTypeInfo{CoreType::LeU16, "le_u16", 16, true, false, ByteOrder::Little},
+    CoreTypeInfo{CoreType::LeU32, "le_u32", 32, true, false, ByteOrder::Little},
+    CoreTypeInfo{CoreType::LeU64, "le_u64", 64, true, false, ByteOrder::Little},
 };
 inline const CoreTypeInfo &core_type_info(CoreType type) {
     return core_types.at(static_cast<size_t>(type));

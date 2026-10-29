@@ -36,8 +36,11 @@ llvm::Expected<TargetLayout> native_target_layout() {
     return *target.value;
 }
 
-llvm::Expected<TypeLayout> measure_type_layout(mlir::Type type, const llvm::DataLayout &layout) {
+llvm::Expected<TypeLayout> measure_type_layout(mlir::Type type, const llvm::DataLayout &target_layout) {
     llvm::LLVMContext context;
+    // DataLayout caches StructLayouts by LLVM type address. Those addresses
+    // belong to this temporary context, so its cache must have the same lifetime.
+    llvm::DataLayout layout(target_layout.getStringRepresentation());
     mlir::LLVM::TypeToLLVMIRTranslator translator(context);
     auto *translated = translator.translateType(type);
     if (!translated || !translated->isSized())

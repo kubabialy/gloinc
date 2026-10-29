@@ -899,6 +899,14 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         log_error("Missing expression");
         return nullptr;
     }
+    if (recording) {
+        if (const auto *call = dynamic_cast<const CallExpression *>(expr)) {
+            bool handled = false;
+            auto type = check_endian_conversion(call, handled);
+            if (handled)
+                return type;
+        }
+    }
     if (checking_constant)
         return check_constant_expression(expr);
     if (const auto *matching = dynamic_cast<const MatchExpression *>(expr))

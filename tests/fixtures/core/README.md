@@ -54,6 +54,12 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 
 ## What each case proves
 
+`run/endian.gloin` checks first-class byte-order types, raw byte aliases, scalar
+and aggregate construction, and copies including padding through Gloin calls.
+It also executes in native `-O0` and `-O2` modes. `EndianTest` verifies the GIR
+contracts and synthetic little/big target lowering; unsupported 128-bit endian
+types and suffix spellings remain rejection fixtures.
+
 The scalar `run` fixtures pass checking and then return the expected host exit
 status with empty stdout/stderr in three independent compile/run processes. The
 hello-world fixture separately asserts exact stdout and exit 0. These

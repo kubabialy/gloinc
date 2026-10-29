@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1134 tests**:
+The current source definitions and CTest discovery contain **1144 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -19,6 +19,7 @@ The current source definitions and CTest discovery contain **1134 tests**:
 | ScopeTest | 11 |
 | VariablesTest | 17 |
 | NumericTest | 12 |
+| EndianTest | 6 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
 | ControlFlowTest | 12 |
@@ -66,7 +67,7 @@ The current source definitions and CTest discovery contain **1134 tests**:
 | MathLibraryTest | 14 |
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 18 |
-| HashmapLibraryTest | 9 |
+| HashmapLibraryTest | 12 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -76,7 +77,7 @@ The current source definitions and CTest discovery contain **1134 tests**:
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 178 |
+| CoreAcceptanceTest | 179 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -189,11 +190,13 @@ VM/CI load; instrumented Debug cases can perform many compiler invocations
 within one test. The filesystem/process signature matrix launches 143 compiler
 processes and has a 300-second aggregate limit in sanitizer builds only. Its
 isolated instrumented run took 119.9 seconds during release validation.
-The 584-program native arithmetic matrix has a 360-second aggregate limit.
-On Linux, it, the integer-simplification trap matrix and the GIR CLI matrices
-run alone: concurrent crash-report collection can exceed their deadlines.
-This changes scheduling, not signals, assertions or timeouts; other tests
-still run in parallel.
+The 1,752-program native arithmetic matrix includes native, big-endian, and
+little-endian integer types and has a 1,080-second aggregate limit. The
+integer-simplification trap matrix also covers all three orders and has three
+times the ordinary compiler-test timeout. The arithmetic matrix runs alone on
+all platforms; on Linux, the integer-simplification trap matrix and the GIR CLI
+matrices also run alone because concurrent crash-report collection can exceed
+their deadlines. Other tests still run in parallel.
 Individual compiler invocations allow ten seconds normally or 30 seconds under
 sanitizers. The HTTP compiler/API
 fixtures allow 60 seconds per compiler invocation and 150 seconds per CTest

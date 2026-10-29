@@ -20,12 +20,20 @@ def EndiannessAttr : I32EnumAttr<"Endianness", "Endianness of integer types",
   let cppNamespace = "::gloin";
 }
 
-// Custom Integer Type with Endianness
-// e.g., !gloin.int<32, Big>
+def SignedInteger : I32EnumAttrCase<"Signed", 0>;
+def UnsignedInteger : I32EnumAttrCase<"Unsigned", 1>;
+def IntegerSignednessAttr : I32EnumAttr<"IntegerSignedness", "Integer signedness",
+                                      [SignedInteger, UnsignedInteger]> {
+    let cppNamespace = "::gloin";
+}
+
+// SSA values are numeric; byte order specifies their addressable representation.
 def GloinInteger : Gloin_Type<"GloinInteger", "int"> {
     let summary = "Integer type with explicit width and endianness";
-    let parameters = (ins "unsigned":$width, "Endianness":$endianness);
-    let assemblyFormat = "`<` $width `,` $endianness `>`";
+    let parameters = (ins "unsigned":$width, "Endianness":$endianness,
+                          "IntegerSignedness":$signedness);
+    let assemblyFormat = "`<` $width `,` $endianness `,` $signedness `>`";
+    let genVerifyDecl = 1;
 }
 
 // Pointer Type

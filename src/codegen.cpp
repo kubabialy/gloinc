@@ -932,6 +932,15 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
+        if (checked_data && checked_data->endian_conversions.contains(call)) {
+            auto input = gen_expression(call->arguments.front().get());
+            auto source = checked_data->types.at(call->arguments.front().get()).builtin();
+            auto target = checked_data->types.at(call).builtin();
+            return builder.create<gloin::EndianConvertOp>(
+                location(), source_type(target), input,
+                mlir::TypeAttr::get(integer_type(source)),
+                mlir::TypeAttr::get(integer_type(target)));
+        }
         if (checked_data && checked_data->error_constructors.contains(call)) {
             auto message = gen_expression(call->arguments.front().get());
             auto code = call->arguments.size() == 3
@@ -1679,6 +1688,16 @@ mlir::Type CodeGen::lower_type(ValueType value_type) {
     return builder.getIntegerType(info.bits);
 }
 
+gloin::GloinIntegerType CodeGen::integer_type(CoreType type) {
+    const auto &info = core_type_info(type);
+    auto order = info.byte_order == ByteOrder::Big ? gloin::Endianness::Big
+               : info.byte_order == ByteOrder::Little ? gloin::Endianness::Little
+                                                     : gloin::Endianness::Native;
+    return gloin::GloinIntegerType::get(
+        &context, info.bits, order, info.is_signed ? gloin::IntegerSignedness::Signed
+                                                 : gloin::IntegerSignedness::Unsigned);
+}
+
 mlir::Type CodeGen::source_type(ValueType value_type) {
     if (value_type.is_pointer()) {
         const auto layer = value_type.pointers.front();
@@ -1705,6 +1724,8 @@ mlir::Type CodeGen::source_type(ValueType value_type) {
     }
     if (value_type.builtin() == CoreType::String)
         return gloin::GloinStringType::get(&context);
+    if (core_type_info(value_type.builtin()).byte_order != ByteOrder::Native)
+        return integer_type(value_type.builtin());
     return lower_type(value_type);
 }
 
@@ -1888,7 +1909,7 @@ mlir::Value CodeGen::emit_constant(const ConstantValue &constant) {
     if (auto integer = std::get_if<llvm::APInt>(&constant.value))
         return checked_data
                    ? mlir::Value(builder.create<gloin::ConstantOp>(
-                         location(), type, builder.getIntegerAttr(type, *integer)))
+                         location(), source_type(constant.type), builder.getIntegerAttr(type, *integer)))
                    : mlir::Value(builder.create<mlir::arith::ConstantOp>(
                          location(), type, builder.getIntegerAttr(type, *integer)));
     if (auto boolean = std::get_if<bool>(&constant.value))

@@ -107,6 +107,13 @@ std::optional<ConstantValue> Sema::evaluate_constant(const Expression *expressio
     auto type = recording->types.at(expression).builtin();
     if (auto found = recording->literals.find(expression); found != recording->literals.end())
         return found->second;
+    if (const auto *call = dynamic_cast<const CallExpression *>(expression);
+        call && recording->endian_conversions.contains(call)) {
+        auto value = evaluate_constant(call->arguments.front().get());
+        if (value)
+            value->type = type;
+        return value;
+    }
     if (const auto *boolean = dynamic_cast<const BooleanLiteral *>(expression))
         return ConstantValue{type, boolean->value};
     if (const auto *string = dynamic_cast<const StringLiteral *>(expression))

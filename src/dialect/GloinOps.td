@@ -115,6 +115,13 @@ def ExactIntegerWidenOp : Gloin_Op<"exact_int_widen", [Pure]> {
     let hasVerifier = 1;
 }
 
+def EndianConvertOp : Gloin_Op<"endian_convert", [Pure]> {
+    let summary = "Preserve an integer's numeric value while changing its byte-order type";
+    let arguments = (ins AnyType:$input, TypeAttr:$source_type, TypeAttr:$target_type);
+    let results = (outs AnyType:$result);
+    let hasVerifier = 1;
+}
+
 def CheckedIntegerBinaryOp : Gloin_Op<"checked_int_binary"> {
     let summary = "Integer arithmetic with Gloin overflow and division checks";
     let arguments = (ins AnyType:$lhs, AnyType:$rhs, StrAttr:$kind,
@@ -398,6 +405,17 @@ def LoadOp : Gloin_Op<"load"> {
 def StoreOp : Gloin_Op<"store"> {
     let summary = "Write a checked value to an address";
     let arguments = (ins AnyType:$value, AnyType:$address, TypeAttr:$source_type);
+    let hasVerifier = 1;
+}
+
+def CopyOp : Gloin_Op<"copy"> {
+    let summary = "Copy a materialized value's complete representation, including padding";
+    let description = [{
+      Source and destination have the same source type and layout. Copy all
+      storage bytes with memmove semantics; never decode or encode fields.
+    }];
+    let arguments = (ins AnyType:$source, AnyType:$destination,
+                     TypeAttr:$source_type, TypeAttr:$layout_type);
     let hasVerifier = 1;
 }
 

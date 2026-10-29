@@ -1,5 +1,33 @@
 #include "sema.h"
 
+std::shared_ptr<Type> Sema::check_endian_conversion(const CallExpression *call, bool &handled) {
+    const auto *name = dynamic_cast<const Identifier *>(call->function.get());
+    auto target = name ? resolve_core_type(name->value) : std::nullopt;
+    if (!target && name)
+        if (auto type = current_scope->resolve_type(name->value))
+            target = resolve_core_type(type->to_string());
+    if (!target)
+        return nullptr;
+    handled = true;
+    const auto &destination = core_type_info(*target);
+    if (!destination.is_integer || call->arguments.size() != 1) {
+        log_error("Endian conversion requires an integer type and exactly one argument");
+        return nullptr;
+    }
+    auto argument = check_expression(call->arguments.front().get(), *target);
+    if (!argument)
+        return nullptr;
+    auto source = resolve_core_type(argument->to_string());
+    if (!source || !core_type_info(*source).is_integer ||
+        core_type_info(*source).bits != destination.bits ||
+        core_type_info(*source).is_signed != destination.is_signed) {
+        log_error("Endian conversion requires the same integer width and signedness");
+        return nullptr;
+    }
+    recording->endian_conversions.insert(call);
+    return get_builtin_type(std::string(destination.name));
+}
+
 std::shared_ptr<Type> Sema::check_numeric_literal(const Expression *expression) {
     DiagnosticScope location(current_span, expression->span);
     const auto *prefix = dynamic_cast<const PrefixExpression *>(expression);
@@ -47,7 +75,30 @@ Sema::check_binary_operands(const InfixExpression *expression) {
         context = numeric_anchor(expression->right.get());
     if (!context && arithmetic)
         context = expected_type;
+    // A checked typed expression can provide context even when the cheap hint
+    // cannot resolve a generic call or an indexed aggregate. Literal trees are
+    // pure syntax, so checking the typed side first does not reorder effects.
+    auto literal_tree = [](auto &&self, const Expression *value) -> bool {
+        if (dynamic_cast<const IntegerLiteral *>(value) || dynamic_cast<const FloatLiteral *>(value))
+            return true;
+        if (const auto *prefix = dynamic_cast<const PrefixExpression *>(value))
+            return prefix->op == "-" && self(self, prefix->right.get());
+        if (const auto *binary = dynamic_cast<const InfixExpression *>(value))
+            return (binary->op == "+" || binary->op == "-" || binary->op == "*" ||
+                    binary->op == "/" || binary->op == "%") &&
+                   self(self, binary->left.get()) && self(self, binary->right.get());
+        return false;
+    };
+    if (!context && literal_tree(literal_tree, expression->left.get()) &&
+        !literal_tree(literal_tree, expression->right.get())) {
+        auto right = check_expression(expression->right.get());
+        auto type = right ? resolve_core_type(right->to_string()) : std::nullopt;
+        auto left = check_expression(expression->left.get(), type);
+        return {left, right};
+    }
     auto left = check_expression(expression->left.get(), context);
+    if (!context && left)
+        context = resolve_core_type(left->to_string());
     auto right = check_expression(expression->right.get(), context);
     return {left, right};
 }

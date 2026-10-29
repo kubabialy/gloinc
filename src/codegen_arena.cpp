@@ -44,8 +44,21 @@ mlir::Value CodeGen::emit_arena_allocation(mlir::func::FuncOp method, bool nulla
     auto pointer_layout = mlir::LLVM::LLVMPointerType::get(&context);
     auto typed_storage = builder.create<gloin::ToLayoutOp>(
         location(), pointer_layout, typed);
+    auto initialize_value = [&] {
+        auto pointer = mlir::cast<gloin::GloinPointerType>(result_source);
+        mlir::Value address = typed;
+        if (nullable) {
+            auto reference = gloin::GloinPointerType::get(
+                &context, pointer.getPointee(), false, false);
+            address = builder.create<gloin::RequireNonNullOp>(
+                location(), reference, typed, mlir::TypeAttr::get(result_source));
+        }
+        builder.create<gloin::StoreOp>(
+            location(), as_source_value(arguments[1], pointer.getPointee()), address,
+            mlir::TypeAttr::get(pointer.getPointee()));
+    };
     if (!nullable) {
-        builder.create<mlir::LLVM::StoreOp>(location(), arguments[1], typed_storage);
+        initialize_value();
     } else {
         auto storage_layout = builder.create<gloin::ToLayoutOp>(
             location(), pointer_layout, storage);
@@ -60,7 +73,7 @@ mlir::Value CodeGen::emit_arena_allocation(mlir::func::FuncOp method, bool nulla
         builder.create<mlir::cf::CondBranchOp>(location(), success, initialize, mlir::ValueRange{},
                                                done, mlir::ValueRange{});
         builder.setInsertionPointToStart(initialize);
-        builder.create<mlir::LLVM::StoreOp>(location(), arguments[1], typed_storage);
+        initialize_value();
         branch_if_open(done);
         builder.setInsertionPointToStart(done);
     }

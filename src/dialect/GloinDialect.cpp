@@ -41,6 +41,8 @@ bool is_payloadless_enum_storage(mlir::Type type) {
 }
 
 bool matches_storage(mlir::Type source, mlir::Type storage) {
+  if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(source))
+    return storage.isSignlessInteger(integer.getWidth());
   if (mlir::isa<gloin::GloinPointerType>(source))
     return mlir::isa<mlir::LLVM::LLVMPointerType>(storage);
   if (auto array = mlir::dyn_cast<gloin::GloinArrayType>(source)) {
@@ -96,6 +98,20 @@ gloin::StructDefinitionOp struct_definition(mlir::Operation *operation,
 }
 
 } // namespace
+
+mlir::LogicalResult gloin::GloinIntegerType::verify(
+    llvm::function_ref<mlir::InFlightDiagnostic()> error, unsigned width,
+    gloin::Endianness order, gloin::IntegerSignedness signedness) {
+  if (width != 8 && width != 16 && width != 32 && width != 64)
+    return error() << "requires an 8, 16, 32 or 64-bit integer";
+  if (order != gloin::Endianness::Native && order != gloin::Endianness::Big &&
+      order != gloin::Endianness::Little)
+    return error() << "requires a supported byte order";
+  if (signedness != gloin::IntegerSignedness::Signed &&
+      signedness != gloin::IntegerSignedness::Unsigned)
+    return error() << "requires integer signedness";
+  return mlir::success();
+}
 
 bool gloin::canWeakenSourceValue(mlir::Type actual, mlir::Type requested) {
   if (actual == requested)
@@ -315,6 +331,15 @@ mlir::LogicalResult ExactIntegerWidenOp::verify() {
 }
 
 mlir::LogicalResult CheckedIntegerBinaryOp::verify() {
+  if (auto type = mlir::dyn_cast<gloin::GloinIntegerType>(getLhs().getType())) {
+    if (type != getRhs().getType() || type != getResult().getType() ||
+        getIsSigned() != (type.getSignedness() == gloin::IntegerSignedness::Signed))
+      return emitOpError("requires identical integer types and matching signedness");
+    auto kind = getKind();
+    if (kind != "+" && kind != "-" && kind != "*" && kind != "/" && kind != "%")
+      return emitOpError("has an unsupported integer operator");
+    return mlir::success();
+  }
   auto type = mlir::dyn_cast<mlir::IntegerType>(getLhs().getType());
   if (!type || type != getRhs().getType() || type != getResult().getType() ||
       (type.getWidth() != 8 && type.getWidth() != 16 && type.getWidth() != 32 &&
@@ -344,6 +369,16 @@ mlir::LogicalResult RequireFiniteOp::verify() {
 }
 
 mlir::LogicalResult CheckedIntegerCompareOp::verify() {
+  if (auto type = mlir::dyn_cast<gloin::GloinIntegerType>(getLhs().getType())) {
+    if (type != getRhs().getType() ||
+        getIsSigned() != (type.getSignedness() == gloin::IntegerSignedness::Signed))
+      return emitOpError("requires identical integer types and matching signedness");
+    auto kind = getKind();
+    if (kind != "==" && kind != "!=" && kind != "<" && kind != "<=" &&
+        kind != ">" && kind != ">=")
+      return emitOpError("has an unsupported integer comparison");
+    return mlir::success();
+  }
   auto type = mlir::dyn_cast<mlir::IntegerType>(getLhs().getType());
   if (!type || type != getRhs().getType() ||
       (type.getWidth() != 1 && type.getWidth() != 8 && type.getWidth() != 16 &&
@@ -707,6 +742,26 @@ mlir::LogicalResult StoreOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult CopyOp::verify() {
+  auto source = mlir::dyn_cast<gloin::GloinPointerType>(getSource().getType());
+  auto destination = mlir::dyn_cast<gloin::GloinPointerType>(getDestination().getType());
+  bool typed = source && destination && !source.getNullable() &&
+               !destination.getNullable() && !destination.getReadOnly() &&
+               source.getPointee() == getSourceType() &&
+               destination.getPointee() == getSourceType();
+  bool layout = mlir::isa<mlir::LLVM::LLVMPointerType>(getSource().getType()) &&
+                getSource().getType() == getDestination().getType();
+  if ((!typed && !layout) || !mlir::LLVM::isCompatibleType(getLayoutType()) ||
+      !matches_storage(getSourceType(), getLayoutType()))
+    return emitOpError("requires matching source/destination types and writable destination storage");
+  if (mlir::isa<gloin::GloinStructType>(getSourceType())) {
+    auto definition = struct_definition(getOperation(), getSourceType());
+    if (!definition || definition.getLayoutType() != getLayoutType())
+      return emitOpError("requires the declared nominal struct layout");
+  }
+  return mlir::success();
+}
+
 mlir::LogicalResult FieldAddressOp::verify() {
   auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(getStructType());
   auto base = mlir::dyn_cast<gloin::GloinPointerType>(getBase().getType());
@@ -771,10 +826,28 @@ mlir::LogicalResult ExtractFieldOp::verify() {
 }
 
 mlir::LogicalResult ConstantOp::verify() {
+  if (auto type = mlir::dyn_cast<gloin::GloinIntegerType>(getResult().getType())) {
+    auto value = mlir::dyn_cast<mlir::IntegerAttr>(getValueAttr());
+    if (!value || !value.getType().isSignlessInteger(type.getWidth()))
+      return emitOpError("requires an integer attribute with the source integer width");
+    return mlir::success();
+  }
   auto value = mlir::dyn_cast<mlir::TypedAttr>(getValueAttr());
   if (!value || !mlir::isa<mlir::IntegerAttr, mlir::FloatAttr>(value) ||
       value.getType() != getResult().getType())
     return emitOpError("requires a matching integer or floating attribute");
+  return mlir::success();
+}
+
+mlir::LogicalResult EndianConvertOp::verify() {
+  auto source = mlir::dyn_cast<gloin::GloinIntegerType>(getSourceType());
+  auto target = mlir::dyn_cast<gloin::GloinIntegerType>(getTargetType());
+  if (!source || !target || source.getWidth() != target.getWidth() ||
+      source.getSignedness() != target.getSignedness())
+    return emitOpError("requires integer types with equal width and signedness");
+  if ((getInput().getType() != source && !matches_storage(source, getInput().getType())) ||
+      (getResult().getType() != target && !matches_storage(target, getResult().getType())))
+    return emitOpError("requires operands matching the declared integer types");
   return mlir::success();
 }
 
@@ -785,6 +858,8 @@ bool case_key_matches(mlir::Type source, mlir::Attribute key) {
     auto integer = mlir::dyn_cast<mlir::IntegerAttr>(key);
     if (!integer)
         return false;
+    if (auto type = mlir::dyn_cast<gloin::GloinIntegerType>(source))
+        return integer.getType().isSignlessInteger(type.getWidth());
     if (mlir::isa<gloin::GloinEnumType>(source))
         return integer.getType().isInteger(32);
     if (mlir::isa<gloin::GloinResultType>(source))
@@ -799,7 +874,8 @@ bool case_key_matches(mlir::Type source, mlir::Attribute key) {
 mlir::LogicalResult verify_cases(mlir::Operation *op, mlir::Type source, mlir::Value subject,
                                  mlir::ArrayAttr keys, uint64_t domain, bool exhaustive) {
     auto scalar = mlir::dyn_cast<mlir::IntegerType>(source);
-    if (!mlir::isa<gloin::GloinEnumType, gloin::GloinResultType, gloin::GloinStringType>(source) &&
+    if (!mlir::isa<gloin::GloinEnumType, gloin::GloinResultType, gloin::GloinStringType,
+                   gloin::GloinIntegerType>(source) &&
         (!scalar || !scalar.isSignless() ||
          (scalar.getWidth() != 1 && scalar.getWidth() != 8 && scalar.getWidth() != 16 &&
           scalar.getWidth() != 32 && scalar.getWidth() != 64)))

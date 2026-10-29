@@ -31,15 +31,16 @@ ID when present. Entry validation does not itself run or lower the module.
 
 [numeric.h](../src/numeric.h) defines canonical `CoreType` IDs for
 `void`, `bool`, signed/unsigned 8/16/32/64-bit integers, `f32`/`f64`, and `string`. The type
-descriptor records storage width, integer category, and signedness. `bool` has
-its own identity. MLIR stores signed and unsigned language integers in signless
-integer types; semantic data preserves the distinction for operator selection.
+descriptor records storage width, integer category, signedness, and byte order.
+The development compiler also defines distinct `be_` and `le_` variants for each
+integer width. `bool` has its own identity. Native integers use signless MLIR
+types; endian-qualified integers retain their full GloinIR type until lowering.
 
 Sema resolves `int` to `i32` and `usize` to `u64` for the supported 64-bit
 macOS and Linux targets. Target information belongs to the checked program; a different
 pointer width is rejected instead of using the host process's `sizeof(void*)`.
 This is not a cross-compilation implementation. Unknown and deferred types,
-including undeclared names and 128-bit/custom-width/endian types, fail even in
+including undeclared names and 128-bit/custom-width types, fail even in
 unused parameters, bindings, or return annotations. `void` is restricted to
 return annotations.
 
@@ -144,9 +145,11 @@ Sema supplies context from declarations, assignment targets, parameters, returns
 and typed arithmetic operands. Typed operands determine the common operand type;
 they are never implicitly widened or narrowed. Literal-only arithmetic receives
 its enclosing numeric context. Unconstrained integers/floats default to i32/f32.
-Integer and floating spellings retain separate categories. The first release
-rejects implicit conversions between already typed values and numeric cast
-syntax. Explicit named standard-library conversion functions are checked
+Integer and floating spellings retain separate categories. Implicit conversions
+between already typed values remain rejected. The development compiler accepts
+`T(value)` for same-width, same-signedness integer byte-order conversions; see
+[the endian contract](endianness.md). Width, sign, and floating conversions use
+explicit named standard-library functions, checked
 against their declared signatures. The private exact i32-to-i64 primitive is
 selected through the checked standard-call table and emits
 [`gloin.exact_int_widen`](lowering.md#exact-integer-widening-020-perf-008),

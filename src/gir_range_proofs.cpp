@@ -63,7 +63,9 @@ struct PromoteMemory : mlir::PromotableMemOpInterface::ExternalModel<
                           llvm::SmallVectorImpl<mlir::OpOperand *> &,
                           const mlir::DataLayout &) const {
         auto memory = mlir::cast<Op>(op);
+        auto allocation = slot.ptr.getDefiningOp<gloin::StackAllocOp>();
         return uses.size() == 1 && memory.getAddress() == slot.ptr &&
+               allocation && allocation.getSourceType() == memory.getSourceType() &&
                memory.getValue().getType() == slot.elemType &&
                &memory.getAddressMutable() == *uses.begin();
     }

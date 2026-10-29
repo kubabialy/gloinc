@@ -25,8 +25,8 @@ stages. It is not yet a uniform GloinIR module.
 Some checked language constructs still bypass the custom Gloin dialect.
 Generic function, arithmetic, and control-flow mechanisms may use MLIR's
 standard `func`, `arith`, and `cf` dialects. Gloin-specific behavior needs a
-Gloin operation while its semantics are still visible. The 0.2.0
-compiler now emits these checked Gloin operations:
+Gloin operation while its semantics are still visible. The development
+compiler emits these checked Gloin operations:
 
 | Operation | Source behavior retained | Lowering |
 | --- | --- | --- |
@@ -34,6 +34,8 @@ compiler now emits these checked Gloin operations:
 | `gloin.abi_call` | Explicit checked call to a declared runtime ABI function with exact layout arguments and result | LLVM call after callee and signature verification |
 | `gloin.constant` | Exact checked scalar literal or folded constant value | `arith.constant` |
 | `gloin.exact_int_widen` | Exact widening of a supported integer with explicit source signedness | Sign or zero extension to the verified wider type |
+| `gloin.endian_convert` | Explicit same-width, same-signedness integer value conversion | Identity on numeric SSA values after source-type verification |
+| `gloin.copy` | Same-type materialized aggregate copy including padding, with overlap support | `llvm.memmove`, without decoding or encoding fields |
 | `gloin.assert` | Trap if a checked runtime precondition fails, including bounds, null, and arithmetic checks | Conditional branch and LLVM trap |
 | `gloin.checked_int_binary` | Signed/unsigned `+`, `-`, `*`, `/`, `%` with overflow and zero-divisor rules | Source-width LLVM overflow intrinsics or guarded division/remainder |
 | `gloin.checked_float_binary` | Finite `f32`/`f64` `+`, `-`, `*`, `/` with zero-divisor rules | Floating arithmetic and finite-result guards |
@@ -72,8 +74,8 @@ compiler now emits these checked Gloin operations:
 | `gloin.enum_compare` | Equality or inequality of operands with the same nominal enum SSA type | Compare extracted tags |
 
 Checked `func.func` signatures now use Gloin source types for pointers, arrays, slices,
-structs, strings, enums, errors, and results. Calls and returns use those types too. Each checked
-function records its LLVM-compatible argument and result layouts in
+structs, strings, enums, errors, results, and endian-qualified integers. Calls and
+returns use those types too. Each checked function records its LLVM-compatible argument and result layouts in
 `gloin.layout_inputs` and `gloin.layout_results`; lowering rejects missing or
 incompatible layout metadata. `gloin.to_layout` converts an entry argument or
 call result for the existing body, and `gloin.from_layout` converts a call
@@ -88,6 +90,14 @@ Typed arena allocation is an
 explicit `gloin.arena_typed_pointer` operation because its raw `*u8` storage
 becomes a pointer to the element being initialized; an ordinary layout bridge
 cannot express that change. The initializer is stored after this operation.
+
+Endian-qualified scalars remain numeric SSA values; scalar memory and aggregate
+field boundaries encode or decode their declared order. Aggregate values carry
+their existing representation. Before LLVM export, internal aggregate layouts
+gain explicit padding fields so copies and Gloin arguments/returns preserve all
+bytes. The transformation retains physical size, alignment, and field offsets;
+foreign aggregate signatures that would change require an explicit adapter.
+See the [endianness contract](endianness.md) for the conversion and ABI rules.
 
 Pointer, fixed-array, struct, enum, and local storage operations carry Gloin source type
 attributes. For example,

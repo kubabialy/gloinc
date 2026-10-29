@@ -34,7 +34,8 @@ TEST(MLIRSetup, DialectRegistration) {
     // Test creating a Gloin type
     // !gloin.int<32, Big>
     mlir::OpBuilder builder(&context);
-    auto type = gloin::GloinIntegerType::get(&context, 32, gloin::Endianness::Big);
+    auto type = gloin::GloinIntegerType::get(&context, 32, gloin::Endianness::Big,
+                                           gloin::IntegerSignedness::Unsigned);
     EXPECT_TRUE(type != nullptr);
     
     // Verify parameters

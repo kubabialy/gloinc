@@ -279,6 +279,11 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         return expression;
     }
     default:
+        if (is_type_token(current_token.type) && next_token.type == GLOIN_TOKEN_LPAREN) {
+            auto name = located_node<Identifier>(std::string(current_token.literal));
+            advance_token();
+            return name;
+        }
         fail("Expected expression, got '" + std::string(current_token.literal) + "'");
     }
 }

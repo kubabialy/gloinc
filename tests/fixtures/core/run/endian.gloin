@@ -1,0 +1,222 @@
+import "@memory";
+import "@arena";
+import "@hashmap";
+
+def struct Packet {
+    def tag: u8,
+    def mut word: be_u32,
+    def tail: u8,
+}
+
+def struct Pair {
+    def first: Packet,
+    def second: le_u16,
+}
+
+def identity<T>(value: T) -> T {
+    return value;
+}
+
+def order<T>(value: be_u32) -> T {
+    return T(value);
+}
+
+def packet_result(value: Packet) -> result<Packet> {
+    return value;
+}
+
+def returned(value: Packet) -> Packet {
+    def mut local: Packet = value;
+
+    return local;
+}
+
+def result_value(value: be_u32) -> result<be_u32> {
+    return value;
+}
+
+def selected(value: be_u32) -> le_u32 {
+    return match value {
+        case 0x11223344 => le_u32(value);
+        default => le_u32(0);
+    };
+}
+
+def counted(counter: &i32) -> be_u32 {
+    *counter = *counter + 1;
+
+    return 0x01020304;
+}
+
+def main() -> i32 {
+    def bytes: *u8 = memory.alloc(512, 16);
+    if bytes == null { return 1; }
+    defer memory.free(bytes);
+
+    def big: *be_u32 = memory.place<be_u32>(bytes, 512, 0x01020304);
+    if big == null { return 2; }
+    if *bytes != 1 || *(bytes + 1) != 2 || *(bytes + 2) != 3 || *(bytes + 3) != 4 { return 3; }
+
+    *big = *big + 1;
+
+    if *(bytes + 3) != 5 { return 4; }
+
+    *(bytes + 0) = 0x11;
+    *(bytes + 1) = 0x22;
+    *(bytes + 2) = 0x33;
+    *(bytes + 3) = 0x44;
+
+    if *big != 0x11223344 { return 5; }
+
+    def little: *le_u32 = memory.place<le_u32>(bytes + 8, 504, le_u32(*big));
+    if little == null { return 6; }
+    if *(bytes + 8) != 0x44 || *(bytes + 9) != 0x33 || *(bytes + 10) != 0x22 || *(bytes + 11) != 0x11 { return 7; }
+    if u32(*little) != u32(*big) { return 8; }
+
+    def signed: *be_i16 = memory.place<be_i16>(bytes + 16, 496, -259);
+    if signed == null { return 9; }
+    if *(bytes + 16) != 0xFE || *(bytes + 17) != 0xFD || le_i16(*signed) != -259 { return 10; }
+
+    def const minimum: le_i64 = le_i64(be_i64(-9223372036854775808));
+    if i64(minimum) != -9223372036854775808 { return 11; }
+
+    def array: *[be_u16; 3] = memory.place<[be_u16; 3]>(bytes + 24, 488, {0x0102, 0x0304, 0x0506});
+    if array == null { return 12; }
+    if *(bytes + 24) != 1 || *(bytes + 29) != 6 || (*array)[1] != 0x0304 { return 13; }
+
+    *array = {0x0708; 3};
+
+    if *(bytes + 24) != 7 || *(bytes + 29) != 8 { return 14; }
+
+    def values: [be_u16] = (*array)[0..3];
+    values[1] = 0x090A;
+
+    if *(bytes + 26) != 9 || *(bytes + 27) != 10 { return 15; }
+
+    def original: *Packet = memory.place<Packet>(bytes + 64, 448, Packet { tag: 7, word: 0x12345678, tail: 9 });
+    def copied: *Packet   = memory.place<Packet>(bytes + 96, 416, Packet { tag: 0, word: 0, tail: 0 });
+
+    if original == null || copied == null { return 16; }
+
+    // Distinct markers in both internal and trailing padding.
+    *(bytes + 65) = 0xA1;
+    *(bytes + 66) = 0xA2;
+    *(bytes + 67) = 0xA3;
+    *(bytes + 73) = 0xB1;
+    *(bytes + 74) = 0xB2;
+    *(bytes + 75) = 0xB3;
+    *copied       = *original;
+
+    for def mut i: i64 = 0; i < memory.size_of<Packet>(); i = i + 1 {
+        if *(bytes + 64 + i) != *(bytes + 96 + i) { return 17; }
+    }
+
+    // The by-value call and return must carry padding as well as fields.
+    *copied = returned(identity<Packet>(*original));
+
+    for def mut i: i64 = 0; i < memory.size_of<Packet>(); i = i + 1 {
+        if *(bytes + 64 + i) != *(bytes + 96 + i) { return 18; }
+    }
+
+    if copied.word != 0x12345678 || identity<Packet>(*copied).word != 0x12345678 { return 19; }
+
+    def captured: Packet = *original;
+    original.word = 0;
+    *copied = identity<Packet>(captured);
+
+    if copied.word != 0x12345678 || *(bytes + 97) != 0xA1 || *(bytes + 107) != 0xB3 { return 20; }
+
+    def nested: *Pair = memory.place<Pair>(bytes + 128, 384, Pair { first: *copied, second: 0x0102 });
+    if nested == null { return 21; }
+    if nested.first.word != 0x12345678 || *(bytes + 129) != 0xA1 || *(bytes + 140) != 2 || *(bytes + 141) != 1 { return 22; }
+
+    def outcome: result<be_u32> = result_value(0x01020304);
+    if outcome.erroneous { return 23; }
+    if outcome.value != 0x01020304 { return 24; }
+
+    def packet_outcome: result<Packet> = packet_result(*copied);
+    if packet_outcome.erroneous { return 25; }
+
+    *original = packet_outcome.value;
+
+    if *(bytes + 65) != 0xA1 || *(bytes + 75) != 0xB3 { return 26; }
+
+    def packets: [Packet; 2]       = {*copied; 2};
+    def packet_array: *[Packet; 2] = memory.place<[Packet; 2]>(bytes + 160, 352, identity<[Packet; 2]>(packets));
+
+    if packet_array == null { return 27; }
+    if *(bytes + 161) != 0xA1 || *(bytes + 183) != 0xB3 || (*packet_array)[1].word != 0x12345678 { return 28; }
+
+    def wide: *be_u64 = memory.place<be_u64>(bytes + 192, 320, 0x0102030405060708);
+    if wide == null { return 29; }
+    if *(bytes + 192) != 1 || *(bytes + 199) != 8 || le_u64(*wide) != 0x0102030405060708 { return 30; }
+    if order<le_u32>(*big) != *little || 0x11223344 != order<be_u32>(*big) { return 31; }
+
+    // A raw copy preserves bytes, even when the destination has another schema.
+    for def mut i: i64 = 0; i < 4; i = i + 1 {
+        *(bytes + 8 + i) = *(bytes + i);
+    }
+
+    if *little != 0x44332211 { return 32; }
+
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def element: &be_u32 = owner.alloc(be_u32(0x01020304));
+    *element = *element + 1;
+
+    if *element != 0x01020305 { return 33; }
+
+    def made: result<hashmap.HashMap<be_u32, le_u64>> = hashmap.HashMap<be_u32, le_u64>.create(&owner, 4);
+    if made.erroneous { return 34; }
+
+    def mut map: hashmap.HashMap<be_u32, le_u64> = made.value;
+    def inserted: result<bool>                   = map.insert(*element, le_u64(*wide));
+
+    if inserted.erroneous { return 35; }
+    if !inserted.value { return 36; }
+
+    def found: *const le_u64 = map.get(*element);
+    if found == null { return 37; }
+    if *found != 0x0102030405060708 { return 38; }
+
+    // Materialized copies must work when source and destination overlap.
+    def overlap_source: *Packet = memory.place<Packet>(bytes + 320, 192, *copied);
+    def overlap_dest: *Packet   = memory.place<Packet>(bytes + 324, 188, *copied);
+
+    if overlap_source == null || overlap_dest == null { return 39; }
+
+    def mut marker: u8 = 1;
+
+    for def mut i: i64 = 0; i < 16; i = i + 1 {
+        *(bytes + 320 + i) = marker;
+        marker = marker + 1;
+    }
+
+    def mut snapshot: [u8; 12] = zeroed;
+
+    for def mut i: i64 = 0; i < 12; i = i + 1 {
+        snapshot[i] = *(bytes + 320 + i);
+    }
+
+    *overlap_dest = *overlap_source;
+
+    for def mut i: i64 = 0; i < 12; i = i + 1 {
+        if *(bytes + 324 + i) != snapshot[i] { return 40; }
+    }
+
+    def optional: *be_u32 = owner.try_alloc(be_u32(0x01020304));
+    if optional == null || *optional != 0x01020304 { return 41; }
+    if selected(*big) != le_u32(*big) { return 43; }
+
+    switch *big {
+        case 0x11223344 {}
+
+        default { return 44; }
+    }
+
+    def mut evaluations: i32 = 0;
+    if le_u32(counted(&evaluations)) != 0x01020304 || evaluations != 1 { return 45; }
+
+    return 42;
+}

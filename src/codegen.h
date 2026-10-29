@@ -52,6 +52,7 @@ class CodeGen {
     void initialize_unchecked_types();
     mlir::Type lower_type(ValueType type);
     mlir::Type source_type(ValueType type);
+    gloin::GloinIntegerType integer_type(CoreType type);
     mlir::Value as_source_value(mlir::Value layout, mlir::Type source);
     std::unordered_map<size_t, mlir::Type> checked_struct_types;
     mlir::Value emit_constant(const ConstantValue &constant);

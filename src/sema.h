@@ -280,6 +280,7 @@ class Sema {
     const FunctionDefinition *current_function = nullptr;
     std::optional<CoreType> numeric_anchor(const Expression *expression);
     std::shared_ptr<Type> check_numeric_literal(const Expression *expression);
+    std::shared_ptr<Type> check_endian_conversion(const CallExpression *call, bool &handled);
     std::pair<std::shared_ptr<Type>, std::shared_ptr<Type>>
     check_binary_operands(const InfixExpression *expression);
     enum class Initialization { Uninitialized, Initialized, MaybeInitialized };

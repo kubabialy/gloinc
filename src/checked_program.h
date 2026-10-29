@@ -134,6 +134,7 @@ struct SemanticData {
     std::unordered_map<const CallExpression *, std::pair<MemoryIntrinsic, ValueType>> memory_intrinsics;
     std::unordered_map<const CallExpression *, StandardPrimitive> standard_calls;
     std::unordered_set<const CallExpression *> error_constructors;
+    std::unordered_set<const CallExpression *> endian_conversions;
     // Typed allocation calls target a checked library layout method. true is try_alloc.
     std::unordered_map<const CallExpression *, bool> arena_allocations;
     std::unordered_set<const CallExpression *> arena_many_allocations;
