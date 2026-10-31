@@ -1,0 +1,51 @@
+{
+  "validation_date": "2026-10-31",
+  "base_commit": "e8af8b5e876f1655888c690dd19f5ce32e6f2d72",
+  "branch": "packed-structs",
+  "working_tree": "uncommitted",
+  "tests": {
+    "macos_core": {
+      "tests": 1132,
+      "failures": 0,
+      "seconds": 294.0,
+      "timestamp": "2026-10-31T17:07:23",
+      "report_sha256": "15bf8acb1266b88abbd413bbdcf6aff6dbc904153884736797390d8bf1787828",
+      "local_report": "build/core.xml"
+    },
+    "linux_network": {
+      "tests": 37,
+      "failures": 0,
+      "seconds": 103.0,
+      "timestamp": "2026-10-31T17:02:36",
+      "report_sha256": "9e780af9b2c2e6295815c68888f8c7573ab2099f4e5fbe836e4f4902a96f3e2a",
+      "local_report": "build/tcpip-linux.xml"
+    },
+    "macos_native_asan_ubsan": {
+      "tests": 13,
+      "failures": 0,
+      "seconds": 0.104,
+      "timestamp": "2026-10-31T20:03:02.333",
+      "report_sha256": "81a63280db8027746dcf9559760659248c01220f38729a3dba0d95d0b2e4a727",
+      "local_report": "build/tcpip-native-sanitized.xml"
+    },
+    "macos_relocated": {
+      "tests": 44,
+      "failures": 0,
+      "seconds": 61.0,
+      "timestamp": "2026-10-31T20:48:16",
+      "report_sha256": "3013f174341bb3ea2079e666cbff2949dbdae5574eee5d201b0b7a8c96c48a19",
+      "local_report": "build/tcpip-relocated.xml"
+    }
+  },
+  "test_inventory": 1179,
+  "html_pages_checked": 9,
+  "gloin_formatter_check": "passed",
+  "diff_whitespace_check": "passed",
+  "linux_kernel_interoperability": {
+    "http": true,
+    "https": true,
+    "transport": "TUN in isolated network namespace",
+    "peer": "Linux kernel TCP and Python verified TLS"
+  },
+  "scope": "Bounded IPv4 host stack; see docs/tcpip-server.md. Raw macOS utun was compiled and its framing tested with socket pairs; live device interoperability was tested on Linux. Complete release/platform classification and hosted x86_64 gates remain separate."
+}

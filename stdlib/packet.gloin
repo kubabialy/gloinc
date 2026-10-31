@@ -1,0 +1,444 @@
+// Bounded IPv4/TCP/UDP wire representations. No sockets, allocation, or reassembly.
+// Headers are copied values; packet slices borrow unchanged caller storage.
+import "@memory";
+import "@status";
+
+def pub const TCP: u8 = 6;
+def pub const UDP: u8 = 17;
+
+def pub packed struct(msb_first) Ipv4Header {
+    def pub mut version: u4,
+    def pub mut header_words: u4,
+    def pub mut dscp: u6,
+    def pub mut ecn: u2,
+    def pub mut total_length: be_u16,
+    def pub mut identification: be_u16,
+    def pub mut reserved: u1,
+    def pub mut dont_fragment: u1,
+    def pub mut more_fragments: u1,
+    def pub mut fragment_offset: u13,
+    def pub mut ttl: u8,
+    def pub mut protocol: u8,
+    def pub mut checksum: be_u16,
+    def pub mut source: be_u32,
+    def pub mut destination: be_u32,
+}
+
+def pub packed struct(msb_first) UdpHeader {
+    def pub mut source_port: be_u16,
+    def pub mut destination_port: be_u16,
+    def pub mut length: be_u16,
+    def pub mut checksum: be_u16,
+}
+
+def pub packed struct(msb_first) TcpHeader {
+    def pub mut source_port: be_u16,
+    def pub mut destination_port: be_u16,
+    def pub mut sequence: be_u32,
+    def pub mut acknowledgment: be_u32,
+    def pub mut header_words: u4,
+    def pub mut reserved: u4,
+    def pub mut cwr: u1,
+    def pub mut ece: u1,
+    def pub mut urg: u1,
+    def pub mut ack: u1,
+    def pub mut psh: u1,
+    def pub mut rst: u1,
+    def pub mut syn: u1,
+    def pub mut fin: u1,
+    def pub mut window: be_u16,
+    def pub mut checksum: be_u16,
+    def pub mut urgent_pointer: be_u16,
+}
+
+def packed struct(msb_first) PseudoHeader {
+    def source: be_u32,
+    def destination: be_u32,
+    def zero: u8,
+    def protocol: u8,
+    def length: be_u16,
+}
+
+// Incremental Internet checksum. Odd input boundaries do not insert padding.
+// finish() does not mutate state and can be called before subsequent updates.
+def pub struct Checksum {
+    def mut sum: u32,
+    def mut high: bool,
+
+    def pub static create() -> Checksum { return Checksum { sum: 0, high: true }; }
+
+    def pub update(self: &Checksum, bytes: [const u8]) -> result<void> {
+        for def mut i: u64 = 0; i < bytes.len; i = i + 1 {
+            def widened: result<u32> = u32(bytes[i]);
+            if widened.erroneous { return widened.error; }
+
+            def mut value: u32 = widened.value;
+            if self.high { value = value * 256; }
+
+            self.sum  = self.sum + value;
+            self.sum  = self.sum % 65536 + self.sum / 65536;
+            self.high = !self.high;
+        }
+
+        return;
+    }
+
+    def pub finish(self: &const Checksum) -> result<be_u16> {
+        def value: result<be_u16> = be_u16(65535 - self.sum);
+        if value.erroneous { return value.error; }
+
+        return value.value;
+    }
+}
+
+def pub checksum(bytes: [const u8]) -> result<be_u16> {
+    def mut sum: Checksum   = Checksum.create();
+    def added: result<void> = sum.update(bytes);
+
+    if added.erroneous { return added.error; }
+
+    def value: result<be_u16> = sum.finish();
+    if value.erroneous { return value.error; }
+
+    return value.value;
+}
+
+// Structural option validation only. Unknown options remain opaque. Source
+// routing is unsupported because transport checksums need the ultimate address.
+def options_valid(bytes: [const u8], ipv4: bool) -> bool {
+    def mut cursor: u64 = 0;
+
+    while cursor < bytes.len {
+        def kind: u8 = bytes[cursor];
+
+        if kind == 0 {
+            while cursor < bytes.len {
+                if bytes[cursor] != 0 { return false; }
+
+                cursor = cursor + 1;
+            }
+
+            return true;
+        }
+
+        if kind == 1 {
+            cursor = cursor + 1;
+        } else {
+            if ipv4 && (kind == 131 || kind == 137) { return false; }
+            if bytes.len - cursor < 2 { return false; }
+
+            def converted: result<u64> = u64(bytes[cursor + 1]);
+            if converted.erroneous { return false; }
+
+            def length: u64 = converted.value;
+            if length < 2 || length > bytes.len - cursor { return false; }
+            // Standard TCP option shapes; values and negotiation are caller policy.
+            if !ipv4 && ((kind == 2 && length != 4) || (kind == 3 && length != 3)
+                    || (kind == 4 && length != 2) || (kind == 5 && (length < 10 || (length - 2) % 8 != 0))
+                    || (kind == 8 && length != 10)) { return false; }
+
+            cursor = cursor + length;
+        }
+    }
+
+    return true;
+}
+
+def pub struct Ipv4Packet {
+    def pub header: Ipv4Header,
+    def pub bytes: [const u8],
+    def pub options: [const u8],
+    def pub payload: [const u8],
+}
+
+def ipv4_shape(bytes: [const u8]) -> result<Ipv4Packet> {
+    def read: result<Ipv4Header> = memory.read_packed<Ipv4Header>(bytes);
+    if read.erroneous { return read.error; }
+
+    def header: Ipv4Header = read.value;
+    if header.version != 4 || header.header_words < 5 || header.reserved != 0 {
+        return error("invalid IPv4 header", status.INVALID, 0);
+    }
+
+    def words: result<u64> = u64(header.header_words);
+    if words.erroneous { return words.error; }
+
+    def length: result<u64> = u64(header.total_length);
+    if length.erroneous { return length.error; }
+
+    def head_size: u64 = words.value * 4;
+    def total: u64     = length.value;
+
+    if total < head_size || total > bytes.len {
+        return error("invalid or truncated IPv4 length", status.OUT_OF_RANGE, 0);
+    }
+    if !options_valid(bytes[20..head_size], true) {
+        return error("invalid or unsupported IPv4 options", status.INVALID, 0);
+    }
+
+    def offset: result<u64> = u64(header.fragment_offset);
+    if offset.erroneous { return offset.error; }
+
+    def payload_size: u64 = total - head_size;
+    def fragmented: bool  = header.more_fragments != 0 || header.fragment_offset != 0;
+
+    if (fragmented && (header.dont_fragment != 0 || payload_size == 0))
+        || (header.more_fragments != 0 && payload_size % 8 != 0)
+        || offset.value * 8 + payload_size > 65515 {
+        return error("invalid IPv4 fragment extent", status.INVALID, 0);
+    }
+
+    return Ipv4Packet { header: header, bytes: bytes[..total],
+        options: bytes[20..head_size], payload: bytes[head_size..total] };
+}
+
+def pub parse_ipv4(bytes: [const u8]) -> result<Ipv4Packet> {
+    def parsed: result<Ipv4Packet> = ipv4_shape(bytes);
+    if parsed.erroneous { return parsed.error; }
+
+    def packet: Ipv4Packet      = parsed.value;
+    def checked: result<be_u16> = checksum(packet.bytes[..20 + packet.options.len]);
+
+    if checked.erroneous { return checked.error; }
+    if checked.value != 0 { return error("invalid IPv4 checksum", status.INVALID, 0); }
+
+    return packet;
+}
+
+def transport_shape(bytes: [const u8], protocol: u8, verify_ip: bool) -> result<Ipv4Packet> {
+    def parsed: result<Ipv4Packet> = ipv4_shape(bytes);
+    if parsed.erroneous { return parsed.error; }
+
+    def packet: Ipv4Packet = parsed.value;
+    if packet.header.protocol != protocol {
+        return error("unexpected IPv4 protocol", status.INVALID, 0);
+    }
+    if packet.header.fragment_offset != 0 || packet.header.more_fragments != 0 {
+        return error("transport decoding requires IPv4 reassembly", status.INVALID, 0);
+    }
+
+    if verify_ip {
+        def checked: result<be_u16> = checksum(packet.bytes[..20 + packet.options.len]);
+        if checked.erroneous { return checked.error; }
+        if checked.value != 0 { return error("invalid IPv4 checksum", status.INVALID, 0); }
+    }
+
+    return packet;
+}
+
+// omit is the checksum field offset when generating, or bytes.len when verifying.
+def transport_checksum(packet: Ipv4Packet, omit: u64) -> result<be_u16> {
+    def length: result<be_u16> = be_u16(packet.payload.len);
+    if length.erroneous { return length.error; }
+
+    def mut pseudo: [u8; 12] = zeroed;
+    def written: result<void> = memory.write_packed<PseudoHeader>(pseudo[..], PseudoHeader {
+        source: packet.header.source, destination: packet.header.destination,
+        zero: 0, protocol: packet.header.protocol, length: length.value });
+
+    if written.erroneous { return written.error; }
+
+    def mut sum: Checksum   = Checksum.create();
+    def added: result<void> = sum.update(pseudo[..]);
+
+    if added.erroneous { return added.error; }
+
+    def before: result<void> = sum.update(packet.payload[..omit]);
+    if before.erroneous { return before.error; }
+
+    if omit < packet.payload.len {
+        def zero: [u8; 2]         = zeroed;
+        def skipped: result<void> = sum.update(zero[..]);
+
+        if skipped.erroneous { return skipped.error; }
+
+        def after: result<void> = sum.update(packet.payload[omit + 2..]);
+        if after.erroneous { return after.error; }
+    }
+
+    def value: result<be_u16> = sum.finish();
+    if value.erroneous { return value.error; }
+
+    return value.value;
+}
+
+def pub struct UdpPacket {
+    def pub ip: Ipv4Packet,
+    def pub header: UdpHeader,
+    def pub payload: [const u8],
+    def pub checksum_present: bool,
+}
+
+def udp_shape(packet: Ipv4Packet) -> result<UdpHeader> {
+    def read: result<UdpHeader> = memory.read_packed<UdpHeader>(packet.payload);
+    if read.erroneous { return read.error; }
+
+    def length: result<u64> = u64(read.value.length);
+    if length.erroneous { return length.error; }
+    if length.value < 8 || length.value != packet.payload.len {
+        return error("UDP length must match IPv4 payload", status.INVALID, 0);
+    }
+
+    return read.value;
+}
+
+def pub parse_udp_ipv4(bytes: [const u8]) -> result<UdpPacket> {
+    def ip: result<Ipv4Packet> = transport_shape(bytes, UDP, true);
+    if ip.erroneous { return ip.error; }
+
+    def read: result<UdpHeader> = udp_shape(ip.value);
+    if read.erroneous { return read.error; }
+
+    def header: UdpHeader = read.value;
+
+    if header.checksum != 0 {
+        def checked: result<be_u16> = transport_checksum(ip.value, ip.value.payload.len);
+        if checked.erroneous { return checked.error; }
+        if checked.value != 0 { return error("invalid UDP checksum", status.INVALID, 0); }
+    }
+
+    return UdpPacket { ip: ip.value, header: header, payload: ip.value.payload[8..],
+        checksum_present: header.checksum != 0 };
+}
+
+def pub struct TcpPacket {
+    def pub ip: Ipv4Packet,
+    def pub header: TcpHeader,
+    def pub options: [const u8],
+    def pub payload: [const u8],
+}
+
+def tcp_shape(packet: Ipv4Packet) -> result<TcpPacket> {
+    def read: result<TcpHeader> = memory.read_packed<TcpHeader>(packet.payload);
+    if read.erroneous { return read.error; }
+
+    def header: TcpHeader  = read.value;
+    def words: result<u64> = u64(header.header_words);
+
+    if words.erroneous { return words.error; }
+
+    def size: u64 = words.value * 4;
+    if size < 20 || size > packet.payload.len {
+        return error("invalid TCP data offset", status.INVALID, 0);
+    }
+
+    def options: [const u8] = packet.payload[20..size];
+    if !options_valid(options, false) { return error("invalid TCP options", status.INVALID, 0); }
+
+    return TcpPacket { ip: packet, header: header, options: options, payload: packet.payload[size..] };
+}
+
+def pub parse_tcp_ipv4(bytes: [const u8]) -> result<TcpPacket> {
+    def ip: result<Ipv4Packet> = transport_shape(bytes, TCP, true);
+    if ip.erroneous { return ip.error; }
+
+    def parsed: result<TcpPacket> = tcp_shape(ip.value);
+    if parsed.erroneous { return parsed.error; }
+
+    def checked: result<be_u16> = transport_checksum(ip.value, ip.value.payload.len);
+    if checked.erroneous { return checked.error; }
+    if checked.value != 0 { return error("invalid TCP checksum", status.INVALID, 0); }
+
+    return parsed.value;
+}
+
+def ipv4_checksum(packet: Ipv4Packet) -> result<be_u16> {
+    def mut sum: Checksum    = Checksum.create();
+    def before: result<void> = sum.update(packet.bytes[..10]);
+
+    if before.erroneous { return before.error; }
+
+    def zero: [u8; 2]         = zeroed;
+    def skipped: result<void> = sum.update(zero[..]);
+
+    if skipped.erroneous { return skipped.error; }
+
+    def after: result<void> = sum.update(packet.bytes[12..20 + packet.options.len]);
+    if after.erroneous { return after.error; }
+
+    def value: result<be_u16> = sum.finish();
+    if value.erroneous { return value.error; }
+
+    return value.value;
+}
+
+// Validate structure then replace checksum(s), ignoring their previous values.
+// All validation precedes writes. Bytes past total_length are never changed.
+def pub seal_ipv4(bytes: [u8]) -> result<void> {
+    def parsed: result<Ipv4Packet> = ipv4_shape(bytes);
+    if parsed.erroneous { return parsed.error; }
+
+    def checked: result<be_u16> = ipv4_checksum(parsed.value);
+    if checked.erroneous { return checked.error; }
+
+    def mut header: Ipv4Header = parsed.value.header;
+    header.checksum = checked.value;
+
+    def written: result<void> = memory.write_packed<Ipv4Header>(bytes, header);
+    if written.erroneous { return written.error; }
+
+    return;
+}
+
+def seal_transport(bytes: [u8], protocol: u8) -> result<void> {
+    def parsed: result<Ipv4Packet> = transport_shape(bytes, protocol, false);
+    if parsed.erroneous { return parsed.error; }
+
+    def packet: Ipv4Packet     = parsed.value;
+    def head_size: u64         = 20 + packet.options.len;
+    def ip_sum: result<be_u16> = ipv4_checksum(packet);
+
+    if ip_sum.erroneous { return ip_sum.error; }
+
+    def mut ip_header: Ipv4Header = packet.header;
+    ip_header.checksum = ip_sum.value;
+
+    if protocol == UDP {
+        def read: result<UdpHeader> = udp_shape(packet);
+        if read.erroneous { return read.error; }
+
+        def mut header: UdpHeader   = read.value;
+        def checked: result<be_u16> = transport_checksum(packet, 6);
+
+        if checked.erroneous { return checked.error; }
+
+        header.checksum = checked.value;
+        if header.checksum == 0 { header.checksum = 65535; }
+
+        def written: result<void> = memory.write_packed<UdpHeader>(bytes[head_size..], header);
+        if written.erroneous { return written.error; }
+    } else {
+        def read: result<TcpPacket> = tcp_shape(packet);
+        if read.erroneous { return read.error; }
+
+        def mut header: TcpHeader = read.value.header;
+        if header.reserved != 0 { return error("TCP generation requires zero reserved bits", status.INVALID, 0); }
+
+        def checked: result<be_u16> = transport_checksum(packet, 16);
+        if checked.erroneous { return checked.error; }
+
+        header.checksum = checked.value;
+
+        def written: result<void> = memory.write_packed<TcpHeader>(bytes[head_size..], header);
+        if written.erroneous { return written.error; }
+    }
+
+    def written: result<void> = memory.write_packed<Ipv4Header>(bytes, ip_header);
+    if written.erroneous { return written.error; }
+
+    return;
+}
+
+def pub seal_udp_ipv4(bytes: [u8]) -> result<void> {
+    def sealed: result<void> = seal_transport(bytes, UDP);
+    if sealed.erroneous { return sealed.error; }
+
+    return;
+}
+
+def pub seal_tcp_ipv4(bytes: [u8]) -> result<void> {
+    def sealed: result<void> = seal_transport(bytes, TCP);
+    if sealed.erroneous { return sealed.error; }
+
+    return;
+}

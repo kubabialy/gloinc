@@ -1,0 +1,1409 @@
+// IPv4 TCP connection engine. Packet I/O, clocks, storage and ISNs are caller-owned.
+// Sequence arithmetic uses a bounded u64 domain modulo 2^32; no signed overflow.
+import "@packet";
+import "@memory";
+import "@status";
+
+def pub const CLOSED: i32       = 0;
+def pub const SYN_SENT: i32     = 1;
+def pub const SYN_RECEIVED: i32 = 2;
+def pub const ESTABLISHED: i32  = 3;
+def pub const FIN_WAIT_1: i32   = 4;
+def pub const FIN_WAIT_2: i32   = 5;
+def pub const CLOSE_WAIT: i32   = 6;
+def pub const CLOSING: i32      = 7;
+def pub const LAST_ACK: i32     = 8;
+def pub const TIME_WAIT: i32    = 9;
+def pub const RESET: i32        = 10;
+def pub const TIMED_OUT: i32    = 11;
+
+def pub struct Address {
+    def pub host: be_u32,
+    def pub port: be_u16,
+}
+
+def pub struct Buffers {
+    def pub send: [u8],
+    def pub receive: [u8],
+    def pub present: [u8],
+}
+
+def pub struct Options {
+    def pub mss: u16,
+    def pub max_retries: u32,
+    def pub idle_timeout_ms: u64,
+    def pub time_wait_ms: u64,
+    def pub no_delay: bool,
+
+    def pub static defaults() -> Options {
+        return Options { mss: 1460, max_retries: 12, idle_timeout_ms: 300000,
+            time_wait_ms: 120000, no_delay: false };
+    }
+}
+
+def pub struct Read {
+    def pub count: u64,
+    def pub end: bool,
+}
+
+def add(sequence: u64, count: u64) -> u64 { return (sequence + count) % 4294967296; }
+
+def distance(first: u64, last: u64) -> u64 { return (last + 4294967296 - first) % 4294967296; }
+
+def before(first: u64, last: u64) -> bool {
+    def delta: u64 = distance(first, last);
+
+    return delta != 0 && delta < 2147483648;
+}
+
+def minimum(a: u64, b: u64) -> u64 { if a < b { return a; } return b; }
+
+def maximum(a: u64, b: u64) -> u64 { if a > b { return a; } return b; }
+
+def peer_mss(options: [const u8], local: u64) -> result<u64> {
+    def mut cursor: u64  = 0;
+    def mut offered: u64 = 536;
+    def mut seen: bool   = false;
+
+    while cursor < options.len {
+        def kind: u8 = options[cursor];
+        if kind == 0 { return minimum(local, offered); }
+
+        if kind == 1 { cursor = cursor + 1; } else {
+            def length: result<u64> = u64(options[cursor + 1]);
+            if length.erroneous { return length.error; }
+
+            if kind == 2 {
+                if seen { return error("duplicate TCP MSS option", status.INVALID, 0); }
+
+                def high: result<u64> = u64(options[cursor + 2]);
+                if high.erroneous { return high.error; }
+
+                def low: result<u64> = u64(options[cursor + 3]);
+                if low.erroneous { return low.error; }
+
+                offered = high.value * 256 + low.value;
+
+                if offered == 0 { return error("zero TCP MSS", status.INVALID, 0); }
+
+                seen = true;
+            }
+
+            cursor = cursor + length.value;
+        }
+    }
+
+    return minimum(local, offered);
+}
+
+def control_packet(local: Address, remote: Address, sequence: u64, acknowledgment: u64,
+    ack_flag: u1, reset: u1, output: [u8]) -> result<u64> {
+    if output.len < 40 { return error("TCP reset output is too short", status.OUT_OF_RANGE, 0); }
+
+    def seq: result<be_u32> = be_u32(sequence);
+    if seq.erroneous { return seq.error; }
+
+    def ack: result<be_u32> = be_u32(acknowledgment);
+    if ack.erroneous { return ack.error; }
+
+    def header: packet.TcpHeader = packet.TcpHeader {
+        source_port: local.port, destination_port: remote.port,
+        sequence: seq.value, acknowledgment: ack.value, header_words: 5, reserved: 0,
+        cwr: 0, ece: 0, urg: 0, ack: ack_flag, psh: 0, rst: reset, syn: 0, fin: 0,
+        window: 0, checksum: 0, urgent_pointer: 0 };
+    def ip: result<void> = memory.write_packed<packet.Ipv4Header>(output, packet.Ipv4Header {
+        version: 4, header_words: 5, dscp: 0, ecn: 0, total_length: 40,
+        identification: 0, reserved: 0, dont_fragment: 1, more_fragments: 0,
+        fragment_offset: 0, ttl: 64, protocol: packet.TCP, checksum: 0,
+        source: local.host, destination: remote.host });
+
+    if ip.erroneous { return ip.error; }
+
+    def tcp: result<void> = memory.write_packed<packet.TcpHeader>(output[20..], header);
+    if tcp.erroneous { return tcp.error; }
+
+    def sealed: result<void> = packet.seal_tcp_ipv4(output[..40]);
+    if sealed.erroneous { return sealed.error; }
+
+    return 40;
+}
+
+// Closed-port response. Never answer a reset with another reset.
+def pub reset_for(bytes: [const u8], output: [u8]) -> result<u64> {
+    def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+    if parsed.erroneous { return parsed.error; }
+
+    def segment: packet.TcpPacket = parsed.value;
+    if segment.header.rst != 0 { return 0; }
+
+    def seq: result<u64> = u64(segment.header.sequence);
+    if seq.erroneous { return seq.error; }
+
+    def ack: result<u64> = u64(segment.header.acknowledgment);
+    if ack.erroneous { return ack.error; }
+
+    def mut sequence: u64       = ack.value;
+    def mut acknowledgment: u64 = 0;
+    def mut flag: u1            = 0;
+
+    if segment.header.ack == 0 {
+        sequence = 0;
+
+        def mut extent: u64 = segment.payload.len;
+        if segment.header.syn != 0 { extent = extent + 1; }
+        if segment.header.fin != 0 { extent = extent + 1; }
+
+        acknowledgment = add(seq.value, extent);
+        flag           = 1;
+    }
+
+    def sent: result<u64> = control_packet(
+        Address { host: segment.ip.header.destination, port: segment.header.destination_port },
+        Address { host: segment.ip.header.source, port: segment.header.source_port },
+        sequence, acknowledgment, flag, 1, output);
+    if sent.erroneous { return sent.error; }
+
+    return sent.value;
+}
+
+def remaining(start: u64, duration: u64, now: u64) -> u64 {
+    def elapsed: u64 = now - start;
+    if elapsed >= duration { return 0; }
+
+    return duration - elapsed;
+}
+
+// Copies alias the supplied buffers. Drive one connection value serially.
+def pub struct Connection {
+    def local: Address,
+    def mut remote: Address,
+    def buffers: Buffers,
+    def options: Options,
+    def mut phase: i32,
+    def iss: u64,
+    def mut irs: u64,
+    def mut una: u64,
+    def mut next: u64,
+    def mut receive_next: u64,
+    def mut send_head: u64,
+    def mut send_used: u64,
+    def mut send_sent: u64,
+    def mut receive_head: u64,
+    def mut receive_ready: u64,
+    def mut peer_window: u64,
+    def mut window_sequence: u64,
+    def mut window_ack: u64,
+    def mut mss: u64,
+    def mut cwnd: u64,
+    def mut threshold: u64,
+    def mut congestion_credit: u64,
+    def mut duplicate_acks: u32,
+    def mut recovery: bool,
+    def mut retransmit: bool,
+    def mut syn_pending: bool,
+    def mut syn_sent: bool,
+    def mut ack_pending: bool,
+    def mut close_requested: bool,
+    def mut fin_sent: bool,
+    def mut fin_acked: bool,
+    def mut fin_sequence: u64,
+    def mut receive_fin: bool,
+    def mut pending_fin: bool,
+    def mut pending_fin_sequence: u64,
+    def mut last_now: u64,
+    def mut last_activity: u64,
+    def mut timer_start: u64,
+    def mut time_wait_start: u64,
+    def mut persist_start: u64,
+    def mut persist_interval: u64,
+    def mut retries: u32,
+    def mut rto: u64,
+    def mut srtt: u64,
+    def mut variance: u64,
+    def mut sample_active: bool,
+    def mut sample_start: u64,
+    def mut sample_end: u64,
+    def mut identification: u64,
+    def mut reset_pending: bool,
+    def mut reset_sequence: u64,
+    def mut reset_ack: u64,
+    def mut reset_ack_flag: u1,
+    def mut last_send: u64,
+    def mut syn_retransmitted: bool,
+    def mut resegment: bool,
+    def mut resegment_next: u64,
+    def mut resegment_end: u64,
+
+    def pub static connect(local: Address, remote: Address, isn: u32,
+        buffers: Buffers, options: Options, now_ms: u64) -> result<Connection> {
+        if local.port == 0 || remote.port == 0 || buffers.send.len == 0 || buffers.send.len > 65535
+            || buffers.receive.len == 0 || buffers.receive.len > 65535
+            || buffers.present.len != buffers.receive.len || options.mss < 64 || options.mss > 65495
+            || options.max_retries == 0 || options.max_retries > 32
+            || options.idle_timeout_ms == 0 || options.time_wait_ms == 0 {
+            return error("invalid TCP connection configuration", status.INVALID, 0);
+        }
+
+        def sequence: result<u64> = u64(isn);
+        if sequence.erroneous { return sequence.error; }
+
+        def segment: result<u64> = u64(options.mss);
+        if segment.erroneous { return segment.error; }
+
+        def initial_sequence: u64 = sequence.value;
+        def initial_mss: u64      = minimum(segment.value, 536);
+
+        for def mut i: u64 = 0; i < buffers.present.len; i = i + 1 { buffers.present[i] = 0; }
+
+        return Connection { local: local, remote: remote, buffers: buffers, options: options,
+            phase: SYN_SENT, iss: initial_sequence, irs: 0, una: initial_sequence, next: initial_sequence,
+            receive_next: 0, send_head: 0, send_used: 0, send_sent: 0, receive_head: 0, receive_ready: 0,
+            peer_window: 0, window_sequence: 0, window_ack: 0, mss: initial_mss,
+            cwnd: minimum(4 * initial_mss, maximum(2 * initial_mss, 4380)), threshold: 65535,
+            congestion_credit: 0, duplicate_acks: 0, recovery: false, retransmit: false,
+            syn_pending: true, syn_sent: false, ack_pending: false, close_requested: false,
+            fin_sent: false, fin_acked: false, fin_sequence: 0, receive_fin: false,
+            pending_fin: false, pending_fin_sequence: 0, last_now: now_ms, last_activity: now_ms,
+            timer_start: now_ms, time_wait_start: now_ms, persist_start: now_ms, persist_interval: 1000,
+            retries: 0, rto: 1000, srtt: 0, variance: 0, sample_active: false,
+            sample_start: now_ms, sample_end: 0, identification: 0,
+            reset_pending: false, reset_sequence: 0, reset_ack: 0, reset_ack_flag: 0,
+            last_send: now_ms, syn_retransmitted: false, resegment: false, resegment_next: 0, resegment_end: 0 };
+    }
+
+    def pub static accept(bytes: [const u8], local: Address, isn: u32,
+        buffers: Buffers, options: Options, now_ms: u64) -> result<Connection> {
+        def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+        if parsed.erroneous { return parsed.error; }
+
+        def segment: packet.TcpPacket = parsed.value;
+        if segment.ip.header.destination != local.host || segment.header.destination_port != local.port
+            || segment.header.syn == 0 || segment.header.ack != 0 || segment.header.rst != 0
+            || segment.header.fin != 0 {
+            return error("TCP listener requires an initial SYN", status.INVALID, 0);
+        }
+
+        def peer: Address            = Address { host: segment.ip.header.source, port: segment.header.source_port };
+        def made: result<Connection> = Connection.connect(local, peer, isn, buffers, options, now_ms);
+
+        if made.erroneous { return made.error; }
+
+        def mut connection: Connection = made.value;
+        def started: result<void>      = connection.start_receive(segment);
+
+        if started.erroneous { return started.error; }
+
+        connection.phase = SYN_RECEIVED;
+
+        return connection;
+    }
+
+    def clock(self: &Connection, now_ms: u64) -> result<void> {
+        if now_ms < self.last_now { return error("TCP clock moved backwards", status.INVALID, 0); }
+
+        self.last_now = now_ms;
+
+        return;
+    }
+
+    def start_receive(self: &Connection, segment: packet.TcpPacket) -> result<void> {
+        def sequence: result<u64> = u64(segment.header.sequence);
+        if sequence.erroneous { return sequence.error; }
+
+        def window: result<u64> = u64(segment.header.window);
+        if window.erroneous { return window.error; }
+
+        def limit: result<u64> = u64(self.options.mss);
+        if limit.erroneous { return limit.error; }
+
+        def negotiated: result<u64> = peer_mss(segment.options, limit.value);
+        if negotiated.erroneous { return negotiated.error; }
+
+        self.irs             = sequence.value;
+        self.receive_next    = add(self.irs, 1);
+        self.peer_window     = window.value;
+        self.window_sequence = sequence.value;
+        self.window_ack      = self.iss;
+        self.mss             = negotiated.value;
+        self.cwnd            = minimum(65535, minimum(4 * self.mss, maximum(2 * self.mss, 4380)));
+
+        return;
+    }
+
+    def path_mtu(self: &Connection, mtu: u64, sequence: u64) -> bool {
+        if mtu < 68 || mtu > 65535 || self.una == self.next
+            || distance(self.una, sequence) >= distance(self.una, self.next) || mtu - 40 >= self.mss { return false; }
+
+        self.mss            = mtu - 40;
+        self.retransmit     = false;
+        self.resegment      = self.send_sent != 0;
+        self.resegment_next = self.una;
+        self.resegment_end  = add(self.una, self.send_sent);
+
+        return true;
+    }
+
+    def pub state(self: &const Connection) -> i32 { return self.phase; }
+
+    def pub local_address(self: &const Connection) -> Address { return self.local; }
+
+    def pub remote_address(self: &const Connection) -> Address { return self.remote; }
+
+    def pub send_available(self: &const Connection) -> u64 { return self.buffers.send.len - self.send_used; }
+
+    def pub readable(self: &const Connection) -> u64 { return self.receive_ready; }
+
+    def pub write(self: &Connection, bytes: [const u8]) -> result<u64> {
+        if self.phase != ESTABLISHED && self.phase != CLOSE_WAIT {
+            return error("TCP connection is not established", status.CLOSED, 0);
+        }
+        if self.close_requested { return error("TCP write side is closed", status.CLOSED, 0); }
+
+        def count: u64    = minimum(bytes.len, self.buffers.send.len - self.send_used);
+        def mut slot: u64 = (self.send_head + self.send_used) % self.buffers.send.len;
+
+        for def mut i: u64 = 0; i < count; i = i + 1 {
+            self.buffers.send[slot] = bytes[i];
+            slot = slot + 1;
+            if slot == self.buffers.send.len { slot = 0; }
+        }
+
+        self.send_used = self.send_used + count;
+
+        return count;
+    }
+
+    def pub read(self: &Connection, output: [u8]) -> result<Read> {
+        if self.phase == RESET || self.phase == TIMED_OUT {
+            return error("TCP connection failed", status.CLOSED, 0);
+        }
+
+        def count: u64    = minimum(output.len, self.receive_ready);
+        def mut slot: u64 = self.receive_head;
+
+        for def mut i: u64 = 0; i < count; i = i + 1 {
+            output[i] = self.buffers.receive[slot];
+            slot = slot + 1;
+            if slot == self.buffers.receive.len { slot = 0; }
+        }
+
+        self.receive_head  = (self.receive_head + count) % self.buffers.receive.len;
+        self.receive_ready = self.receive_ready - count;
+        if count != 0 { self.ack_pending = true; }
+
+        return Read { count: count, end: self.receive_fin && self.receive_ready == 0 };
+    }
+
+    def pub shutdown_write(self: &Connection) -> result<void> {
+        if self.phase != ESTABLISHED && self.phase != CLOSE_WAIT {
+            return error("TCP shutdown requires an established connection", status.CLOSED, 0);
+        }
+
+        self.close_requested = true;
+
+        return;
+    }
+
+    def pub cancel(self: &Connection) -> void {
+        if self.phase == RESET { return; }
+
+        if self.phase >= SYN_RECEIVED && self.phase <= TIME_WAIT {
+            self.reset_pending  = true;
+            self.reset_sequence = self.next;
+            self.reset_ack      = self.receive_next;
+            self.reset_ack_flag = 1;
+        }
+
+        self.phase = RESET;
+    }
+
+    // Caller schedules this many milliseconds before asking emit() again.
+    def pub next_timeout_ms(self: &const Connection, now_ms: u64) -> result<u64> {
+        if now_ms < self.last_now { return error("TCP clock moved backwards", status.INVALID, 0); }
+        if self.reset_pending { return 0; }
+        if self.phase == CLOSED || self.phase == RESET || self.phase == TIMED_OUT { return 18446744073709551615; }
+        if self.ack_pending || self.syn_pending || (self.retransmit && self.peer_window != 0 && self.una != self.next) { return 0; }
+        if self.phase == TIME_WAIT { return remaining(self.time_wait_start, self.options.time_wait_ms, now_ms); }
+        if self.resegment && distance(self.una, self.resegment_next) < self.peer_window { return 0; }
+
+        def mut wait: u64 = remaining(self.last_activity, self.options.idle_timeout_ms, now_ms);
+
+        if self.una != self.next && (self.phase == SYN_SENT || self.phase == SYN_RECEIVED || self.peer_window != 0) {
+            wait = minimum(wait, remaining(self.timer_start, self.rto, now_ms));
+        }
+
+        if self.phase == ESTABLISHED || self.phase == CLOSE_WAIT {
+            if self.peer_window == 0 && (self.send_used != 0 || (self.close_requested && !self.fin_sent)) {
+                wait = minimum(wait, remaining(self.persist_start, self.persist_interval, now_ms));
+            } else {
+                def flight: u64    = distance(self.una, self.next);
+                def allowance: u64 = minimum(self.peer_window, self.cwnd);
+
+                if allowance > flight {
+                    if self.send_used > self.send_sent && (self.options.no_delay || self.close_requested
+                            || flight == 0 || minimum(self.send_used - self.send_sent, allowance - flight) >= self.mss) { return 0; }
+                    if self.send_used == self.send_sent && self.close_requested && !self.fin_sent { return 0; }
+                }
+            }
+        }
+
+        return wait;
+    }
+
+    def acknowledge(self: &Connection, acknowledgment: u64, now_ms: u64) -> void {
+        def advanced: u64 = distance(self.una, acknowledgment);
+        if advanced == 0 { return; }
+
+        if self.sample_active && !before(acknowledgment, self.sample_end) {
+            def sample: u64 = minimum(60000, maximum(1, now_ms - self.sample_start));
+
+            if self.srtt == 0 {
+                self.srtt     = sample;
+                self.variance = sample / 2;
+            } else {
+                def mut delta: u64 = self.srtt - minimum(self.srtt, sample);
+                if sample > self.srtt { delta = sample - self.srtt; }
+
+                self.variance = (3 * self.variance + delta) / 4;
+                self.srtt     = (7 * self.srtt + sample) / 8;
+            }
+
+            self.rto           = minimum(60000, maximum(1000, self.srtt + maximum(1, 4 * self.variance)));
+            self.sample_active = false;
+        }
+
+        def data: u64 = minimum(advanced, self.send_sent);
+        self.send_head = (self.send_head + data) % self.buffers.send.len;
+        self.send_used = self.send_used - data;
+        self.send_sent = self.send_sent - data;
+        self.una       = acknowledgment;
+
+        if self.resegment {
+            if !before(acknowledgment, self.resegment_end) { self.resegment = false; }
+            else if before(self.resegment_next, acknowledgment) { self.resegment_next = acknowledgment; }
+        }
+
+        self.timer_start    = now_ms;
+        self.retries        = 0;
+        self.duplicate_acks = 0;
+        self.retransmit     = false;
+
+        if self.recovery {
+            self.cwnd     = self.threshold;
+            self.recovery = false;
+        } else if data != 0 {
+            if self.cwnd < self.threshold {
+                self.cwnd = minimum(65535, self.cwnd + minimum(data, self.mss));
+            } else {
+                self.congestion_credit = self.congestion_credit + data;
+
+                if self.congestion_credit >= self.cwnd {
+                    self.congestion_credit = self.congestion_credit - self.cwnd;
+                    self.cwnd              = minimum(65535, self.cwnd + self.mss);
+                }
+            }
+        }
+
+        if self.fin_sent && !before(acknowledgment, add(self.fin_sequence, 1)) {
+            self.fin_acked = true;
+            if self.phase == FIN_WAIT_1 { self.phase = FIN_WAIT_2; }
+            if self.phase == CLOSING {
+                self.phase           = TIME_WAIT;
+                self.time_wait_start = now_ms;
+            }
+
+            if self.phase == LAST_ACK { self.phase = CLOSED; }
+        }
+    }
+
+    def accept_data(self: &Connection, segment: packet.TcpPacket, sequence: u64, now_ms: u64) -> void {
+        if self.receive_fin { self.ack_pending = true; return; }
+
+        def free: u64 = self.buffers.receive.len - self.receive_ready;
+
+        for def mut i: u64 = 0; i < segment.payload.len; i = i + 1 {
+            def position: u64 = add(sequence, i);
+            def offset: u64   = distance(self.receive_next, position);
+
+            if offset < free && (!self.pending_fin || before(position, self.pending_fin_sequence)) {
+                def slot: u64 = (self.receive_head + self.receive_ready + offset) % self.buffers.receive.len;
+
+                // First arrival wins for retransmitted/overlapping TCP data.
+                if self.buffers.present[slot] == 0 {
+                    self.buffers.receive[slot] = segment.payload[i];
+                    self.buffers.present[slot] = 1;
+                }
+            }
+        }
+
+        def fin: u64 = add(sequence, segment.payload.len);
+
+        if segment.header.fin != 0 && distance(self.receive_next, fin) < free {
+            if !self.pending_fin || before(fin, self.pending_fin_sequence) {
+                self.pending_fin          = true;
+                self.pending_fin_sequence = fin;
+            }
+        }
+
+        def mut contiguous: bool = true;
+
+        while contiguous && self.receive_ready < self.buffers.receive.len
+            && (!self.pending_fin || self.receive_next != self.pending_fin_sequence) {
+            def slot: u64 = (self.receive_head + self.receive_ready) % self.buffers.receive.len;
+
+            if self.buffers.present[slot] == 0 {
+                contiguous = false;
+            } else {
+                self.buffers.present[slot] = 0;
+                self.receive_ready         = self.receive_ready + 1;
+                self.receive_next          = add(self.receive_next, 1);
+            }
+        }
+
+        if self.pending_fin && self.receive_next == self.pending_fin_sequence {
+            self.receive_fin  = true;
+            self.receive_next = add(self.receive_next, 1);
+            if self.phase == ESTABLISHED { self.phase = CLOSE_WAIT; }
+            if self.phase == FIN_WAIT_1 { self.phase = CLOSING; }
+            if self.phase == FIN_WAIT_2 || (self.phase == CLOSING && self.fin_acked) {
+                self.phase           = TIME_WAIT;
+                self.time_wait_start = now_ms;
+            }
+        }
+
+        if segment.payload.len != 0 || segment.header.fin != 0 { self.ack_pending = true; }
+    }
+
+    def pub input(self: &Connection, bytes: [const u8], now_ms: u64) -> result<void> {
+        def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+        if parsed.erroneous { return parsed.error; }
+
+        def segment: packet.TcpPacket = parsed.value;
+        if segment.ip.header.destination != self.local.host || segment.ip.header.source != self.remote.host
+            || segment.header.destination_port != self.local.port || segment.header.source_port != self.remote.port {
+            return error("TCP packet belongs to another connection", status.INVALID, 0);
+        }
+
+        def clocked: result<void> = self.clock(now_ms);
+        if clocked.erroneous { return clocked.error; }
+        if self.phase == CLOSED || self.phase == RESET || self.phase == TIMED_OUT { return; }
+
+        def seq: result<u64> = u64(segment.header.sequence);
+        if seq.erroneous { return seq.error; }
+
+        def ack: result<u64> = u64(segment.header.acknowledgment);
+        if ack.erroneous { return ack.error; }
+
+        def window: result<u64> = u64(segment.header.window);
+        if window.erroneous { return window.error; }
+
+        def sequence: u64       = seq.value;
+        def acknowledgment: u64 = ack.value;
+
+        if self.phase == SYN_SENT {
+            if segment.header.ack != 0 && (!self.syn_sent || acknowledgment != self.next) {
+                if segment.header.rst == 0 {
+                    self.reset_pending  = true;
+                    self.reset_sequence = acknowledgment;
+                    self.reset_ack      = 0;
+                    self.reset_ack_flag = 0;
+                }
+
+                return;
+            }
+
+            if segment.header.rst != 0 {
+                if segment.header.ack != 0 { self.phase = RESET; }
+
+                return;
+            }
+
+            if segment.header.syn == 0 || segment.header.fin != 0 { return; }
+
+            def started: result<void> = self.start_receive(segment);
+            if started.erroneous { return started.error; }
+
+            self.last_activity = now_ms;
+
+            if segment.header.ack != 0 {
+                self.acknowledge(acknowledgment, now_ms);
+                self.phase = ESTABLISHED;
+                if self.syn_retransmitted { self.rto = maximum(3000, self.rto); self.cwnd = self.mss; }
+
+                self.syn_pending = false;
+                self.ack_pending = true;
+            } else {
+                self.phase       = SYN_RECEIVED;
+                self.syn_pending = true;
+            }
+
+            return;
+        }
+
+        if self.phase == SYN_RECEIVED && segment.header.syn != 0 && sequence == self.irs
+            && segment.header.ack != 0 && acknowledgment == self.next && self.syn_sent
+            && segment.header.rst == 0 && segment.header.fin == 0 {
+            self.acknowledge(acknowledgment, now_ms);
+            self.phase         = ESTABLISHED;
+            self.syn_pending   = false;
+            self.ack_pending   = true;
+            self.last_activity = now_ms;
+            if self.syn_retransmitted { self.rto = maximum(3000, self.rto); self.cwnd = self.mss; }
+
+            return;
+        }
+
+        if self.phase == SYN_RECEIVED && segment.header.syn != 0 && sequence == self.irs
+            && segment.header.ack == 0 && segment.header.rst == 0 {
+            self.syn_pending = true;
+
+            return;
+        }
+        if self.phase == TIME_WAIT && segment.header.rst != 0 { return; }
+        if self.phase == TIME_WAIT && segment.header.fin != 0
+            && add(sequence, segment.payload.len + 1) == self.receive_next {
+            self.ack_pending     = true;
+            self.time_wait_start = now_ms;
+
+            return;
+        }
+
+        def free: u64       = self.buffers.receive.len - self.receive_ready;
+        def mut extent: u64 = segment.payload.len;
+
+        if segment.header.syn != 0 { extent = extent + 1; }
+        if segment.header.fin != 0 { extent = extent + 1; }
+
+        def mut acceptable: bool = sequence == self.receive_next && extent == 0;
+
+        if free != 0 {
+            acceptable = distance(self.receive_next, sequence) < free;
+            if extent != 0 && distance(self.receive_next, add(sequence, extent - 1)) < free { acceptable = true; }
+        }
+
+        if !acceptable {
+            if segment.header.rst == 0 { self.ack_pending = true; }
+
+            return;
+        }
+
+        if segment.header.rst != 0 {
+            if sequence == self.receive_next { self.phase = RESET; } else { self.ack_pending = true; }
+
+            return;
+        }
+
+        if segment.header.syn != 0 { self.ack_pending = true; return; }
+        if segment.header.ack == 0 { return; }
+
+        if self.phase == SYN_RECEIVED && acknowledgment != self.next {
+            self.reset_pending  = true;
+            self.reset_sequence = acknowledgment;
+            self.reset_ack      = 0;
+            self.reset_ack_flag = 0;
+
+            return;
+        }
+
+        if before(self.next, acknowledgment) { self.ack_pending = true; return; }
+
+        if self.phase == SYN_RECEIVED {
+            if !self.syn_sent || acknowledgment != self.next { return; }
+
+            self.acknowledge(acknowledgment, now_ms);
+            self.phase = ESTABLISHED;
+            if self.syn_retransmitted { self.rto = maximum(3000, self.rto); self.cwnd = self.mss; }
+
+            self.syn_pending = false;
+        } else if before(self.una, acknowledgment) {
+            self.acknowledge(acknowledgment, now_ms);
+        } else if acknowledgment == self.una && self.send_sent != 0 && self.peer_window != 0 && segment.payload.len == 0
+            && window.value == self.peer_window && segment.header.fin == 0 {
+            if self.duplicate_acks < 3 { self.duplicate_acks = self.duplicate_acks + 1; }
+            if self.duplicate_acks == 3 && !self.recovery {
+                self.threshold  = maximum(distance(self.una, self.next) / 2, 2 * self.mss);
+                self.cwnd       = minimum(65535, self.threshold + 3 * self.mss);
+                self.recovery   = true;
+                self.retransmit = true;
+            } else if self.recovery { self.cwnd = minimum(65535, self.cwnd + self.mss); }
+        }
+
+        if !before(acknowledgment, self.una) && (before(self.window_sequence, sequence)
+                || (self.window_sequence == sequence && !before(acknowledgment, self.window_ack))) {
+            if self.peer_window == 0 && window.value != 0 && self.send_sent != 0 { self.retransmit = true; }
+
+            self.peer_window     = window.value;
+            self.window_sequence = sequence;
+            self.window_ack      = acknowledgment;
+            if self.peer_window != 0 { self.persist_interval = 1000; self.persist_start = now_ms; }
+        }
+
+        self.last_activity = now_ms;
+        if self.phase != CLOSED && self.phase != TIME_WAIT { self.accept_data(segment, sequence, now_ms); }
+
+        return;
+    }
+
+    def pub emit(self: &Connection, output: [u8], now_ms: u64) -> result<u64> {
+        if output.len < 44 { return error("TCP output buffer needs at least 44 bytes", status.OUT_OF_RANGE, 0); }
+
+        def clocked: result<void> = self.clock(now_ms);
+        if clocked.erroneous { return clocked.error; }
+
+        if self.reset_pending {
+            def sent: result<u64> = control_packet(self.local, self.remote, self.reset_sequence,
+                self.reset_ack, self.reset_ack_flag, 1, output);
+            if sent.erroneous { return sent.error; }
+
+            self.reset_pending = false;
+
+            return sent.value;
+        }
+
+        if self.phase == CLOSED || self.phase == RESET || self.phase == TIMED_OUT { return 0; }
+        if self.phase == TIME_WAIT && now_ms - self.time_wait_start >= self.options.time_wait_ms {
+            self.phase = CLOSED;
+
+            return 0;
+        }
+        if self.phase != TIME_WAIT && now_ms - self.last_activity >= self.options.idle_timeout_ms {
+            self.phase = TIMED_OUT;
+
+            return 0;
+        }
+
+        def handshake: bool = self.phase == SYN_SENT || self.phase == SYN_RECEIVED;
+
+        if self.una != self.next && (handshake || self.peer_window != 0)
+            && now_ms - self.timer_start >= self.rto {
+            if self.retries == self.options.max_retries { self.phase = TIMED_OUT; return 0; }
+
+            self.retries        = self.retries + 1;
+            self.threshold      = maximum(distance(self.una, self.next) / 2, 2 * self.mss);
+            self.cwnd           = self.mss;
+            self.recovery       = false;
+            self.duplicate_acks = 0;
+            self.rto            = minimum(60000, self.rto * 2);
+            self.sample_active  = false;
+            self.resegment      = false;
+            self.retransmit     = true;
+            if handshake { self.syn_pending = true; }
+        }
+
+        if self.una == self.next && now_ms - self.last_send >= self.rto {
+            self.cwnd = minimum(self.cwnd, minimum(4 * self.mss, maximum(2 * self.mss, 4380)));
+        }
+
+        def had_flight: bool       = self.una != self.next;
+        def mut syn: u1            = 0;
+        def mut fin: u1            = 0;
+        def mut sequence: u64      = self.next;
+        def mut count: u64         = 0;
+        def mut offset: u64        = self.send_sent;
+        def mut again: bool        = false;
+        def mut probe: bool        = false;
+        def mut resegmenting: bool = false;
+
+        if handshake {
+            if !self.syn_pending { return 0; }
+
+            syn      = 1;
+            sequence = self.iss;
+            again    = self.syn_sent;
+        } else if self.phase != TIME_WAIT {
+            if self.peer_window == 0 && self.send_used != 0
+                && now_ms - self.persist_start >= self.persist_interval {
+                count    = 1;
+                offset   = 0;
+                sequence = self.una;
+                again    = self.send_sent != 0;
+                probe    = true;
+            } else if self.peer_window == 0 && self.close_requested && !self.fin_sent
+                && now_ms - self.persist_start >= self.persist_interval {
+                sequence = add(self.una, 4294967295);
+                self.ack_pending = true;
+                probe = true;
+            } else if self.resegment && distance(self.una, self.resegment_next) < self.peer_window {
+                offset       = distance(self.una, self.resegment_next);
+                count        = minimum(distance(self.resegment_next, self.resegment_end), self.mss);
+                count        = minimum(count, minimum(output.len - 40, self.peer_window - offset));
+                sequence     = self.resegment_next;
+                again        = true;
+                resegmenting = true;
+            } else if self.retransmit && self.una != self.next && self.peer_window != 0 {
+                count    = minimum(self.send_sent, self.mss);
+                count    = minimum(count, output.len - 40);
+                offset   = 0;
+                sequence = self.una;
+                again    = true;
+                if count == 0 && self.fin_sent && !self.fin_acked { fin = 1; }
+            } else {
+                def flight: u64    = distance(self.una, self.next);
+                def allowance: u64 = minimum(self.peer_window, self.cwnd);
+
+                if allowance > flight {
+                    count = minimum(self.send_used - self.send_sent, allowance - flight);
+                    if !self.options.no_delay && !self.close_requested && flight != 0 && count < self.mss { count = 0; }
+
+                    count = minimum(count, minimum(self.mss, output.len - 40));
+                    if count == 0 && self.send_sent == self.send_used && self.close_requested && !self.fin_sent { fin = 1; }
+                }
+            }
+        }
+
+        if syn == 0 && fin == 0 && count == 0 && !self.ack_pending { return 0; }
+
+        def mut tcp_size: u64 = 20;
+        if syn != 0 { tcp_size = 24; }
+
+        def total: u64             = 20 + tcp_size + count;
+        def length: result<be_u16> = be_u16(total);
+
+        if length.erroneous { return length.error; }
+
+        def seq: result<be_u32> = be_u32(sequence);
+        if seq.erroneous { return seq.error; }
+
+        def ack: result<be_u32> = be_u32(self.receive_next);
+        if ack.erroneous { return ack.error; }
+
+        def window: result<be_u16> = be_u16(self.buffers.receive.len - self.receive_ready);
+        if window.erroneous { return window.error; }
+
+        def id: result<be_u16> = be_u16(self.identification);
+        if id.erroneous { return id.error; }
+
+        def ip: result<void> = memory.write_packed<packet.Ipv4Header>(output, packet.Ipv4Header {
+            version: 4, header_words: 5, dscp: 0, ecn: 0, total_length: length.value,
+            identification: id.value, reserved: 0, dont_fragment: 1, more_fragments: 0,
+            fragment_offset: 0, ttl: 64, protocol: packet.TCP, checksum: 0,
+            source: self.local.host, destination: self.remote.host });
+        if ip.erroneous { return ip.error; }
+
+        def mut ack_flag: u1 = 1;
+        if self.phase == SYN_SENT { ack_flag = 0; }
+
+        def mut words: u4 = 5;
+        if syn != 0 { words = 6; }
+
+        def header: result<void> = memory.write_packed<packet.TcpHeader>(output[20..], packet.TcpHeader {
+            source_port: self.local.port, destination_port: self.remote.port,
+            sequence: seq.value, acknowledgment: ack.value, header_words: words,
+            reserved: 0, cwr: 0, ece: 0, urg: 0, ack: ack_flag, psh: 0, rst: 0, syn: syn, fin: fin,
+            window: window.value, checksum: 0, urgent_pointer: 0 });
+        if header.erroneous { return header.error; }
+
+        if syn != 0 {
+            def offered: result<u64> = u64(self.options.mss);
+            if offered.erroneous { return offered.error; }
+
+            def high: result<u8> = u8(offered.value / 256);
+            if high.erroneous { return high.error; }
+
+            def low: result<u8> = u8(offered.value % 256);
+            if low.erroneous { return low.error; }
+
+            output[40] = 2;
+            output[41] = 4;
+            output[42] = high.value;
+            output[43] = low.value;
+        }
+
+        def mut slot: u64 = (self.send_head + offset) % self.buffers.send.len;
+
+        for def mut i: u64 = 0; i < count; i = i + 1 {
+            output[20 + tcp_size + i] = self.buffers.send[slot];
+            slot = slot + 1;
+            if slot == self.buffers.send.len { slot = 0; }
+        }
+
+        def sealed: result<void> = packet.seal_tcp_ipv4(output[..total]);
+        if sealed.erroneous { return sealed.error; }
+
+        if resegmenting {
+            self.resegment_next = add(self.resegment_next, count);
+            if self.resegment_next == self.resegment_end { self.resegment = false; }
+        }
+
+        self.identification = (self.identification + 1) % 65536;
+        self.ack_pending    = false;
+        self.retransmit     = false;
+
+        if syn != 0 {
+            self.syn_pending = false;
+            if again { self.syn_retransmitted = true; }
+
+            self.syn_sent = true;
+            self.next     = add(self.iss, 1);
+        } else if !again {
+            self.send_sent = self.send_sent + count;
+            self.next      = add(self.next, count);
+
+            if fin != 0 {
+                self.fin_sent     = true;
+                self.fin_sequence = self.next;
+                self.next         = add(self.next, 1);
+                if self.phase == CLOSE_WAIT { self.phase = LAST_ACK; } else { self.phase = FIN_WAIT_1; }
+            }
+        }
+
+        if again { self.sample_active = false; }
+        if syn != 0 || fin != 0 || count != 0 {
+            self.last_send = now_ms;
+            if again || !had_flight { self.timer_start = now_ms; }
+            if !again && !probe && !self.sample_active {
+                self.sample_active = true;
+                self.sample_start  = now_ms;
+                self.sample_end    = self.next;
+            }
+        }
+
+        if probe {
+            self.persist_start    = now_ms;
+            self.persist_interval = minimum(60000, self.persist_interval * 2);
+        }
+
+        return total;
+    }
+}
+
+// Stable handles never expose references into a slot that can later be reused.
+def pub struct Handle {
+    def pub index: u64,
+    def pub generation: u64,
+}
+
+def pub struct Slot {
+    def mut connection: Connection,
+    def mut occupied: bool,
+    def mut generation: u64,
+
+    def pub static create(buffers: Buffers, options: Options) -> result<Slot> {
+        def placeholder: Address     = Address { host: 0, port: 1 };
+        def made: result<Connection> = Connection.connect(placeholder, placeholder, 0, buffers, options, 0);
+
+        if made.erroneous { return made.error; }
+
+        def mut connection: Connection = made.value;
+        connection.phase = CLOSED;
+
+        return Slot { connection: connection, occupied: false, generation: 0 };
+    }
+}
+
+def pub struct Input {
+    // generation == 0 means no matching connection (e.g. a closed port).
+    def pub connection: Handle,
+    def pub created: bool,
+    // Immediate closed-port reset, otherwise zero. Send before reusing output.
+    def pub reply_bytes: u64,
+}
+
+// Small retained tuple after a fully drained active connection enters TIME_WAIT.
+// No send/receive buffer ownership is retained here.
+def pub struct TimeWait {
+    def mut occupied: bool,
+    def mut local: Address,
+    def mut remote: Address,
+    def mut sequence: u64,
+    def mut acknowledgment: u64,
+    def mut started: u64,
+    def mut duration: u64,
+    def mut ack_pending: bool,
+
+    def pub static empty() -> TimeWait {
+        return TimeWait { occupied: false, local: Address { host: 0, port: 0 }, remote: Address { host: 0, port: 0 },
+            sequence: 0, acknowledgment: 0, started: 0, duration: 0, ack_pending: false };
+    }
+}
+
+// Serial, bounded connection table for one IPv4 host. Slots/buffers/listener
+// ports must remain alive and exclusively owned by this table. Each emit scans
+// at most slots.len connections and returns at most one packet, round-robin.
+// ISNs are supplied by the caller: use a cryptographic, tuple-aware source for
+// real networks. Explicit values permit deterministic protocol simulations.
+def pub struct Table {
+    def host: be_u32,
+    def ports: [const be_u16],
+    def slots: [Slot],
+    def mut history: [TimeWait],
+    def mut history_used: u64,
+    def mut cursor: u64,
+    def mut last_now: u64,
+
+    def pub static create(host: be_u32, ports: [const be_u16], slots: [Slot]) -> result<Table> {
+        if host == 0 || slots.len == 0 || slots.len > 4096 || ports.len > 4096 {
+            return error("invalid TCP table configuration", status.INVALID, 0);
+        }
+
+        for def mut i: u64 = 0; i < slots.len; i = i + 1 {
+            if slots[i].occupied { return error("TCP slot is already in use", status.INVALID, 0); }
+        }
+
+        for def mut i: u64 = 0; i < ports.len; i = i + 1 {
+            if ports[i] == 0 { return error("TCP listener port is zero", status.INVALID, 0); }
+
+            for def mut j: u64 = 0; j < i; j = j + 1 {
+                if ports[i] == ports[j] { return error("duplicate TCP listener port", status.INVALID, 0); }
+            }
+        }
+
+        def mut history: [TimeWait; 0] = {};
+
+        return Table { host: host, ports: ports, slots: slots, history: history[..], history_used: 0, cursor: 0, last_now: 0 };
+    }
+
+    // Attach before opening any connection. History must remain exclusively
+    // owned by the table. A full history pool keeps TIME_WAIT in its original slot.
+    def pub time_wait_storage(self: &Table, history: [TimeWait]) -> result<void> {
+        if self.history.len != 0 || history.len > 65536 { return error("invalid TCP TIME_WAIT storage", status.INVALID, 0); }
+
+        for def mut i: u64 = 0; i < self.slots.len; i = i + 1 {
+            if self.slots[i].occupied { return error("TCP table is already active", status.INVALID, 0); }
+        }
+
+        for def mut i: u64 = 0; i < history.len; i = i + 1 {
+            if history[i].occupied { return error("TCP TIME_WAIT record is in use", status.INVALID, 0); }
+        }
+
+        self.history = history;
+
+        return;
+    }
+
+    def pub retire_time_wait(self: &Table, handle: Handle) -> result<void> {
+        if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
+
+        def connection: &const Connection = &self.slots[handle.index].connection;
+        if connection.phase != TIME_WAIT || connection.receive_ready != 0 {
+            return error("TCP TIME_WAIT retirement requires a drained connection", status.IN_PROGRESS, 0);
+        }
+
+        def mut index: u64  = self.history_used;
+        def mut found: bool = false;
+
+        for def mut i: u64 = 0; i < self.history_used && !found; i = i + 1 {
+            if !self.history[i].occupied { index = i; found = true; }
+        }
+
+        if index == self.history.len { return error("TCP TIME_WAIT pool is full", status.WOULD_BLOCK, 0); }
+
+        self.history[index] = TimeWait { occupied: true, local: connection.local, remote: connection.remote,
+            sequence: connection.next, acknowledgment: connection.receive_next,
+            started: connection.time_wait_start, duration: connection.options.time_wait_ms,
+            ack_pending: connection.ack_pending };
+        if index == self.history_used { self.history_used = self.history_used + 1; }
+
+        self.slots[handle.index].occupied = false;
+
+        return;
+    }
+
+    def expire_history(self: &Table, now_ms: u64) -> void {
+        for def mut i: u64 = 0; i < self.history_used; i = i + 1 {
+            if self.history[i].occupied && now_ms - self.history[i].started >= self.history[i].duration { self.history[i].occupied = false; }
+        }
+
+        while self.history_used != 0 && !self.history[self.history_used - 1].occupied { self.history_used = self.history_used - 1; }
+    }
+
+    def history_for(self: &const Table, local_port: be_u16, remote: Address) -> u64 {
+        for def mut i: u64 = 0; i < self.history_used; i = i + 1 {
+            if self.history[i].occupied && self.history[i].local.port == local_port
+                && self.history[i].remote.host == remote.host && self.history[i].remote.port == remote.port { return i; }
+        }
+
+        return self.history.len;
+    }
+
+    def valid(self: &const Table, handle: Handle) -> bool {
+        return handle.index < self.slots.len && handle.generation != 0
+            && self.slots[handle.index].occupied && self.slots[handle.index].generation == handle.generation;
+    }
+
+    def clock(self: &Table, now_ms: u64) -> result<void> {
+        if now_ms < self.last_now { return error("TCP table clock moved backwards", status.INVALID, 0); }
+
+        self.last_now = now_ms;
+
+        return;
+    }
+
+    def find(self: &const Table, local_port: be_u16, remote: Address) -> u64 {
+        for def mut i: u64 = 0; i < self.slots.len; i = i + 1 {
+            if self.slots[i].occupied {
+                def connection: &const Connection = &self.slots[i].connection;
+                if connection.local.port == local_port && connection.remote.host == remote.host
+                    && connection.remote.port == remote.port { return i; }
+            }
+        }
+
+        return self.slots.len;
+    }
+
+    def free_slot(self: &const Table) -> u64 {
+        for def mut i: u64 = 0; i < self.slots.len; i = i + 1 {
+            if !self.slots[i].occupied && self.slots[i].generation != 18446744073709551615 { return i; }
+        }
+
+        return self.slots.len;
+    }
+
+    def install(self: &Table, index: u64, connection: Connection) -> Handle {
+        self.slots[index].connection = connection;
+        self.slots[index].generation = self.slots[index].generation + 1;
+        self.slots[index].occupied   = true;
+
+        return Handle { index: index, generation: self.slots[index].generation };
+    }
+
+    // ICMP fragmentation-needed is advisory; require a quote of an in-flight
+    // sequence on the exact four-tuple before shrinking/resegmenting data.
+    def pub packet_too_big(self: &Table, local_port: be_u16, remote: Address,
+        sequence: be_u32, mtu: be_u16) -> result<bool> {
+        def index: u64 = self.find(local_port, remote);
+        if index == self.slots.len { return false; }
+
+        def size: result<u64> = u64(mtu);
+        if size.erroneous { return size.error; }
+
+        def seq: result<u64> = u64(sequence);
+        if seq.erroneous { return seq.error; }
+
+        return self.slots[index].connection.path_mtu(size.value, seq.value);
+    }
+
+    def pub capacity(self: &const Table) -> u64 { return self.slots.len; }
+
+    def pub handle_at(self: &const Table, index: u64) -> result<Handle> {
+        if index >= self.slots.len { return error("TCP slot index out of range", status.OUT_OF_RANGE, 0); }
+        if !self.slots[index].occupied { return error("TCP slot is vacant", status.NOT_FOUND, 0); }
+
+        return Handle { index: index, generation: self.slots[index].generation };
+    }
+
+    def pub state(self: &const Table, handle: Handle) -> result<i32> {
+        if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
+
+        return self.slots[handle.index].connection.state();
+    }
+
+    def pub remote_address(self: &const Table, handle: Handle) -> result<Address> {
+        if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
+
+        return self.slots[handle.index].connection.remote;
+    }
+
+    def pub write(self: &Table, handle: Handle, bytes: [const u8]) -> result<u64> {
+        if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
+
+        def written: result<u64> = self.slots[handle.index].connection.write(bytes);
+        if written.erroneous { return written.error; }
+
+        return written.value;
+    }
+
+    def pub read(self: &Table, handle: Handle, bytes: [u8]) -> result<Read> {
+        if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
+
+        def read: result<Read> = self.slots[handle.index].connection.read(bytes);
+        if read.erroneous { return read.error; }
+
+        return read.value;
+    }
+
+    def pub shutdown_write(self: &Table, handle: Handle) -> result<void> {
+        if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
+
+        def closed: result<void> = self.slots[handle.index].connection.shutdown_write();
+        if closed.erroneous { return closed.error; }
+
+        return;
+    }
+
+    def pub cancel(self: &Table, handle: Handle) -> result<void> {
+        if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
+
+        self.slots[handle.index].connection.cancel();
+
+        return;
+    }
+
+    // Preserve TIME_WAIT tuples and pending resets; the application must drain
+    // receive data before releasing a gracefully closed connection.
+    def pub release(self: &Table, handle: Handle) -> result<void> {
+        if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
+
+        def connection: &const Connection = &self.slots[handle.index].connection;
+        if connection.reset_pending || (connection.phase != CLOSED && connection.phase != RESET && connection.phase != TIMED_OUT) {
+            return error("TCP connection is still live", status.IN_PROGRESS, 0);
+        }
+
+        self.slots[handle.index].occupied = false;
+
+        return;
+    }
+
+    def pub connect(self: &Table, local_port: be_u16, remote: Address, isn: u32, now_ms: u64) -> result<Handle> {
+        def clocked: result<void> = self.clock(now_ms);
+        if clocked.erroneous { return clocked.error; }
+
+        self.expire_history(now_ms);
+
+        if self.find(local_port, remote) != self.slots.len || self.history_for(local_port, remote) != self.history.len {
+            return error("TCP tuple already exists", status.ALREADY_EXISTS, 0);
+        }
+
+        def index: u64 = self.free_slot();
+        if index == self.slots.len { return error("TCP connection table is full", status.WOULD_BLOCK, 0); }
+
+        def old: &const Connection = &self.slots[index].connection;
+        def made: result<Connection> = Connection.connect(Address { host: self.host, port: local_port },
+            remote, isn, old.buffers, old.options, now_ms);
+
+        if made.erroneous { return made.error; }
+
+        return self.install(index, made.value);
+    }
+
+    def pub input(self: &Table, bytes: [const u8], isn: u32, now_ms: u64, output: [u8]) -> result<Input> {
+        def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+        if parsed.erroneous { return parsed.error; }
+
+        def segment: packet.TcpPacket = parsed.value;
+        if segment.ip.header.destination != self.host || segment.ip.header.ttl == 0 {
+            return error("TCP datagram is not for this host", status.INVALID, 0);
+        }
+
+        def clocked: result<void> = self.clock(now_ms);
+        if clocked.erroneous { return clocked.error; }
+
+        def remote: Address = Address { host: segment.ip.header.source, port: segment.header.source_port };
+        def found: u64      = self.find(segment.header.destination_port, remote);
+
+        if found != self.slots.len {
+            def fed: result<void> = self.slots[found].connection.input(bytes, now_ms);
+            if fed.erroneous { return fed.error; }
+
+            return Input { connection: Handle { index: found, generation: self.slots[found].generation },
+                created: false, reply_bytes: 0 };
+        }
+
+        self.expire_history(now_ms);
+
+        def retained: u64 = self.history_for(segment.header.destination_port, remote);
+
+        if retained != self.history.len {
+            def old: &TimeWait = &self.history[retained];
+            def mut count: u64 = 0;
+
+            if segment.header.rst == 0 {
+                def seq: result<u64> = u64(segment.header.sequence);
+                if seq.erroneous { return seq.error; }
+
+                def sequence: u64 = seq.value;
+                if segment.header.fin != 0 && add(sequence, segment.payload.len + 1) == old.acknowledgment { old.started = now_ms; }
+                if segment.header.fin != 0 || segment.header.syn != 0 || segment.payload.len != 0 || sequence != old.acknowledgment {
+                    def sent: result<u64> = control_packet(old.local, old.remote, old.sequence, old.acknowledgment, 1, 0, output);
+                    if sent.erroneous { return sent.error; }
+
+                    count = sent.value;
+                    old.ack_pending = false;
+                }
+            }
+
+            return Input { connection: Handle { index: 0, generation: 0 }, created: false, reply_bytes: count };
+        }
+
+        def mut listening: bool = false;
+
+        for def mut i: u64 = 0; i < self.ports.len; i = i + 1 {
+            if self.ports[i] == segment.header.destination_port { listening = true; }
+        }
+
+        if listening && segment.header.syn != 0 && segment.header.rst == 0
+            && segment.header.ack == 0 && segment.header.fin == 0 {
+            def index: u64 = self.free_slot();
+            if index == self.slots.len { return error("TCP connection table is full", status.WOULD_BLOCK, 0); }
+
+            def old: &const Connection = &self.slots[index].connection;
+            def made: result<Connection> = Connection.accept(bytes,
+                Address { host: self.host, port: segment.header.destination_port }, isn, old.buffers, old.options, now_ms);
+
+            if made.erroneous { return made.error; }
+
+            def handle: Handle = self.install(index, made.value);
+
+            return Input { connection: handle, created: true, reply_bytes: 0 };
+        }
+
+        def mut count: u64 = 0;
+
+        if !listening || segment.header.ack != 0 {
+            def reset: result<u64> = reset_for(bytes, output);
+            if reset.erroneous { return reset.error; }
+
+            count = reset.value;
+        }
+
+        return Input { connection: Handle { index: 0, generation: 0 }, created: false, reply_bytes: count };
+    }
+
+    def pub emit(self: &Table, output: [u8], now_ms: u64) -> result<u64> {
+        def clocked: result<void> = self.clock(now_ms);
+        if clocked.erroneous { return clocked.error; }
+
+        self.expire_history(now_ms);
+
+        for def mut i: u64 = 0; i < self.history_used; i = i + 1 {
+            if self.history[i].occupied && self.history[i].ack_pending {
+                def old: &TimeWait    = &self.history[i];
+                def sent: result<u64> = control_packet(old.local, old.remote, old.sequence, old.acknowledgment, 1, 0, output);
+
+                if sent.erroneous { return sent.error; }
+
+                old.ack_pending = false;
+
+                return sent.value;
+            }
+        }
+
+        for def mut visited: u64 = 0; visited < self.slots.len; visited = visited + 1 {
+            def index: u64 = self.cursor;
+            self.cursor = (self.cursor + 1) % self.slots.len;
+
+            if self.slots[index].occupied {
+                def sent: result<u64> = self.slots[index].connection.emit(output, now_ms);
+                if sent.erroneous { return sent.error; }
+                if sent.value != 0 { return sent.value; }
+            }
+        }
+
+        return 0;
+    }
+
+    def pub next_timeout_ms(self: &const Table, now_ms: u64) -> result<u64> {
+        if now_ms < self.last_now { return error("TCP table clock moved backwards", status.INVALID, 0); }
+
+        def mut wait: u64 = 18446744073709551615;
+
+        for def mut i: u64 = 0; i < self.slots.len; i = i + 1 {
+            if self.slots[i].occupied {
+                def timed: result<u64> = self.slots[i].connection.next_timeout_ms(now_ms);
+                if timed.erroneous { return timed.error; }
+
+                wait = minimum(wait, timed.value);
+            }
+        }
+
+        for def mut i: u64 = 0; i < self.history_used; i = i + 1 {
+            if self.history[i].occupied {
+                if self.history[i].ack_pending { return 0; }
+
+                wait = minimum(wait, remaining(self.history[i].started, self.history[i].duration, now_ms));
+            }
+        }
+
+        return wait;
+    }
+}

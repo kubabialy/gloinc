@@ -339,6 +339,13 @@ def RawPlaceOp : Gloin_Op<"raw_place"> {
     let hasVerifier = 1;
 }
 
+def RawPackedPointerOp : Gloin_Op<"raw_packed_pointer", [Pure]> {
+    let summary = "View raw bytes as an alignment-one packed record; bounds are caller checked";
+    let arguments = (ins AnyType:$storage, TypeAttr:$source_type);
+    let results = (outs AnyType:$pointer);
+    let hasVerifier = 1;
+}
+
 def RawPaddingOp : Gloin_Op<"raw_padding", [Pure]> {
     let summary = "Compute padding for a typed raw storage address";
     let arguments = (ins AnyType:$storage, TypeAttr:$element_type);

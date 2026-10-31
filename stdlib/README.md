@@ -14,6 +14,26 @@ HTTP/1.1 head operations in the 0.1.0 candidate. Their public APIs use built-in
 `result<T>` for failures and ordinary payloads for expected readiness/EOF
 states. See [networking](../docs/networking.md) and the
 [local example](../examples/network_http.gloin).
+
+`@tcp`, `@ipv4`, and `@ip_stack` implement TCP/IP over raw IPv4 packets in Gloin.
+`@http_server` provides reusable HTTP/1.1 sessions, while `@tcp_tls` and
+`@http_service` provide bounded TLS and HTTP/HTTPS progress over those streams.
+`@net.PacketDevice` supplies Linux TUN/macOS utun transport. See the
+[TCP/IP server guide](../docs/tcpip-server.md) for buffers, ownership, timers,
+limits, and the concurrent server example.
+
+`@packet` uses packed structs and endian types for IPv4, UDP, and TCP headers.
+It provides bounded packet parsing, checksum verification/sealing, and incremental
+Internet checksums. `@memory.read_packed` and `write_packed` also support user-defined
+packed records. See [packet APIs](../docs/packets.md) and the
+[runnable example](../examples/packet_headers.gloin).
+
+The 0.3.0 development `@http` module also provides `RequestDecoder` and
+`RequestReader` for bounded incremental fixed-length and chunked HTTP/1.1
+request bodies. They use caller-owned buffers and built-in results, perform no
+I/O or allocation, and preserve pipelined suffixes. See the [request decoding
+guide](../docs/http-requests.md).
+
 `@net` also provides verified client TLS, reusable PEM server configurations,
 accepted TLS sessions and readiness-driven bidirectional shutdown. See
 [server TLS, ownership and cleanup](../docs/server-tls.md).

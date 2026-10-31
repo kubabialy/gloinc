@@ -1,0 +1,230 @@
+// Fair, incremental HTTP/HTTPS transport driver over Gloin TCP connections.
+import "@http_server";
+import "@http";
+import "@tcp";
+import "@tcp_tls";
+import "@net";
+import "@status";
+
+def pub const WAIT: i32              = 0;
+def pub const HAVE_HEAD: i32         = 1;
+def pub const HAVE_BODY: i32         = 2;
+def pub const REQUEST_COMPLETE: i32  = 3;
+def pub const NEED_RESPONSE: i32     = 4;
+def pub const RESPONSE_COMPLETE: i32 = 5;
+def pub const DONE: i32              = 6;
+
+def pub struct Progress {
+    def pub event: i32,
+    def pub body_bytes: u64,
+    def pub progressed: bool,
+}
+
+// One application-owned driver per live TCP handle. Round-robin poll() across
+// drivers for concurrency; each call performs bounded reads/writes and one HTTP
+// decoder step. No thread or per-request allocation is required. The application
+// inspects session.head(), accepts/rejects bodies, writes responses, then calls
+// session.advance() on RESPONSE_COMPLETE after releasing its borrowed head views.
+def pub struct Connection {
+    def handle: tcp.Handle,
+    // Optional, caller-owned adapter. It must remain alive until DONE/cancel.
+    def tls: *tcp_tls.Stream,
+    def pub mut session: http_server.Session,
+    def input: [u8],
+    def mut start: u64,
+    def mut end: u64,
+    def mut eof: bool,
+    def mut handshaking: bool,
+    def mut closing: bool,
+    def mut done: bool,
+    def mut started: u64,
+    def mut last_now: u64,
+    def handshake_timeout: u64,
+    def close_timeout: u64,
+
+    def pub static create(handle: tcp.Handle, tls: *tcp_tls.Stream, session: http_server.Session,
+        input: [u8], now_ms: u64, handshake_timeout_ms: u64, close_timeout_ms: u64) -> result<Connection> {
+        if handle.generation == 0 || input.len == 0 || handshake_timeout_ms == 0 || close_timeout_ms == 0 {
+            return error("invalid HTTP service configuration", status.INVALID, 0);
+        }
+
+        return Connection { handle: handle, tls: tls, session: session, input: input,
+            start: 0, end: 0, eof: false, handshaking: tls != null, closing: false, done: false,
+            started: now_ms, last_now: now_ms, handshake_timeout: handshake_timeout_ms, close_timeout: close_timeout_ms };
+    }
+
+    def pub next_timeout_ms(self: &const Connection, now_ms: u64) -> result<u64> {
+        if now_ms < self.last_now { return error("HTTP service clock moved backwards", status.INVALID, 0); }
+        if self.done { return 18446744073709551615; }
+
+        if self.handshaking || self.closing {
+            def mut limit: u64 = self.handshake_timeout;
+            if self.closing { limit = self.close_timeout; }
+            if now_ms - self.started >= limit { return 0; }
+
+            return limit - (now_ms - self.started);
+        }
+
+        def wait: result<u64> = self.session.next_timeout_ms(now_ms);
+        if wait.erroneous { return wait.error; }
+
+        return wait.value;
+    }
+
+    def pub cancel(self: &Connection, table: &tcp.Table) -> result<void> {
+        if self.done { return; }
+
+        self.done = true;
+        self.session.cancel();
+
+        if self.tls != null {
+            def closed: result<void> = (*self.tls).close();
+
+            // Always attempt TCP cancellation even if native cleanup failed.
+            if closed.erroneous {
+                def cancelled: result<void> = table.cancel(self.handle);
+                if cancelled.erroneous { return cancelled.error; }
+
+                return closed.error;
+            }
+        }
+
+        def cancelled: result<void> = table.cancel(self.handle);
+        if cancelled.erroneous { return cancelled.error; }
+
+        return;
+    }
+
+    def pub poll(self: &Connection, table: &tcp.Table, body: [u8], now_ms: u64) -> result<Progress> {
+        def timed: result<u64> = self.next_timeout_ms(now_ms);
+        if timed.erroneous { return timed.error; }
+
+        self.last_now = now_ms;
+
+        if self.done { return Progress { event: DONE, body_bytes: 0, progressed: false }; }
+        if timed.value == 0 { return error("HTTP service deadline expired", status.TIMED_OUT, 0); }
+
+        def state: result<i32> = table.state(self.handle);
+        if state.erroneous { return state.error; }
+        if state.value == tcp.RESET || state.value == tcp.TIMED_OUT { return error("HTTP transport failed", status.CLOSED, 0); }
+        if state.value == tcp.SYN_RECEIVED || state.value == tcp.SYN_SENT {
+            return Progress { event: WAIT, body_bytes: 0, progressed: false };
+        }
+
+        if self.handshaking {
+            def step: result<i32> = (*self.tls).handshake(table);
+            if step.erroneous { return step.error; }
+            if step.value != 0 { return Progress { event: WAIT, body_bytes: 0, progressed: false }; }
+
+            self.handshaking = false;
+        }
+
+        def mut progress: bool = false;
+
+        if self.tls != null {
+            def pumped: result<bool> = (*self.tls).pump(table);
+            if pumped.erroneous { return pumped.error; }
+
+            progress = pumped.value;
+        }
+
+        if self.session.state() == http_server.CLOSED && !self.closing {
+            self.closing = true;
+            self.started = now_ms;
+        }
+
+        if self.closing {
+            if self.tls != null {
+                def shutdown: result<i32> = (*self.tls).shutdown(table);
+                if shutdown.erroneous { return shutdown.error; }
+                if shutdown.value != 0 { return Progress { event: WAIT, body_bytes: 0, progressed: progress }; }
+
+                def closed: result<void> = (*self.tls).close();
+                if closed.erroneous { return closed.error; }
+            }
+
+            def shut: result<void> = table.shutdown_write(self.handle);
+            if shut.erroneous { return shut.error; }
+
+            self.done = true;
+
+            return Progress { event: DONE, body_bytes: 0, progressed: true };
+        }
+
+        def checked: result<void> = self.session.tick(now_ms);
+        if checked.erroneous { return checked.error; }
+
+        def output: [const u8] = self.session.output();
+
+        if output.len != 0 {
+            def mut count: u64 = 0;
+
+            if self.tls == null {
+                def written: result<u64> = table.write(self.handle, output);
+                if written.erroneous { return written.error; }
+
+                count = written.value;
+            } else {
+                def written: result<net.TlsWriteOutcome> = (*self.tls).write(table, output);
+                if written.erroneous { return written.error; }
+
+                count = written.value.count;
+            }
+
+            def consumed: result<void> = self.session.consume_output(count);
+            if consumed.erroneous { return consumed.error; }
+
+            if count != 0 { progress = true; }
+        }
+
+        def phase: i32 = self.session.state();
+        if phase == http_server.FAILED { return error("HTTP session failed", status.INVALID, 0); }
+        if phase == http_server.HEAD { return Progress { event: HAVE_HEAD, body_bytes: 0, progressed: progress }; }
+        if phase == http_server.COMPLETE { return Progress { event: RESPONSE_COMPLETE, body_bytes: 0, progressed: progress }; }
+        if phase == http_server.RESPONSE { return Progress { event: NEED_RESPONSE, body_bytes: 0, progressed: progress }; }
+        if self.session.body_complete() { return Progress { event: REQUEST_COMPLETE, body_bytes: 0, progressed: progress }; }
+
+        if self.start == self.end && !self.eof {
+            def mut count: u64 = 0;
+            def mut eof: bool  = false;
+
+            if self.tls == null {
+                def read: result<tcp.Read> = table.read(self.handle, self.input);
+                if read.erroneous { return read.error; }
+
+                count = read.value.count;
+                eof   = read.value.end;
+            } else {
+                def read: result<net.TlsReadOutcome> = (*self.tls).read(table, self.input);
+                if read.erroneous { return read.error; }
+
+                count = read.value.count;
+                eof   = read.value.state == status.END;
+            }
+
+            self.start = 0;
+            self.end   = count;
+            self.eof   = eof;
+            if count != 0 || eof { progress = true; }
+        }
+
+        if self.start == self.end && !self.eof { return Progress { event: WAIT, body_bytes: 0, progressed: progress }; }
+
+        def decoded: result<http.StreamProgress> = self.session.input(self.input[self.start..self.end], self.eof, body, now_ms);
+        if decoded.erroneous { return decoded.error; }
+
+        def step: http.StreamProgress = decoded.value;
+        self.start = self.start + step.consumed;
+        if step.consumed != 0 || step.produced != 0 { progress = true; }
+
+        def mut event: i32 = WAIT;
+        if self.session.state() == http_server.HEAD { event = HAVE_HEAD; }
+        if step.complete { event = REQUEST_COMPLETE; }
+        // A newly available head always needs the application's decision, even
+        // for bodyless requests; complete is also available through the session.
+        if self.session.state() == http_server.HEAD { event = HAVE_HEAD; }
+        if step.produced != 0 { event = HAVE_BODY; }
+
+        return Progress { event: event, body_bytes: step.produced, progressed: progress };
+    }
+}

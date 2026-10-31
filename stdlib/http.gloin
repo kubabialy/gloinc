@@ -1,4 +1,4 @@
-// Bounded HTTP/1.1 formatting and incremental response decoding. No I/O.
+// Bounded HTTP/1.1 formatting and incremental request/response decoding. No I/O.
 // All returned views borrow caller storage; see docs/networking.md.
 import "@arena";
 import "@status";
@@ -266,6 +266,14 @@ def pub parse_request(bytes: string, max_header_bytes: u64) -> result<RequestHea
     if head.status == status.TOO_LONG { return error("HTTP request head exceeds limit"); }
     if head.status != status.OK || head.chunked { return error("invalid or unsupported HTTP request head"); }
 
+    def parsed: result<RequestHead> = request_fields(head);
+    if parsed.erroneous { return parsed.error; }
+
+    return parsed.value;
+}
+
+// Shared request-line validation; framing is selected by the caller.
+def request_fields(head: HeadResult) -> result<RequestHead> {
     def first_space: strings.FindResult = strings.find(head.start_line, " ");
     if !first_space.found { return error("invalid HTTP request line"); }
 
@@ -810,10 +818,12 @@ def pub struct StreamProgress {
 // Each input byte is consumed once. Chunk-size/trailer lines are capped at 1024 bytes each;
 // max_metadata_bytes bounds all heads, chunk syntax, and trailers together.
 // Copies alias the buffers: use one reader at a time for a given storage pair.
-def pub struct ResponseDecoder {
+def struct MessageDecoder {
     def head_storage: [u8],
     def body_limit: u64,
     def method: string,
+    def request: bool,
+    def mut head_ready: bool,
     def metadata_limit: u64,
     def mut metadata_used: u64,
     def mut head_used: u64,
@@ -824,8 +834,8 @@ def pub struct ResponseDecoder {
     def mut line: [u8; 1024],
     def mut line_used: u64,
 
-    def pub static create(head_storage: [u8], max_body_bytes: u64, method: string,
-        max_metadata_bytes: u64) -> result<ResponseDecoder> {
+    def static create(head_storage: [u8], max_body_bytes: u64, method: string,
+        max_metadata_bytes: u64, request: bool) -> result<MessageDecoder> {
         if head_storage.len == ZERO || max_metadata_bytes == 0 || !token(method)
             || strings.equal(method, "CONNECT") {
             return error("invalid HTTP response reader configuration");
@@ -833,10 +843,12 @@ def pub struct ResponseDecoder {
 
         def empty: [u8; 1024] = zeroed;
 
-        return ResponseDecoder {
+        return MessageDecoder {
             head_storage: head_storage,
             body_limit: max_body_bytes,
             method: method,
+            request: request,
+            head_ready: false,
             metadata_limit: max_metadata_bytes,
             metadata_used: 0,
             head_used: 0,
@@ -849,7 +861,7 @@ def pub struct ResponseDecoder {
         };
     }
 
-    def consume(self: &ResponseDecoder, bytes: string, output: [u8]) -> result<StreamProgress> {
+    def consume(self: &MessageDecoder, bytes: string, output: [u8]) -> result<StreamProgress> {
         def mut produced: u64 = 0;
         def mut cursor: u64   = 0;
 
@@ -858,8 +870,11 @@ def pub struct ResponseDecoder {
 
             if self.state == READ_FIXED || self.state == READ_CLOSE || self.state == READ_DATA {
                 if self.body_used == self.body_limit || self.code == 205 {
+                    if self.request { return error("HTTP request body exceeds limit"); }
+
                     return error("HTTP response body exceeds limit");
                 }
+
                 if produced == output.len {
                     return StreamProgress {
                         complete: false,
@@ -884,6 +899,8 @@ def pub struct ResponseDecoder {
                 }
             } else {
                 if self.metadata_used == self.metadata_limit {
+                    if self.request { return error("HTTP request metadata exceeds limit"); }
+
                     return error("HTTP response metadata exceeds limit");
                 }
 
@@ -891,6 +908,8 @@ def pub struct ResponseDecoder {
 
                 if self.state == READ_HEAD {
                     if self.head_used == self.head_storage.len {
+                        if self.request { return error("HTTP request head exceeds limit"); }
+
                         return error("HTTP response head exceeds limit");
                     }
 
@@ -901,33 +920,57 @@ def pub struct ResponseDecoder {
                         && self.head_storage[self.head_used - 2] == CR
                         && self.head_storage[self.head_used - 3] == LF
                         && self.head_storage[self.head_used - 4] == CR {
-                        def parsed: result<ResponseHead> = parse_response(
-                            strings.view_bytes(self.head_storage[0..self.head_used]), self.head_storage.len);
-                        if parsed.erroneous { return parsed.error; }
+                        if self.request {
+                            def parsed: result<RequestInfo> = request_info(
+                                strings.view_bytes(self.head_storage[0..self.head_used]), self.head_storage.len);
+                            if parsed.erroneous { return parsed.error; }
 
-                        def head: ResponseHead = parsed.value;
-                        self.code = head.code;
+                            def head: RequestInfo = parsed.value;
+                            self.head_ready = true;
 
-                        if head.code == 101 { return error("HTTP protocol upgrades are unsupported"); }
+                            if head.chunked {
+                                self.state = READ_SIZE;
+                            } else {
+                                if head.content_length > self.body_limit {
+                                    return error("HTTP request body exceeds limit");
+                                }
 
-                        if head.code < 200 {
-                            self.head_used = 0;
-                        } else if strings.equal(self.method, "HEAD") || head.code == 204 || head.code == 304 {
-                            self.state = READ_DONE;
-                        } else if head.chunked {
-                            self.state = READ_SIZE;
-                        } else if head.has_content_length {
-                            if head.content_length > self.body_limit
-                                || (head.code == 205 && head.content_length != 0) {
-                                return error("HTTP response body exceeds limit");
+                                self.remaining = head.content_length;
+                                self.state     = READ_FIXED;
+                                if self.remaining == 0 { self.state = READ_DONE; }
                             }
+                        } else {
+                            def parsed: result<ResponseHead> = parse_response(
+                                strings.view_bytes(self.head_storage[0..self.head_used]), self.head_storage.len);
+                            if parsed.erroneous { return parsed.error; }
 
-                            self.remaining = head.content_length;
-                            self.state     = READ_FIXED;
-                            if self.remaining == 0 { self.state = READ_DONE; }
-                        } else { self.state = READ_CLOSE; }
+                            def head: ResponseHead = parsed.value;
+                            self.code = head.code;
 
-                        if self.code >= 200 {
+                            if head.code == 101 { return error("HTTP protocol upgrades are unsupported"); }
+
+                            self.head_ready = head.code >= 200;
+
+                            if head.code < 200 {
+                                self.head_used = 0;
+                            } else if strings.equal(self.method, "HEAD") || head.code == 204 || head.code == 304 {
+                                self.state = READ_DONE;
+                            } else if head.chunked {
+                                self.state = READ_SIZE;
+                            } else if head.has_content_length {
+                                if head.content_length > self.body_limit
+                                    || (head.code == 205 && head.content_length != 0) {
+                                    return error("HTTP response body exceeds limit");
+                                }
+
+                                self.remaining = head.content_length;
+                                self.state     = READ_FIXED;
+                                if self.remaining == 0 { self.state = READ_DONE; }
+                            } else { self.state = READ_CLOSE; }
+
+                        }
+
+                        if self.head_ready {
                             return StreamProgress {
                                 complete: self.state == READ_DONE,
                                 consumed: cursor + 1,
@@ -982,7 +1025,10 @@ def pub struct ResponseDecoder {
                             if !token(name) || !header_value(value)
                                 || equals_header_name(name, "Content-Length")
                                 || equals_header_name(name, "Transfer-Encoding")
-                                || equals_header_name(name, "Host") {
+                                || equals_header_name(name, "Host")
+                                || (self.request && (equals_header_name(name, "Connection")
+                                    || equals_header_name(name, "Upgrade") || equals_header_name(name, "Expect")
+                                    || equals_header_name(name, "TE") || equals_header_name(name, "Trailer"))) {
                                 return error("invalid or forbidden HTTP trailer");
                             }
                         }
@@ -1006,7 +1052,7 @@ def pub struct ResponseDecoder {
         return StreamProgress {
             complete: self.state == READ_DONE,
             produced: produced,
-            head_ready: self.code >= 200,
+            head_ready: self.head_ready,
             consumed: cursor
         };
     }
@@ -1014,8 +1060,12 @@ def pub struct ResponseDecoder {
     // Feed bytes in wire order. eof means clean transport EOF after these bytes.
     // EOF is applied only when all supplied bytes have been consumed. Output can
     // precede a later framing failure: completion alone makes the response valid.
-    def pub feed(self: &ResponseDecoder, bytes: string, eof: bool, output: [u8]) -> result<StreamProgress> {
-        if self.state == READ_FAILED { return error("HTTP response reader has failed"); }
+    def feed(self: &MessageDecoder, bytes: string, eof: bool, output: [u8]) -> result<StreamProgress> {
+        if self.state == READ_FAILED {
+            if self.request { return error("HTTP request reader has failed"); }
+
+            return error("HTTP response reader has failed");
+        }
 
         def consumed: result<StreamProgress> = self.consume(bytes, output);
         if consumed.erroneous {
@@ -1029,6 +1079,8 @@ def pub struct ResponseDecoder {
         if eof && progress.consumed == strings.byte_length(bytes) && self.state != READ_DONE {
             self.state = READ_FAILED;
 
+            if self.request { return error("HTTP request ended before completion"); }
+
             return error("HTTP response ended before completion");
         }
 
@@ -1040,7 +1092,7 @@ def pub struct ResponseDecoder {
         };
     }
 
-    def pub head(self: &const ResponseDecoder) -> result<ResponseInfo> {
+    def head(self: &const MessageDecoder) -> result<ResponseInfo> {
         if self.code < 200 || self.state == READ_FAILED { return error("HTTP final head is unavailable"); }
 
         return ResponseInfo {
@@ -1049,6 +1101,177 @@ def pub struct ResponseDecoder {
         };
     }
 
+}
+
+// Response API retained over the shared framing engine.
+def pub struct ResponseDecoder {
+    def mut decoder: MessageDecoder,
+
+    def pub static create(head_storage: [u8], max_body_bytes: u64, method: string,
+        max_metadata_bytes: u64) -> result<ResponseDecoder> {
+        def made: result<MessageDecoder> = MessageDecoder.create(
+            head_storage, max_body_bytes, method, max_metadata_bytes, false);
+        if made.erroneous { return made.error; }
+
+        return ResponseDecoder { decoder: made.value };
+    }
+
+    def pub feed(self: &ResponseDecoder, bytes: string, eof: bool, output: [u8]) -> result<StreamProgress> {
+        def step: result<StreamProgress> = self.decoder.feed(bytes, eof, output);
+        if step.erroneous { return step.error; }
+
+        return step.value;
+    }
+
+    def pub head(self: &const ResponseDecoder) -> result<ResponseInfo> {
+        def info: result<ResponseInfo> = self.decoder.head();
+        if info.erroneous { return info.error; }
+
+        return info.value;
+    }
+}
+
+// A validated request head borrowing the decoder's head storage.
+def pub struct RequestInfo {
+    def pub method: string,
+    def pub target: string,
+    def pub host: string,
+    def pub head: string,
+    def pub content_length: u64,
+    def pub has_content_length: bool,
+    def pub chunked: bool,
+}
+
+def request_info(bytes: string, max_header_bytes: u64) -> result<RequestInfo> {
+    def head: HeadResult = parse_head(bytes, max_header_bytes);
+    if head.status != status.OK { return error("invalid HTTP request head"); }
+
+    def parsed: result<RequestHead> = request_fields(head);
+    if parsed.erroneous { return parsed.error; }
+    if !valid_host(head.host) || strings.contains(head.host, ",")
+        || strings.contains(head.host, "@") || strings.contains(head.host, "/")
+        || strings.contains(head.host, "\\") || strings.contains(head.host, "#")
+        || strings.contains(head.host, "?") {
+        return error("invalid HTTP request Host");
+    }
+    if strings.equal(parsed.value.method, "CONNECT") {
+        return error("HTTP CONNECT requests are unsupported");
+    }
+
+    return RequestInfo {
+        method: parsed.value.method,
+        target: parsed.value.target,
+        host: parsed.value.host,
+        head: bytes,
+        content_length: head.content_length,
+        has_content_length: head.has_content_length,
+        chunked: head.chunked
+    };
+}
+
+// One request, no I/O or allocation. Stops after the head and when output fills.
+// Retain unconsumed input, including a following pipelined request. An absent
+// length/transfer coding means an empty body; request bodies are never EOF-framed.
+// Copies alias head/output storage; drive only one decoder per storage region.
+def pub struct RequestDecoder {
+    def mut decoder: MessageDecoder,
+
+    def pub static create(head_storage: [u8], max_body_bytes: u64,
+        max_metadata_bytes: u64) -> result<RequestDecoder> {
+        if head_storage.len == ZERO || max_metadata_bytes == 0 {
+            return error("invalid HTTP request reader configuration");
+        }
+
+        def made: result<MessageDecoder> = MessageDecoder.create(
+            head_storage, max_body_bytes, "GET", max_metadata_bytes, true);
+        if made.erroneous { return made.error; }
+
+        return RequestDecoder { decoder: made.value };
+    }
+
+    // EOF applies after all supplied input is consumed. Returned output is
+    // provisional until complete, since a later chunk/trailer can still fail.
+    def pub feed(self: &RequestDecoder, bytes: string, eof: bool, output: [u8]) -> result<StreamProgress> {
+        def step: result<StreamProgress> = self.decoder.feed(bytes, eof, output);
+        if step.erroneous { return step.error; }
+
+        return step.value;
+    }
+
+    // Header views stay valid while the caller keeps head_storage unchanged.
+    def pub head(self: &const RequestDecoder) -> result<RequestInfo> {
+        if !self.decoder.head_ready || self.decoder.state == READ_FAILED {
+            return error("HTTP request head is unavailable");
+        }
+
+        def info: result<RequestInfo> = request_info(
+            strings.view_bytes(self.decoder.head_storage[0..self.decoder.head_used]), self.decoder.head_used);
+        if info.erroneous { return info.error; }
+
+        return info.value;
+    }
+}
+
+// Complete decoded request; head views and body borrow the supplied buffers.
+def pub struct Request {
+    def pub method: string,
+    def pub target: string,
+    def pub host: string,
+    def pub head: string,
+    def pub body: string,
+}
+
+def pub struct RequestProgress {
+    def pub complete: bool,
+    def pub consumed: u64,
+}
+
+def pub struct RequestReader {
+    def mut decoder: RequestDecoder,
+    def body_storage: [u8],
+    def mut body_used: u64,
+    def mut complete: bool,
+
+    def pub static create(head_storage: [u8], body_storage: [u8],
+        max_metadata_bytes: u64) -> result<RequestReader> {
+        def made: result<RequestDecoder> = RequestDecoder.create(
+            head_storage, body_storage.len, max_metadata_bytes);
+        if made.erroneous { return made.error; }
+
+        return RequestReader { decoder: made.value, body_storage: body_storage,
+            body_used: 0, complete: false };
+    }
+
+    def pub feed(self: &RequestReader, bytes: string, eof: bool) -> result<RequestProgress> {
+        def mut cursor: u64 = 0;
+        def mut again: bool = true;
+
+        while again {
+            def decoded: result<StreamProgress> = self.decoder.feed(
+                slice_or_empty(bytes, cursor, strings.byte_length(bytes) - cursor),
+                eof, self.body_storage[self.body_used..]);
+            if decoded.erroneous { return decoded.error; }
+
+            def step: StreamProgress = decoded.value;
+            cursor = cursor + step.consumed;
+            self.body_used = self.body_used + step.produced;
+            self.complete  = step.complete;
+            again = !step.complete && cursor < strings.byte_length(bytes);
+        }
+
+        return RequestProgress { complete: self.complete, consumed: cursor };
+    }
+
+    def pub request(self: &const RequestReader) -> result<Request> {
+        if !self.complete { return error("HTTP request is incomplete"); }
+
+        def info: result<RequestInfo> = self.decoder.head();
+        if info.erroneous { return info.error; }
+
+        return Request { method: info.value.method, target: info.value.target,
+            host: info.value.host, head: info.value.head,
+            body: strings.view_bytes(self.body_storage[0..self.body_used]) };
+    }
 }
 
 // Whole-body convenience wrapper over the streaming decoder. Copies alias storage.
@@ -1133,4 +1356,100 @@ def append_succeeded(outcome: result<void>) -> bool {
     if outcome.erroneous { return false; }
 
     return true;
+}
+
+// Bounded response-head writer for persistent servers. No allocation. The
+// framing fields are owned here; user headers cannot override them. On failure
+// output is unspecified and must not be sent. Bodies are supplied separately.
+def struct HeadWriter {
+    def bytes: [u8],
+    def mut used: u64,
+    def mut full: bool,
+
+    def text(self: &HeadWriter, value: string) -> void {
+        def count: u64 = strings.byte_length(value);
+        if self.full || count > self.bytes.len - self.used { self.full = true; return; }
+
+        for def mut i: u64 = 0; i < count; i = i + 1 {
+            self.bytes[self.used + i] = byte_or_zero(value, i);
+        }
+
+        self.used = self.used + count;
+    }
+
+    def number(self: &HeadWriter, value: u64) -> void {
+        def mut digits: [u8; 20] = zeroed;
+        def mut cursor: u64      = 20;
+        def mut rest: u64        = value;
+        def mut again: bool      = true;
+
+        while again {
+            cursor = cursor - 1;
+            digits[cursor] = byte_or_zero("0123456789", rest % 10);
+            rest  = rest / 10;
+            again = rest != 0;
+        }
+
+        self.text(strings.view_bytes(digits[cursor..]));
+    }
+}
+
+def pub write_response_head(output: [u8], code: i32, reason: string,
+    headers: [const Header], content_length: u64, chunked: bool,
+    keep_alive: bool, head_request: bool) -> result<u64> {
+    if code < 200 || code > 599 || !header_value(reason) || strings.byte_length(reason) == 0 {
+        return error("invalid final HTTP response status", status.INVALID, 0);
+    }
+    if (code == 204 || code == 205) && (content_length != 0 || chunked) {
+        return error("HTTP status prohibits a response body", status.INVALID, 0);
+    }
+    if chunked && (head_request || code == 304 || content_length != 0) {
+        return error("invalid HTTP response framing", status.INVALID, 0);
+    }
+
+    for def mut i: u64 = 0; i < headers.len; i = i + 1 {
+        def field: Header = headers[i];
+        if !token(field.name) || !header_value(field.value)
+            || equals_header_name(field.name, "Content-Length")
+            || equals_header_name(field.name, "Transfer-Encoding")
+            || equals_header_name(field.name, "Connection")
+            || equals_header_name(field.name, "Trailer")
+            || equals_header_name(field.name, "Upgrade") {
+            return error("invalid or reserved HTTP response header", status.INVALID, 0);
+        }
+    }
+
+    def number: result<u64> = u64(code);
+    if number.erroneous { return number.error; }
+
+    def mut writer: HeadWriter = HeadWriter { bytes: output, used: 0, full: false };
+
+    writer.text("HTTP/1.1 ");
+    writer.number(number.value);
+    writer.text(" ");
+    writer.text(reason);
+    writer.text("\r\n");
+
+    for def mut i: u64 = 0; i < headers.len; i = i + 1 {
+        writer.text(headers[i].name);
+        writer.text(": ");
+        writer.text(headers[i].value);
+        writer.text("\r\n");
+    }
+
+    if chunked {
+        writer.text("Transfer-Encoding: chunked\r\n");
+    } else if code != 204 {
+        writer.text("Content-Length: ");
+        writer.number(content_length);
+        writer.text("\r\n");
+    }
+
+    if !keep_alive { writer.text("Connection: close\r\n"); }
+
+    writer.text("\r\n");
+
+    if writer.full { return error("HTTP response head exceeds output storage", status.TOO_LONG, 0); }
+
+    return writer.used;
 }

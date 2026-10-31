@@ -180,6 +180,29 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
         parameters = {get_builtin_type("i32"), get_builtin_type("string"),
                       get_builtin_type("string"),
                       std::make_shared<PointerType>(byte_pointer, false, false), reference("i32")};
+    else if (kind == StandardPrimitive::NetTunOpen)
+        parameters = {get_builtin_type("string"), reference("i32"), reference("i32"), reference("i32")};
+    else if (kind == StandardPrimitive::NetPacketRead || kind == StandardPrimitive::NetPacketWrite)
+        parameters = {get_builtin_type("i32"), get_builtin_type("i32"),
+                      std::make_shared<PointerType>(get_builtin_type("u8"), false, kind == StandardPrimitive::NetPacketWrite),
+                      get_builtin_type("u64"), reference("u64"), reference("i32")};
+    else if (kind == StandardPrimitive::NetIsnSeed)
+        parameters = {reference("u8")};
+    else if (kind == StandardPrimitive::NetIsnNext)
+        parameters = {std::make_shared<PointerType>(get_builtin_type("u8"), false, true),
+                      get_builtin_type("u32"), get_builtin_type("u16"), get_builtin_type("u32"),
+                      get_builtin_type("u16"), get_builtin_type("u64"), reference("u32")};
+    else if (kind == StandardPrimitive::NetTlsBufferCreate)
+        parameters = {get_builtin_type("u64"), get_builtin_type("string"), get_builtin_type("string"),
+                      std::make_shared<PointerType>(byte_pointer, false, false), reference("i32")};
+    else if (kind == StandardPrimitive::NetTlsBufferServerCreate)
+        parameters = {get_builtin_type("u64"), byte_pointer,
+                      std::make_shared<PointerType>(byte_pointer, false, false), reference("i32")};
+    else if (kind == StandardPrimitive::NetTlsBufferFeed)
+        parameters = {byte_pointer, std::make_shared<PointerType>(get_builtin_type("u8"), true, true),
+                      get_builtin_type("u64"), get_builtin_type("i32"), reference("u64")};
+    else if (kind == StandardPrimitive::NetTlsBufferDrain)
+        parameters = {byte_pointer, reference("u8"), get_builtin_type("u64"), reference("u64")};
     else if (kind == StandardPrimitive::NetTlsServerConfig)
         parameters = {get_builtin_type("string"), get_builtin_type("string"),
                       std::make_shared<PointerType>(byte_pointer, false, false), reference("i32")};

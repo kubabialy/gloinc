@@ -1,0 +1,167 @@
+import "@tcp";
+import "@packet";
+
+def random(state: &u64) -> u64 {
+    *state = (*state * 1664525 + 1013904223) % 4294967296;
+
+    return *state;
+}
+
+def payload_byte(index: u64, direction: u64) -> u8 {
+    def value: result<u8> = u8((index * 13 + direction * 47) % 251);
+    if value.erroneous { return 0; }
+
+    return value.value;
+}
+
+def pub struct Flight {
+    def mut bytes: [u8; 300],
+    def mut count: u64,
+    def mut due: u64,
+    def mut direction: u64,
+}
+
+def simulation(seed: u64) -> i32 {
+    def mut atx: [u8; 1024] = zeroed;
+    def mut arx: [u8; 257]  = zeroed;
+    def mut amap: [u8; 257] = zeroed;
+    def mut btx: [u8; 1024] = zeroed;
+    def mut brx: [u8; 257]  = zeroed;
+    def mut bmap: [u8; 257] = zeroed;
+    def mut wire: [u8; 300] = zeroed;
+    def local: tcp.Address  = tcp.Address { host: 0xc0000201, port: 1234 };
+    def remote: tcp.Address = tcp.Address { host: 0xc0000202, port: 80 };
+    def opts: tcp.Options = tcp.Options { mss: 64, max_retries: 12, idle_timeout_ms: 900000,
+        time_wait_ms: 120000, no_delay: false };
+    def made: result<tcp.Connection> = tcp.Connection.connect(local, remote, 4294967294,
+        tcp.Buffers { send: atx[..], receive: arx[..], present: amap[..] }, opts, 0);
+
+    if made.erroneous { return 1; }
+
+    def mut a: tcp.Connection = made.value;
+    // Active opens on both sides exercise simultaneous open, including SYN loss.
+    def other: result<tcp.Connection> = tcp.Connection.connect(remote, local, 4294967290,
+        tcp.Buffers { send: btx[..], receive: brx[..], present: bmap[..] }, opts, 0);
+    if other.erroneous { return 2; }
+
+    def mut b: tcp.Connection   = other.value;
+    def vacant: Flight          = Flight { bytes: zeroed, count: 0, due: 0, direction: 0 };
+    def mut queue: [Flight; 12] = {vacant, vacant, vacant, vacant, vacant, vacant, vacant, vacant, vacant, vacant, vacant, vacant};
+    def mut rng: u64            = seed;
+    def mut sent: [u64; 2]      = zeroed;
+    def mut read: [u64; 2]      = zeroed;
+    def mut ended: [bool; 2]    = zeroed;
+    def mut shutdown: [bool; 2] = zeroed;
+    def mut payload: [u8; 137]  = zeroed;
+    def mut received: [u8; 101] = zeroed;
+    def total: u64              = 6000;
+    def mut done: bool          = false;
+
+    for def mut now: u64 = 0; now < 900000 && !done; now = now + 17 {
+        // Reverse traversal and independent delivery times cause reordering.
+        for def mut reverse: u64 = 12; reverse != 0; reverse = reverse - 1 {
+            def slot: u64 = reverse - 1;
+
+            if queue[slot].count != 0 && queue[slot].due <= now {
+                def mut target: &tcp.Connection = &a;
+                if queue[slot].direction == 0 { target = &b; }
+
+                def input: result<void> = target.input(queue[slot].bytes[..queue[slot].count], now);
+                if input.erroneous { return 3; }
+
+                if random(&rng) % 7 == 0 {
+                    def duplicate: result<void> = target.input(queue[slot].bytes[..queue[slot].count], now);
+                    if duplicate.erroneous { return 4; }
+                }
+
+                queue[slot].count = 0;
+            }
+        }
+
+        for def mut direction: u64 = 0; direction < 2; direction = direction + 1 {
+            def mut connection: &tcp.Connection = &a;
+            if direction == 1 { connection = &b; }
+
+            def state: i32 = connection.state();
+            if state == tcp.RESET || state == tcp.TIMED_OUT { return 5; }
+
+            if (state == tcp.ESTABLISHED || state == tcp.CLOSE_WAIT) && !shutdown[direction] {
+                def mut count: u64 = total - sent[direction];
+                if count > 137 { count = 137; }
+
+                for def mut i: u64 = 0; i < count; i = i + 1 {
+                    payload[i] = payload_byte(sent[direction] + i, direction);
+                }
+
+                def written: result<u64> = connection.write(payload[..count]);
+                if written.erroneous { return 6; }
+
+                sent[direction] = sent[direction] + written.value;
+
+                if sent[direction] == total {
+                    def closed: result<void> = connection.shutdown_write();
+                    if closed.erroneous { return 7; }
+
+                    shutdown[direction] = true;
+                }
+            }
+
+            // Slow consumers repeatedly fill the window, then release it.
+            if (now / 17) % 13 == direction {
+                def got: result<tcp.Read> = connection.read(received[..]);
+                if got.erroneous { return 8; }
+
+                def count: u64 = got.value.count;
+                def end: bool  = got.value.end;
+
+                for def mut i: u64 = 0; i < count; i = i + 1 {
+                    if received[i] != payload_byte(read[direction] + i, 1 - direction) { return 9; }
+                }
+
+                read[direction] = read[direction] + count;
+
+                if read[direction] > total || (end && read[direction] != total) { return 10; }
+
+                if end { ended[direction] = true; }
+            }
+
+            def emitted: result<u64> = connection.emit(wire[..], now);
+            if emitted.erroneous { return 11; }
+
+            def count: u64 = emitted.value;
+
+            if count != 0 && random(&rng) % 8 != 0 {
+                def mut queued: bool = false;
+
+                for def mut slot: u64 = 0; slot < 12 && !queued; slot = slot + 1 {
+                    if queue[slot].count == 0 {
+                        for def mut i: u64 = 0; i < count; i = i + 1 { queue[slot].bytes[i] = wire[i]; }
+
+                        queue[slot].count     = count;
+                        queue[slot].due       = now + 17 + random(&rng) % 170;
+                        queue[slot].direction = direction;
+                        queued = true;
+                    }
+                }
+            }
+
+            def timeout: result<u64> = connection.next_timeout_ms(now);
+            if timeout.erroneous { return 12; }
+        }
+
+        done = a.state() == tcp.CLOSED && b.state() == tcp.CLOSED && ended[0] && ended[1];
+    }
+
+    if !done { return 13; }
+
+    return 0;
+}
+
+def main() -> i32 {
+    for def mut seed: u64 = 1; seed <= 24; seed = seed + 1 {
+        def outcome: i32 = simulation(seed * 167);
+        if outcome != 0 { return outcome; }
+    }
+
+    return 0;
+}

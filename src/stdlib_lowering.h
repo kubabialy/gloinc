@@ -5,6 +5,7 @@
 inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &context,
                                                           StandardPrimitive kind) {
     auto pointer = mlir::LLVM::LLVMPointerType::get(&context);
+    auto i16 = mlir::IntegerType::get(&context, 16);
     auto i32 = mlir::IntegerType::get(&context, 32);
     auto i64 = mlir::IntegerType::get(&context, 64);
     auto nothing = mlir::LLVM::LLVMVoidType::get(&context);
@@ -58,6 +59,24 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
     case StandardPrimitive::NetTlsCreate:
         return mlir::LLVM::LLVMFunctionType::get(
             i32, {i32, pointer, i64, pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::NetTunOpen:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer, pointer, pointer}, false);
+    case StandardPrimitive::NetPacketRead:
+    case StandardPrimitive::NetPacketWrite:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::NetIsnSeed:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer}, false);
+    case StandardPrimitive::NetIsnNext:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i32, i16, i32, i16, i64, pointer}, false);
+    case StandardPrimitive::NetTlsBufferCreate:
+        return mlir::LLVM::LLVMFunctionType::get(
+            i32, {i64, pointer, i64, pointer, i64, pointer, pointer}, false);
+    case StandardPrimitive::NetTlsBufferServerCreate:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {i64, pointer, pointer, pointer}, false);
+    case StandardPrimitive::NetTlsBufferFeed:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i64, i32, pointer}, false);
+    case StandardPrimitive::NetTlsBufferDrain:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i64, pointer}, false);
     case StandardPrimitive::NetTlsHandshake:
     case StandardPrimitive::NetTlsShutdown:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer, pointer}, false);

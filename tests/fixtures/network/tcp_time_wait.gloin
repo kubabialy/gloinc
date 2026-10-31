@@ -1,0 +1,179 @@
+import "@tcp";
+import "@packet";
+
+def main() -> i32 {
+    def mut tx: [u8; 256]      = zeroed;
+    def mut rx: [u8; 256]      = zeroed;
+    def mut map: [u8; 256]     = zeroed;
+    def mut ptx: [u8; 256]     = zeroed;
+    def mut prx: [u8; 256]     = zeroed;
+    def mut pmap: [u8; 256]    = zeroed;
+    def options: tcp.Options   = tcp.Options { mss: 128, max_retries: 5, idle_timeout_ms: 30000, time_wait_ms: 2000, no_delay: true };
+    def slot: result<tcp.Slot> = tcp.Slot.create(tcp.Buffers { send: tx[..], receive: rx[..], present: map[..] }, options);
+
+    if slot.erroneous { return 1; }
+
+    def mut slots: [tcp.Slot; 1] = {slot.value};
+    def ports: [be_u16; 0]       = {};
+    def made: result<tcp.Table>  = tcp.Table.create(0xc0000201, ports[..], slots[..]);
+
+    if made.erroneous { return 2; }
+
+    def mut table: tcp.Table           = made.value;
+    def mut history: [tcp.TimeWait; 1] = {tcp.TimeWait.empty()};
+    def attached: result<void>         = table.time_wait_storage(history[..]);
+
+    if attached.erroneous { return 3; }
+
+    def remote: tcp.Address        = tcp.Address { host: 0xc0000202, port: 80 };
+    def opened: result<tcp.Handle> = table.connect(1234, remote, 4294967294, 0);
+
+    if opened.erroneous { return 4; }
+
+    def handle: tcp.Handle    = opened.value;
+    def mut wire: [u8; 1500]  = zeroed;
+    def mut reply: [u8; 1500] = zeroed;
+    def syn: result<u64>      = table.emit(wire[..], 0);
+
+    if syn.erroneous { return 5; }
+
+    def accepted: result<tcp.Connection> = tcp.Connection.accept(wire[..syn.value], remote, 4294967290,
+        tcp.Buffers { send: ptx[..], receive: prx[..], present: pmap[..] }, options, 0);
+    if accepted.erroneous { return 6; }
+
+    def mut peer: tcp.Connection = accepted.value;
+    def synack: result<u64>      = peer.emit(wire[..], 1);
+
+    if synack.erroneous { return 7; }
+
+    def input: result<tcp.Input> = table.input(wire[..synack.value], 0, 1, reply[..]);
+    if input.erroneous { return 8; }
+
+    def ack: result<u64> = table.emit(wire[..], 2);
+    if ack.erroneous { return 9; }
+
+    def fed: result<void> = peer.input(wire[..ack.value], 2);
+    if fed.erroneous { return 10; }
+
+    // Path-MTU quote guards and complete resegmentation without one RTO per piece.
+    def data: [u8; 64]      = zeroed;
+    def queued: result<u64> = table.write(handle, data[..]);
+
+    if queued.erroneous { return 11; }
+
+    def original: result<u64> = table.emit(wire[..], 3);
+    if original.erroneous { return 12; }
+    if original.value != 104 { return 13; }
+
+    def spoofed: result<bool> = table.packet_too_big(1234, remote, 1000, 68);
+    if spoofed.erroneous { return 14; }
+    if spoofed.value { return 15; }
+
+    def adjusted: result<bool> = table.packet_too_big(1234, remote, 4294967295, 68);
+    if adjusted.erroneous { return 16; }
+    if !adjusted.value { return 17; }
+
+    def lengths: [u64; 3]      = {68,68,48};
+    def sequences: [be_u32; 3] = {4294967295,27,55};
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def emitted: result<u64> = table.emit(wire[..], 4 + i);
+        if emitted.erroneous { return 18; }
+        if emitted.value != lengths[i] { return 19; }
+
+        def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(wire[..emitted.value]);
+        if parsed.erroneous { return 20; }
+        if parsed.value.header.sequence != sequences[i] { return 21; }
+
+        def delivered: result<void> = peer.input(wire[..lengths[i]], 4 + i);
+        if delivered.erroneous { return 22; }
+    }
+
+    def acknowledged: result<u64> = peer.emit(wire[..], 7);
+    if acknowledged.erroneous { return 23; }
+
+    def advanced: result<tcp.Input> = table.input(wire[..acknowledged.value], 0, 7, reply[..]);
+    if advanced.erroneous { return 24; }
+
+    def shut: result<void> = table.shutdown_write(handle);
+    if shut.erroneous { return 25; }
+
+    def fin: result<u64> = table.emit(wire[..], 8);
+    if fin.erroneous { return 26; }
+
+    def gotfin: result<void> = peer.input(wire[..fin.value], 8);
+    if gotfin.erroneous { return 27; }
+
+    // The other direction can still deliver data after our FIN.
+    def one: [u8; 1]       = {42};
+    def wrote: result<u64> = peer.write(one[..]);
+
+    if wrote.erroneous { return 28; }
+
+    def sent: result<u64> = peer.emit(wire[..], 9);
+    if sent.erroneous { return 29; }
+
+    def received: result<tcp.Input> = table.input(wire[..sent.value], 0, 9, reply[..]);
+    if received.erroneous { return 30; }
+
+    def peerclose: result<void> = peer.shutdown_write();
+    if peerclose.erroneous { return 31; }
+
+    def peerfin: result<u64> = peer.emit(wire[..], 10);
+    if peerfin.erroneous { return 32; }
+
+    def closed: result<tcp.Input> = table.input(wire[..peerfin.value], 0, 10, reply[..]);
+    if closed.erroneous { return 33; }
+
+    def unread: result<void> = table.retire_time_wait(handle);
+    if !unread.erroneous { return 34; }
+
+    def mut byte: [u8; 1]      = zeroed;
+    def read: result<tcp.Read> = table.read(handle, byte[..]);
+
+    if read.erroneous { return 35; }
+    if read.value.count != 1 || !read.value.end || byte[0] != 42 { return 36; }
+
+    def retired: result<void> = table.retire_time_wait(handle);
+    if retired.erroneous { return 37; }
+
+    def stale: result<i32> = table.state(handle);
+    if !stale.erroneous { return 38; }
+
+    // Pending final ACK survives retirement; the receive buffer is reusable.
+    def finalack: result<u64> = table.emit(reply[..], 11);
+    if finalack.erroneous { return 39; }
+    if finalack.value != 40 { return 40; }
+
+    def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(reply[..40]);
+    if parsed.erroneous { return 41; }
+    if parsed.value.header.rst != 0 || parsed.value.header.ack == 0 || parsed.value.header.acknowledgment != 4294967293 { return 42; }
+
+    def blocked: result<tcp.Handle> = table.connect(1234, remote, 100, 12);
+    if !blocked.erroneous { return 43; }
+
+    def reused: result<tcp.Handle> = table.connect(1235, remote, 100, 13);
+    if reused.erroneous { return 44; }
+
+    def next: tcp.Handle = reused.value;
+    if next.generation == handle.generation || next.index != handle.index { return 45; }
+
+    // Duplicate FIN is ACKed and restarts the retained tuple's timeout.
+    def duplicate: result<tcp.Input> = table.input(wire[..40], 0, 15, reply[..]);
+    if duplicate.erroneous { return 46; }
+    if duplicate.value.reply_bytes != 40 || duplicate.value.connection.generation != 0 { return 47; }
+
+    def cancelled: result<void> = table.cancel(next);
+    if cancelled.erroneous { return 48; }
+
+    def released: result<void> = table.release(next);
+    if released.erroneous { return 49; }
+
+    def early: result<tcp.Handle> = table.connect(1234, remote, 100, 2014);
+    if !early.erroneous { return 50; }
+
+    def late: result<tcp.Handle> = table.connect(1234, remote, 100, 2015);
+    if late.erroneous { return 51; }
+
+    return 0;
+}

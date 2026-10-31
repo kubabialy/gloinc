@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1160 tests**:
+The current source definitions and CTest discovery contain **1179 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -20,7 +20,7 @@ The current source definitions and CTest discovery contain **1160 tests**:
 | VariablesTest | 17 |
 | NumericTest | 12 |
 | EndianTest | 7 |
-| PackedTest | 11 |
+| PackedTest | 13 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
 | ControlFlowTest | 12 |
@@ -53,9 +53,9 @@ The current source definitions and CTest discovery contain **1160 tests**:
 | NumericRuntimeTest | 16 |
 | IoLibraryTest | 18 |
 | IoRuntimeTest | 14 |
-| NetworkLibraryTest | 10 |
-| NetRuntimeTest | 3 |
-| TlsRuntimeTest | 7 |
+| NetworkLibraryTest | 24 |
+| NetRuntimeTest | 5 |
+| TlsRuntimeTest | 8 |
 | TlsClientSmoke | 1 |
 | HttpClientSmoke | 1 |
 | HttpStreamSmoke | 1 |
@@ -248,20 +248,28 @@ alias invalidation. Raw memory
 and custom arena acceptance cases check allocation, alignment, typed placement,
 release, and rejected unsafe arguments. Direct byte-slice I/O and vector live
 views/collection methods run through compiler, runtime, and packaged examples.
-Eight `NetworkLibraryTest` cases exercise local HTTP over JIT and native
+Twenty-four `NetworkLibraryTest` cases exercise local HTTP over JIT and native
 executables, exact request-head limits and injection rejection, every response
 split point, one-byte chunk decoding, malformed/truncated framing, metadata/body
 limits, built-in results, address construction, and socket alias close state.
 Streaming decoder cases vary every split with 1–3-byte reusable output buffers,
 stop at final-head/output boundaries, preserve following bytes, and enforce
-cumulative body limits.
+cumulative body limits. Independent TCP packet oracles and 24 seeded loss,
+reordering and duplication simulations cover sequence wrap, simultaneous open,
+flow/congestion control and close timers. Additional JIT/O0/O2 fixtures cover
+fragment ambiguity, UDP/ICMP dispatch, validated path-MTU quotes and
+resegmentation, generation handles, TIME_WAIT retirement, HTTP server framing,
+and verified HTTPS over lossy Gloin TCP. Native tests check raw packet framing,
+secret-dependent ISNs, bounded TLS BIOs, hostname rejection and truncated EOF.
+[The raw-packet acceptance harness](tcpip/README.md) adds independent Linux
+kernel TCP and Python TLS peers, plus repeatable complete-server measurements.
 `HttpClientSmoke.LocalPeers` checks HTTP and verified HTTPS against local peers
 in JIT/native modes, including multi-buffer binary POSTs/responses, certificate
 rejection, deadlines despite progress, and connection cleanup. It also runs the
 packaged example with an ephemeral port. The zeroed-array acceptance case now
-checks a 64 KiB byte buffer in JIT and default native output. Three `NetRuntimeTest` cases check nonblocking and
+checks a 64 KiB byte buffer in JIT and default native output. Five `NetRuntimeTest` cases check nonblocking and
 close-on-exec flags, readiness, partial-I/O statuses, TLS client validation, and invalid arguments.
-Seven `TlsRuntimeTest` cases add independent direct-OpenSSL interoperability,
+Eight `TlsRuntimeTest` cases add independent direct-OpenSSL interoperability,
 TLS 1.2/1.3 and old-protocol rejection, reusable configuration lifetime,
 encrypted/mismatched key rejection, binary backpressure, graceful shutdown,
 truncation and SIGPIPE policy. Two compiler cases check the new source-typed
@@ -274,7 +282,14 @@ consumption, alias cancellation, short/excess input, and truncation after body
 delivery. It also runs 32 simultaneous exchanges over HTTP and HTTPS in JIT and
 native modes; 31 bodies exceed reusable buffers and one peer remains stalled
 until cancelled. Package gates run the installed streaming example too.
-The [network guide](../docs/networking.md) and [client guide](../docs/http-client.md) state the supported HTTP subset.
+The [network guide](../docs/networking.md) and [client guide](../docs/http-client.md)
+state the supported HTTP subset.
+
+Four request-decoder cases execute in JIT,
+`-O0`, and `-O2`: every wire split, binary bodies, head boundaries, zero/tiny
+output windows, pipelined suffixes, exact size budgets, malformed/truncated
+framing, and permanent failure after a delivered prefix. The loopback example
+receives a chunked binary POST in three-byte socket reads in all three modes.
 
 `JsonSmoke.CodecAndState` checks `@json` in JIT, native `-O0`, and native `-O2`
 modes. The deterministic corpus contains 142 accepted documents, 53 rejection
@@ -628,7 +643,7 @@ member access on a function remains an error.
 
 ## Packed memory layouts and exact-width integers (0.3.0)
 
-Eleven `PackedTest` cases cover all native integer widths from 1 through 64,
+Thirteen `PackedTest` cases cover all native integer widths from 1 through 64,
 constant conversion bounds across every native/endian width and sign pair,
 recoverable runtime narrowing failures and arithmetic traps, generic arithmetic,
 arrays, and results.
@@ -818,3 +833,10 @@ canonical formatters, all integer aliases and legacy `to_string` as recoverable
 results. The exact-widening case verifies a scalar i64 API and unchanged GIR
 sign-extension lowering. Existing parser/formatting/rounding/native-ABI tests
 retain their boundaries, lifetimes and independent oracles.
+
+The [packed packet layer](../docs/packets.md) adds four networking cases covering
+independent IPv4/UDP/TCP wire vectors, checksums across every split, a maximum-size
+IPv4/UDP datagram, and the packaged example in JIT, native `-O0`, and native `-O2`.
+They also test generic packed byte access, unaligned buffers, spare-bit copies,
+short writes, constness, and invalid type arguments. Two packed compiler cases
+verify raw-view IR and exact/short copies at native guard-page boundaries.

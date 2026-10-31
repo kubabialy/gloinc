@@ -1,0 +1,130 @@
+import "@http_server";
+import "@http";
+import "@strings";
+
+def input(session: &http_server.Session, text: string, end: bool, body: [u8], now: u64) -> result<http.StreamProgress> {
+    def mut bytes: [u8; 2048] = zeroed;
+    def count: u64            = strings.byte_length(text);
+
+    if count > 2048 { return error("test input too long"); }
+
+    for def mut i: u64 = 0; i < count; i = i + 1 {
+        def byte: result<u8> = strings.byte_at(text, i);
+        if byte.erroneous { return byte.error; }
+
+        bytes[i] = byte.value;
+    }
+
+    def fed: result<http.StreamProgress> = session.input(bytes[..count], end, body, now);
+    if fed.erroneous { return fed.error; }
+
+    return fed.value;
+}
+
+def drain(session: &http_server.Session, expected: string) -> bool {
+    def output: [const u8] = session.output();
+    if !strings.equal(strings.view_bytes(output), expected) { return false; }
+
+    // One-byte stream writes exercise offset bookkeeping.
+    for def mut i: u64 = 0; i < output.len; i = i + 1 {
+        def consumed: result<void> = session.consume_output(1);
+        if consumed.erroneous { return false; }
+    }
+
+    return session.output().len == 0;
+}
+
+def main() -> i32 {
+    def mut head: [u8; 1024]  = zeroed;
+    def mut output: [u8; 128] = zeroed;
+    def mut body: [u8; 4]     = zeroed;
+    def limits: http_server.Limits = http_server.Limits { body_bytes: 64, metadata_bytes: 1024,
+        request_timeout_ms: 100, response_timeout_ms: 100, idle_timeout_ms: 200, max_requests: 10 };
+    def made: result<http_server.Session> = http_server.Session.create(head[..], output[..], limits, 0);
+
+    if made.erroneous { return 1; }
+
+    def mut session: http_server.Session   = made.value;
+    def fields: [http.Header; 0]           = {};
+    def request: string                    = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n";
+    def first: result<http.StreamProgress> = input(&session, request, false, body[..], 1);
+
+    if first.erroneous { return 2; }
+    if first.value.consumed != strings.byte_length(request) || first.value.produced != 0
+        || session.state() != http_server.HEAD || session.expected() != http_server.CONTINUE { return 3; }
+
+    def accepted: result<void> = session.accept_body();
+    if accepted.erroneous { return 4; }
+
+    def undrained: result<void> = session.begin_response(200, "OK", fields[..], 0, true, false, 2);
+    if !undrained.erroneous { return 5; }
+    if !drain(&session, "HTTP/1.1 100 Continue\r\n\r\n") { return 6; }
+
+    def second: result<http.StreamProgress> = input(&session, "\0abcHEAD /next HTTP/1.1\r\nHost: localhost\r\n\r\n", false, body[..], 3);
+    if second.erroneous { return 7; }
+    if !second.value.complete || second.value.consumed != 4 || second.value.produced != 4
+        || body[0] != 0 || body[1] != 97 || body[2] != 98 || body[3] != 99 { return 8; }
+
+    def response: result<void> = session.begin_response(200, "OK", fields[..], 0, true, false, 4);
+    if response.erroneous { return 9; }
+    if !drain(&session, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n") { return 10; }
+
+    def chunk: result<u64> = session.write_body(body[..]);
+    if chunk.erroneous { return 11; }
+    if chunk.value != 4 { return 12; }
+    if !drain(&session, "4\r\n\0abc\r\n") { return 13; }
+
+    def finished: result<void> = session.finish_body();
+    if finished.erroneous { return 14; }
+    if !drain(&session, "0\r\n\r\n") || session.state() != http_server.COMPLETE { return 15; }
+
+    def next: result<void> = session.advance(5);
+    if next.erroneous { return 16; }
+
+    def pipeline: result<http.StreamProgress> = input(&session, "HEAD /next HTTP/1.1\r\nHost: localhost\r\n\r\n", false, body[..], 6);
+    if pipeline.erroneous { return 17; }
+    if !pipeline.value.complete { return 18; }
+
+    def metadata: result<void> = session.begin_response(200, "OK", fields[..], 50, false, false, 7);
+    if metadata.erroneous { return 19; }
+    if !drain(&session, "HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\n")
+        || session.state() != http_server.COMPLETE { return 20; }
+
+    def advance: result<void> = session.advance(8);
+    if advance.erroneous { return 21; }
+
+    // A rejected body forces close, so its suffix cannot become another request.
+    def rejected: result<http.StreamProgress> = input(&session, request, false, body[..], 9);
+    if rejected.erroneous { return 22; }
+
+    def bad_header: [http.Header; 1] = {http.Header { name: "Content-Length", value: "1" }};
+    def injected: result<void>       = session.begin_response(400, "Bad Request", bad_header[..], 0, false, false, 10);
+
+    if !injected.erroneous { return 23; }
+
+    def early: result<void> = session.begin_response(413, "Content Too Large", fields[..], 0, false, false, 11);
+    if early.erroneous { return 24; }
+    if !drain(&session, "HTTP/1.1 413 Content Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") { return 25; }
+
+    def close: result<void> = session.advance(12);
+    if close.erroneous { return 26; }
+    if session.state() != http_server.CLOSED { return 27; }
+
+    // Slow progress cannot refresh the absolute request deadline.
+    def other: result<http_server.Session> = http_server.Session.create(head[..], output[..], limits, 1000);
+    if other.erroneous { return 28; }
+
+    session = other.value;
+
+    def partial: result<http.StreamProgress> = input(&session, "G", false, body[..], 1001);
+    if partial.erroneous { return 29; }
+
+    def more: result<http.StreamProgress> = input(&session, "E", false, body[..], 1100);
+    if more.erroneous { return 30; }
+
+    def expired: result<void> = session.tick(1101);
+    if !expired.erroneous { return 31; }
+    if session.state() != http_server.FAILED || session.output().len != 0 { return 32; }
+
+    return 0;
+}

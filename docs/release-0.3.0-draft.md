@@ -3,7 +3,9 @@
 **Status: unreleased development draft.** First-class integer endianness, with
 representation-preserving aggregate copies and Gloin calls, is implemented.
 Packed memory layouts, exact-width integers, and checked integer constructors
-are implemented as the second feature.
+are implemented as the second feature. The standard library also adds bounded
+incremental HTTP/1.1 request-body decoding, packed IPv4/UDP/TCP packet codecs,
+an independent IPv4/TCP endpoint in Gloin, and HTTP/HTTPS server sessions.
 This is a minor release because it adds source-language behavior.
 The published baseline remains [0.2.1](release-notes-0.2.1.md); the compiler version,
 release assets, and numbered guides will be updated when the release is cut.
@@ -20,6 +22,10 @@ release assets, and numbered guides will be updated when the release is cut.
 | Packed access performance | Bounded word loads/stores with alignment one, field masks, and explicit target byte order. Construction keeps direct byte encoding. See the [measurement report](packed-performance.md). |
 | Exact-width integer values | Implemented: `u1`–`u64` and `i1`–`i64`, with arithmetic checked at their declared widths and separate native storage slots. |
 | Checked integer constructors | Implemented: `T(value)` always returns `result<T>`, including widening and endian-only changes; callers handle errors through `.erroneous` or `match`. |
+| Packed networking | `@packet` IPv4/UDP/TCP headers, bounded decoding, and checksum sealing; reusable packed-only memory reads/writes. See [packet APIs](packets.md). |
+| HTTP request decoding | Implemented in `@http`: streaming and buffered fixed-length/chunked bodies, header-boundary inspection, output backpressure, exact consumed offsets, and caller-owned buffers. See the [request decoder](http-requests.md). |
+| Gloin TCP/IP | IPv4 reassembly, UDP/ICMP dispatch, TCP connections and generation-checked tables, flow/congestion control, retransmission, path-MTU reduction and separate TIME_WAIT storage. Raw Linux TUN/macOS utun adapters keep protocol state in Gloin. |
+| HTTP/HTTPS servers | Bounded incremental sessions, keep-alive/pipelining, fixed/chunked responses, deadlines, cancellation and fair per-connection progress; OpenSSL TLS over Gloin TCP through bounded BIO pairs. See the [server guide](tcpip-server.md). |
 | Validation | macOS ARM64 core, focused regressions, and independent endian and packed torture labs pass. Final release/platform/package validation remains pending. |
 
 The [endianness contract](endianness.md) defines byte-order behavior. The
@@ -174,6 +180,59 @@ Validation on local macOS ARM64 with LLVM/MLIR 21.1.6:
   links passed. The source catalog contains 1,160 tests. Final cross-platform,
   sanitizer, and package release validation remains pending.
 
+## Packed networking, 2026-10-30
+
+`@packet` uses packed records, narrow bitfields, and big-endian integer fields
+for IPv4, UDP, and TCP fixed headers. Bounded parsers validate lengths, option
+framing, fragment constraints, and checksums; sealing functions validate before
+updating checksum fields. Payloads and options remain borrowed byte slices.
+The [packet guide](packets.md) documents the supported subset and the
+[runnable example](../examples/packet_headers.gloin) constructs an unaligned
+IPv4/UDP datagram without allocation or network access.
+
+`memory.read_packed<T>` and `memory.write_packed<T>` add reusable bounded byte
+access for nonempty packed records. They preserve complete representations,
+including spare bits, and reject native-layout types and pointer payloads.
+A private, verified `gloin.raw_packed_pointer` operation preserves the nominal
+type and constness until lowering; the public API returns copied values rather
+than pointers into input storage. The OS socket adapter keeps its native ABI.
+
+Local macOS ARM64 validation with LLVM/MLIR 21.1.6 passed all **1,123 core tests**.
+Four networking regression groups passed in JIT, native `-O0`, and native `-O2`
+both from the build and an installed, relocated package. Independent C++ wire
+vectors and checksums cover malformed packets, every representative truncation
+and single-bit corruption, unaligned access, output canaries, option bounds,
+fragments, UDP checksum absence/zero, and a maximum-size IPv4/UDP datagram.
+Two compiler cases check forged raw-view IR and native guard-page boundaries.
+Formatting and all nine HTML pages with local links pass. The source catalog
+now contains **1,170 tests**. Linux, sanitizer, and complete release-package
+validation for this change remain pending; no throughput improvement is claimed.
+
+## HTTP request decoding, 2026-10-29
+
+`@http.RequestDecoder` streams fixed-length and chunked request bodies into
+reusable caller-owned output buffers. `RequestReader` buffers a complete body
+within a caller-supplied limit. Both preserve unconsumed input, including
+pipelined requests, enforce head/body/metadata limits, and permanently reject
+further input after malformed framing or premature EOF. The streaming decoder
+stops at the head boundary so applications can decide routing and response policy
+before consuming a body. See the [API and ownership contract](http-requests.md).
+
+Request and response decoders share the body-framing engine. Existing response
+APIs and the fixed-length `parse_request`/`frame_request` helpers retain their
+behavior. The loopback example now exercises a binary chunked POST received in
+three-byte pieces; the one-request echo server also uses the new reader.
+
+Local macOS ARM64 validation with LLVM/MLIR 21.1.6 passed all **1,117 core tests**,
+including the integer-constructor harness corrections described above, existing
+HTTP/HTTPS client and response-streaming suites, and four new request test groups
+in JIT, native `-O0`, and native `-O2`. The request cases cover every input split,
+output backpressure, exact limits, pipelined suffixes, malformed framing,
+truncated messages, and buffer canaries. The guide example runs verbatim in those
+three modes. Formatting and all nine HTML pages with local links also pass.
+The source catalog now contains **1,164 tests**. Cross-platform, sanitizer, and
+installed-package validation for these changes remain pending.
+
 ## Development validation, 2026-10-29
 
 These results cover the local development working tree on **macOS ARM64 with
@@ -288,3 +347,41 @@ cover them on every maintained target. Widths above 64 bits, endian-qualified
 sub-byte integers and floating types, automatic aggregate schema conversion,
 general FFI, and language-level
 threads/async/spawn remain outside the current 0.3.0 scope.
+
+## Independent TCP/IP and HTTP/HTTPS servers
+
+The new `@tcp`, `@ipv4` and `@ip_stack` modules implement a bounded IPv4 host
+endpoint in Gloin over raw packets. `@http_server` owns HTTP/1.1 session state;
+`@tcp_tls` and `@http_service` connect it to Gloin TCP and OpenSSL TLS. The
+packaged `ip_http_server.gloin` example handles concurrent connections in one
+serial loop, preserves partial output, reuses per-connection arenas, and keeps
+TIME_WAIT tuples separately from full connection buffers.
+
+Independent Linux kernel peers verify HTTP and HTTPS, binary/chunked uploads,
+pipelining, large responses, stalled/concurrent clients and connection churn.
+Pure protocol and TLS fixtures also run through JIT and native builds. The
+[server guide](tcpip-server.md) documents ownership, timers, supported protocol
+features and remaining limitations; IPv6, Ethernet/ARP, TCP SACK/window scaling
+and full standards-conformance certification are outside this implementation.
+Measurement artifacts are retained under [TCP/IP benchmarks](benchmarks/tcpip-2026-10-30/).
+
+
+### TCP/IP server validation, 2026-10-31
+
+The working development tree passed all **1,132 macOS ARM64 core tests**,
+**37 Linux ARM64 networking/TLS tests**, **13 macOS native networking/TLS
+ASan/UBSan tests**, and **44 networking/packed/endian tests using a relocated
+installed package**. Protocol fixtures run in JIT and native `-O0`/`-O2` modes.
+The installed server example type-checks; the final Linux native server passed
+independent kernel TCP and verified Python TLS acceptance through an isolated
+TUN. The source inventory matches all **1,179 discovered tests**; Gloin
+formatting, whitespace checks, and all nine HTML pages/local links pass.
+
+[Recorded measurements and validation](benchmarks/tcpip-2026-10-30/) include
+four controlled complete-server runs and a separate request-decoder comparison.
+Bulk transfer improved after reducing TIME_WAIT scans, memory-TLS signal guards,
+and ring-copy division. Small-response concurrency results are mixed and are
+reported without a general speedup claim. Parser median time differed by 1.1%.
+These checks cover the development implementation; complete final-release
+classification, hosted x86_64 gates and live macOS utun interoperability are
+not implied by them.

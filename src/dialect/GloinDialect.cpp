@@ -565,6 +565,26 @@ mlir::LogicalResult RawPlaceOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult RawPackedPointerOp::verify() {
+  auto target = mlir::dyn_cast<gloin::GloinPointerType>(getSourceType());
+  auto raw = mlir::dyn_cast<gloin::GloinPointerType>(getStorage().getType());
+  bool typed = raw && target && raw.getPointee().isInteger(8) &&
+               raw.getNullable() && target.getNullable() &&
+               raw.getReadOnly() == target.getReadOnly() &&
+               getPointer().getType() == getSourceType();
+  bool layout = mlir::isa<mlir::LLVM::LLVMPointerType>(getStorage().getType()) &&
+                getPointer().getType() == getStorage().getType();
+  auto definition = target ? struct_definition(getOperation(), target.getPointee())
+                           : gloin::StructDefinitionOp{};
+  auto module = (*this)->getParentOfType<mlir::ModuleOp>();
+  layout = layout && module && !module->hasAttr("gloin.checked");
+  if (!target || !target.getNullable() || (!typed && !layout) || !definition ||
+      !definition->hasAttr("packed_order") || definition.getFieldSourceTypes().empty())
+    return emitOpError("requires byte storage with matching mutability and a packed record pointer: ")
+        << getStorage().getType() << ", " << getPointer().getType() << ", " << getSourceType();
+  return mlir::success();
+}
+
 mlir::LogicalResult RawPaddingOp::verify() {
   auto raw = mlir::dyn_cast<gloin::GloinPointerType>(getStorage().getType());
   if (((raw && raw.getPointee().isInteger(8) && raw.getNullable() &&

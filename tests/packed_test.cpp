@@ -513,3 +513,143 @@ TEST_F(PackedTest, FieldsAcrossBytesAndWordsStayInsideGuardPagesAndPreserveOther
         EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 0);
     }
 }
+
+TEST_F(PackedTest, RawPackedByteViewsVerifyNominalTypesAndConstness) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        import "@memory";
+        def packed struct(msb_first) Header { def x: u13, def y: u3, def z: be_u32, }
+        def struct Native { def x: u32, }
+        def read(bytes: [const u8]) -> result<Header> {
+            def value: result<Header> = memory.read_packed<Header>(bytes);
+            if value.erroneous { return value.error; }
+            return value.value;
+        }
+        def write(bytes: [u8], value: Header) -> result<void> {
+            def done: result<void> = memory.write_packed<Header>(bytes, value);
+            if done.erroneous { return done.error; }
+            return;
+        }
+    )",
+                                   "raw-packed.gloin", context);
+    ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+    EXPECT_TRUE(mlir::succeeded(mlir::verify(*compiled.module)));
+    unsigned views = 0;
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    compiled.module->walk([&](gloin::RawPackedPointerOp view) {
+        ++views;
+        auto source = mlir::cast<gloin::GloinPointerType>(view.getSourceType());
+        auto old_type = view.getPointer().getType();
+        for (auto forged :
+             {gloin::GloinPointerType::get(&context, source.getPointee(), true,
+                                           !source.getReadOnly()),
+              gloin::GloinPointerType::get(&context, mlir::IntegerType::get(&context, 32), true,
+                                           source.getReadOnly()),
+              gloin::GloinPointerType::get(&context, source.getPointee(), false,
+                                           source.getReadOnly())}) {
+            view.setSourceType(forged);
+            view.getPointer().setType(forged);
+            EXPECT_TRUE(mlir::failed(view.verify()));
+        }
+        view.setSourceType(source);
+        view.getPointer().setType(old_type);
+        EXPECT_TRUE(mlir::succeeded(view.verify()));
+    });
+    EXPECT_EQ(views, 2u);
+    EXPECT_TRUE(mlir::succeeded(mlir::verify(*compiled.module)));
+}
+
+TEST_F(PackedTest, PackedByteCopiesAndShortBuffersStayInsideGuardPages) {
+    std::string program = "import \"@memory\";\n";
+    std::ostringstream harness;
+    harness << R"(
+        #include <stdint.h>
+        #include <string.h>
+        #include <stdlib.h>
+        #include <sys/mman.h>
+        #include <unistd.h>
+        typedef int32_t (*Copy)(unsigned char *, uint64_t);
+        struct Case { Copy copy; unsigned size; };
+    )";
+    std::string cases;
+    for (unsigned size : {1, 2, 3, 6, 9, 20, 60, 257}) {
+        const auto id = std::to_string(size);
+        program += "def packed struct(msb_first) Bytes" + id + " { def data: [u8; " + id + "], }\n";
+        program += "def copy_" + id + "(p: *[u8; " + id +
+                   "], capacity: u64) -> i32 { "
+                   "def read: result<Bytes" +
+                   id + "> = memory.read_packed<Bytes" + id +
+                   ">((*p)[..capacity]); "
+                   "if read.erroneous { if capacity < " +
+                   id +
+                   " { return 0; } return 1; } "
+                   "if capacity < " +
+                   id +
+                   " { return 2; } (*p)[0] = 0; "
+                   "def written: result<void> = memory.write_packed<Bytes" +
+                   id +
+                   ">((*p)[..capacity], read.value); "
+                   "if written.erroneous { return 3; } return 0; }\n";
+        harness << "extern int32_t copy_" << id << "(unsigned char *, uint64_t);\n";
+        cases += "{copy_" + id + "," + id + "},";
+    }
+    harness << "static struct Case cases[] = {" << cases << "};\n";
+    harness << R"(
+        // The imported memory module retains unused alloc/free wrappers in object output.
+        // Any allocation in a packed copy is a test failure.
+        void *gloin_memory_alloc(int64_t bytes, int64_t alignment) { abort(); }
+        void gloin_memory_free(void *pointer) { abort(); }
+        void *gloin_process_arguments_push(int64_t argc, void *argv) {
+            static char scope; (void)argc; (void)argv; return &scope;
+        }
+        int32_t gloin_process_arguments_pop(void *scope) { (void)scope; return 0; }
+        int guard_driver(void) {
+            long page = sysconf(_SC_PAGESIZE);
+            if (page <= 0) return 1;
+            unsigned char *pages = mmap(0, page * 3, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            if (pages == MAP_FAILED || mprotect(pages + page, page, PROT_READ | PROT_WRITE)) return 2;
+            for (unsigned c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+                struct Case t = cases[c];
+                for (unsigned edge = 0; edge < 2; ++edge) {
+                    for (unsigned capacity = 0; capacity <= t.size; ++capacity) {
+                        unsigned char *p = edge ? pages + 2 * page - capacity : pages + page;
+                        unsigned char expected[257];
+                        for (unsigned i = 0; i < capacity; ++i) p[i] = expected[i] = (i * 71 + 123) % 256;
+                        if (t.copy(p, capacity)) return 3;
+                        if (memcmp(p, expected, capacity)) return 4;
+                    }
+                }
+            }
+            return munmap(pages, page * 3) ? 5 : 0;
+        }
+    )";
+    const auto harness_path = source(harness.str(), "packed-copy-guard.c");
+    auto cc = llvm::sys::findProgramByName("cc");
+    ASSERT_TRUE(static_cast<bool>(cc));
+    for (auto optimization : {NativeOptimization::O0, NativeOptimization::O2}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(program, "byte-copy.gloin", context, CompilationMode::Module,
+                                       CompilationOutput::LLVM);
+        ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+        mlir::OpBuilder builder(&context);
+        builder.setInsertionPointToEnd(compiled.module->getBody());
+        auto entry = mlir::LLVM::LLVMFunctionType::get(builder.getI32Type(), {});
+        auto driver =
+            builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "guard_driver", entry);
+        auto main = builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "main", entry);
+        builder.setInsertionPointToStart(main.addEntryBlock(builder));
+        auto result =
+            builder.create<mlir::LLVM::CallOp>(builder.getUnknownLoc(), driver, mlir::ValueRange{});
+        builder.create<mlir::LLVM::ReturnOp>(builder.getUnknownLoc(), result.getResults());
+        const auto object = directory + "/copy.o";
+        ASSERT_TRUE(emit_native(*compiled.module, object, NativeOutput::Object, optimization,
+                                gloin_test::gloinc, *compiled.diagnostics))
+            << errors(*compiled.diagnostics);
+        const auto executable = directory + "/guard";
+        ASSERT_EQ(llvm::sys::ExecuteAndWait(*cc, {*cc, harness_path, object, "-o", executable},
+                                            std::nullopt, {}, 30),
+                  0);
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 0);
+    }
+}

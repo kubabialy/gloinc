@@ -33,22 +33,44 @@ int32_t gloin_net_close(int32_t fd, int32_t *os_error);
 // TLS owns its SSL state, never the underlying socket. `trust_file` may be
 // empty to use OpenSSL's default trust paths. Calls never wait for socket readiness.
 int32_t gloin_net_tls_create(int32_t fd, const char *hostname, uint64_t hostname_length,
-                             const char *trust_file, uint64_t trust_file_length,
-                             void **handle, int32_t *detail);
+                             const char *trust_file, uint64_t trust_file_length, void **handle,
+                             int32_t *detail);
 int32_t gloin_net_tls_handshake(void *handle, int32_t *wait_for, int32_t *detail);
-int32_t gloin_net_tls_read(void *handle, uint8_t *bytes, uint64_t capacity,
-                            uint64_t *count, int32_t *wait_for, int32_t *detail);
-int32_t gloin_net_tls_write(void *handle, const uint8_t *bytes, uint64_t length,
-                             uint64_t *count, int32_t *wait_for, int32_t *detail);
+int32_t gloin_net_tls_read(void *handle, uint8_t *bytes, uint64_t capacity, uint64_t *count,
+                           int32_t *wait_for, int32_t *detail);
+int32_t gloin_net_tls_write(void *handle, const uint8_t *bytes, uint64_t length, uint64_t *count,
+                            int32_t *wait_for, int32_t *detail);
 int32_t gloin_net_tls_close(void *handle);
 // Reusable server configuration. PEM certificate chain and unencrypted PEM key.
 // Sessions retain their own SSL_CTX reference; closing config does not close them.
 int32_t gloin_net_tls_server_config(const char *certificate, uint64_t certificate_length,
-                                  const char *key, uint64_t key_length, void **handle, int32_t *detail);
+                                    const char *key, uint64_t key_length, void **handle,
+                                    int32_t *detail);
 int32_t gloin_net_tls_server_config_close(void *handle);
 int32_t gloin_net_tls_server_create(int32_t fd, void *config, void **handle, int32_t *detail);
 // OK means both close_notify alerts exchanged; WOULD_BLOCK sets READABLE/WRITABLE.
 int32_t gloin_net_tls_shutdown(void *handle, int32_t *wait_for, int32_t *detail);
+// Socket-independent TLS using a bounded BIO pair (1024..1048576 bytes per direction).
+int32_t gloin_net_tls_buffer_create(uint64_t capacity, const char *hostname,
+                                    uint64_t hostname_length, const char *trust_file,
+                                    uint64_t trust_file_length, void **handle, int32_t *detail);
+int32_t gloin_net_tls_buffer_server_create(uint64_t capacity, void *config, void **handle,
+                                           int32_t *detail);
+int32_t gloin_net_tls_buffer_feed(void *handle, const uint8_t *bytes, uint64_t length, int32_t eof,
+                                  uint64_t *count);
+int32_t gloin_net_tls_buffer_drain(void *handle, uint8_t *bytes, uint64_t capacity,
+                                   uint64_t *count);
+// Nonblocking raw IPv4 packet devices: Linux TUN (no PI) or macOS utun (4-byte AF).
+int32_t gloin_net_tun_open(const char *name, uint64_t length, int32_t *fd, int32_t *framing,
+                           int32_t *os_error);
+int32_t gloin_net_packet_read(int32_t fd, int32_t framing, uint8_t *bytes, uint64_t capacity,
+                              uint64_t *count, int32_t *os_error);
+int32_t gloin_net_packet_write(int32_t fd, int32_t framing, const uint8_t *bytes, uint64_t length,
+                               uint64_t *count, int32_t *os_error);
+int32_t gloin_net_isn_seed(uint8_t *secret32);
+int32_t gloin_net_isn_next(const uint8_t *secret32, uint32_t local, uint16_t local_port,
+                           uint32_t remote, uint16_t remote_port, uint64_t microseconds,
+                           uint32_t *isn);
 #ifdef __cplusplus
 }
 #endif

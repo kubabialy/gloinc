@@ -451,6 +451,9 @@ struct LowerGloinSignaturesPass
         module.walk([&](gloin::RawPlaceOp placement) {
             placement.getPointer().setType(pointer_layout);
         });
+        module.walk([&](gloin::RawPackedPointerOp view) {
+            view.getPointer().setType(pointer_layout);
+        });
         module.walk([&](gloin::PointerOffsetOp offset) {
             offset.getAddress().setType(pointer_layout);
         });
@@ -1158,6 +1161,15 @@ struct LowerArenaTypedPointer : mlir::OpRewritePattern<gloin::ArenaTypedPointerO
     }
 };
 
+struct LowerRawPackedPointer : mlir::OpRewritePattern<gloin::RawPackedPointerOp> {
+    using OpRewritePattern::OpRewritePattern;
+    mlir::LogicalResult matchAndRewrite(gloin::RawPackedPointerOp op,
+                                       mlir::PatternRewriter &rewriter) const override {
+        rewriter.replaceOp(op, op.getStorage());
+        return mlir::success();
+    }
+};
+
 struct LowerRawPlace : mlir::OpRewritePattern<gloin::RawPlaceOp> {
     const IntegerRepresentation &representation;
     LowerRawPlace(mlir::MLIRContext *context, const IntegerRepresentation &representation)
@@ -1631,7 +1643,8 @@ struct LowerGloinCorePass
                  LowerGloinAssert, LowerExactIntegerWiden, LowerEndianConvert, LowerIntegerConvert,
                  LowerCheckedFloatBinary, LowerRequireFinite, LowerCheckedIntegerCompare,
                  LowerCheckedFloatCompare, LowerZeroedArray, LowerStringLiteral, LowerNull,
-                 LowerArenaTypedPointer, LowerRawPadding, LowerPointerOffset, LowerRequireNonNull,
+                 LowerArenaTypedPointer, LowerRawPackedPointer, LowerRawPadding, LowerPointerOffset,
+                 LowerRequireNonNull,
                  LowerPointerCompare, LowerSliceFromArray, LowerSliceFromPointer,
                  LowerSliceSubrange, LowerSliceLength, LowerStackAlloc, LowerFieldAddress,
                  LowerEnumConstant, LowerEnumCompare>(&getContext());
@@ -1762,6 +1775,12 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                      !mlir::isa<gloin::GloinPointerType>(
                          placement.getStorage().getType()))) {
                 op->emitError("checked raw placement requires typed storage and result");
+                valid = false;
+            }
+            if (auto view = mlir::dyn_cast<gloin::RawPackedPointerOp>(op);
+                view && (view.getPointer().getType() != view.getSourceType() ||
+                         !mlir::isa<gloin::GloinPointerType>(view.getStorage().getType()))) {
+                op->emitError("checked packed byte access requires typed storage and result");
                 valid = false;
             }
             if (auto padding = mlir::dyn_cast<gloin::RawPaddingOp>(op);
@@ -1970,7 +1989,8 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                     gloin::NullOp, gloin::ErrorLiteralOp, gloin::ErrorMessageOp, gloin::ErrorCodeOp,
                     gloin::ErrorOsErrorOp, gloin::ResultSuccessOp, gloin::ResultFailureOp,
                     gloin::ResultIsErrorOp, gloin::ResultValueOp, gloin::ResultErrorOp,
-                    gloin::ArenaTypedPointerOp, gloin::RawPlaceOp, gloin::RawPaddingOp,
+                    gloin::ArenaTypedPointerOp, gloin::RawPackedPointerOp, gloin::RawPlaceOp,
+                    gloin::RawPaddingOp,
                     gloin::PointerOffsetOp, gloin::ArrayElementAddressOp, gloin::SliceFromArrayOp,
                     gloin::SliceFromPointerOp, gloin::SliceSubrangeOp, gloin::SliceElementAddressOp,
                     gloin::SliceLengthOp, gloin::ArenaFillOp, gloin::RequireNonNullOp,
@@ -2017,7 +2037,7 @@ bool check_legality(mlir::ModuleOp module, bool final) {
             if (!final && name == "source_type" &&
                 mlir::isa<gloin::NullOp, gloin::PointerOffsetOp,
                           gloin::RequireNonNullOp, gloin::PointerCompareOp,
-                          gloin::ArenaTypedPointerOp, gloin::RawPlaceOp,
+                          gloin::ArenaTypedPointerOp, gloin::RawPackedPointerOp, gloin::RawPlaceOp,
                           gloin::EnumConstantOp, gloin::EnumCompareOp,
                           gloin::ArrayLiteralOp, gloin::RepeatArrayOp, gloin::ArrayFillOp,
                           gloin::ZeroedArrayOp,

@@ -1,3 +1,5 @@
+import "@status";
+
 // Individually owned raw blocks. Only release a pointer returned by alloc,
 // exactly once, and only after all views and placed values have stopped using it.
 def pub alloc(bytes: i64, alignment: i64) -> *u8 {
@@ -29,4 +31,34 @@ def pub padding<T>(storage: *u8) -> i64 {
 // The caller guarantees that available describes live writable storage.
 def pub place<T>(storage: *u8, available: i64, value: T) -> *T {
     return __memory_place<T>(storage, available, value);
+}
+
+// Copy a packed representation from the prefix of bytes. No pointer escapes.
+// Packed layouts have alignment one and admit every bit pattern. Protocol
+// validation is the caller's job; native structs/pointers are rejected.
+def pub read_packed<T>(bytes: [const u8]) -> result<T> {
+    def size: result<u64> = u64(size_of<T>());
+    if size.erroneous { return size.error; }
+    if bytes.len < size.value || size.value == 0 {
+        return error("packed input is too short", status.OUT_OF_RANGE, 0);
+    }
+
+    def pointer: *const T = __memory_packed_pointer<T>(&bytes[0]);
+
+    return *pointer;
+}
+
+// Writes only the packed prefix, preserving its complete stored representation.
+// Failure leaves bytes unchanged. Value capture makes overlap safe.
+def pub write_packed<T>(bytes: [u8], value: T) -> result<void> {
+    def size: result<u64> = u64(size_of<T>());
+    if size.erroneous { return size.error; }
+    if bytes.len < size.value || size.value == 0 {
+        return error("packed output is too short", status.OUT_OF_RANGE, 0);
+    }
+
+    def pointer: *T = __memory_packed_mut_pointer<T>(&bytes[0]);
+    *pointer = value;
+
+    return;
 }

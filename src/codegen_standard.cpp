@@ -129,11 +129,14 @@ mlir::Value CodeGen::emit_standard_primitive(StandardPrimitive kind, mlir::Value
                 native_arguments.push_back(arguments[i]);
         }
     } else if (kind == StandardPrimitive::NetResolveIpv4 ||
+               kind == StandardPrimitive::NetTunOpen ||
                kind == StandardPrimitive::NetTlsCreate ||
+               kind == StandardPrimitive::NetTlsBufferCreate ||
                kind == StandardPrimitive::NetTlsServerConfig) {
-        const size_t first = kind == StandardPrimitive::NetTlsCreate ? 1 : 0;
+        const bool client_tls = kind == StandardPrimitive::NetTlsCreate || kind == StandardPrimitive::NetTlsBufferCreate;
+        const size_t first = client_tls ? 1 : 0;
         if (first) native_arguments.push_back(arguments[0]);
-        const size_t end = kind == StandardPrimitive::NetTlsCreate ? 3 :
+        const size_t end = client_tls ? 3 :
                            kind == StandardPrimitive::NetTlsServerConfig ? 2 : 1;
         for (size_t i = first; i < end; ++i) {
             native_arguments.push_back(builder.create<mlir::LLVM::ExtractValueOp>(

@@ -1,0 +1,50 @@
+// Construct and validate an unaligned IPv4/UDP datagram without sockets or allocation.
+import "@memory";
+import "@packet";
+import "@std";
+
+def main() -> i32 {
+    def mut storage: [u8; 33] = zeroed;
+    storage[0]  = 0xca;
+    storage[32] = 0xfe;
+
+    def bytes: [u8] = storage[1..32];
+
+    def ip: packet.Ipv4Header = packet.Ipv4Header {
+        version: 4, header_words: 5, dscp: 0, ecn: 0, total_length: 31,
+        identification: 0x1234, reserved: 0, dont_fragment: 1,
+        more_fragments: 0, fragment_offset: 0, ttl: 64, protocol: packet.UDP,
+        checksum: 0, source: 0xc0000201, destination: 0xc6336402
+    };
+    def ip_written: result<void> = memory.write_packed<packet.Ipv4Header>(bytes, ip);
+
+    if ip_written.erroneous { return 1; }
+
+    def udp: packet.UdpHeader = packet.UdpHeader {
+        source_port: 1234, destination_port: 9000, length: 11, checksum: 0
+    };
+    def udp_written: result<void> = memory.write_packed<packet.UdpHeader>(bytes[20..], udp);
+
+    if udp_written.erroneous { return 2; }
+
+    bytes[28] = 65;
+    bytes[29] = 0;
+    bytes[30] = 66;
+
+    def sealed: result<void> = packet.seal_udp_ipv4(bytes);
+    if sealed.erroneous { return 3; }
+
+    def decoded: result<packet.UdpPacket> = packet.parse_udp_ipv4(bytes);
+    if decoded.erroneous { return 4; }
+    if decoded.value.header.destination_port != 9000 || !decoded.value.checksum_present
+        || decoded.value.payload.len != 3 || decoded.value.payload[1] != 0 { return 5; }
+    if storage[0] != 0xca || storage[32] != 0xfe { return 6; }
+
+    // Numeric reads need no manual byte swap. Copies retain the exact representation.
+    def copied: packet.Ipv4Header = decoded.value.ip.header;
+    if copied.source != 0xc0000201 || copied.fragment_offset != 0 { return 7; }
+
+    std.println("packed IPv4/UDP round trip succeeded");
+
+    return 0;
+}

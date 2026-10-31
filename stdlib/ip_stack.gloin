@@ -1,0 +1,269 @@
+// An IPv4 endpoint over raw IP packets. Transport adapters supply packets and
+// monotonic time; TCP state/retransmission/reassembly remain in Gloin.
+import "@tcp";
+import "@packet";
+import "@ipv4";
+import "@status";
+import "@memory";
+
+def packed struct(msb_first) IcmpMtu {
+    def kind: u8, def code: u8, def checksum: be_u16, def unused: be_u16, def mtu: be_u16,
+}
+
+def packed struct(msb_first) TcpQuote {
+    def source: be_u16, def destination: be_u16, def sequence: be_u32,
+}
+
+def pub struct Event {
+    // Zero means ignored/control traffic. TCP/UDP denote application traffic.
+    def pub protocol: u8,
+    def pub connection: tcp.Handle,
+    def pub created: bool,
+    def pub reply_bytes: u64,
+    def pub source: be_u32,
+    def pub source_port: be_u16,
+    def pub destination_port: be_u16,
+    // UDP payload borrows input or reassembly storage until the next input.
+    def pub payload: [const u8],
+}
+
+def empty(bytes: [const u8], count: u64) -> Event {
+    return Event { protocol: 0, connection: tcp.Handle { index: 0, generation: 0 }, created: false,
+        reply_bytes: count, source: 0, source_port: 0, destination_port: 0, payload: bytes[..0] };
+}
+
+def unicast(host: be_u32) -> bool {
+    def number: result<u64> = u64(host);
+    if number.erroneous { return false; }
+
+    return number.value >= 16777216 && number.value < 3758096384;
+}
+
+// One serial owner; copies alias caller-owned slots and buffers. Empty fragment
+// storage disables fragment acceptance explicitly. UDP is delivered immediately
+// with no hidden queue. TCP connections are accessed through stable table handles.
+def pub struct Endpoint {
+    def host: be_u32,
+    def udp_ports: [const be_u16],
+    def fragments: [ipv4.Reassembly],
+    def pub mut connections: tcp.Table,
+    def mut last_now: u64,
+    def mut identification: u64,
+
+    def pub static create(host: be_u32, tcp_ports: [const be_u16], udp_ports: [const be_u16],
+        slots: [tcp.Slot], fragments: [ipv4.Reassembly]) -> result<Endpoint> {
+        if !unicast(host) || fragments.len > 256 || udp_ports.len > 4096 {
+            return error("invalid IPv4 endpoint configuration", status.INVALID, 0);
+        }
+
+        for def mut i: u64 = 0; i < udp_ports.len; i = i + 1 {
+            if udp_ports[i] == 0 { return error("UDP port is zero", status.INVALID, 0); }
+
+            for def mut j: u64 = 0; j < i; j = j + 1 {
+                if udp_ports[i] == udp_ports[j] { return error("duplicate UDP port", status.INVALID, 0); }
+            }
+        }
+
+        for def mut i: u64 = 0; i < fragments.len; i = i + 1 {
+            if fragments[i].occupied() { return error("IPv4 fragment slot is in use", status.INVALID, 0); }
+        }
+
+        def table: result<tcp.Table> = tcp.Table.create(host, tcp_ports, slots);
+        if table.erroneous { return table.error; }
+
+        return Endpoint { host: host, udp_ports: udp_ports, fragments: fragments,
+            connections: table.value, last_now: 0, identification: 0 };
+    }
+
+    def tick(self: &Endpoint, now_ms: u64) -> result<void> {
+        if now_ms < self.last_now { return error("IPv4 endpoint clock moved backwards", status.INVALID, 0); }
+
+        self.last_now = now_ms;
+
+        for def mut i: u64 = 0; i < self.fragments.len; i = i + 1 {
+            def expired: result<bool> = self.fragments[i].expire(now_ms);
+            if expired.erroneous { return expired.error; }
+        }
+
+        return;
+    }
+
+    def pub reassemble(self: &Endpoint, bytes: [const u8], now_ms: u64) -> result<ipv4.Datagram> {
+        def parsed: result<packet.Ipv4Packet> = packet.parse_ipv4(bytes);
+        if parsed.erroneous { return parsed.error; }
+
+        def original: packet.Ipv4Packet = parsed.value;
+        if original.header.destination != self.host || !unicast(original.header.source) || original.header.ttl == 0 {
+            return ipv4.Datagram { complete: false, bytes: bytes[..0] };
+        }
+
+        def timed: result<void> = self.tick(now_ms);
+        if timed.erroneous { return timed.error; }
+
+        def mut datagram: [const u8] = original.bytes;
+
+        if original.header.more_fragments != 0 || original.header.fragment_offset != 0 {
+            def mut index: u64  = self.fragments.len;
+            def mut vacant: u64 = self.fragments.len;
+
+            for def mut i: u64 = 0; i < self.fragments.len; i = i + 1 {
+                if self.fragments[i].matches(original.header) { index = i; }
+                if !self.fragments[i].occupied() && vacant == self.fragments.len { vacant = i; }
+            }
+
+            if index == self.fragments.len { index = vacant; }
+            if index == self.fragments.len { return error("IPv4 reassembly pool is full", status.WOULD_BLOCK, 0); }
+
+            def assembled: result<ipv4.Datagram> = self.fragments[index].input(bytes, now_ms);
+            if assembled.erroneous { return assembled.error; }
+            if !assembled.value.complete { return ipv4.Datagram { complete: false, bytes: bytes[..0] }; }
+
+            datagram = assembled.value.bytes;
+        }
+
+        return ipv4.Datagram { complete: true, bytes: datagram };
+    }
+
+    def pub input(self: &Endpoint, bytes: [const u8], isn: u32, now_ms: u64, output: [u8]) -> result<Event> {
+        def assembled: result<ipv4.Datagram> = self.reassemble(bytes, now_ms);
+        if assembled.erroneous { return assembled.error; }
+        if !assembled.value.complete { return empty(bytes, 0); }
+
+        def datagram: [const u8]              = assembled.value.bytes;
+        def parsed: result<packet.Ipv4Packet> = packet.parse_ipv4(datagram);
+
+        if parsed.erroneous { return parsed.error; }
+
+        def original: packet.Ipv4Packet = parsed.value;
+
+        if original.header.protocol == packet.TCP {
+            def input: result<tcp.Input> = self.connections.input(datagram, isn, now_ms, output);
+            if input.erroneous { return input.error; }
+
+            def event: tcp.Input = input.value;
+            def mut protocol: u8 = 0;
+
+            if event.connection.generation != 0 { protocol = packet.TCP; }
+
+            return Event { protocol: protocol, connection: event.connection, created: event.created,
+                reply_bytes: event.reply_bytes, source: original.header.source, source_port: 0,
+                destination_port: 0, payload: bytes[..0] };
+        }
+
+        def id: result<be_u16> = be_u16(self.identification);
+        if id.erroneous { return id.error; }
+
+        def identification: be_u16 = id.value;
+        self.identification = (self.identification + 1) % 65536;
+
+        if original.header.protocol == ipv4.ICMP {
+            def icmp: result<IcmpMtu> = memory.read_packed<IcmpMtu>(original.payload);
+            if icmp.erroneous { return icmp.error; }
+
+            def message: IcmpMtu = icmp.value;
+
+            if message.kind == 3 && message.code == 4 {
+                def checked: result<be_u16> = packet.checksum(original.payload);
+                if checked.erroneous { return checked.error; }
+                if checked.value != 0 { return error("invalid ICMP checksum", status.INVALID, 0); }
+
+                def quoted: result<packet.Ipv4Header> = memory.read_packed<packet.Ipv4Header>(original.payload[8..]);
+                if quoted.erroneous { return quoted.error; }
+
+                def ip: packet.Ipv4Header = quoted.value;
+                if ip.version != 4 || ip.header_words < 5 || ip.source != self.host || ip.protocol != packet.TCP
+                    || ip.fragment_offset != 0 || ip.dont_fragment == 0 { return empty(bytes, 0); }
+
+                def mut mtu: be_u16 = message.mtu;
+
+                if mtu == 0 {
+                    def plateaus: [be_u16; 11] = {65535,32000,17914,8166,4352,2002,1492,1006,508,296,68};
+
+                    for def mut i: u64 = 0; i < 11 && mtu == 0; i = i + 1 {
+                        if plateaus[i] < ip.total_length { mtu = plateaus[i]; }
+                    }
+                }
+
+                if mtu < 68 || mtu >= ip.total_length { return empty(bytes, 0); }
+
+                def words: result<u64> = u64(ip.header_words);
+                if words.erroneous { return words.error; }
+
+                def head_size: u64 = words.value * 4;
+                if original.payload.len < 8 + head_size + 8 { return error("short ICMP TCP quote", status.INVALID, 0); }
+
+                def head_checksum: result<be_u16> = packet.checksum(original.payload[8..8 + head_size]);
+                if head_checksum.erroneous { return head_checksum.error; }
+                if head_checksum.value != 0 { return error("invalid quoted IPv4 checksum", status.INVALID, 0); }
+
+                def transport: result<TcpQuote> = memory.read_packed<TcpQuote>(original.payload[8 + head_size..]);
+                if transport.erroneous { return transport.error; }
+
+                def quote: TcpQuote = transport.value;
+                def adjusted: result<bool> = self.connections.packet_too_big(quote.source,
+                    tcp.Address { host: ip.destination, port: quote.destination }, quote.sequence, mtu);
+
+                if adjusted.erroneous { return adjusted.error; }
+
+                return empty(bytes, 0);
+            }
+
+            def replied: result<u64> = ipv4.echo_reply(datagram, output, identification);
+            if replied.erroneous { return replied.error; }
+
+            return empty(bytes, replied.value);
+        }
+
+        def mut code: u8 = 2;
+
+        if original.header.protocol == packet.UDP {
+            def parsed_udp: result<packet.UdpPacket> = packet.parse_udp_ipv4(datagram);
+            if parsed_udp.erroneous { return parsed_udp.error; }
+
+            def udp: packet.UdpPacket = parsed_udp.value;
+
+            for def mut i: u64 = 0; i < self.udp_ports.len; i = i + 1 {
+                if udp.header.destination_port == self.udp_ports[i] {
+                    return Event { protocol: packet.UDP, connection: tcp.Handle { index: 0, generation: 0 },
+                        created: false, reply_bytes: 0, source: udp.ip.header.source,
+                        source_port: udp.header.source_port, destination_port: udp.header.destination_port, payload: udp.payload };
+                }
+            }
+
+            code = 3;
+        }
+
+        def replied: result<u64> = ipv4.unreachable(datagram, output, code, identification);
+        if replied.erroneous { return replied.error; }
+
+        return empty(bytes, replied.value);
+    }
+
+    def pub emit(self: &Endpoint, output: [u8], now_ms: u64) -> result<u64> {
+        def timed: result<void> = self.tick(now_ms);
+        if timed.erroneous { return timed.error; }
+
+        def sent: result<u64> = self.connections.emit(output, now_ms);
+        if sent.erroneous { return sent.error; }
+
+        return sent.value;
+    }
+
+    def pub next_timeout_ms(self: &const Endpoint, now_ms: u64) -> result<u64> {
+        if now_ms < self.last_now { return error("IPv4 endpoint clock moved backwards", status.INVALID, 0); }
+
+        def tcp_wait: result<u64> = self.connections.next_timeout_ms(now_ms);
+        if tcp_wait.erroneous { return tcp_wait.error; }
+
+        def mut wait: u64 = tcp_wait.value;
+
+        for def mut i: u64 = 0; i < self.fragments.len; i = i + 1 {
+            def fragment_wait: result<u64> = self.fragments[i].next_timeout_ms(now_ms);
+            if fragment_wait.erroneous { return fragment_wait.error; }
+
+            if fragment_wait.value < wait { wait = fragment_wait.value; }
+        }
+
+        return wait;
+    }
+}

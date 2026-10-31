@@ -1,0 +1,476 @@
+// Gloin TCP/IP + HTTP/HTTPS over a preconfigured raw IP device.
+// IPv4 endpoint 10.0.0.2:8080. Usage: ip-http-server DEVICE [CERT.pem KEY.pem]
+// Linux example (inside an isolated namespace):
+//   ip tuntap add dev gloin0 mode tun
+//   ip addr add 10.0.0.1/24 dev gloin0
+//   ip link set gloin0 up
+//   ./ip-http-server gloin0
+// This program does not configure addresses/routes. See docs/tcpip-server.md.
+import "@arena";
+import "@vector";
+import "@net";
+import "@tcp";
+import "@tcp_tls";
+import "@ip_stack";
+import "@ipv4";
+import "@packet";
+import "@http";
+import "@http_server";
+import "@http_service";
+import "@strings";
+import "@process";
+import "@time";
+import "@status";
+import "@std";
+
+def struct TcpBuffers {
+    def mut send: [u8; 16384],
+    def mut receive: [u8; 16384],
+    def mut present: [u8; 16384],
+}
+
+def struct AppBuffers {
+    def mut head: [u8; 8192],
+    def mut output: [u8; 8192],
+    def mut input: [u8; 4096],
+    def mut encrypted_in: [u8; 4096],
+    def mut encrypted_out: [u8; 4096],
+    def mut response: [u8; 65536],
+}
+
+def struct FragmentBuffers {
+    def mut bytes: [u8; 65575],
+    def mut present: [u8; 65515],
+}
+
+def struct App {
+    def mut owner: arena.GeneralArena,
+    def mut driver: *http_service.Connection,
+    def mut buffers: *AppBuffers,
+    def mut body_size: u64,
+    def mut response_size: u64,
+    def mut response_sent: u64,
+
+    def active(self: &const App) -> bool { return self.driver != null; }
+
+    def static create() -> App {
+        return App { owner: arena.GeneralArena.create(), driver: null, buffers: null,
+            body_size: 0, response_size: 0, response_sent: 0 };
+    }
+
+    def start(self: &App, handle: tcp.Handle, config: *net.TlsServerConfig, now: u64) -> result<void> {
+        if self.driver != null { return error("HTTP application slot is occupied"); }
+
+        self.owner.reset();
+        self.buffers = self.owner.try_alloc(AppBuffers { head: zeroed, output: zeroed, input: zeroed,
+            encrypted_in: zeroed, encrypted_out: zeroed, response: zeroed });
+
+        if self.buffers == null { return error("HTTP buffer allocation failed"); }
+
+        def limits: http_server.Limits = http_server.Limits { body_bytes: 65536, metadata_bytes: 16384,
+            request_timeout_ms: 30000, response_timeout_ms: 30000, idle_timeout_ms: 60000, max_requests: 1000 };
+        def session: result<http_server.Session> = http_server.Session.create(self.buffers.head[..], self.buffers.output[..], limits, now);
+
+        if session.erroneous { return session.error; }
+
+        def mut tls: *tcp_tls.Stream = null;
+
+        if config != null {
+            def made: result<net.TlsBuffer> = net.TlsBuffer.server(&self.owner, &*config, 32768);
+            if made.erroneous { return made.error; }
+
+            def mut owned: net.TlsBuffer = made.value;
+            def adapted: result<tcp_tls.Stream> = tcp_tls.Stream.create(handle, owned,
+                self.buffers.encrypted_in[..], self.buffers.encrypted_out[..]);
+
+            if adapted.erroneous {
+                def closed: result<void> = owned.close();
+                if closed.erroneous { return closed.error; }
+
+                return adapted.error;
+            }
+
+            tls = self.owner.try_alloc(adapted.value);
+
+            if tls == null {
+                def closed: result<void> = owned.close();
+                if closed.erroneous { return closed.error; }
+
+                return error("TLS adapter allocation failed");
+            }
+        }
+
+        def made: result<http_service.Connection> = http_service.Connection.create(handle, tls,
+            session.value, self.buffers.input[..], now, 10000, 5000);
+
+        if made.erroneous {
+            if tls != null {
+                def closed: result<void> = (*tls).close();
+                if closed.erroneous { return closed.error; }
+            }
+
+            return made.error;
+        }
+
+        self.driver = self.owner.try_alloc(made.value);
+
+        if self.driver == null {
+            if tls != null {
+                def closed: result<void> = (*tls).close();
+                if closed.erroneous { return closed.error; }
+            }
+
+            return error("HTTP driver allocation failed");
+        }
+
+        self.body_size     = 0;
+        self.response_size = 0;
+        self.response_sent = 0;
+
+        return;
+    }
+
+    def poll(self: &App, table: &tcp.Table, body: [u8], now: u64) -> result<bool> {
+        if self.driver == null { return false; }
+
+        def polled: result<http_service.Progress> = (*self.driver).poll(table, body, now);
+        if polled.erroneous { return polled.error; }
+
+        def step: http_service.Progress = polled.value;
+
+        if step.body_bytes != 0 {
+            if step.body_bytes > 65536 - self.body_size { return error("request body too long"); }
+
+            for def mut i: u64 = 0; i < step.body_bytes; i = i + 1 { self.buffers.response[self.body_size + i] = body[i]; }
+
+            self.body_size = self.body_size + step.body_bytes;
+        }
+
+        def headers: [http.Header; 1] = {http.Header { name: "Content-Type", value: "application/octet-stream" }};
+
+        if step.event == http_service.HAVE_HEAD {
+            if self.driver.session.expected() == http_server.UNSUPPORTED_EXPECTATION {
+                def rejected: result<void> = self.driver.session.begin_response(417, "Expectation Failed", headers[..], 0, false, true, now);
+                if rejected.erroneous { return rejected.error; }
+            } else {
+                def accepted: result<void> = self.driver.session.accept_body();
+                if accepted.erroneous { return accepted.error; }
+            }
+
+            return true;
+        }
+
+        if step.event == http_service.REQUEST_COMPLETE {
+            def head: result<http.RequestInfo> = self.driver.session.head();
+            if head.erroneous { return head.error; }
+
+            def request: http.RequestInfo = head.value;
+            self.response_size = self.body_size;
+
+            if strings.equal(request.target, "/bytes") {
+                self.response_size = 65536;
+
+                for def mut i: u64 = 0; i < 65536; i = i + 1 {
+                    def value: result<u8> = u8(i % 251);
+                    if value.erroneous { return value.error; }
+
+                    self.buffers.response[i] = value.value;
+                }
+            } else if !strings.equal(request.target, "/echo") {
+                def text: string = "Gloin TCP/IP server\n";
+                self.response_size = strings.byte_length(text);
+
+                for def mut i: u64 = 0; i < self.response_size; i = i + 1 {
+                    def value: result<u8> = strings.byte_at(text, i);
+                    if value.erroneous { return value.error; }
+
+                    self.buffers.response[i] = value.value;
+                }
+            }
+
+            self.response_sent = 0;
+
+            def response: result<void> = self.driver.session.begin_response(200, "OK", headers[..], self.response_size, false, false, now);
+            if response.erroneous { return response.error; }
+
+            return true;
+        }
+
+        if step.event == http_service.NEED_RESPONSE && self.response_sent < self.response_size {
+            def sent: result<u64> = self.driver.session.write_body(self.buffers.response[self.response_sent..self.response_size]);
+            if sent.erroneous { return sent.error; }
+
+            def count: u64 = sent.value;
+            self.response_sent = self.response_sent + count;
+
+            return step.progressed || count != 0;
+        }
+
+        if step.event == http_service.RESPONSE_COMPLETE {
+            def advanced: result<void> = self.driver.session.advance(now);
+            if advanced.erroneous { return advanced.error; }
+
+            self.body_size     = 0;
+            self.response_size = 0;
+            self.response_sent = 0;
+
+            return true;
+        }
+
+        if step.event == http_service.DONE {
+            self.driver  = null;
+            self.buffers = null;
+            self.owner.reset();
+
+            return true;
+        }
+
+        return step.progressed;
+    }
+}
+
+def cleanup(apps: [App], table: &tcp.Table) -> void {
+    for def mut i: u64 = 0; i < apps.len; i = i + 1 {
+        if apps[i].active() {
+            def cancelled: result<void> = (*apps[i].driver).cancel(table);
+            if cancelled.erroneous { std.println(cancelled.error.message); }
+        }
+
+        apps[i].owner.free();
+    }
+}
+
+def close_device(device: &net.PacketDevice) -> void {
+    def closed: result<void> = device.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def close_config(config: *net.TlsServerConfig) -> void {
+    if config != null {
+        def closed: result<void> = (*config).close();
+        if closed.erroneous { std.println(closed.error.message); }
+    }
+}
+
+def serve(owner: &arena.GeneralArena) -> result<void> {
+    if process.arg_count() != 2 && process.arg_count() != 4 { return error("usage: ip-http-server DEVICE [CERT.pem KEY.pem]"); }
+
+    def name: result<string> = process.arg(owner, 1);
+    if name.erroneous { return name.error; }
+
+    def opened: result<net.PacketDevice> = net.PacketDevice.open(owner, name.value);
+    if opened.erroneous { return opened.error; }
+
+    def mut device: net.PacketDevice = opened.value;
+    defer close_device(&device);
+
+    def mut config: *net.TlsServerConfig = null;
+
+    if process.arg_count() == 4 {
+        def cert: result<string> = process.arg(owner, 2);
+        if cert.erroneous { return cert.error; }
+
+        def key: result<string> = process.arg(owner, 3);
+        if key.erroneous { return key.error; }
+
+        def made: result<net.TlsServerConfig> = net.TlsServerConfig.load(owner, cert.value, key.value);
+        if made.erroneous { return made.error; }
+
+        config = owner.alloc(made.value);
+    }
+    defer close_config(config);
+
+    def mut slots: vector.Vector<tcp.Slot> = vector.Vector<tcp.Slot>.empty(owner, 64);
+    def mut apps: vector.Vector<App>       = vector.Vector<App>.empty(owner, 64);
+    def options: tcp.Options = tcp.Options { mss: 1460, max_retries: 12, idle_timeout_ms: 300000,
+        time_wait_ms: 120000, no_delay: true };
+
+    for def mut i: u64 = 0; i < 64; i = i + 1 {
+        def buffers: *TcpBuffers   = owner.alloc(TcpBuffers { send: zeroed, receive: zeroed, present: zeroed });
+        def slot: result<tcp.Slot> = tcp.Slot.create(tcp.Buffers { send: buffers.send[..], receive: buffers.receive[..], present: buffers.present[..] }, options);
+
+        if slot.erroneous { return slot.error; }
+        if !slots.push(slot.value) || !apps.push(App.create()) { return error("server slot allocation failed"); }
+    }
+
+    def mut fragments: vector.Vector<ipv4.Reassembly> = vector.Vector<ipv4.Reassembly>.empty(owner, 4);
+
+    for def mut i: u64 = 0; i < 4; i = i + 1 {
+        def buffers: *FragmentBuffers     = owner.alloc(FragmentBuffers { bytes: zeroed, present: zeroed });
+        def slot: result<ipv4.Reassembly> = ipv4.Reassembly.create(buffers.bytes[..], buffers.present[..], 30000);
+
+        if slot.erroneous { return slot.error; }
+        if !fragments.push(slot.value) { return error("fragment slot allocation failed"); }
+    }
+
+    def ports: [be_u16; 1]              = {8080};
+    def udp_ports: [be_u16; 0]          = {};
+    def made: result<ip_stack.Endpoint> = ip_stack.Endpoint.create(0x0a000002, ports[..], udp_ports[..], slots.as_slice(), fragments.as_slice());
+
+    if made.erroneous { return made.error; }
+
+    def mut endpoint: ip_stack.Endpoint          = made.value;
+    def mut history: vector.Vector<tcp.TimeWait> = vector.Vector<tcp.TimeWait>.empty(owner, 4096);
+
+    for def mut i: u64 = 0; i < 4096; i = i + 1 {
+        if !history.push(tcp.TimeWait.empty()) { return error("TIME_WAIT allocation failed"); }
+    }
+
+    def attached: result<void> = endpoint.connections.time_wait_storage(history.as_slice());
+    if attached.erroneous { return attached.error; }
+
+    def app: [App] = apps.as_slice();
+    defer cleanup(app, &endpoint.connections);
+
+    def generator: result<net.TcpIsnGenerator> = net.TcpIsnGenerator.create();
+    if generator.erroneous { return generator.error; }
+
+    def mut isn: net.TcpIsnGenerator = generator.value;
+    def mut input: [u8; 65535]       = zeroed;
+    def mut output: [u8; 65535]      = zeroed;
+    def mut body: [u8; 4096]         = zeroed;
+    def mut pending: u64             = 0;
+
+    std.println("ready: 10.0.0.2:8080");
+
+    while true {
+        def clock: result<time.Instant> = time.monotonic_now();
+        if clock.erroneous { return clock.error; }
+
+        def now: u64           = clock.value.ticks_ns / 1000000;
+        def micros: u64        = clock.value.ticks_ns / 1000;
+        def mut progress: bool = false;
+        def mut reading: bool  = true;
+
+        for def mut work: u64 = 0; work < 32 && reading; work = work + 1 {
+            if pending != 0 {
+                def sent: result<net.WriteOutcome> = device.write(output[..pending]);
+                if sent.erroneous { return sent.error; }
+
+                if !sent.value.would_block { pending = 0; progress = true; }
+            }
+
+            if pending != 0 { reading = false; } else {
+                def read: result<net.ReadOutcome> = device.read(input[..]);
+                if read.erroneous { return read.error; }
+
+                def count: u64 = read.value.count;
+
+                if read.value.state == status.END { return; }
+
+                if count == 0 { reading = false; } else {
+                    progress = true;
+
+                    def assembled: result<ipv4.Datagram> = endpoint.reassemble(input[..count], now);
+
+                    if assembled.erroneous {
+                        // Malformed packets and exhausted bounded pools are dropped.
+                    } else if assembled.value.complete {
+                        def datagram: [const u8]                 = assembled.value.bytes;
+                        def mut sequence: u32                    = 0;
+                        def tcp_packet: result<packet.TcpPacket> = packet.parse_tcp_ipv4(datagram);
+
+                        if tcp_packet.erroneous {
+                            // UDP and ICMP do not need an ISN.
+                        } else if tcp_packet.value.header.syn != 0 && tcp_packet.value.header.ack == 0 {
+                            def segment: packet.TcpPacket = tcp_packet.value;
+                            def selected: result<u32> = isn.next(segment.ip.header.destination, segment.header.destination_port,
+                                segment.ip.header.source, segment.header.source_port, micros);
+
+                            if selected.erroneous { return selected.error; }
+
+                            sequence = selected.value;
+                        }
+
+                        def fed: result<ip_stack.Event> = endpoint.input(datagram, sequence, now, output[..]);
+
+                        if fed.erroneous {
+                            // Reject malformed traffic without terminating unrelated connections.
+                        } else {
+                            def event: ip_stack.Event = fed.value;
+                            pending = event.reply_bytes;
+
+                            if event.created {
+                                def started: result<void> = app[event.connection.index].start(event.connection, config, now);
+                                if started.erroneous { return started.error; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for def mut i: u64 = 0; i < app.len; i = i + 1 {
+            if app[i].active() {
+                def polled: result<bool> = app[i].poll(&endpoint.connections, body[..], now);
+
+                if polled.erroneous {
+                    def cancelled: result<void> = (*app[i].driver).cancel(&endpoint.connections);
+                    if cancelled.erroneous { return cancelled.error; }
+
+                    app[i].driver  = null;
+                    app[i].buffers = null;
+                    app[i].owner.reset();
+                    progress = true;
+                } else if polled.value { progress = true; }
+            }
+
+            def handle: result<tcp.Handle> = endpoint.connections.handle_at(i);
+
+            if handle.erroneous {
+                // Vacant slot.
+            } else if !app[i].active() {
+                def state: result<i32> = endpoint.connections.state(handle.value);
+                if state.erroneous { return state.error; }
+
+                if state.value == tcp.TIME_WAIT {
+                    def retired: result<void> = endpoint.connections.retire_time_wait(handle.value);
+
+                    if retired.erroneous {
+                        if retired.error.code != status.WOULD_BLOCK { return retired.error; }
+                    }
+                } else if state.value == tcp.CLOSED || state.value == tcp.RESET || state.value == tcp.TIMED_OUT {
+                    def released: result<void> = endpoint.connections.release(handle.value);
+
+                    if released.erroneous {
+                        if released.error.code != status.IN_PROGRESS { return released.error; }
+                    }
+                }
+            }
+        }
+
+        if pending == 0 {
+            def emitted: result<u64> = endpoint.emit(output[..], now);
+            if emitted.erroneous { return emitted.error; }
+
+            pending = emitted.value;
+        }
+
+        if pending != 0 {
+            def sent: result<net.WriteOutcome> = device.write(output[..pending]);
+            if sent.erroneous { return sent.error; }
+
+            if !sent.value.would_block { pending = 0; progress = true; }
+        }
+
+        if !progress {
+            def mut events: i32 = net.READABLE;
+            if pending != 0 { events = 3; }
+
+            def waited: result<i32> = device.wait(events, 1);
+            if waited.erroneous { return waited.error; }
+        }
+    }
+
+    return;
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def served: result<void> = serve(&owner);
+    if served.erroneous { std.println(served.error.message); return 1; }
+
+    return 0;
+}

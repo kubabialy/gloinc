@@ -1,0 +1,96 @@
+import "@tcp";
+import "@packet";
+
+def deliver(from: &tcp.Connection, to: &tcp.Connection, now: u64, wire: [u8]) -> i32 {
+    def emitted: result<u64> = from.emit(wire, now);
+    if emitted.erroneous { return 1; }
+
+    def count: u64 = emitted.value;
+    if count == 0 { return 0; }
+
+    def fed: result<void> = to.input(wire[..count], now);
+    if fed.erroneous { return 2; }
+
+    return 0;
+}
+
+def main() -> i32 {
+    def mut atx: [u8; 4096]  = zeroed;
+    def mut arx: [u8; 512]   = zeroed;
+    def mut amap: [u8; 512]  = zeroed;
+    def mut btx: [u8; 4096]  = zeroed;
+    def mut brx: [u8; 512]   = zeroed;
+    def mut bmap: [u8; 512]  = zeroed;
+    def mut wire: [u8; 1500] = zeroed;
+    def local: tcp.Address   = tcp.Address { host: 0xc0000201, port: 1234 };
+    def remote: tcp.Address  = tcp.Address { host: 0xc0000202, port: 80 };
+    def opts: tcp.Options = tcp.Options { mss: 128, max_retries: 6, idle_timeout_ms: 300000,
+        time_wait_ms: 120000, no_delay: true };
+    def made: result<tcp.Connection> = tcp.Connection.connect(local, remote, 4294967294,
+        tcp.Buffers { send: atx[..], receive: arx[..], present: amap[..] }, opts, 0);
+
+    if made.erroneous { return 1; }
+
+    def mut a: tcp.Connection = made.value;
+    def syn: result<u64>      = a.emit(wire[..], 0);
+
+    if syn.erroneous { return 2; }
+
+    def got: result<tcp.Connection> = tcp.Connection.accept(wire[..syn.value], remote, 4294967290,
+        tcp.Buffers { send: btx[..], receive: brx[..], present: bmap[..] }, opts, 0);
+    if got.erroneous { return 3; }
+
+    def mut b: tcp.Connection = got.value;
+    if deliver(&b, &a, 10, wire[..]) != 0 { return 4; }
+    if deliver(&a, &b, 20, wire[..]) != 0 { return 5; }
+    if a.state() != tcp.ESTABLISHED || b.state() != tcp.ESTABLISHED { return 6; }
+
+    def mut payload: [u8; 3000] = zeroed;
+
+    for def mut i: u64 = 0; i < 3000; i = i + 1 {
+        def byte: result<u8> = u8(i % 251);
+        if byte.erroneous { return 7; }
+
+        payload[i] = byte.value;
+    }
+
+    def queued: result<u64> = a.write(payload[..]);
+    if queued.erroneous { return 8; }
+    if queued.value != 3000 { return 9; }
+
+    def mut received: [u8; 3000] = zeroed;
+    def mut count: u64           = 0;
+
+    for def mut now: u64 = 30; now < 1000 && count < 3000; now = now + 1 {
+        if deliver(&a, &b, now, wire[..]) != 0 { return 10; }
+        if deliver(&b, &a, now, wire[..]) != 0 { return 11; }
+
+        def read: result<tcp.Read> = b.read(received[count..]);
+        if read.erroneous { return 12; }
+
+        count = count + read.value.count;
+    }
+
+    if count != 3000 { return 13; }
+
+    for def mut i: u64 = 0; i < count; i = i + 1 { if received[i] != payload[i] { return 14; } }
+
+    def shut: result<void> = a.shutdown_write();
+    if shut.erroneous { return 15; }
+    if deliver(&b, &a, 1001, wire[..]) != 0 { return 16; }
+    if deliver(&a, &b, 1002, wire[..]) != 0 { return 17; }
+    if deliver(&b, &a, 1003, wire[..]) != 0 { return 18; }
+    if a.state() != tcp.FIN_WAIT_2 || b.state() != tcp.CLOSE_WAIT { return 19; }
+
+    def shut_b: result<void> = b.shutdown_write();
+    if shut_b.erroneous { return 20; }
+    if deliver(&b, &a, 1004, wire[..]) != 0 { return 21; }
+    if deliver(&a, &b, 1005, wire[..]) != 0 { return 22; }
+    if a.state() != tcp.TIME_WAIT || b.state() != tcp.CLOSED { return 23; }
+
+    def timed: result<u64> = a.emit(wire[..], 122000);
+    if timed.erroneous { return 24; }
+    if a.state() != tcp.CLOSED { return 25; }
+
+    return 0;
+}

@@ -1,7 +1,7 @@
 #include "sema.h"
 
 std::shared_ptr<Type> Sema::check_memory_primitive(const CallExpression *call,
-                                                    MemoryPrimitive kind) {
+                                                   MemoryPrimitive kind) {
     auto pointer = std::make_shared<PointerType>(get_builtin_type("u8"), true, false);
     std::vector<std::shared_ptr<Type>> parameters;
     if (kind == MemoryPrimitive::Allocate)
@@ -36,12 +36,36 @@ std::shared_ptr<Type> Sema::check_memory_intrinsic(const CallExpression *call,
         log_error("Invalid raw memory intrinsic type argument");
         return nullptr;
     }
-    const auto kind = name == "__memory_size_of" ? MemoryIntrinsic::SizeOf :
-                      name == "__memory_align_of" ? MemoryIntrinsic::AlignOf :
-                      name == "__memory_padding" ? MemoryIntrinsic::Padding :
-                                                   MemoryIntrinsic::Place;
-    const auto expected = kind == MemoryIntrinsic::Place ? 3u :
-                          kind == MemoryIntrinsic::Padding ? 1u : 0u;
+    if (name == "__memory_packed_pointer" || name == "__memory_packed_mut_pointer") {
+        const auto *record = dynamic_cast<const StructType *>(type.get());
+        if (!record || !record->is_packed || record->fields.empty()) {
+            log_error("Packed byte access requires a nonempty packed struct type");
+            return nullptr;
+        }
+        const bool read_only = name == "__memory_packed_pointer";
+        auto raw = std::make_shared<PointerType>(get_builtin_type("u8"), true, read_only);
+        if (call->arguments.size() != 1) {
+            log_error("Packed byte access expects one storage pointer");
+            return nullptr;
+        }
+        auto actual = check_typed_expression(call->arguments.front().get(), raw);
+        if (!actual || !actual->equals(*raw)) {
+            log_error("Packed byte access storage pointer type mismatch");
+            return nullptr;
+        }
+        recording->memory_intrinsics.emplace(
+            call, std::make_pair(read_only ? MemoryIntrinsic::PackedPointer
+                                           : MemoryIntrinsic::PackedMutPointer,
+                                 *value_type(type)));
+        return std::make_shared<PointerType>(type, true, read_only);
+    }
+    const auto kind = name == "__memory_size_of"    ? MemoryIntrinsic::SizeOf
+                      : name == "__memory_align_of" ? MemoryIntrinsic::AlignOf
+                      : name == "__memory_padding"  ? MemoryIntrinsic::Padding
+                                                    : MemoryIntrinsic::Place;
+    const auto expected = kind == MemoryIntrinsic::Place     ? 3u
+                          : kind == MemoryIntrinsic::Padding ? 1u
+                                                             : 0u;
     if (call->arguments.size() != expected) {
         log_error("Incorrect number of raw memory intrinsic arguments");
         return nullptr;

@@ -100,44 +100,45 @@ def local_round_trip(owner: &arena.GeneralArena) -> result<void> {
     def mut server: net.Socket = accepted.value.socket;
     defer cleanup(&server);
 
-    def request_text: result<string> = http.format_get(owner, "localhost", "/hello", 512);
-    if request_text.erroneous { return request_text.error; }
+    // Literal wire bytes exercise request decoding independently of formatting.
+    def request_text: string  = "POST /hello HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n3\r\n\0bc\r\n0\r\nX-End: yes\r\n\r\n";
+    def written: result<void> = send_all(&client, request_text);
 
-    def written: result<void> = send_all(&client, request_text.value);
     if written.erroneous { return written.error; }
 
-    def mut request_bytes: [u8; 1024] = zeroed;
-    def mut request_used: u64         = 0;
-    def mut request_complete: bool    = false;
-    def mut request_attempts: i32     = 0;
+    def mut request_head: [u8; 256]      = zeroed;
+    def mut request_body: [u8; 8]        = zeroed;
+    def mut receive: [u8; 3]             = zeroed;
+    def made: result<http.RequestReader> = http.RequestReader.create(request_head[..], request_body[..], 512);
 
-    while !request_complete && request_attempts < 10 {
+    if made.erroneous { return made.error; }
+
+    def mut reader: http.RequestReader = made.value;
+    def mut request_complete: bool     = false;
+    def mut request_attempts: i32      = 0;
+
+    while !request_complete && request_attempts < 128 {
         def readable: result<i32> = server.wait(net.READABLE, 1000);
         if readable.erroneous { return readable.error; }
         if readable.value == 0 { return error("HTTP request timed out"); }
 
-        def request_read: result<net.ReadOutcome> = server.read(request_bytes[request_used..]);
-        if request_read.erroneous { return request_read.error; }
-        if request_read.value.state == status.END { return error("HTTP request ended early"); }
+        def received: result<net.ReadOutcome> = server.read(receive[..]);
+        if received.erroneous { return received.error; }
 
-        request_used = request_used + request_read.value.count;
+        def decoded: result<http.RequestProgress> = reader.feed(
+            strings.view_bytes(receive[..received.value.count]), received.value.state == status.END);
+        if decoded.erroneous { return decoded.error; }
 
-        def partial: result<http.RequestHead> = http.parse_request(
-            strings.view_bytes(request_bytes[0..request_used]), 1024);
-        if partial.erroneous { return partial.error; }
-
-        request_complete = partial.value.complete;
+        request_complete = decoded.value.complete;
         request_attempts = request_attempts + 1;
     }
 
-    if !request_complete { return error("HTTP request head did not complete"); }
+    if !request_complete { return error("HTTP request did not complete"); }
 
-    def request: result<http.RequestHead> = http.parse_request(
-        strings.view_bytes(request_bytes[0..request_used]), 1024);
+    def request: result<http.Request> = reader.request();
     if request.erroneous { return request.error; }
-    if !request.value.complete || !strings.equal(request.value.method, "GET") ||
-        !strings.equal(request.value.target, "/hello") ||
-        !strings.equal(request.value.host, "localhost") {
+    if !strings.equal(request.value.method, "POST") || !strings.equal(request.value.target, "/hello")
+        || !strings.equal(request.value.body, "a\0bc") {
         return error("unexpected HTTP request");
     }
 

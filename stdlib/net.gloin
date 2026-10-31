@@ -1,5 +1,7 @@
 // Nonblocking IPv4 TCP, verified client TLS and server TLS. Calls never wait except
 // readiness waits, which have explicit timeouts. See docs/networking.md.
+// For byte-exact IPv4/TCP/UDP packet codecs, use @packet; socket addresses below
+// are numeric endpoints adapted to the OS ABI, not serialized packet headers.
 import "@arena";
 import "@status";
 import "@strings";
@@ -580,8 +582,8 @@ def pub struct TlsClient {
         }
 
         def native: *u8 = self.state.native;
-        self.state.native            = null;
-        self.state.socket.tls_active = false;
+        self.state.native = null;
+        if self.state.socket != null { self.state.socket.tls_active = false; }
 
         def code: i32 = __net_tls_close(native);
         if code != status.OK { return error("TLS cleanup failed"); }
@@ -725,4 +727,244 @@ def pub resolve_ipv4(host: string, hosts: [u32]) -> result<u64> {
     if code != status.OK { return error("IPv4 hostname lookup failed"); }
 
     return count;
+}
+
+// TLS over an externally driven byte stream (e.g. @tcp). Each encrypted
+// direction is bounded by capacity; a full buffer applies backpressure.
+// Drain encrypted output after EVERY operation, including WANT_READ. Retry a
+// blocked plaintext write with the same bytes/length until it consumes them.
+// Copies alias native state. Close before resetting/freeing the owner arena.
+def pub struct TlsBuffer {
+    def mut session: TlsClient,
+
+    def pub static client(owner: &arena.GeneralArena, hostname: string,
+        trust_file: string, capacity: u64) -> result<TlsBuffer> {
+        def state: *TlsClientState = owner.try_alloc(TlsClientState {
+            native: null, socket: null, ready: false, closing: false, failed: false });
+        if state == null { return error("TLS metadata allocation failed", status.NO_MEMORY, 0); }
+
+        def mut native: *u8 = null;
+        def mut detail: i32 = 0;
+        def code: i32       = __net_tls_buffer_create(capacity, hostname, trust_file, &native, &detail);
+
+        if code != status.OK { return error("TLS buffer client setup failed", code, detail); }
+
+        state.native = native;
+
+        return TlsBuffer { session: TlsClient { state: state } };
+    }
+
+    def pub static server(owner: &arena.GeneralArena, config: &const TlsServerConfig,
+        capacity: u64) -> result<TlsBuffer> {
+        if !config.is_open() { return error("TLS server configuration is closed", status.CLOSED, 0); }
+
+        def state: *TlsClientState = owner.try_alloc(TlsClientState {
+            native: null, socket: null, ready: false, closing: false, failed: false });
+        if state == null { return error("TLS metadata allocation failed", status.NO_MEMORY, 0); }
+
+        def mut native: *u8 = null;
+        def mut detail: i32 = 0;
+        def code: i32       = __net_tls_buffer_server_create(capacity, config.state.native, &native, &detail);
+
+        if code != status.OK { return error("TLS buffer server setup failed", code, detail); }
+
+        state.native = native;
+
+        return TlsBuffer { session: TlsClient { state: state } };
+    }
+
+    def pub is_open(self: &const TlsBuffer) -> bool { return self.session.is_open(); }
+
+    def pub handshake(self: &TlsBuffer) -> result<i32> {
+        def outcome: result<i32> = self.session.handshake();
+        if outcome.erroneous { return outcome.error; }
+
+        return outcome.value;
+    }
+
+    def pub read(self: &TlsBuffer, bytes: [u8]) -> result<TlsReadOutcome> {
+        def outcome: result<TlsReadOutcome> = self.session.read(bytes);
+        if outcome.erroneous { return outcome.error; }
+
+        return outcome.value;
+    }
+
+    def pub write(self: &TlsBuffer, bytes: [const u8]) -> result<TlsWriteOutcome> {
+        def outcome: result<TlsWriteOutcome> = self.session.write(bytes);
+        if outcome.erroneous { return outcome.error; }
+
+        return outcome.value;
+    }
+
+    // end is applied only when all supplied bytes are accepted. Preserve and
+    // retry the suffix on a partial result. Feed EOF once, including empty EOF.
+    def pub encrypted_input(self: &TlsBuffer, bytes: [const u8], end: bool) -> result<u64> {
+        if !self.is_open() { return error("TLS buffer is closed", status.CLOSED, 0); }
+
+        def mut pointer: *const u8 = null;
+        if bytes.len != 0 { pointer = &bytes[0]; }
+
+        def mut eof: i32 = 0;
+        if end { eof = 1; }
+
+        def mut count: u64 = 0;
+        def code: i32      = __net_tls_buffer_feed(self.session.state.native, pointer, bytes.len, eof, &count);
+
+        if code != status.OK && code != status.WOULD_BLOCK { return error("TLS encrypted input failed", code, 0); }
+
+        return count;
+    }
+
+    def pub encrypted_output(self: &TlsBuffer, bytes: [u8]) -> result<u64> {
+        if !self.is_open() { return error("TLS buffer is closed", status.CLOSED, 0); }
+        if bytes.len == 0 { return 0; }
+
+        def mut count: u64 = 0;
+        def code: i32      = __net_tls_buffer_drain(self.session.state.native, &bytes[0], bytes.len, &count);
+
+        if code != status.OK && code != status.WOULD_BLOCK && code != status.END { return error("TLS encrypted output failed", code, 0); }
+
+        return count;
+    }
+
+    def pub shutdown(self: &TlsBuffer) -> result<i32> {
+        def outcome: result<i32> = self.session.shutdown();
+        if outcome.erroneous { return outcome.error; }
+
+        return outcome.value;
+    }
+
+    def pub close(self: &TlsBuffer) -> result<void> {
+        def outcome: result<void> = self.session.close();
+        if outcome.erroneous { return outcome.error; }
+
+        return;
+    }
+}
+
+// Tuple-dependent ISNs plus a four-microsecond clock (RFC 9293). Secret state
+// belongs to this value, never a process-global generator. Keep it private and
+// retain it across connections; recreate with fresh entropy on process restart.
+def pub struct TcpIsnGenerator {
+    def secret: [u8; 32],
+    def mut last_us: u64,
+
+    def pub static create() -> result<TcpIsnGenerator> {
+        def mut secret: [u8; 32] = zeroed;
+        def code: i32            = __net_isn_seed(&secret[0]);
+
+        if code != status.OK { return error("TCP ISN entropy unavailable", code, 0); }
+
+        return TcpIsnGenerator { secret: secret, last_us: 0 };
+    }
+
+    def pub next(self: &TcpIsnGenerator, local: be_u32, local_port: be_u16,
+        remote: be_u32, remote_port: be_u16, now_us: u64) -> result<u32> {
+        if now_us < self.last_us { return error("TCP ISN clock moved backwards", status.INVALID, 0); }
+
+        def lh: result<u32> = u32(local);
+        if lh.erroneous { return lh.error; }
+
+        def lp: result<u16> = u16(local_port);
+        if lp.erroneous { return lp.error; }
+
+        def rh: result<u32> = u32(remote);
+        if rh.erroneous { return rh.error; }
+
+        def rp: result<u16> = u16(remote_port);
+        if rp.erroneous { return rp.error; }
+
+        def mut sequence: u32 = 0;
+        def code: i32         = __net_isn_next(&self.secret[0], lh.value, lp.value, rh.value, rp.value, now_us, &sequence);
+
+        if code != status.OK { return error("TCP ISN generation failed", code, 0); }
+
+        self.last_us = now_us;
+
+        return sequence;
+    }
+}
+
+def struct PacketDeviceState {
+    def mut descriptor: i32,
+    def framing: i32,
+}
+
+// Raw IPv4 packet transport only: no host TCP sockets, routes or interface
+// addresses are configured here. Linux uses a named TUN; macOS uses utunN.
+// Opening may require privileges. Copies alias the descriptor; close before
+// resetting its owner arena. Preserve an unsent packet on WOULD_BLOCK.
+def pub struct PacketDevice {
+    def state: *PacketDeviceState,
+
+    def pub static open(owner: &arena.GeneralArena, name: string) -> result<PacketDevice> {
+        def state: *PacketDeviceState = owner.try_alloc(PacketDeviceState { descriptor: -1, framing: 0 });
+        if state == null { return error("packet device metadata allocation failed", status.NO_MEMORY, 0); }
+
+        def mut descriptor: i32 = -1;
+        def mut framing: i32    = 0;
+        def mut failure: i32    = 0;
+        def code: i32           = __net_tun_open(name, &descriptor, &framing, &failure);
+
+        if code != status.OK { return error("packet device open failed", code, failure); }
+
+        // Initialize the state once so aliases share closure state.
+        *state = PacketDeviceState { descriptor: descriptor, framing: framing };
+
+        return PacketDevice { state: state };
+    }
+
+    def pub is_open(self: &const PacketDevice) -> bool { return self.state != null && self.state.descriptor >= 0; }
+
+    def pub read(self: &PacketDevice, bytes: [u8]) -> result<ReadOutcome> {
+        if !self.is_open() { return error("packet device is closed", status.CLOSED, 0); }
+        if bytes.len < 65535 { return error("packet receive storage needs 65535 bytes", status.OUT_OF_RANGE, 0); }
+
+        def mut count: u64   = 0;
+        def mut failure: i32 = 0;
+        def code: i32        = __net_packet_read(self.state.descriptor, self.state.framing, &bytes[0], bytes.len, &count, &failure);
+
+        if code != status.OK && code != status.WOULD_BLOCK && code != status.END { return error("packet read failed", code, failure); }
+
+        return ReadOutcome { state: code, count: count };
+    }
+
+    def pub write(self: &PacketDevice, bytes: [const u8]) -> result<WriteOutcome> {
+        if !self.is_open() { return error("packet device is closed", status.CLOSED, 0); }
+        if bytes.len < 20 { return error("packet is too short", status.INVALID, 0); }
+
+        def mut count: u64   = 0;
+        def mut failure: i32 = 0;
+        def code: i32        = __net_packet_write(self.state.descriptor, self.state.framing, &bytes[0], bytes.len, &count, &failure);
+
+        if code != status.OK && code != status.WOULD_BLOCK { return error("packet write failed", code, failure); }
+
+        return WriteOutcome { would_block: code == status.WOULD_BLOCK, count: count };
+    }
+
+    def pub wait(self: &PacketDevice, events: i32, timeout_ms: i32) -> result<i32> {
+        if !self.is_open() { return error("packet device is closed", status.CLOSED, 0); }
+
+        def mut ready: i32   = 0;
+        def mut failure: i32 = 0;
+        def code: i32        = __net_wait(self.state.descriptor, events, timeout_ms, &ready, &failure);
+
+        if code != status.OK && code != status.TIMED_OUT { return error("packet readiness failed", code, failure); }
+
+        return ready;
+    }
+
+    def pub close(self: &PacketDevice) -> result<void> {
+        if !self.is_open() { return error("packet device already closed", status.CLOSED, 0); }
+
+        def descriptor: i32 = self.state.descriptor;
+        self.state.descriptor = -1;
+
+        def mut failure: i32 = 0;
+        def code: i32        = __net_close(descriptor, &failure);
+
+        if code != status.OK { return error("packet close failed", code, failure); }
+
+        return;
+    }
 }

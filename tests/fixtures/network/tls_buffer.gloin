@@ -1,0 +1,151 @@
+import "@net";
+import "@arena";
+import "@process";
+import "@status";
+
+def struct Pipe {
+    def mut bytes: [u8; 73],
+    def mut start: u64,
+    def mut end: u64,
+
+    def pump(self: &Pipe, from: &net.TlsBuffer, to: &net.TlsBuffer) -> i32 {
+        if self.start == self.end {
+            def drained: result<u64> = from.encrypted_output(self.bytes[..]);
+            if drained.erroneous { return 1; }
+
+            self.start = 0;
+            self.end   = drained.value;
+        }
+
+        if self.start == self.end { return 0; }
+
+        def fed: result<u64> = to.encrypted_input(self.bytes[self.start..self.end], false);
+        if fed.erroneous { return 2; }
+
+        self.start = self.start + fed.value;
+
+        return 0;
+    }
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def cert: result<string> = process.arg(&owner, 1);
+    if cert.erroneous { return 1; }
+
+    def key: result<string> = process.arg(&owner, 2);
+    if key.erroneous { return 2; }
+
+    def loaded: result<net.TlsServerConfig> = net.TlsServerConfig.load(&owner, cert.value, key.value);
+    if loaded.erroneous { return 3; }
+
+    def mut config: net.TlsServerConfig = loaded.value;
+    def first: result<net.TlsBuffer>    = net.TlsBuffer.client(&owner, "localhost", cert.value, 1024);
+
+    if first.erroneous { return 4; }
+
+    def mut client: net.TlsBuffer     = first.value;
+    def second: result<net.TlsBuffer> = net.TlsBuffer.server(&owner, &config, 1024);
+
+    if second.erroneous { return 5; }
+
+    def mut server: net.TlsBuffer = second.value;
+    // Sessions retain the context independently of configuration lifetime.
+    def closed_config: result<void> = config.close();
+    if closed_config.erroneous { return 6; }
+
+    def mut client_pipe: Pipe  = Pipe { bytes: zeroed, start: 0, end: 0 };
+    def mut server_pipe: Pipe  = Pipe { bytes: zeroed, start: 0, end: 0 };
+    def mut client_ready: bool = false;
+    def mut server_ready: bool = false;
+
+    for def mut i: u64 = 0; i < 10000 && (!client_ready || !server_ready); i = i + 1 {
+        if !client_ready {
+            def step: result<i32> = client.handshake();
+            if step.erroneous { return 7; }
+
+            client_ready = step.value == 0;
+        }
+
+        if !server_ready {
+            def step: result<i32> = server.handshake();
+            if step.erroneous { return 8; }
+
+            server_ready = step.value == 0;
+        }
+
+        if client_pipe.pump(&client, &server) != 0 || server_pipe.pump(&server, &client) != 0 { return 9; }
+    }
+
+    if !client_ready || !server_ready { return 10; }
+
+    def mut payload: [u8; 30000] = zeroed;
+    def mut output: [u8; 101]    = zeroed;
+
+    for def mut i: u64 = 0; i < 30000; i = i + 1 {
+        def byte: result<u8> = u8(i % 251);
+        if byte.erroneous { return 11; }
+
+        payload[i] = byte.value;
+    }
+
+    def mut sent: u64 = 0;
+    def mut read: u64 = 0;
+
+    for def mut i: u64 = 0; i < 100000 && read < 30000; i = i + 1 {
+        if sent < 30000 {
+            def step: result<net.TlsWriteOutcome> = client.write(payload[sent..]);
+            if step.erroneous { return 12; }
+
+            sent = sent + step.value.count;
+        }
+
+        def got: result<net.TlsReadOutcome> = server.read(output[..]);
+        if got.erroneous { return 13; }
+
+        def count: u64 = got.value.count;
+
+        for def mut j: u64 = 0; j < count; j = j + 1 {
+            if read + j >= 30000 || output[j] != payload[read + j] { return 14; }
+        }
+
+        read = read + count;
+
+        if client_pipe.pump(&client, &server) != 0 || server_pipe.pump(&server, &client) != 0 { return 15; }
+    }
+
+    if sent != 30000 || read != 30000 { return 16; }
+
+    def mut client_closed: bool = false;
+    def mut server_closed: bool = false;
+
+    for def mut i: u64 = 0; i < 10000 && (!client_closed || !server_closed); i = i + 1 {
+        if !client_closed {
+            def step: result<i32> = client.shutdown();
+            if step.erroneous { return 17; }
+
+            client_closed = step.value == 0;
+        }
+
+        if !server_closed {
+            def step: result<i32> = server.shutdown();
+            if step.erroneous { return 18; }
+
+            server_closed = step.value == 0;
+        }
+
+        if client_pipe.pump(&client, &server) != 0 || server_pipe.pump(&server, &client) != 0 { return 19; }
+    }
+
+    if !client_closed || !server_closed { return 20; }
+
+    def first_closed: result<void> = client.close();
+    if first_closed.erroneous { return 21; }
+
+    def second_closed: result<void> = server.close();
+    if second_closed.erroneous { return 22; }
+
+    return 0;
+}

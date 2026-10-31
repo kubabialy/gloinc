@@ -17,4 +17,4 @@ inline std::optional<MemoryPrimitive> memory_operation(
     return std::nullopt;
 }
 
-enum class MemoryIntrinsic { SizeOf, AlignOf, Padding, Place };
+enum class MemoryIntrinsic { SizeOf, AlignOf, Padding, Place, PackedPointer, PackedMutPointer };

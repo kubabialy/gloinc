@@ -1,12 +1,26 @@
 # Networking milestones after the first TCP and HTTP layer
 
+The 0.3.0 development library now includes an independent IPv4/TCP endpoint,
+raw packet adapters, bounded HTTP server sessions, and TLS over Gloin TCP.
+[The server guide](tcpip-server.md) records the implemented scope and tests.
+This roadmap also tracks separate OS-socket conveniences and application
+protocols that are not implied by the raw-packet server implementation.
+
+The 0.3.0 development [packed packet layer](packets.md) adds IPv4/UDP/TCP
+representations and bounded validation. The independent IPv4 endpoint now uses
+these representations for raw transport, reassembly and TCP state.
+
 The 0.1.0 release provides nonblocking IPv4 TCP, a verified nonblocking TLS
 client, bounded multi-socket readiness waits, and a Gloin HTTP/HTTPS client
 with streaming fixed-length, chunked, and clean-EOF response decoding,
 backpressure, cancellation, and per-exchange deadlines. The
 [HTTP acceptance peer](../tests/http/README.md) exercises concurrent, bounded
-HTTP/HTTPS connections. A reusable HTTP server library and a full real-time
-client remain unimplemented.
+HTTP/HTTPS connections. The development library adds a reusable HTTP server; a full real-time
+client remains unimplemented. The 0.3.0 development [request decoder](http-requests.md)
+now provides bounded fixed-length/chunked request bodies, backpressure, and
+header-boundary inspection. `@http_server` and `@http_service` add bounded server
+state and concurrent progress over Gloin TCP; applications supply scheduling and
+response policy.
 [Server-side TLS and explicit graceful shutdown](server-tls.md) are available;
 the TLS and HTTP/HTTPS acceptance drivers are written in Gloin.
 Slack is one demanding

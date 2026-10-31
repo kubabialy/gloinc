@@ -1,0 +1,331 @@
+import "@arena";
+import "@process";
+import "@net";
+import "@tcp";
+import "@tcp_tls";
+import "@http";
+import "@http_server";
+import "@http_service";
+import "@strings";
+import "@status";
+
+def simulation(secure: bool, cert: string, key: string) -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mut atx: [u8; 1024]  = zeroed;
+    def mut arx: [u8; 1024]  = zeroed;
+    def mut amap: [u8; 1024] = zeroed;
+    def mut btx: [u8; 1024]  = zeroed;
+    def mut brx: [u8; 1024]  = zeroed;
+    def mut bmap: [u8; 1024] = zeroed;
+    def options: tcp.Options = tcp.Options { mss: 128, max_retries: 12, idle_timeout_ms: 300000,
+        time_wait_ms: 2000, no_delay: true };
+    def aslot: result<tcp.Slot> = tcp.Slot.create(tcp.Buffers { send: atx[..], receive: arx[..], present: amap[..] }, options);
+
+    if aslot.erroneous { return 1; }
+
+    def bslot: result<tcp.Slot> = tcp.Slot.create(tcp.Buffers { send: btx[..], receive: brx[..], present: bmap[..] }, options);
+    if bslot.erroneous { return 2; }
+
+    def mut aslots: [tcp.Slot; 1] = {aslot.value};
+    def mut bslots: [tcp.Slot; 1] = {bslot.value};
+    def empty: [be_u16; 0]        = {};
+    def ports: [be_u16; 1]        = {80};
+    def amade: result<tcp.Table>  = tcp.Table.create(0xc0000201, empty[..], aslots[..]);
+
+    if amade.erroneous { return 3; }
+
+    def bmade: result<tcp.Table> = tcp.Table.create(0xc0000202, ports[..], bslots[..]);
+    if bmade.erroneous { return 4; }
+
+    def mut a: tcp.Table           = amade.value;
+    def mut b: tcp.Table           = bmade.value;
+    def opened: result<tcp.Handle> = a.connect(1234, tcp.Address { host: 0xc0000202, port: 80 }, 4294967290, 0);
+
+    if opened.erroneous { return 5; }
+
+    def ah: tcp.Handle        = opened.value;
+    def mut wire: [u8; 1500]  = zeroed;
+    def mut reply: [u8; 1500] = zeroed;
+    def syn: result<u64>      = a.emit(wire[..], 0);
+
+    if syn.erroneous { return 6; }
+
+    def accepted: result<tcp.Input> = b.input(wire[..syn.value], 4294967294, 0, reply[..]);
+    if accepted.erroneous { return 7; }
+
+    def bh: tcp.Handle                  = accepted.value.connection;
+    def mut ai: [u8; 131]               = zeroed;
+    def mut ao: [u8; 137]               = zeroed;
+    def mut bi: [u8; 139]               = zeroed;
+    def mut bo: [u8; 149]               = zeroed;
+    def mut client_tls: *tcp_tls.Stream = null;
+    def mut server_tls: *tcp_tls.Stream = null;
+
+    if secure {
+        def loaded: result<net.TlsServerConfig> = net.TlsServerConfig.load(&owner, cert, key);
+        if loaded.erroneous { return 8; }
+
+        def mut config: net.TlsServerConfig = loaded.value;
+        def first: result<net.TlsBuffer>    = net.TlsBuffer.client(&owner, "localhost", cert, 1024);
+
+        if first.erroneous { return 9; }
+
+        def second: result<net.TlsBuffer> = net.TlsBuffer.server(&owner, &config, 1024);
+        if second.erroneous { return 10; }
+
+        def closed: result<void> = config.close();
+        if closed.erroneous { return 11; }
+
+        def ac: result<tcp_tls.Stream> = tcp_tls.Stream.create(ah, first.value, ai[..], ao[..]);
+        if ac.erroneous { return 12; }
+
+        def bc: result<tcp_tls.Stream> = tcp_tls.Stream.create(bh, second.value, bi[..], bo[..]);
+        if bc.erroneous { return 13; }
+
+        client_tls = owner.try_alloc(ac.value);
+        server_tls = owner.try_alloc(bc.value);
+
+        if client_tls == null || server_tls == null { return 14; }
+    }
+
+    def mut head: [u8; 1024] = zeroed;
+    def mut out: [u8; 128]   = zeroed;
+    def mut input: [u8; 71]  = zeroed;
+    def mut body: [u8; 3]    = zeroed;
+    def limits: http_server.Limits = http_server.Limits { body_bytes: 1024, metadata_bytes: 4096,
+        request_timeout_ms: 120000, response_timeout_ms: 120000, idle_timeout_ms: 120000, max_requests: 2 };
+    def session: result<http_server.Session> = http_server.Session.create(head[..], out[..], limits, 0);
+
+    if session.erroneous { return 15; }
+
+    def created: result<http_service.Connection> = http_service.Connection.create(bh, server_tls, session.value, input[..], 0, 120000, 10000);
+    if created.erroneous { return 16; }
+
+    def mut server: http_service.Connection = created.value;
+    def request: string                     = "POST /first HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n4\r\n\0abc\r\n0\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    def mut request_bytes: [u8; 512]        = zeroed;
+    def request_size: u64                   = strings.byte_length(request);
+
+    for def mut i: u64 = 0; i < request_size; i = i + 1 {
+        def byte: result<u8> = strings.byte_at(request, i);
+        if byte.erroneous { return 17; }
+
+        request_bytes[i] = byte.value;
+    }
+
+    def fields: [http.Header; 0]              = {};
+    def response_bytes: [u8; 5]               = {0,255,97,98,99};
+    def mut response_head: [u8; 1024]         = zeroed;
+    def mut response_body: [u8; 3]            = zeroed;
+    def decoded: result<http.ResponseDecoder> = http.ResponseDecoder.create(response_head[..], 100, "POST", 4096);
+
+    if decoded.erroneous { return 18; }
+
+    def mut decoder: http.ResponseDecoder = decoded.value;
+    def mut client_input: [u8; 97]        = zeroed;
+    def mut client_start: u64             = 0;
+    def mut client_end: u64               = 0;
+    def mut client_eof: bool              = false;
+    def mut ready: bool                   = !secure;
+    def mut sent: u64                     = 0;
+    def mut body_received: u64            = 0;
+    def mut requests: u64                 = 0;
+    def mut response_sent: u64            = 0;
+    def mut response_received: u64        = 0;
+    def mut responses: u64                = 0;
+    def mut server_done: bool             = false;
+    def mut client_done: bool             = false;
+    def mut packets: u64                  = 0;
+
+    for def mut now: u64 = 1; now < 240000 && (!server_done || !client_done); now = now + 1 {
+        for def mut direction: u64 = 0; direction < 2; direction = direction + 1 {
+            def mut from: &tcp.Table = &a;
+            def mut to: &tcp.Table   = &b;
+
+            if direction == 1 { from = &b; to = &a; }
+
+            def emitted: result<u64> = from.emit(wire[..], now);
+            if emitted.erroneous { return 19; }
+
+            def count: u64 = emitted.value;
+
+            if count != 0 {
+                packets = packets + 1;
+
+                // Drop both data and acknowledgments deterministically.
+                if packets % 17 != 0 {
+                    def fed: result<tcp.Input> = to.input(wire[..count], 0, now, reply[..]);
+                    if fed.erroneous { return 20; }
+                }
+            }
+        }
+
+        if !server_done {
+            def polled: result<http_service.Progress> = server.poll(&b, body[..], now);
+            if polled.erroneous { return 21; }
+
+            def step: http_service.Progress = polled.value;
+
+            if step.event == http_service.HAVE_HEAD {
+                def info: result<http.RequestInfo> = server.session.head();
+                if info.erroneous { return 22; }
+                if (requests == 0 && !strings.equal(info.value.target, "/first"))
+                    || (requests == 1 && !strings.equal(info.value.target, "/second")) { return 23; }
+
+                def accepted_body: result<void> = server.session.accept_body();
+                if accepted_body.erroneous { return 24; }
+            }
+
+            if step.body_bytes != 0 {
+                for def mut i: u64 = 0; i < step.body_bytes; i = i + 1 {
+                    def expected: [u8; 4] = {0,97,98,99};
+                    if body_received + i >= 4 || body[i] != expected[body_received + i] { return 25; }
+                }
+
+                body_received = body_received + step.body_bytes;
+            }
+
+            if step.event == http_service.REQUEST_COMPLETE {
+                if body_received != 4 { return 26; }
+
+                def begun: result<void> = server.session.begin_response(200, "OK", fields[..], 5, false, false, now);
+                if begun.erroneous { return 27; }
+
+                requests      = requests + 1;
+                response_sent = 0;
+            }
+
+            if step.event == http_service.NEED_RESPONSE && response_sent < 5 {
+                def written: result<u64> = server.session.write_body(response_bytes[response_sent..]);
+                if written.erroneous { return 28; }
+
+                response_sent = response_sent + written.value;
+            }
+
+            if step.event == http_service.RESPONSE_COMPLETE {
+                def next: result<void> = server.session.advance(now);
+                if next.erroneous { return 29; }
+            }
+
+            if step.event == http_service.DONE { server_done = true; }
+        }
+
+        def state: result<i32> = a.state(ah);
+        if state.erroneous { return 30; }
+
+        if state.value == tcp.ESTABLISHED || state.value == tcp.CLOSE_WAIT {
+            if !ready {
+                def handshake: result<i32> = (*client_tls).handshake(&a);
+                if handshake.erroneous { return 31; }
+
+                ready = handshake.value == 0;
+            }
+
+            if ready && sent < request_size {
+                if secure {
+                    def written: result<net.TlsWriteOutcome> = (*client_tls).write(&a, request_bytes[sent..request_size]);
+                    if written.erroneous { return 32; }
+
+                    sent = sent + written.value.count;
+                } else {
+                    def written: result<u64> = a.write(ah, request_bytes[sent..request_size]);
+                    if written.erroneous { return 33; }
+
+                    sent = sent + written.value;
+                }
+            }
+
+            if ready && responses < 2 {
+                if client_start == client_end && !client_eof {
+                    client_start = 0;
+
+                    if secure {
+                        def read: result<net.TlsReadOutcome> = (*client_tls).read(&a, client_input[..]);
+                        if read.erroneous { return 34; }
+
+                        client_end = read.value.count;
+                        client_eof = read.value.state == status.END;
+                    } else {
+                        def read: result<tcp.Read> = a.read(ah, client_input[..]);
+                        if read.erroneous { return 35; }
+
+                        client_end = read.value.count;
+                        client_eof = read.value.end;
+                    }
+                }
+
+                def fed: result<http.StreamProgress> = decoder.feed(strings.view_bytes(client_input[client_start..client_end]), client_eof, response_body[..]);
+                if fed.erroneous { return 36; }
+
+                def progress: http.StreamProgress = fed.value;
+                client_start = client_start + progress.consumed;
+
+                for def mut i: u64 = 0; i < progress.produced; i = i + 1 {
+                    if response_received + i >= 5 || response_body[i] != response_bytes[response_received + i] { return 37; }
+                }
+
+                response_received = response_received + progress.produced;
+
+                if progress.complete {
+                    if response_received != 5 { return 38; }
+
+                    responses         = responses + 1;
+                    response_received = 0;
+
+                    def next: result<http.ResponseDecoder> = http.ResponseDecoder.create(response_head[..], 100, "GET", 4096);
+                    if next.erroneous { return 39; }
+
+                    decoder = next.value;
+                }
+            }
+
+            if responses == 2 && !client_done {
+                def mut shut: bool = true;
+
+                if secure {
+                    def shutdown: result<i32> = (*client_tls).shutdown(&a);
+                    if shutdown.erroneous { return 40; }
+
+                    shut = shutdown.value == 0;
+                }
+
+                if shut {
+                    if secure {
+                        def closed: result<void> = (*client_tls).close();
+                        if closed.erroneous { return 41; }
+                    }
+
+                    def ended: result<void> = a.shutdown_write(ah);
+                    if ended.erroneous { return 42; }
+
+                    client_done = true;
+                }
+            }
+        }
+    }
+
+    if !client_done || !server_done || requests != 2 || responses != 2 || sent != request_size { return 43; }
+
+    return 0;
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def cert: result<string> = process.arg(&owner, 1);
+    if cert.erroneous { return 90; }
+
+    def key: result<string> = process.arg(&owner, 2);
+    if key.erroneous { return 91; }
+
+    def plain: i32 = simulation(false, cert.value, key.value);
+    if plain != 0 { return plain; }
+
+    def secure: i32 = simulation(true, cert.value, key.value);
+    if secure != 0 { return secure + 100; }
+
+    return 0;
+}
