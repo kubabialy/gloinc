@@ -1,0 +1,147 @@
+import "./kernels";
+import "@arena";
+import "@process";
+import "@std";
+import "@strings";
+
+def evaluate32(mode: string, value: f32) -> f32 {
+    if strings.equal(mode, "combined") { return kernels.combined32(value, 1.0, 16); }
+    if strings.equal(mode, "zero_sink") { return kernels.zero_sink32(value, 0.0, 16); }
+    if strings.equal(mode, "masked") { return kernels.masked32(value, 1.0, 16); }
+    if strings.equal(mode, "independent") { return kernels.independent32(value, 3.0, 16); }
+    if strings.equal(mode, "empty_combined") { return kernels.combined32(value, 1.0, 0); }
+    if strings.equal(mode, "anchored") { return kernels.anchored32(value, 16); }
+    if strings.equal(mode, "bounded") { return kernels.bounded32(value, 16, 2.0); }
+    if strings.equal(mode, "zero") { return kernels.bounded32(value, 0, 2.0); }
+    if strings.equal(mode, "negative") { return kernels.bounded32(value, -1, 2.0); }
+    if strings.equal(mode, "signedmin") { return kernels.bounded32(value, -9223372036854775808, 2.0); }
+    if strings.equal(mode, "partial") { return kernels.bounded32(value, 3, 2.0); }
+    if strings.equal(mode, "first") { return kernels.lane32(value, 16, 0); }
+    if strings.equal(mode, "last") { return kernels.lane32(value, 16, 15); }
+    if strings.equal(mode, "skiplast") { return kernels.lane32(value, 15, 15); }
+    if strings.equal(mode, "discarded") { return kernels.discarded32(value, 16); }
+    if strings.equal(mode, "scaled") { return kernels.scaled32(value, 2.0, 16); }
+    if strings.equal(mode, "signedzero") { return kernels.scaled32(value, 1.0, 16); }
+    if strings.equal(mode, "zero_product") { return kernels.scaled32(value, 0.0, 16); }
+    if strings.equal(mode, "round") { return kernels.rounded32(value, 0.9999998807907104, 16); }
+    if strings.equal(mode, "growround") { return kernels.rounded32(value, 2.0, 16); }
+    if strings.equal(mode, "underflow") { return kernels.scaled32(value, 0.5, 16); }
+    if strings.equal(mode, "overlap") { return kernels.overlap32(value, 16); }
+    if strings.equal(mode, "subrange") { return kernels.subrange32(value, 16); }
+    if strings.equal(mode, "nested") { return kernels.nested32(value, 16); }
+    if strings.equal(mode, "effect") { return kernels.effect32(value, 1); }
+    if strings.equal(mode, "escaped") { return kernels.escaped32(value, 16); }
+    if strings.equal(mode, "divisor") { return kernels.divisor32(value, 2.0, 16); }
+    if strings.equal(mode, "trap") { return kernels.divisor32(value, 0.0, 1); }
+    if strings.equal(mode, "offset") { return kernels.offset32(value, 0, 16); }
+    if strings.equal(mode, "early") { return kernels.early32(value, 16); }
+    if strings.equal(mode, "integer") { return kernels.integer32(value, 0, 16); }
+    if strings.equal(mode, "integer_overflow") { return kernels.integer32(value, 18446744073709551615, 16); }
+    if strings.equal(mode, "bounds") { return kernels.bounded32(value, 17, 2.0); }
+    if strings.equal(mode, "bounds_subrange") { return kernels.subrange32(value, 17); }
+    if strings.equal(mode, "bounds_overlap") { return kernels.overlap32(value, 17); }
+    if strings.equal(mode, "bounds_offset") { return kernels.offset32(value, 1, 16); }
+    if strings.equal(mode, "maximum") { return kernels.lane32(value, 18446744073709551615, 0); }
+    if strings.equal(mode, "empty_badmath") { return kernels.rounded32(value, 2.0, 0); }
+
+    def mut output: f32 = 0.0;
+    if strings.equal(mode, "external") { return kernels.external32(value, &output, 16); }
+
+    def mut input: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 { input[i] = value; }
+    if strings.equal(mode, "borrowed") { return kernels.borrowed32(input[..], 16); }
+
+    return 0.0;
+}
+
+def evaluate64(mode: string, value: f64) -> f64 {
+    if strings.equal(mode, "combined") { return kernels.combined64(value, 1.0, 16); }
+    if strings.equal(mode, "zero_sink") { return kernels.zero_sink64(value, 0.0, 16); }
+    if strings.equal(mode, "masked") { return kernels.masked64(value, 1.0, 16); }
+    if strings.equal(mode, "independent") { return kernels.independent64(value, 3.0, 16); }
+    if strings.equal(mode, "empty_combined") { return kernels.combined64(value, 1.0, 0); }
+    if strings.equal(mode, "anchored") { return kernels.anchored64(value, 16); }
+    if strings.equal(mode, "bounded") { return kernels.bounded64(value, 16, 2.0); }
+    if strings.equal(mode, "zero") { return kernels.bounded64(value, 0, 2.0); }
+    if strings.equal(mode, "negative") { return kernels.bounded64(value, -1, 2.0); }
+    if strings.equal(mode, "signedmin") { return kernels.bounded64(value, -9223372036854775808, 2.0); }
+    if strings.equal(mode, "partial") { return kernels.bounded64(value, 3, 2.0); }
+    if strings.equal(mode, "first") { return kernels.lane64(value, 16, 0); }
+    if strings.equal(mode, "last") { return kernels.lane64(value, 16, 15); }
+    if strings.equal(mode, "skiplast") { return kernels.lane64(value, 15, 15); }
+    if strings.equal(mode, "discarded") { return kernels.discarded64(value, 16); }
+    if strings.equal(mode, "scaled") { return kernels.scaled64(value, 2.0, 16); }
+    if strings.equal(mode, "signedzero") { return kernels.scaled64(value, 1.0, 16); }
+    if strings.equal(mode, "zero_product") { return kernels.scaled64(value, 0.0, 16); }
+    if strings.equal(mode, "round") { return kernels.rounded64(value, 0.9999999999999998, 16); }
+    if strings.equal(mode, "growround") { return kernels.rounded64(value, 2.0, 16); }
+    if strings.equal(mode, "underflow") { return kernels.scaled64(value, 0.5, 16); }
+    if strings.equal(mode, "overlap") { return kernels.overlap64(value, 16); }
+    if strings.equal(mode, "subrange") { return kernels.subrange64(value, 16); }
+    if strings.equal(mode, "nested") { return kernels.nested64(value, 16); }
+    if strings.equal(mode, "effect") { return kernels.effect64(value, 1); }
+    if strings.equal(mode, "escaped") { return kernels.escaped64(value, 16); }
+    if strings.equal(mode, "divisor") { return kernels.divisor64(value, 2.0, 16); }
+    if strings.equal(mode, "trap") { return kernels.divisor64(value, 0.0, 1); }
+    if strings.equal(mode, "offset") { return kernels.offset64(value, 0, 16); }
+    if strings.equal(mode, "early") { return kernels.early64(value, 16); }
+    if strings.equal(mode, "integer") { return kernels.integer64(value, 0, 16); }
+    if strings.equal(mode, "integer_overflow") { return kernels.integer64(value, 18446744073709551615, 16); }
+    if strings.equal(mode, "bounds") { return kernels.bounded64(value, 17, 2.0); }
+    if strings.equal(mode, "bounds_subrange") { return kernels.subrange64(value, 17); }
+    if strings.equal(mode, "bounds_overlap") { return kernels.overlap64(value, 17); }
+    if strings.equal(mode, "bounds_offset") { return kernels.offset64(value, 1, 16); }
+    if strings.equal(mode, "maximum") { return kernels.lane64(value, 18446744073709551615, 0); }
+    if strings.equal(mode, "empty_badmath") { return kernels.rounded64(value, 2.0, 0); }
+
+    def mut output: f64 = 0.0;
+    if strings.equal(mode, "external") { return kernels.external64(value, &output, 16); }
+
+    def mut input: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 { input[i] = value; }
+    if strings.equal(mode, "borrowed") { return kernels.borrowed64(input[..], 16); }
+
+    return 0.0;
+}
+
+def main() -> i32 {
+    if process.arg_count() != 4 { return 2; }
+
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def width: result<string> = process.arg(&owner, 1);
+    if width.erroneous { return 2; }
+
+    def mode: result<string> = process.arg(&owner, 2);
+    if mode.erroneous { return 2; }
+
+    def text: result<string> = process.arg(&owner, 3);
+    if text.erroneous { return 2; }
+
+    if strings.equal(width.value, "64") {
+        def parsed: result<f64> = std.parse_f64(text.value);
+        if parsed.erroneous { return 2; }
+
+        def computed: f64             = evaluate64(mode.value, parsed.value);
+        def formatted: result<string> = std.format_f64(&owner, computed);
+
+        if formatted.erroneous { return 1; }
+
+        std.println(formatted.value);
+    } else {
+        def parsed: result<f32> = std.parse_f32(text.value);
+        if parsed.erroneous { return 2; }
+
+        def computed: f32             = evaluate32(mode.value, parsed.value);
+        def formatted: result<string> = std.format_f32(&owner, computed);
+
+        if formatted.erroneous { return 1; }
+
+        std.println(formatted.value);
+    }
+
+    return 0;
+}

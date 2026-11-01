@@ -22,7 +22,7 @@ struct PromoteAllocation : mlir::PromotableAllocationOpInterface::ExternalModel<
         auto allocation = mlir::cast<gloin::StackAllocOp>(op);
         auto type = allocation.getElementType();
         if (!mlir::isa<mlir::LLVM::LLVMPointerType>(allocation.getAddress().getType()) ||
-            (!mlir::isa<mlir::IntegerType>(type) &&
+            (!mlir::isa<mlir::IntegerType>(type) && !type.isF32() && !type.isF64() &&
              !mlir::isa<gloin::GloinSliceType>(allocation.getSourceType())))
             return {};
         return {{allocation.getAddress(), type}};
@@ -617,6 +617,8 @@ GloinRangeProofs prove_gloin_ranges(mlir::ModuleOp module) {
         if (function.isExternal()) continue;
         llvm::SmallVector<mlir::PromotableAllocationOpInterface> allocations;
         function.walk([&](gloin::StackAllocOp op) {
+            // Reduction recognition still needs the floating accumulator slot.
+            if (op.getElementType().isF32() || op.getElementType().isF64()) return;
             allocations.push_back(mlir::cast<mlir::PromotableAllocationOpInterface>(op.getOperation()));
         });
         mlir::OpBuilder builder(context);
@@ -628,4 +630,23 @@ GloinRangeProofs prove_gloin_ranges(mlir::ModuleOp module) {
         version_strided_slice_loops(function, proofs);
     }
     return proofs;
+}
+
+void promote_gloin_float_locals(mlir::ModuleOp module) {
+    // Called after prove_gloin_ranges has installed the promotion interfaces
+    // and finished the storage-based reduction and loop versioning proofs.
+    for (auto function : module.getOps<mlir::func::FuncOp>()) {
+        if (function.isExternal()) continue;
+        llvm::SmallVector<mlir::PromotableAllocationOpInterface> allocations;
+        function.walk([&](gloin::StackAllocOp op) {
+            if (op.getElementType().isF32() || op.getElementType().isF64())
+                allocations.push_back(mlir::cast<mlir::PromotableAllocationOpInterface>(op.getOperation()));
+        });
+        // Versioning changes the CFG. Rebuild dominance before promoting float
+        // locals; escaped storage remains in memory and carries no SSA facts.
+        if (allocations.empty()) continue;
+        mlir::OpBuilder builder(module.getContext());
+        mlir::DominanceInfo float_dominance(function);
+        (void)mlir::tryToPromoteMemorySlots(allocations, builder, mlir::DataLayout(module), float_dominance);
+    }
 }

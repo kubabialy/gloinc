@@ -4,13 +4,14 @@ Gloin is an experimental language with explicit types, manual memory management,
 and native executables. Its compiler, `gloinc`, is built on LLVM/MLIR, with
 language operations represented in the GloinIR dialect.
 
-**[Download 0.2.1](https://github.com/kubabialy/gloinc/releases/tag/v0.2.1)** ·
-[Language guide](docs/site/0.2.1/index.html) ·
+**[Download 0.2.2](https://github.com/kubabialy/gloinc/releases/tag/v0.2.2)** ·
+[Language guide](docs/site/0.2.2/index.html) ·
 [Examples](examples/README.md) ·
-[Release notes](docs/release-notes-0.2.1.md)
+[Release notes](docs/release-notes-0.2.2.md)
 
-Version 0.2.1 adds arena-backed hash maps for integer, boolean, and string keys,
-with generic values, checked allocation, and allocation-free churn within capacity.
+Version 0.2.2 reduces redundant checked-floating-point work and enables SIMD in
+proved-safe private-array loops while preserving arithmetic and memory guarantees.
+It includes the arena-backed hash maps introduced in 0.2.1.
 See the [migration notes](docs/release-notes-0.2.0.md#migrating-from-010)
 when updating 0.1.0 programs.
 
@@ -18,12 +19,12 @@ The [0.3.0 draft](docs/release-0.3.0-draft.md) introduces
 [first-class endian integer types](docs/endianness.md), explicit value conversions,
 and aggregate copies that preserve padding through Gloin calls. See the
 [development guide](docs/site/development/index.html); this feature is not
-included in the published 0.2.1 binaries.
+included in the published 0.2.2 binaries.
 
 ## Get started
 
 Download and extract the archive for your platform. Verify it with the attached
-`.sha256` file; see the [installation guide](docs/release-0.2.1.md#installation-and-package).
+`.sha256` file; see the [installation guide](docs/release-0.2.2.md#installation-and-package).
 
 | Supported platform | Required LLVM/MLIR | Bundled toolchain installer |
 | --- | --- | --- |
@@ -80,20 +81,20 @@ Windows support is not planned; contributions are welcome.
 
 | I want to… | Start here |
 | --- | --- |
-| Learn the language | [0.2.1 HTML guide](docs/site/0.2.1/index.html) |
+| Learn the language | [0.2.2 HTML guide](docs/site/0.2.2/index.html) |
 | Run complete programs | [Examples and usage](examples/README.md) |
 | Use library APIs | [Standard library](docs/standard-library.md), [I/O](docs/io.md), [processes](docs/child-processes.md), [networking](docs/networking.md), [HTTP](docs/http-client.md), [JSON](docs/json.md) |
 | Format Gloin code | [gloinfmt](docs/gloinfmt.md) and [source style](docs/gloin-style.md) |
 | Understand the compiler | [Checked programs](docs/checked-program.md) and [GloinIR/lowering](docs/lowering.md) |
-| Inspect release verification | [0.2.1 record](docs/release-0.2.1.md#verification-boundary) and [test inventory](tests/README.md) |
+| Inspect release verification | [0.2.2 record](docs/release-0.2.2.md#verification-boundary) and [test inventory](tests/README.md) |
 
 To read the HTML guide in a browser, open
-`share/doc/gloinc/docs/site/0.2.1/index.html` inside an extracted archive.
+`share/doc/gloinc/docs/site/0.2.2/index.html` inside an extracted archive.
 Older releases keep their own versioned guides.
 
 ## Build from source
 
-Follow the [macOS and Linux build instructions](docs/release-0.2.1.md#build-and-run).
+Follow the [macOS and Linux build instructions](docs/release-0.2.2.md#build-and-run).
 Source builds require a C++23 compiler, CMake 3.28+, Ninja, OpenSSL 3 and the
 pinned LLVM/MLIR installation above. See the [toolchain guide](docs/toolchain.md)
 for compiler-only builds and offline dependencies.

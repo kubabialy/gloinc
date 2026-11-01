@@ -1,0 +1,485 @@
+import "@std";
+
+def pub bounded32(value: f32, n: i64, scale: f32) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 { data[i] = value; }
+
+    for def mut i: i64 = 0; i < n; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x + 1.0;
+    }
+
+    return data[0];
+}
+
+def pub lane32(value: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def mut x: f32 = data[i] * 2.0;
+        if x > 1024.0 { x = 1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[0];
+}
+
+def pub discarded32(value: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def mut x: f32 = value * 2.0;
+        if x > 1024.0 { x = 1024.0; }
+
+        data[i] = x;
+    }
+
+    return 0.0;
+}
+
+def pub rounded32(value: f32, factor: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = value * factor - 1.0; }
+
+    return data[0];
+}
+
+def pub scaled32(value: f32, factor: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = value * factor; }
+
+    return data[0];
+}
+
+def pub overlap32(factor: f32, n: u64) -> f32 {
+    def mut data: [f32; 17] = zeroed;
+    data[0] = 1.0;
+
+    def input: [const f32] = data[0..16];
+    def output: [f32]      = data[1..17];
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { output[i] = input[i] * factor; }
+
+    return data[16];
+}
+
+def pub subrange32(factor: f32, n: u64) -> f32 {
+    def mut data: [f32; 32] = zeroed;
+
+    for def mut i: u64 = 0; i < 32; i = i + 1 { data[i] = 3.0; }
+
+    def row: [f32] = data[8..24];
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { row[i] = row[i] * factor; }
+
+    return data[0] + data[8];
+}
+
+def pub nested32(factor: f32, n: u64) -> f32 {
+    def mut data: [[f32; 16]; 2] = zeroed;
+    data[1][0] = 3.0;
+
+    def row: [f32] = data[1][..];
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { row[i] = row[i] * factor; }
+
+    return data[1][0];
+}
+
+def pub effect32(value: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        std.println("before");
+        data[i] = value * 2.0;
+        std.println("after");
+    }
+
+    return data[0];
+}
+
+def pub external32(value: f32, output: &f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = value * 2.0; *output = data[i]; }
+
+    return data[0];
+}
+
+def inspect32(values: [const f32]) -> f32 { return values[0]; }
+
+def pub escaped32(value: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+    def ignored: f32        = inspect32(data[..]);
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = value * 2.0; }
+
+    return data[0];
+}
+
+def pub divisor32(value: f32, divisor: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = (value * 2.0) / divisor; }
+
+    return data[0];
+}
+
+def pub offset32(value: f32, offset: u64, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i + offset] = value * 2.0; }
+
+    return data[0];
+}
+
+def pub borrowed32(input: [const f32], n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = input[i] * 2.0; }
+
+    return data[0];
+}
+
+def pub early32(value: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { if value < 0.0 { return value; } data[i] = value * 2.0; }
+
+    return data[0];
+}
+
+def pub integer32(value: f32, addend: u64, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        data[i] = value * 2.0;
+
+        def checked: u64 = i + addend;
+    }
+
+    return data[0];
+}
+
+def pub bounded64(value: f64, n: i64, scale: f64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 { data[i] = value; }
+
+    for def mut i: i64 = 0; i < n; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x + 1.0;
+    }
+
+    return data[0];
+}
+
+def pub lane64(value: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def mut x: f64 = data[i] * 2.0;
+        if x > 1024.0 { x = 1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[0];
+}
+
+def pub discarded64(value: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def mut x: f64 = value * 2.0;
+        if x > 1024.0 { x = 1024.0; }
+
+        data[i] = x;
+    }
+
+    return 0.0;
+}
+
+def pub rounded64(value: f64, factor: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = value * factor - 1.0; }
+
+    return data[0];
+}
+
+def pub scaled64(value: f64, factor: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = value * factor; }
+
+    return data[0];
+}
+
+def pub overlap64(factor: f64, n: u64) -> f64 {
+    def mut data: [f64; 17] = zeroed;
+    data[0] = 1.0;
+
+    def input: [const f64] = data[0..16];
+    def output: [f64]      = data[1..17];
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { output[i] = input[i] * factor; }
+
+    return data[16];
+}
+
+def pub subrange64(factor: f64, n: u64) -> f64 {
+    def mut data: [f64; 32] = zeroed;
+
+    for def mut i: u64 = 0; i < 32; i = i + 1 { data[i] = 3.0; }
+
+    def row: [f64] = data[8..24];
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { row[i] = row[i] * factor; }
+
+    return data[0] + data[8];
+}
+
+def pub nested64(factor: f64, n: u64) -> f64 {
+    def mut data: [[f64; 16]; 2] = zeroed;
+    data[1][0] = 3.0;
+
+    def row: [f64] = data[1][..];
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { row[i] = row[i] * factor; }
+
+    return data[1][0];
+}
+
+def pub effect64(value: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        std.println("before");
+        data[i] = value * 2.0;
+        std.println("after");
+    }
+
+    return data[0];
+}
+
+def pub external64(value: f64, output: &f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = value * 2.0; *output = data[i]; }
+
+    return data[0];
+}
+
+def inspect64(values: [const f64]) -> f64 { return values[0]; }
+
+def pub escaped64(value: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+    def ignored: f64        = inspect64(data[..]);
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = value * 2.0; }
+
+    return data[0];
+}
+
+def pub divisor64(value: f64, divisor: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = (value * 2.0) / divisor; }
+
+    return data[0];
+}
+
+def pub offset64(value: f64, offset: u64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i + offset] = value * 2.0; }
+
+    return data[0];
+}
+
+def pub borrowed64(input: [const f64], n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { data[i] = input[i] * 2.0; }
+
+    return data[0];
+}
+
+def pub early64(value: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { if value < 0.0 { return value; } data[i] = value * 2.0; }
+
+    return data[0];
+}
+
+def pub integer64(value: f64, addend: u64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        data[i] = value * 2.0;
+
+        def checked: u64 = i + addend;
+    }
+
+    return data[0];
+}
+
+// Combining moves the producer check onto its formerly safe consumer.
+def pub anchored32(value: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+    def two: f32            = 2.0;
+    def half: f32           = 0.5;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        if value > 0.0 { data[i] = (value * two) * half; }
+    }
+
+    return 0.0;
+}
+
+// Combining moves the producer check onto its formerly safe consumer.
+def pub anchored64(value: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+    def two: f64            = 2.0;
+    def half: f64           = 0.5;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        if value > 0.0 { data[i] = (value * two) * half; }
+    }
+
+    return 0.0;
+}
+
+def pub combined32(value: f32, other: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+    def mut copy: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def p: f32 = value * 2.0;
+        data[i] = p;
+
+        def q: f32 = p + other;
+        copy[i] = p;
+        data[i] = q;
+    }
+
+    return data[0];
+}
+
+def pub zero_sink32(value: f32, other: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+    def mut copy: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def p: f32 = value * 2.0;
+        data[i] = p;
+        data[i] = p * other;
+    }
+
+    return data[0];
+}
+
+def pub masked32(value: f32, other: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+    def mut copy: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def mut p: f32 = value * 2.0;
+        data[i] = p;
+        if p > 1024.0 { p = 0.0; }
+
+        data[i] = p + other;
+    }
+
+    return data[0];
+}
+
+def pub independent32(value: f32, other: f32, n: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+    def mut copy: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def p: f32 = value * 2.0;
+        data[i] = p;
+
+        def q: f32 = other * 3.0;
+        data[i] = q;
+    }
+
+    return data[0];
+}
+
+def pub combined64(value: f64, other: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+    def mut copy: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def p: f64 = value * 2.0;
+        data[i] = p;
+
+        def q: f64 = p + other;
+        copy[i] = p;
+        data[i] = q;
+    }
+
+    return data[0];
+}
+
+def pub zero_sink64(value: f64, other: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+    def mut copy: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def p: f64 = value * 2.0;
+        data[i] = p;
+        data[i] = p * other;
+    }
+
+    return data[0];
+}
+
+def pub masked64(value: f64, other: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+    def mut copy: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def mut p: f64 = value * 2.0;
+        data[i] = p;
+        if p > 1024.0 { p = 0.0; }
+
+        data[i] = p + other;
+    }
+
+    return data[0];
+}
+
+def pub independent64(value: f64, other: f64, n: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+    def mut copy: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def p: f64 = value * 2.0;
+        data[i] = p;
+
+        def q: f64 = other * 3.0;
+        data[i] = q;
+    }
+
+    return data[0];
+}

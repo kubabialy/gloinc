@@ -1,7 +1,7 @@
 # First-class byte order (development)
 
 This is the development contract for SPEC-037, included in the
-[0.3.0 draft](release-0.3.0-draft.md). It is not part of the published 0.2.1 release.
+[0.3.0 draft](release-0.3.0-draft.md). It is not part of the published 0.2.2 release.
 The [development guide](site/development/index.html) contains the source-language
 overview.
 

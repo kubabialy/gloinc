@@ -1,0 +1,95 @@
+import "./kernels";
+import "@arena";
+import "@process";
+import "@std";
+import "@strings";
+
+def evaluate32(mode: string, value: f32) -> f32 {
+    if strings.equal(mode, "tree") { return kernels.tree32(value, 4.0, 0.5, 2.0); }
+    if strings.equal(mode, "treezero") { return kernels.tree32(value, 4.0, 0.0, 2.0); }
+    if strings.equal(mode, "treeother") { return kernels.tree32(4.0, value, 0.0, 2.0); }
+    if strings.equal(mode, "subtract") { return kernels.subtract32(value, 2.0, 1.0); }
+    if strings.equal(mode, "round") { return kernels.subtract32(value, 0.9999998807907104, 1.0); }
+    if strings.equal(mode, "signedzero") { return kernels.subtract32(value, 1.0, 0.0); }
+    if strings.equal(mode, "underflow") { return kernels.subtract32(value, 0.5, 0.0); }
+    if strings.equal(mode, "multiply") { return kernels.multiply32(value, value, 0.0); }
+    if strings.equal(mode, "cancel") { return kernels.add32(value, value, -value, -value); }
+    if strings.equal(mode, "add") { return kernels.add32(value, 1.0, 2.0, 3.0); }
+    if strings.equal(mode, "shared") { return kernels.shared32(value, 2.0, 1.0); }
+    if strings.equal(mode, "discarded") { return kernels.discarded32(value, value, 0.0); }
+    if strings.equal(mode, "effect") { std.println("before"); return kernels.effect32(value, 2.0, 1.0); }
+    if strings.equal(mode, "branch") { return kernels.branch32(value, 2.0, 1.0, false); }
+    if strings.equal(mode, "divisor") { return kernels.divisor32(value, 2.0, 0.0); }
+    if strings.equal(mode, "independent") { return kernels.independent32(1.0, 2.0, value, 2.0); }
+
+    def mut local: f32 = 1.0;
+    if strings.equal(mode, "read") { return kernels.read32(value, 2.0, &local); }
+    if strings.equal(mode, "write") { return kernels.write32(value, 2.0, &local); }
+
+    return 0.0;
+}
+
+def evaluate64(mode: string, value: f64) -> f64 {
+    if strings.equal(mode, "tree") { return kernels.tree64(value, 4.0, 0.5, 2.0); }
+    if strings.equal(mode, "treezero") { return kernels.tree64(value, 4.0, 0.0, 2.0); }
+    if strings.equal(mode, "treeother") { return kernels.tree64(4.0, value, 0.0, 2.0); }
+    if strings.equal(mode, "subtract") { return kernels.subtract64(value, 2.0, 1.0); }
+    if strings.equal(mode, "round") { return kernels.subtract64(value, 0.9999999999999998, 1.0); }
+    if strings.equal(mode, "signedzero") { return kernels.subtract64(value, 1.0, 0.0); }
+    if strings.equal(mode, "underflow") { return kernels.subtract64(value, 0.5, 0.0); }
+    if strings.equal(mode, "multiply") { return kernels.multiply64(value, value, 0.0); }
+    if strings.equal(mode, "cancel") { return kernels.add64(value, value, -value, -value); }
+    if strings.equal(mode, "add") { return kernels.add64(value, 1.0, 2.0, 3.0); }
+    if strings.equal(mode, "shared") { return kernels.shared64(value, 2.0, 1.0); }
+    if strings.equal(mode, "discarded") { return kernels.discarded64(value, value, 0.0); }
+    if strings.equal(mode, "effect") { std.println("before"); return kernels.effect64(value, 2.0, 1.0); }
+    if strings.equal(mode, "branch") { return kernels.branch64(value, 2.0, 1.0, false); }
+    if strings.equal(mode, "divisor") { return kernels.divisor64(value, 2.0, 0.0); }
+    if strings.equal(mode, "independent") { return kernels.independent64(1.0, 2.0, value, 2.0); }
+
+    def mut local: f64 = 1.0;
+    if strings.equal(mode, "read") { return kernels.read64(value, 2.0, &local); }
+    if strings.equal(mode, "write") { return kernels.write64(value, 2.0, &local); }
+
+    return 0.0;
+}
+
+def main() -> i32 {
+    if process.arg_count() != 4 { return 2; }
+
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def width: result<string> = process.arg(&owner, 1);
+    if width.erroneous { return 2; }
+
+    def mode: result<string> = process.arg(&owner, 2);
+    if mode.erroneous { return 2; }
+
+    def text: result<string> = process.arg(&owner, 3);
+    if text.erroneous { return 2; }
+
+    if strings.equal(width.value, "64") {
+        def parsed: result<f64> = std.parse_f64(text.value);
+        if parsed.erroneous { return 2; }
+
+        def computed: f64             = evaluate64(mode.value, parsed.value);
+        def formatted: result<string> = std.format_f64(&owner, computed);
+
+        if formatted.erroneous { return 1; }
+
+        std.println(formatted.value);
+    } else {
+        def parsed: result<f32> = std.parse_f32(text.value);
+        if parsed.erroneous { return 2; }
+
+        def computed: f32             = evaluate32(mode.value, parsed.value);
+        def formatted: result<string> = std.format_f32(&owner, computed);
+
+        if formatted.erroneous { return 1; }
+
+        std.println(formatted.value);
+    }
+
+    return 0;
+}

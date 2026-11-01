@@ -3,7 +3,7 @@
 **Status: unreleased development draft.** The first included feature is
 first-class integer endianness, with representation-preserving aggregate copies
 and Gloin calls. This is a minor release because it adds source-language behavior.
-The published baseline remains [0.2.1](release-notes-0.2.1.md); the compiler version,
+The published baseline is [0.2.2](release-notes-0.2.2.md); the compiler version,
 release assets, and numbered guides will be updated when the release is cut.
 
 ## Scope and status
@@ -129,7 +129,7 @@ execution and cross-compilation support are not claimed.
 ## Remaining release validation
 
 Before publishing 0.3.0, follow the existing
-[release verification requirements](release-0.2.1.md#verification-boundary) on
+[release verification requirements](release-0.2.2.md#verification-boundary) on
 the final committed source:
 
 - Run the required core and complete-suite classification gates on the maintained
@@ -142,3 +142,12 @@ the final committed source:
 Packed structs, bit fields, custom-width/128-bit integers, endian-qualified
 floating types, automatic aggregate schema conversion, general FFI, and
 language-level threads/async/spawn are outside the current 0.3.0 scope.
+
+## Integration with 0.2.2
+
+The candidate includes the complete checked-floating-point optimization series
+from 0.2.2 alongside endian integers and representation-preserving aggregates.
+Both endian and floating regression suites remain in the required core gate.
+The compiler still reports the last release version until 0.3.0 is cut; use the
+candidate branch commit to identify development builds. No 0.3.0 release is
+claimed by this integration.

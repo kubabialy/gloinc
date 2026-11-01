@@ -17,3 +17,6 @@ struct GloinRangeProofs {
 };
 
 GloinRangeProofs prove_gloin_ranges(mlir::ModuleOp module);
+
+// Run after the storage-based proofs above, before floating SSA analysis.
+void promote_gloin_float_locals(mlir::ModuleOp module);

@@ -9,9 +9,51 @@ permissions:
   contents: read
 
 jobs:
-  linux:
-    name: Ubuntu 24.04 x86_64 / LLVM 21.1.8
+  superseded-release-runs:
+    name: Cancel superseded 0.2.2 validation runs
+    if: >-
+      github.repository == 'kubabialy/gloinc' &&
+      (github.ref == 'refs/heads/release/0.2.2' ||
+      (github.event_name == 'pull_request' && github.head_ref == 'release/0.2.2' &&
+      github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Keep validation for the current release head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          [[ "$CANDIDATE_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          current_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release/0.2.2" --jq .object.sha)
+          [[ "$current_head" == "$CANDIDATE_HEAD" ]] || exit 0
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=release%2F0.2.2&per_page=100" \
+            --jq ".workflow_runs[] | select(.head_sha != \"$CANDIDATE_HEAD\" and .status != \"completed\") | .id" \
+            > superseded-runs.txt
+          while read -r run_id; do
+            [[ "$run_id" =~ ^[0-9]+$ ]]
+            current_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release/0.2.2" --jq .object.sha)
+            [[ "$current_head" == "$CANDIDATE_HEAD" ]] || exit 0
+            # A concurrent cleanup or a just-finished job may already have ended it.
+            if ! gh run cancel "$run_id" --repo "$GITHUB_REPOSITORY"; then
+              echo "::notice::Could not cancel run $run_id; current-head validation continues."
+            fi
+          done < superseded-runs.txt
+
+  linux:
+    name: Ubuntu 24.04 ${{ matrix.arch }} / LLVM 21.1.8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     # Fresh build, both package matrices, and serial/parallel complete audits.
     # Individual CTest and child-process deadlines remain separately bounded.
     timeout-minutes: 90
@@ -60,17 +102,20 @@ jobs:
         id: core
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          cmake --build build-ci-linux --target check-core 2>&1 | tee ci-reports-linux/core.log
-          cp build-ci-linux/core.xml ci-reports-linux/core.xml
+          core_status=0
+          cmake --build build-ci-linux --target check-core 2>&1 | tee ci-reports-linux/core.log || core_status=$?
+          if [[ -f build-ci-linux/core.xml ]]; then cp build-ci-linux/core.xml ci-reports-linux/core.xml; fi
+          test "$core_status" -eq 0
 
       - name: Verify installation and relocated Linux package
+        id: package
         if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         run: |
           bash scripts/check-package.sh build-ci-linux ci-reports-linux/package \
             2>&1 | tee ci-reports-linux/package.log
 
       - name: Classify complete suite
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: |
           set +e
           ctest --test-dir build-ci-linux -j 1 --output-on-failure \
@@ -87,7 +132,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: compiler-linux-ci-reports
+          name: compiler-linux-${{ matrix.arch }}-ci-reports
           retention-days: 14
           if-no-files-found: error
           path: |
@@ -200,8 +245,10 @@ jobs:
         id: core
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          cmake --build build-ci --target check-core 2>&1 | tee ci-reports/core.log
-          cp build-ci/core.xml ci-reports/core.xml
+          core_status=0
+          cmake --build build-ci --target check-core 2>&1 | tee ci-reports/core.log || core_status=$?
+          if [[ -f build-ci/core.xml ]]; then cp build-ci/core.xml ci-reports/core.xml; fi
+          test "$core_status" -eq 0
           {
             echo '## Executable core acceptance'
             echo 'All required supported-language suites passed from a fresh Release build.'
@@ -209,13 +256,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify installation and relocated package
+        id: package
         if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         run: |
           bash scripts/check-package.sh build-ci ci-reports/package \
             2>&1 | tee ci-reports/package.log
 
       - name: Build and check with AddressSanitizer and UBSan
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        id: sanitized
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         env:
           ASAN_OPTIONS: halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -231,7 +280,7 @@ jobs:
           cp build-ci-sanitized/core.xml ci-reports/sanitized-core.xml
 
       - name: Run complete suite serially and in parallel
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.sanitized.outcome == 'success' }}
         run: |
           set +e
           ctest --test-dir build-ci -j 1 --output-on-failure \
@@ -267,3 +316,21 @@ jobs:
             build-ci-sanitized/core.xml
             build-ci-sanitized/Testing/Temporary/
             build-ci-sanitized/CMakeCache.txt
+
+  release:
+    name: Publish validated 0.2.2 packages
+    needs: [linux, macos]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'kubabialy/gloinc' && contains(github.event.head_commit.message, '[publish v0.2.2]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Publish packages and validation provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-0.2.2.sh
