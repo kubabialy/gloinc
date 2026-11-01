@@ -623,6 +623,17 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     set_tests_properties(GloinFloatScheduleSmoke.NativeO0 GloinFloatScheduleSmoke.NativeO2
         GloinFloatScheduleSmoke.Jit GloinFloatScheduleSmoke.Structure PROPERTIES TIMEOUT 90)
 
+    # Instrumented compiler startup is paid for each JIT case. All four drivers
+    # hit their former 90-second aggregate limit on hosted macOS; Linux ASan
+    # reproduced the timeouts. Avoid competition between these large matrices
+    # and keep each child-process deadline and semantic assertion unchanged.
+    set(GLOIN_FLOAT_JIT_TESTS GloinFloatProofSmoke.Jit GloinFloatChainSmoke.Jit
+        GloinFloatBatchSmoke.Jit GloinFloatScheduleSmoke.Jit)
+    set_tests_properties(${GLOIN_FLOAT_JIT_TESTS} PROPERTIES RUN_SERIAL TRUE)
+    if(GLOIN_ENABLE_SANITIZERS)
+        set_tests_properties(${GLOIN_FLOAT_JIT_TESTS} PROPERTIES TIMEOUT 360)
+    endif()
+
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
     set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress|GloinFloatProofSmoke|GloinFloatChainSmoke|GloinFloatBatchSmoke|GloinFloatScheduleSmoke|GloinFloatArraySmoke)\\.")
     add_custom_target(check-core

@@ -50,8 +50,12 @@ fs.writeFileSync('release-assets/gloinc-0.2.2-provenance.json', JSON.stringify({
     'formatting', 'documentation', 'macOS compiler-only build', 'macOS ASan/UBSan'],
   artifacts: hashes
 }, null, 2) + '\n');
+const notes = fs.readFileSync('docs/release-notes-0.2.2.md', 'utf8').replace(
+  /\]\((?!https?:\/\/|#)([^)]+)\)/g,
+  (_, target) => `](https://github.com/${process.env.GITHUB_REPOSITORY}/blob/${process.env.GITHUB_SHA}/docs/${target})`);
+fs.writeFileSync('release-evidence/release-notes.md', notes);
 NODE
-(cd release-assets && sha256sum -c ./*.sha256)
+(cd release-assets && sha256sum gloinc-0.2.2-provenance.json > gloinc-0.2.2-provenance.json.sha256 && sha256sum -c ./*.sha256)
 # Preserve an existing published release; a rerun must never replace its assets.
 gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > release-evidence/releases.json
 release_state=$(node -e 'const r=require("./release-evidence/releases.json").find(r=>r.tag_name==="v0.2.2");process.stdout.write(r?(r.draft?"draft":"published"):"missing")')
@@ -64,7 +68,7 @@ if [[ "$release_state" != missing ]]; then
   fi
 else
   gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-    --draft --title 'Gloin 0.2.2' --notes-file docs/release-notes-0.2.2.md
+    --draft --title 'Gloin 0.2.2' --notes-file release-evidence/release-notes.md
 fi
 gh release upload "$tag" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
 gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest

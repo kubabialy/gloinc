@@ -9,6 +9,40 @@ permissions:
   contents: read
 
 jobs:
+  superseded-release-runs:
+    name: Cancel superseded 0.2.2 validation runs
+    if: >-
+      github.repository == 'kubabialy/gloinc' &&
+      (github.ref == 'refs/heads/release/0.2.2' ||
+      (github.event_name == 'pull_request' && github.head_ref == 'release/0.2.2' &&
+      github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Keep validation for the current release head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          [[ "$CANDIDATE_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          current_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release/0.2.2" --jq .object.sha)
+          [[ "$current_head" == "$CANDIDATE_HEAD" ]] || exit 0
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=release%2F0.2.2&per_page=100" \
+            --jq ".workflow_runs[] | select(.head_sha != \"$CANDIDATE_HEAD\" and .status != \"completed\") | .id" \
+            > superseded-runs.txt
+          while read -r run_id; do
+            [[ "$run_id" =~ ^[0-9]+$ ]]
+            current_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release/0.2.2" --jq .object.sha)
+            [[ "$current_head" == "$CANDIDATE_HEAD" ]] || exit 0
+            # A concurrent cleanup or a just-finished job may already have ended it.
+            if ! gh run cancel "$run_id" --repo "$GITHUB_REPOSITORY"; then
+              echo "::notice::Could not cancel run $run_id; current-head validation continues."
+            fi
+          done < superseded-runs.txt
+
   linux:
     name: Ubuntu 24.04 ${{ matrix.arch }} / LLVM 21.1.8
     strategy:

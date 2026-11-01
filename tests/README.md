@@ -806,7 +806,10 @@ recorded 53.41 seconds serially and 89.54 seconds under parallel load, with a
 separate run exceeding the former 90-second aggregate limit. GIR/operand-trap
 matrices also run serially on macOS and Linux: hosted macOS exhausted a
 10-second child compile deadline under four-worker contention. That child
-deadline remains unchanged.
+deadline remains unchanged. All four floating JIT drivers run serially;
+sanitizer builds allow 360 seconds per driver because instrumented startup is
+paid for every case. The hosted macOS sanitizer run and a local Linux sanitizer
+run both exceeded the former 90-second aggregate limits.
 `tests/float_batches` contains 122 source execution cases per JIT/native O0/native O2
 mode and 42 source structural cases. The mixed-IR driver checks 28 structural
 cases and 22 executions at each native optimization level. It compares fatal
