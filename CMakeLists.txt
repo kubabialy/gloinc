@@ -351,13 +351,11 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     set(GLOIN_SIGNATURE_MATRIX_TEST "ContextLibraryTest.PublicSignaturesAndCanonicalPrimitivePrivacyAreChecked")
     set(GLOIN_ARITHMETIC_MATRIX_TEST "CliTest.NativeCheckedIntegerBoundariesAtEveryWidthAndOptimizationLevel")
     set(GLOIN_OPERATOR_MATRIX_TEST "OperatorsTest.IntegerSimplificationPreservesOperandTraps")
-    set(GLOIN_SIGNAL_MATRIX_PROPERTIES)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        # Hundreds of expected signals compete for the host crash reporter.
-        # Run the large compiler trap matrices alone, retaining every assertion,
-        # per-process deadline and aggregate timeout. Other tests stay parallel.
-        set(GLOIN_SIGNAL_MATRIX_PROPERTIES RUN_SERIAL TRUE)
-    endif()
+    # Expected signals compete for the Linux crash reporter. Hosted macOS also
+    # exhausted a child compile's deadline when GIR trap matrices shared four
+    # workers. Serialize these matrices on both platforms while retaining all
+    # child deadlines, aggregate timeouts and assertions.
+    set(GLOIN_SIGNAL_MATRIX_PROPERTIES RUN_SERIAL TRUE)
     gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}:${GLOIN_ARITHMETIC_MATRIX_TEST}:${GLOIN_OPERATOR_MATRIX_TEST}:CliTest.GIR*"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
     gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_OPERATOR_MATRIX_TEST}:CliTest.GIR*"
@@ -549,6 +547,12 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/kernels.gloin")
     set_tests_properties(GloinFloatBatchSmoke.NativeO0 GloinFloatBatchSmoke.NativeO2
         GloinFloatBatchSmoke.Jit GloinFloatBatchSmoke.Structure PROPERTIES TIMEOUT 90)
+
+    # This driver launches 122 JIT cases, including intentional traps. Hosted
+    # x86_64 took 53 seconds alone and 89.5 seconds under four-worker load,
+    # with another parallel run exceeding 90 seconds. Keep child deadlines
+    # and assertions intact, and serialize this aggregate matrix.
+    set_tests_properties(GloinFloatBatchSmoke.Jit PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
 
     add_executable(gloin_lower_ir tests/support/lower_ir.cpp)
     target_link_libraries(gloin_lower_ir PRIVATE gloin_backend)

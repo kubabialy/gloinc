@@ -800,6 +800,13 @@ freezing, including independent intervening arithmetic. The four
 ## Checked private-array batches
 
 The eight `GloinFloatBatchSmoke` tests are part of `check-core`.
+The 122-case JIT driver runs serially with a 240-second aggregate deadline;
+individual child deadlines and all assertions remain unchanged. Hosted x86_64
+recorded 53.41 seconds serially and 89.54 seconds under parallel load, with a
+separate run exceeding the former 90-second aggregate limit. GIR/operand-trap
+matrices also run serially on macOS and Linux: hosted macOS exhausted a
+10-second child compile deadline under four-worker contention. That child
+deadline remains unchanged.
 `tests/float_batches` contains 122 source execution cases per JIT/native O0/native O2
 mode and 42 source structural cases. The mixed-IR driver checks 28 structural
 cases and 22 executions at each native optimization level. It compares fatal
