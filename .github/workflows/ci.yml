@@ -68,17 +68,20 @@ jobs:
         id: core
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          cmake --build build-ci-linux --target check-core 2>&1 | tee ci-reports-linux/core.log
-          cp build-ci-linux/core.xml ci-reports-linux/core.xml
+          core_status=0
+          cmake --build build-ci-linux --target check-core 2>&1 | tee ci-reports-linux/core.log || core_status=$?
+          if [[ -f build-ci-linux/core.xml ]]; then cp build-ci-linux/core.xml ci-reports-linux/core.xml; fi
+          test "$core_status" -eq 0
 
       - name: Verify installation and relocated Linux package
+        id: package
         if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         run: |
           bash scripts/check-package.sh build-ci-linux ci-reports-linux/package \
             2>&1 | tee ci-reports-linux/package.log
 
       - name: Classify complete suite
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: |
           set +e
           ctest --test-dir build-ci-linux -j 1 --output-on-failure \
@@ -208,8 +211,10 @@ jobs:
         id: core
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          cmake --build build-ci --target check-core 2>&1 | tee ci-reports/core.log
-          cp build-ci/core.xml ci-reports/core.xml
+          core_status=0
+          cmake --build build-ci --target check-core 2>&1 | tee ci-reports/core.log || core_status=$?
+          if [[ -f build-ci/core.xml ]]; then cp build-ci/core.xml ci-reports/core.xml; fi
+          test "$core_status" -eq 0
           {
             echo '## Executable core acceptance'
             echo 'All required supported-language suites passed from a fresh Release build.'
@@ -217,13 +222,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify installation and relocated package
+        id: package
         if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         run: |
           bash scripts/check-package.sh build-ci ci-reports/package \
             2>&1 | tee ci-reports/package.log
 
       - name: Build and check with AddressSanitizer and UBSan
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        id: sanitized
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         env:
           ASAN_OPTIONS: halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -239,7 +246,7 @@ jobs:
           cp build-ci-sanitized/core.xml ci-reports/sanitized-core.xml
 
       - name: Run complete suite serially and in parallel
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.sanitized.outcome == 'success' }}
         run: |
           set +e
           ctest --test-dir build-ci -j 1 --output-on-failure \
