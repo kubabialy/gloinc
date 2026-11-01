@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gloinc VERSION 0.2.1)
+project(gloinc VERSION 0.2.2)
 
 option(GLOIN_ENABLE_SANITIZERS "Instrument project C++ code with AddressSanitizer and UBSan" OFF)
 if(GLOIN_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -136,7 +136,9 @@ add_library(gloin_backend STATIC
     src/target_layout.cpp
     src/lowering.cpp
     src/gir_float_checks.cpp
+    src/gir_float_ranges.cpp
     src/gir_float_reductions.cpp
+    src/gir_float_batches.cpp
     src/gir_range_proofs.cpp
     src/dialect/GloinDialect.cpp
     src/jit_runner.cpp
@@ -349,13 +351,11 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     set(GLOIN_SIGNATURE_MATRIX_TEST "ContextLibraryTest.PublicSignaturesAndCanonicalPrimitivePrivacyAreChecked")
     set(GLOIN_ARITHMETIC_MATRIX_TEST "CliTest.NativeCheckedIntegerBoundariesAtEveryWidthAndOptimizationLevel")
     set(GLOIN_OPERATOR_MATRIX_TEST "OperatorsTest.IntegerSimplificationPreservesOperandTraps")
-    set(GLOIN_SIGNAL_MATRIX_PROPERTIES)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        # Hundreds of expected signals compete for the host crash reporter.
-        # Run the large compiler trap matrices alone, retaining every assertion,
-        # per-process deadline and aggregate timeout. Other tests stay parallel.
-        set(GLOIN_SIGNAL_MATRIX_PROPERTIES RUN_SERIAL TRUE)
-    endif()
+    # Expected signals compete for the Linux crash reporter. Hosted macOS also
+    # exhausted a child compile's deadline when GIR trap matrices shared four
+    # workers. Serialize these matrices on both platforms while retaining all
+    # child deadlines, aggregate timeouts and assertions.
+    set(GLOIN_SIGNAL_MATRIX_PROPERTIES RUN_SERIAL TRUE)
     gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}:${GLOIN_ARITHMETIC_MATRIX_TEST}:${GLOIN_OPERATOR_MATRIX_TEST}:CliTest.GIR*"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
     gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_OPERATOR_MATRIX_TEST}:CliTest.GIR*"
@@ -477,14 +477,171 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     set_tests_properties(GloinToolingSmoke.NativeChecksAndWrites GloinToolingSmoke.JitChecksAndWrites
         PROPERTIES TIMEOUT 90)
 
+    # Regression drivers and fixtures are written in Gloin. The structural
+    # driver also checks the unoptimized LLVM lowering, independent of LLVM O2.
+    foreach(mode IN ITEMS O0 O2)
+        add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-fixture-${mode}"
+            COMMAND "$<TARGET_FILE:gloinc>" -${mode} -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-fixture-${mode}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_proofs/fixture.gloin"
+            DEPENDS gloinc tests/float_proofs/fixture.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+        add_test(NAME GloinFloatProofSmoke.Native${mode}
+            COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-tests" "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-fixture-${mode}")
+    endforeach()
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-tests"
+        COMMAND "$<TARGET_FILE:gloinc>" -O2 -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-tests"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_proofs/main.gloin"
+        DEPENDS gloinc tests/float_proofs/main.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+    add_custom_target(gloin_float_tests ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-tests"
+        "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-fixture-O0" "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-fixture-O2")
+    add_test(NAME GloinFloatProofSmoke.Jit
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-tests" "$<TARGET_FILE:gloinc>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_proofs/fixture.gloin")
+    add_test(NAME GloinFloatProofSmoke.Structure
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-tests" --structure "$<TARGET_FILE:gloinc>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_proofs/structure.gloin")
+    set_tests_properties(GloinFloatProofSmoke.NativeO0 GloinFloatProofSmoke.NativeO2
+        GloinFloatProofSmoke.Jit GloinFloatProofSmoke.Structure PROPERTIES TIMEOUT 90)
+
+    foreach(mode IN ITEMS O0 O2)
+        add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-fixture-${mode}"
+            COMMAND "$<TARGET_FILE:gloinc>" -${mode} -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-fixture-${mode}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_chains/fixture.gloin"
+            DEPENDS gloinc tests/float_chains/fixture.gloin tests/float_chains/kernels.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+        add_test(NAME GloinFloatChainSmoke.Native${mode}
+            COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-tests" "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-fixture-${mode}")
+    endforeach()
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-tests"
+        COMMAND "$<TARGET_FILE:gloinc>" -O2 -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-tests"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_chains/main.gloin"
+        DEPENDS gloinc tests/float_chains/main.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+    add_custom_target(gloin_float_chain_tests ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-tests"
+        "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-fixture-O0" "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-fixture-O2")
+    add_test(NAME GloinFloatChainSmoke.Jit
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-tests" "$<TARGET_FILE:gloinc>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_chains/fixture.gloin")
+    add_test(NAME GloinFloatChainSmoke.Structure
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-chain-tests" --structure "$<TARGET_FILE:gloinc>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_chains/kernels.gloin")
+    set_tests_properties(GloinFloatChainSmoke.NativeO0 GloinFloatChainSmoke.NativeO2
+        GloinFloatChainSmoke.Jit GloinFloatChainSmoke.Structure PROPERTIES TIMEOUT 90)
+
+    foreach(mode IN ITEMS O0 O2)
+        add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-fixture-${mode}"
+            COMMAND "$<TARGET_FILE:gloinc>" -${mode} -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-fixture-${mode}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/fixture.gloin"
+            DEPENDS gloinc tests/float_batches/fixture.gloin tests/float_batches/kernels.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+        add_test(NAME GloinFloatBatchSmoke.Native${mode}
+            COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-tests" "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-fixture-${mode}")
+    endforeach()
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-tests"
+        COMMAND "$<TARGET_FILE:gloinc>" -O2 -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-tests"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/main.gloin"
+        DEPENDS gloinc tests/float_batches/main.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+    add_custom_target(gloin_float_batch_tests ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-tests"
+        "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-fixture-O0" "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-fixture-O2")
+    add_test(NAME GloinFloatBatchSmoke.Jit
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-tests" "$<TARGET_FILE:gloinc>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/fixture.gloin")
+    add_test(NAME GloinFloatBatchSmoke.Structure
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-tests" --structure "$<TARGET_FILE:gloinc>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/kernels.gloin")
+    set_tests_properties(GloinFloatBatchSmoke.NativeO0 GloinFloatBatchSmoke.NativeO2
+        GloinFloatBatchSmoke.Jit GloinFloatBatchSmoke.Structure PROPERTIES TIMEOUT 90)
+
+    # This driver launches 122 JIT cases, including intentional traps. Hosted
+    # x86_64 took 53 seconds alone and 89.5 seconds under four-worker load,
+    # with another parallel run exceeding 90 seconds. Keep child deadlines
+    # and assertions intact, and serialize this aggregate matrix.
+    set_tests_properties(GloinFloatBatchSmoke.Jit PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+
+    add_executable(gloin_lower_ir tests/support/lower_ir.cpp)
+    target_link_libraries(gloin_lower_ir PRIVATE gloin_backend)
+    list(APPEND GLOIN_TARGETS gloin_lower_ir)
+
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-mixed"
+        COMMAND "$<TARGET_FILE:gloinc>" -O2 -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-mixed"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/mixed.gloin"
+        DEPENDS gloinc tests/float_batches/mixed.gloin tests/support/tool_runner.gloin
+            tools/checks/common.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+    add_custom_target(gloin_float_batch_mixed ALL DEPENDS
+        "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-mixed" gloin_lower_ir)
+    foreach(mode IN ITEMS O0 O2)
+        add_test(NAME GloinFloatBatchSmoke.Mixed${mode}
+            COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-mixed" "$<TARGET_FILE:gloin_lower_ir>"
+                "${mode}" "${CMAKE_CURRENT_BINARY_DIR}")
+        set_tests_properties(GloinFloatBatchSmoke.Mixed${mode} PROPERTIES TIMEOUT 90)
+    endforeach()
+
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-coverage"
+        COMMAND "$<TARGET_FILE:gloinc>" -O2 -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-coverage"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/coverage.gloin"
+        DEPENDS gloinc tests/float_batches/coverage.gloin tests/support/tool_runner.gloin
+            tools/checks/common.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+    add_custom_target(gloin_float_batch_coverage ALL DEPENDS
+        "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-coverage" gloin_lower_ir)
+    foreach(mode IN ITEMS O0 O2)
+        add_test(NAME GloinFloatBatchSmoke.Coverage${mode}
+            COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-batch-coverage" "$<TARGET_FILE:gloin_lower_ir>"
+                "${mode}" "${CMAKE_CURRENT_BINARY_DIR}")
+        set_tests_properties(GloinFloatBatchSmoke.Coverage${mode} PROPERTIES TIMEOUT 90)
+    endforeach()
+
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-array-tests"
+        COMMAND "$<TARGET_FILE:gloinc>" -O2 -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-array-tests"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_arrays/main.gloin"
+        DEPENDS gloinc tests/float_arrays/main.gloin tests/support/tool_runner.gloin
+            tools/checks/common.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+    add_custom_target(gloin_float_array_tests ALL DEPENDS
+        "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-array-tests" gloin_lower_ir)
+    foreach(mode IN ITEMS O0 O2)
+        add_test(NAME GloinFloatArraySmoke.Native${mode}
+            COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-array-tests" "$<TARGET_FILE:gloin_lower_ir>"
+                "${mode}" "${CMAKE_CURRENT_BINARY_DIR}")
+        set_tests_properties(GloinFloatArraySmoke.Native${mode} PROPERTIES TIMEOUT 90)
+    endforeach()
+
+    foreach(mode IN ITEMS O0 O2)
+        add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-fixture-${mode}"
+            COMMAND "$<TARGET_FILE:gloinc>" -${mode} -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-fixture-${mode}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/schedule_fixture.gloin"
+            DEPENDS gloinc tests/float_batches/schedule_fixture.gloin tests/float_batches/schedule_kernels.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+        add_test(NAME GloinFloatScheduleSmoke.Native${mode}
+            COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-tests" "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-fixture-${mode}")
+    endforeach()
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-tests"
+        COMMAND "$<TARGET_FILE:gloinc>" -O2 -o "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-tests"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/schedule.gloin"
+        DEPENDS gloinc tests/float_batches/schedule.gloin ${GLOIN_STANDARD_MODULES} VERBATIM)
+    add_custom_target(gloin_float_schedule_tests ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-tests"
+        "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-fixture-O0" "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-fixture-O2")
+    add_test(NAME GloinFloatScheduleSmoke.Jit
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-tests" "$<TARGET_FILE:gloinc>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/schedule_fixture.gloin")
+    add_test(NAME GloinFloatScheduleSmoke.Structure
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/gloin-float-schedule-tests" --structure "$<TARGET_FILE:gloinc>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/float_batches/schedule_kernels.gloin")
+    set_tests_properties(GloinFloatScheduleSmoke.NativeO0 GloinFloatScheduleSmoke.NativeO2
+        GloinFloatScheduleSmoke.Jit GloinFloatScheduleSmoke.Structure PROPERTIES TIMEOUT 90)
+
+    # Instrumented compiler startup is paid for each JIT case. All four drivers
+    # hit their former 90-second aggregate limit on hosted macOS; Linux ASan
+    # reproduced the timeouts. Avoid competition between these large matrices
+    # and keep each child-process deadline and semantic assertion unchanged.
+    set(GLOIN_FLOAT_JIT_TESTS GloinFloatProofSmoke.Jit GloinFloatChainSmoke.Jit
+        GloinFloatBatchSmoke.Jit GloinFloatScheduleSmoke.Jit)
+    set_tests_properties(${GLOIN_FLOAT_JIT_TESTS} PROPERTIES RUN_SERIAL TRUE)
+    if(GLOIN_ENABLE_SANITIZERS)
+        set_tests_properties(${GLOIN_FLOAT_JIT_TESTS} PROPERTIES TIMEOUT 360)
+    endif()
+
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress|GloinFloatProofSmoke|GloinFloatChainSmoke|GloinFloatBatchSmoke|GloinFloatScheduleSmoke|GloinFloatArraySmoke)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure
             --output-junit "${CMAKE_CURRENT_BINARY_DIR}/core.xml"
         DEPENDS gloinc_test gloin_arena_test gloin_standard_test gloin_formatter gloin_formatter_tests
-                gloin_checks gloin_tooling_tests gloin_json_tests gloin_stress_tests gloin_tls_tests gloin_http_tests USES_TERMINAL VERBATIM)
+                gloin_checks gloin_tooling_tests gloin_json_tests gloin_stress_tests gloin_tls_tests gloin_http_tests gloin_float_tests gloin_float_chain_tests gloin_float_batch_tests gloin_float_batch_mixed gloin_float_batch_coverage gloin_float_array_tests gloin_float_schedule_tests USES_TERMINAL VERBATIM)
 endif()
 
 set_target_properties(${GLOIN_TARGETS} PROPERTIES

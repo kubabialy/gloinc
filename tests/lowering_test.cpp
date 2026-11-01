@@ -1957,7 +1957,6 @@ TEST(LoweringTest, GIRFloatCheckCombiningRejectsInterveningOperationsAndEscaping
             {"two uses in one consumer", multiply + sum("%p, %p") + result},
             {"escaping product", multiply + addition + " func.call @consume(%p) : (" + type +
                 ") -> ()" + result},
-            {"subtraction", multiply + sum("%total, %p", "-") + result},
             {"division consumer", multiply + sum("%total, %p", "/") + result},
         };
         for (const auto &[name, body] : bodies) {

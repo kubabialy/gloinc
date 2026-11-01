@@ -405,51 +405,149 @@ the [PERF-007 record](compiler-validation.md) for controlled timings and LLVM
 remarks, including C experiments that deliberately omit checks and therefore
 do not implement the same safety contract.
 
+### Floating SSA bounds (2026-10-19)
+
+After the integer and storage-based loop proofs, exact nonescaping `f32` and
+`f64` local slots are promoted to SSA. Promotion deliberately follows local
+floating reduction recognition, which still needs the accumulator's storage.
+Taking an address or exposing an alias blocks promotion. Opaque loads and call
+results remain unknown. Private arrays can contribute the invariants below;
+the floating type alone never establishes finiteness.
+
+Before adjacent-check combining, a forward worklist computes finite interval and magnitude
+bounds for constants, successful checked arithmetic, ordinary arithmetic,
+negation, selects, and explicit CFG joins/backedges. The domain distinguishes
+not-yet-contributed edges, finite bounds, and unknown values (including NaN and
+infinity). All incoming edges participate, including late backedges. Increasing
+bounds widen to the largest finite magnitude after four increases, bounding
+analysis work for growing loops. Unknown inputs still invalidate finite facts.
+The worklist uses deterministic IR order.
+
+A successful checked add, subtract, or multiply also implies finite operands.
+That implication refines its result bound even when an operand came from opaque
+storage: for example, checked `x * 0.5` has magnitude at most half the largest
+finite value. The same refinement applies to division by a finite nonzero
+constant. This implication only bounds the result; it cannot remove that
+operation's own check.
+
+Bounds use LLVM APFloat in the source format, with round-to-nearest ties-to-even.
+Addition/subtraction use the sum of operand magnitudes; multiplication uses
+their product. Division requires a known finite, nonzero constant divisor.
+Rounding the extremum bounds interior results because these positive operations
+are monotone. Underflow is allowed and signed zeros retain ordinary IEEE
+behavior. No algebraic rewriting, reassociation, contraction, or fast-math flags
+are introduced.
+
+Only a checked operation whose operands prove a finite result is replaced by
+ordinary arithmetic, subject to a separate profitability policy. A checked producer may establish finiteness, but remains
+effectful unless independently proved safe. Decisions use the completed fixed
+point before any operation is rewritten. This supports shrinking recurrences
+and branch joins without removing the necessary check in a growing recurrence.
+It also prevents a later multiply by zero, a discarded result, or a clamp from
+hiding earlier overflow. Checks never move across effects or memory accesses.
+LLVM `freeze` is opaque outside the stabilized array analysis below: freezing
+poison can produce a non-finite value.
+
+For profitability, checks in conditional natural-loop blocks are retained. An
+operation's block must dominate every latch of its innermost loop to be eligible
+for removal. Removing the last effect in a conditional path can otherwise cause
+LLVM to speculate floating multiplies into selects, lengthening the recurrence's
+dependency chain. The particle experiment reproduced a substantial regression
+from that transformation despite fewer checks. The retained operations still
+contribute their result bounds to unconditional work. This conservative policy
+can be refined with target cost/profile evidence; it is not a safety requirement.
+
+The analysis does not infer bounds for heap fields, inspect unknown callees,
+or synthesize source guards. Existing reduction exit checks remain intact.
+The Gloin programs in `tests/float_proofs/` exercise native O0/O2 and JIT
+semantics plus structural LLVM-lowering checks for both floating widths.
+
+### Private floating array invariants (2026-10-23)
+
+Flat, nonescaping stack arrays of f32/f64 can carry an invariant joining their
+whole initializer and **every** scalar write. Array indices are not distinguished.
+Borrowed and overlapping subranges contribute to the same root; no disjointness
+is assumed. Every load needs a dominating whole-array initializer. Unknown writes
+invalidate finite facts. Calls exposing the root, unknown derived uses,
+incompatible widths, unsupported layouts, stack restore, and raw LLVM stores
+disable the relevant proof. The scan examines at most 64 allocations and 256
+derived values per root.
+
+Comparisons with finite constants narrow already-finite values on dominated
+branch paths and explicit outgoing CFG edges. False ordered comparisons do not
+establish finiteness. Signed interval endpoints survive joins, including clamps;
+ordinary arithmetic still uses conservative magnitude bounds and source rounding.
+All entry writes and backedges join before checks are removed. The existing
+widening limit prevents loop simulation.
+
+In functions with accepted array roots, opaque operands of checked floating
+arithmetic are frozen once at their definitions. This establishes concrete
+checked results at the public mixed GIR/LLVM boundary, where undef/poison would
+otherwise invalidate per-value branch facts. Freeze transfers finite facts only
+within this stabilized analysis; opaque poison, undef and loads remain unknown.
+The batch pass recomputes the proof after check combining.
+
+The particle benchmark explicitly validates and bounds its fast-path input,
+then uses the scalar algorithm for batches outside that domain. This is source
+code, not a compiler assumption about typical inputs. Energy overflow checks
+remain. The proof introduces no fast math, reassociation, FMA contraction or
+unchecked arithmetic.
+
+The Gloin driver in `tests/float_arrays/` checks both floating widths structurally
+and executes defined fixtures at O0/O2. It covers clamped and growing recurrences,
+late writes, overlapping slices, unknown storage, signed zero, subnormals, and
+retained overflow traps. Undefined-input and foreign-layout cases are structural
+only. Existing native/JIT floating suites remain part of check-core.
+
 ### Adjacent floating checks (2026-10-19)
 
-After range proofs and loop versioning, `combine_gloin_float_checks` examines
-verified GIR before general core lowering. It accepts exactly an `f32` or `f64`
-`gloin.checked_float_binary` multiplication immediately followed in the same
-block by a checked addition of the same type. The product must have exactly one
-use, as either operand of that addition. Both operands of the addition are
-already computed; no other operation may appear between the pair. The rule
-also applies inside a checked fallback when the same conditions hold there.
+Extended on 2026-10-20 to bounded expression trees. After range proofs,
+floating-local promotion and finite-bound proofs, `combine_gloin_float_checks`
+examines verified GIR before general core lowering. It groups contiguous runs
+of checked `f32` or `f64` `+`, `-`, and `*` operations of one type. A window
+contains at most 64 operations, bounding temporary storage and analysis work.
+Every other operation is a barrier, including division, constants, ordinary
+arithmetic, loads, stores, calls, assertions, and control flow.
 
-A non-finite product necessarily produces a non-finite sum under ordinary IEEE
-addition, regardless of the other addend. The rewrite therefore lowers the
-product to `arith.mulf` and retains `gloin.checked_float_binary` for the sum.
-The sum remains effectful and must check for a finite result even if its value
-is discarded. Multiplication and addition retain separate rounding and their
-original locations. No fast-math flags, FMA contraction or reassociation are
-introduced. The check stays before the next operation, including the next loop
-iteration's reads and effects.
+Within a window, a checked result with exactly one use by another member can
+lose its own check. Its consumer necessarily propagates a non-finite input:
+ordinary IEEE addition, subtraction, and multiplication cannot turn NaN or
+infinity into a finite result, including `Inf * 0` and `Inf - Inf`. Following
+single-use dependencies must end at a retained check, because SSA is acyclic
+inside a block. Unused results and results escaping the window retain checks.
+For example, `(a*a + b*b)*c + d` can use one final check when its five checked
+operations are contiguous. Intermediate arithmetic retains source order,
+separate rounding, and original locations; no reassociation, fast-math, or
+contraction is enabled. A final result that is unused must still be checked.
 
-The lowering API also accepts mixed GIR/LLVM modules. An LLVM `poison` value in
-the other addend must not hide a product failure that originally occurred before
-that addend was used. The rewrite applies `llvm.freeze` to the other addend;
-this preserves every concrete floating value and prevents poison propagation
-from removing the mandatory trap. This follows LLVM's
-[freeze semantics](https://llvm.org/docs/LangRef.html#freeze-instruction).
-It neither initializes source storage nor makes an invalid source read safe.
+The rewrite freezes every external input to a changed window before its first
+operation. This includes inputs to independent intermediate checked operations,
+not just the last consumer's other operand. The public lowering API accepts
+mixed GIR/LLVM modules; a later poison value must not create undefined behavior
+that hides an earlier deferred failure. After freezing external inputs, ordinary
+IEEE operations inside the window cannot produce poison. Freezing preserves
+concrete values, including NaNs, infinities, and signed zeros. It neither
+initializes source storage nor justifies moving a memory read.
 
-This proof is structural and consumed immediately during rewriting; there is
-no textual attribute that requests unchecked multiplication. Intervening loads,
-stores, calls, assertions, other arithmetic, constants and unknown operations
-all block the rule. So do block boundaries, conditional consumers and additional
-uses of the product. It makes no claim about pointer validity, allocation
-lifetime, aliasing or a complete loop's effects. The separate
-[local reduction proof](#local-floating-reductions-2026-10-19) below supplies
-those additional facts for a bounded set of loops.
+Checks never cross the next barrier or a block boundary. At least one effectful
+check remains on every combined dependency chain, including within conditional
+loop blocks. The pass makes no pointer validity, lifetime, or aliasing
+assumptions and does not defer checks across loop iterations. The separate
+[local reduction proof](#local-floating-reductions-2026-10-19) supplies additional
+storage and iteration facts for its narrower family of loops.
 
-Current finite-result failures use the same fatal trap without reporting which
-arithmetic operation failed. The rule preserves this behavior. Adding distinct
-failure diagnostics requires retaining the first failed operation before this
-transformation can be used under that richer contract. Structural tests cover
-both widths and operand positions, refusal cases and unused results. Runtime
-tests preserve rounding and observable failure order in JIT, native O0 and O2;
-mixed-IR tests retain the product trap after LLVM O2 even with poison/undef in
-the other addend. Measurements are in the
-[validation journal](compiler-validation.md#adjacent-floating-checks--2026-10-19).
+All finite-result failures currently use the same fatal trap without identifying
+the failed operation. An independent intermediate check can trap before a
+deferred producer's final check, with the same observable result. Distinct
+failure diagnostics would require preserving the first failing operation before
+using this transformation under that richer contract.
+
+The Gloin `tests/float_chains` suite checks execution in JIT and native O0/O2,
+check counts for both widths, external-input freezing, effect barriers, escaping
+and discarded results, overflow cancellation, multiplication by zero, signed
+zero, underflow, and separate rounding. Existing mixed-IR regressions continue
+to test poison/undef through LLVM O2. See the
+[validation journal](compiler-validation.md#floating-check-chains--2026-10-20).
 
 ### Local floating reductions (2026-10-19)
 
@@ -546,6 +644,141 @@ small loops are not guaranteed to improve. The
 [validation journal](compiler-validation.md#local-floating-reductions--2026-10-19)
 records correctness and measurements separately from the generic borrowed-slice
 benchmark, whose storage remains unproven.
+
+### Checked private-array batches (2026-10-20)
+
+`version_gloin_float_batches` runs after floating-local promotion, finite-bound
+proofs, and expression check combining. It creates a fast loop with a persistent
+validity flag, keeping the original checked loop as its fallback. The ordinary
+native LLVM pipeline can then vectorize eligible independent lanes. No source
+annotation, vector ABI, fast-math flag, FMA contraction, or global optimizer
+threshold is introduced.
+
+The recognizer accepts an innermost natural loop with a single entry and latch,
+one i64/u64 counter starting at zero, `i < n`, and a unit increment. Removing the
+backedge must leave an acyclic region of at most 32 blocks and 256 operations.
+Branch diamonds are supported, but internal exits, additional cycles, and SSA
+live-outs are rejected. Only the counter is loop-carried before transformation.
+The count is a dominating value, a header constant, or a length of a dominating
+slice descriptor. An existing slice-versioning true edge can be specialized;
+its original false-edge fallback is retained without another specialization.
+
+Every memory access must index the counter directly into a proven private
+floating array or its borrowed view. The shared `LocalStorage` proof requires
+an actual local allocation, a dominating whole initializer, ordinary native
+layout, and confined address/descriptor uses. Nested arrays and subranges are
+supported; provenance depth is capped at eight and each confinement walk at
+256 values. Each load/store width must match the addressed element. Unknown
+storage, escaped addresses, LLVM stack restoration, raw/volatile accesses,
+external writes, calls, and unrelated fallible operations reject the batch.
+Checked division is not deferred. Source-visible pointer and slice types alone
+cannot establish this proof.
+
+An unsigned entry predicate requires the count to fit every accessed capacity.
+It performs only non-faulting SSA/descriptor work. Failure selects the original
+loop, preserving partial progress and error order, including signed negative
+counts and oversized ranges. The guard establishes every iteration's address
+validity and the counter increment's safety. Views may overlap: the pass adds
+no no-alias claims and does not reorder iterations. LLVM must independently
+prove vectorization legal or retain scalar execution.
+
+The fast copy replaces each remaining checked `+`, `-`, or `*` with separately
+rounded arithmetic and accumulates its finite-result predicate into a validity
+flag. Each CFG edge and backedge carries that flag. Once false, it remains false,
+including through clamps, overwritten state, and later successful iterations.
+The sole fast exit asserts the flag before any continuation can observe the
+private state. Zero iterations leave it true. All reads and writes that occur
+after a deferred failure remain within proven live, initialized private storage;
+no external effect or different language failure can intervene.
+
+Every external scalar input and every floating load in the fast copy is frozen.
+The supported internal operations cannot create poison from those inputs.
+Thus a later poisoned load, branch condition, or operand cannot hide an earlier
+arithmetic failure at the public mixed GIR/LLVM boundary. Freezing values does
+not establish memory safety; that is proved separately before cloning.
+
+Finite bounds are recomputed on the current IR after expression combining.
+Checks retained solely for scalar profitability need no flag update in the fast
+copy. Reusing facts from before combining would be unsound: combining may move
+the producer check that anchored a consumer's finite bound. The original scalar
+fallback retains its profitability policy. Current failures are fatal traps
+without per-operation diagnostic identity; richer failure diagnostics would
+require additional handling before using this transformation.
+
+#### Scheduling short constant batches (2026-10-23)
+
+The proven fast copy receives an LLVM interleave-count hint of two for a direct
+constant bound of eight, or four for direct constant bounds from 16 through 32.
+The original operation count multiplied by that bound must be at most 4096. The hint is attached
+only to the fast copy's latch; fallback and dynamic loops keep the ordinary cost
+model. The matcher already limits loops to 256 operations and 32 blocks.
+
+This is a bounded profitability policy, not a new safety proof. LLVM still
+chooses the vector width, proves memory dependences (including overlapping
+views), and generates any scalar tail. The hint does not assert independence,
+force a vector width, remove a check, or enable fast-math. It groups vector
+iterations rather than forcing complete scalar unrolling before vectorization.
+The native O2 pipeline and target selection remain unchanged.
+
+On the tested AVX2 host this schedules a 16-element f64 particle batch as four
+vector groups without the inner four-trip vector loop. Finite masks combine
+across those groups before the same checked exit. There are still three
+finite predicates per four-particle group. Target-specific profitability on
+other CPUs is not established; scalar-only batches retain the prior policy's
+known profitability limitation.
+
+The Gloin scheduling fixtures check f32/f64 constant bounds 16, 17 and 32,
+smaller/larger/dynamic loops, code-growth refusal, overlapping views, first and
+last failing lanes, clamps, signed zero, underflow and separate rounding. The
+structural test verifies that only the fast copy carries the hint.
+
+The eight-iteration policy was added on 2026-10-23 after register-pressure
+experiments. An eight-lane particle layout plus two-way interleaving lowers the
+hot loop's stack-access instruction count from 74 per sixteen particles to four
+per eight particles when paired with combined collision conditions. These are
+static stack-access counts, including array accesses, not hardware spill events.
+There are still three finite predicates per four particles. The old sixteen-lane
+executable is byte-identical under both compilers. Alternate bit/exponent masks,
+a maximum-encoding accumulator and post-vectorization unrolling were rejected
+after measurements; none is part of the selected compiler.
+
+#### Combining predicates within a proven batch
+
+Before cloning, a reverse walk of each accepted basic block identifies checks
+whose failures must reach a later retained predicate. The walk seeds coverage
+only from checks that emit a predicate, then propagates it backwards through
+checked or raw IEEE `+`, `-`, `*`, unary negation, and floating freeze. Every
+non-finite operand remains non-finite through these operations, including
+`Inf * 0` and `Inf - Inf`. Batch matching rejects fast-math flags; the fast
+copy's existing freezing policy prevents poison from invalidating this argument.
+
+The covered producer keeps its arithmetic and loses only its flag update.
+Multiple uses and intervening private loads/stores are allowed because the
+entire batch already proves their safety, termination, and lack of observable
+effects before the checked exit. Values stored to private memory may be used
+elsewhere, but a later retained predicate in the same block still executes.
+No arithmetic is reordered, reassociated, or contracted.
+
+Each block starts with an empty coverage set. A conditional consumer or a
+consumer beyond a block boundary cannot justify removal. Selects, block
+arguments, and memory reloads do not propagate coverage. Unused failing
+operations retain a predicate unless their result also reaches a retained sink.
+Range-proven checks never seed coverage: such a check emits no flag, and its
+finite fact may depend on the earlier check under consideration. Reverse order
+ensures every removed predicate ends at a retained one, without circular
+reasoning. Work is bounded by the existing 256-operation batch limit.
+
+Gloin tests in `tests/float_batches` exercise normal results, signed zero,
+underflow, rounding, first/last-lane overflow, clamps, discarded results, empty
+and negative ranges, bounds fallbacks, overlapping views, and refusal cases.
+A thin public-lowering adapter lets the Gloin driver construct mixed-IR tests
+for poison/undef, NaN/infinity, invalid reads, mismatched widths, missing
+initialization, stack restoration, and unusual layouts. Native failures are
+compared with a control program's trap signal, not merely any child crash.
+The coverage driver adds exact predicate counts and native execution checks for
+intervening stores, multiple uses, raw arithmetic, discarded sinks, poison/undef,
+conditional consumers, selects, reloads, and safe consumers that cannot act as
+check anchors.
 
 ### Strided groups and live tail counters (2026-10-18)
 

@@ -1,5 +1,62 @@
 # Compiler validation and improvements
 
+## Eight-lane register-pressure tuning — 2026-10-23
+
+Added a two-way interleave hint for proven constant-eight private batches, under
+the existing operation budget. The original sixteen-lane executable remains
+byte-identical. The selected particle source uses eight lanes and combined wall
+conditions. Static hot-loop stack accesses decrease from 74/16 particles to 4/8;
+all three finite predicates per four particles remain. Native optimizer flags,
+arithmetic rounding and failure handling are unchanged.
+
+Fresh 24-run medians on logical CPU 4 of the i7-10700: previous Gloin 120.85 ms;
+selected 118.23 ms (2.2% reduction); Clang O3 97.01 ms; Odin 90.74 ms. Both other
+languages were tested at eight and sixteen lanes and favored sixteen. Timing
+ranges overlap; no large or cross-target benefit is claimed. Alternative integer
+masks, maximum-encoding accumulation and late unrolling were rejected.
+
+Core: 1096/1110 pass, with the same 14 network/TLS sandbox failures as upstream
+0.2.1. All 114 relevant lowering, float, scheduling and hashmap tests pass. The
+expanded Gloin scheduling suite has 62 semantic cases per JIT/O0/O2 mode and 24
+structural cases, including eight-lane overlap and overflow; traps are compared
+with an ordinary overflow control signal. All ten comparison binaries pass CLI
+fixtures in both modes, and 50 extra boundary/collision fixtures pass in each of
+JIT/O0/O2. Formatting and cumulative/staged patch replay are verified.
+
+
+## Short checked-batch scheduling — 2026-10-23
+
+Rebased the previous finite SSA, check-chain and private-batch optimizations onto
+upstream 0.2.1 (`e321d076656319b7b83a8e845652d49b5636a54f`). Added a bounded
+interleave-count hint on proven fast-copy latches: constant bound 16–32 and at
+most 4096 original operations times iterations. LLVM still proves dependences,
+chooses vector widths and handles tails. All finite checks and fallbacks remain;
+no native optimizer flag, fast-math, FMA or alias assumption changed.
+
+Linux x86-64, LLVM/MLIR 21.1.8, Intel i7-10700. Fresh 15-run particle medians:
+prior fixes on 0.2.1 159.83 ms; scheduling only 126.00 ms (21.2% reduction);
+collision-only source candidate 151.37 ms; both 125.08 ms; Clang O3 100.18 ms;
+Odin speed/native 94.78 ms. Every warmup and timed output passes the independent
+Gloin oracle. The selected implementation keeps the original batched source;
+the extra collision gain is within the substantial timing spread. CPU affinity
+and frequency were uncontrolled. Target-specific profitability remains a limit.
+
+`check-core`: 1096/1110 pass. The 14 network/TLS failures exactly match the
+recorded upstream 0.2.1 sandbox failures. All 114 relevant lowering, float and
+hashmap cases pass. New Gloin scheduling tests run 50 semantic cases in each of
+JIT/O0/O2 plus 16 structural cases; every overflow case is compared against an
+ordinary checked-overflow control signal. Cases cover fixed sizes and code
+budgets, nonmultiple tails, overlapping slices, clamps, first/last failing
+lanes, signed zero, underflow and separate rounding. The strengthened signal
+checks also pass in a final focused four-test rerun with the same compiler hash.
+
+All six benchmark variants pass CLI fixtures in baseline/optimized modes.
+35 extra collision/batch-boundary/tail fixtures pass in JIT/O0/O2. Formatting
+passes. Cumulative and staged patches replay exactly to the tested sources.
+The canonical compiler checkout is unchanged; the benchmark workspace contains
+the tested compiler, patch series, raw samples, assembly and validation logs.
+
+
 This is the development record of compiler issues found while checking larger
 and more complex programs after 0.1.0. It covers correctness failures, compilation
 cost and unnecessary work in generated code. The fixes belong to 0.2.0; their
@@ -9,6 +66,171 @@ PERF-001–009 are stable identifiers for these completed investigations. Task
 tracking belongs in the
 [wiki implementation checklist](https://github.com/kubabialy/gloinc/wiki/Implementation-Checklist).
 The [0.2.0 development record](release-0.2.0-draft.md) defines release scope.
+
+## Combining private-batch predicates — 2026-10-20
+
+The proven private-batch transformation now shares finite-result predicates
+across nonadjacent operations and multiple uses within one basic block.
+A backwards walk starts from retained checks and follows only operations that
+propagate every non-finite operand to their result. Intervening private memory
+operations are safe under the existing batch proof. Selects, reloads, conditional
+consumers and block boundaries do not propagate coverage. A range-proven check
+that emits no predicate cannot anchor removal of another predicate. Original
+scalar/fallback checks and production optimizer settings remain unchanged.
+See the [proof](lowering.md#combining-predicates-within-a-proven-batch).
+
+The particle SIMD loop drops from five to three finite-result predicates per
+four-particle vector group. On the i7-10700, LLVM 21.1.8, Linux x86-64 host, a
+fresh nine-run comparison of identical native O2 sources measured 100 million
+updates in 146.09 ms with the previous SIMD compiler and 134.17 ms with this
+change, an 8.2% time reduction. The scalar executables are byte-identical;
+their 253.38/254.79 ms medians differ through timing noise. Order rotated,
+each variant had one warmup, and no compilation/tests ran concurrently.
+CPU affinity and frequency were uncontrolled. All 36 timed outputs and four
+warmups passed the independent Gloin oracle.
+
+Gloin regressions add 18 source execution cases per JIT/native O0/native O2
+mode and eight source structural cases. A new Gloin mixed-IR driver adds 42
+structural cases and 42 native executions at each of O0/O2: 138 additional
+executions overall and 50 distinct new structural cases. It verifies exact
+predicate counts and compares failure signals with a control trap. The
+previous compiler fails the new predicate-count test, confirming that it
+detects the optimization. All 98 targeted tests pass, including earlier
+floating regressions and the 82 lowering tests.
+
+`check-core` reports 1,080 passes and 14 failures out of 1,094, with the same
+sandbox socket/TLS failures as the previous compiler and the earlier stock
+comparison. The full release gate still requires an unrestricted run.
+Whole-tree Gloin formatting passes, both particle layouts pass baseline and
+optimized fixtures, and both cumulative/incremental patch paths reproduce the
+tested source tree. The benchmark workspace retains logs, assembly, raw
+samples, and artifact fingerprints.
+
+## Checked SIMD batches — 2026-10-20
+
+The compiler now versions bounded innermost loops over initialized, nonescaping
+private floating arrays. The fast copy accumulates finite-result predicates
+into a persistent flag, asserted at its sole exit before private state becomes
+observable. A capacity guard selects this copy or the original checked loop.
+The proof rejects effects, unknown storage, unrelated failures and unsupported
+control flow; overlapping views remain legal without no-alias promises.
+External scalars and floating loads are frozen to prevent later poison from
+hiding earlier failures. Finite bounds are recomputed after expression
+combining so moved check anchors cannot invalidate the proof. See
+[proof and scope](lowering.md#checked-private-array-batches-2026-10-20).
+
+On the same i7-10700, LLVM 21.1.8 and Linux x86-64 host, a fresh nine-run
+comparison of identical particle sources at native O2 measured 100 million
+updates. The batched median decreased from 307.38 to 145.48 ms (52.7%),
+42.3% below the previous scalar median of 252.12 ms. Scalar executables are
+byte-identical; the new 251.62 ms scalar median differs only by timing noise.
+All 45 timed outputs and five warmups passed the independent Gloin oracle.
+Execution order rotated, compilation/tests were stopped, and CPU affinity and
+frequency were uncontrolled.
+
+The production kernel contains AVX packed arithmetic on four doubles at a
+time. A diagnostic build disabling only LLVM loop/SLP vectorization measured
+465.43 ms with the same checks. With vectorization enabled its `.text` matches
+production exactly. Production optimizer settings and rounding semantics are
+unchanged. This exposes an outstanding profitability issue when LLVM cannot
+vectorize: deferred predicates can cost more than the original scalar checks.
+Target-aware profitability and general heap/borrowed-slice support remain
+outside this implementation.
+
+New tests are written in Gloin: 104 execution cases in each of JIT and native
+O0/O2 (312 total), 34 source structural checks, and 28 mixed-IR structural
+checks plus 22 executions at each of O0/O2 (44 total). A thin C++ adapter
+exposes the existing public lowering API; test generation and assertions stay
+in Gloin. Cases include overflow followed by clamps/overwrites, first/last
+lanes, signed zero, rounding, bounds fallbacks, overlapping views, poison,
+undef, NaN/infinity, invalid/raw/volatile reads, mismatched widths, missing
+initialization, stack restoration, and unusual layouts. Mixed-IR fatal cases
+must match a control program's trap signal. A regression also checks a
+mandatory anchor moved by expression combining.
+
+The targeted 96-test selection passes. `check-core` reports 1,078 passes and
+14 failures out of 1,092; the failure names match the sandbox socket/TLS failures
+previously reproduced with the stock compiler. The full gate still needs an
+unrestricted run before release. Whole-tree Gloin formatting passes, both
+particle layouts pass baseline/optimized fixtures, and the vectorization-disabled
+control passes optimized fixtures. The benchmark workspace retains cumulative
+and incremental patches, replay evidence, logs, assembly, raw samples, and
+compiler/binary fingerprints.
+
+## Floating check chains — 2026-10-20
+
+The adjacent product/addition combiner now handles bounded contiguous expression
+trees of checked `+`, `-`, and `*`. Single-use intermediates share a later
+mandatory check; all other operations remain barriers. Each chain ends in a
+retained check, including discarded outputs. All external inputs of a changed
+window are frozen so a later independent poison input cannot hide an earlier
+failure. Windows are capped at 64 operations and processed without recursion.
+See the [proof and limits](lowering.md#adjacent-floating-checks-2026-10-19).
+
+On the same Intel i7-10700, LLVM 21.1.8, Linux x86-64 host, nine fresh processes
+per binary measured 100 million particle updates with identical sources and
+native O2. Compared with the preceding SSA fix, scalar median time decreased
+from 296.37 to 256.16 ms (13.6%); batched time decreased from 345.82 to 313.46 ms
+(9.4%). Order rotated between variants, each had one warmup, and no compilation
+or tests ran concurrently. CPU affinity and frequency were uncontrolled.
+Every measured output passed the independent Gloin oracle. The scalar kernel
+has 10 finite-result checks instead of 12; the kinetic-energy tree shares one
+check, while the conditional collision checks remain. SIMD across particles
+is still outside this transformation's scope.
+
+New regressions are written in Gloin: 68 execution cases in each of JIT and
+native O0/O2 (204 total), plus 24 structural cases covering both widths. They
+verify check counts, external-input freezing, operation/effect order, retained
+discarded failures, zero multiplication, overflow cancellation, rounding, signed
+zero and underflow. Existing finite-bound tests and all 82 lowering tests pass.
+The former subtraction refusal case was superseded by the Gloin positive
+subtraction cases; all remaining refusal cases are unchanged.
+
+`check-core` reports 1,072 passes and 14 failures out of 1,086. The failures are
+the same sandbox socket/TLS tests previously reproduced with the stock compiler.
+The full gate still requires an unrestricted run before release. Formatting,
+both particle layouts in baseline/optimized modes, and both patch replay paths
+are verified in the benchmark workspace, which retains patches, logs, raw
+samples and compiler/binary fingerprints.
+
+## Floating SSA bounds — 2026-10-19
+
+The follow-up to adjacent floating checks promotes nonescaping floating locals
+after storage-based reduction recognition and computes finite magnitude bounds
+through SSA operations, branch joins, and loop backedges. APFloat endpoint
+arithmetic preserves source precision and separate rounding. A bounded widening
+policy prevents analysis from simulating growing loops. Unknown memory/calls,
+LLVM freeze, and raw arithmetic with fast-math flags remain conservative.
+See the [proof and scope](lowering.md#floating-ssa-bounds-2026-10-19).
+
+Validation uses the local `a1ec915e0eff0f9a163afa62aa1e1c59375da32f`
+baseline, LLVM/MLIR 21.1.8, native O0/O2 and JIT on Linux x86-64. New regression
+programs are written in Gloin: 90 semantic cases per execution mode (270 total)
+and 24 named f32/f64 structural checks. Cases cover boundaries, signed zero,
+subnormal underflow, separate rounding, joins, shrinking/growing loops, late
+backedge inputs, aliases, variable/zero divisors, discarded overflow, and trap
+ordering. The existing 82 lowering regressions remain intact, including the
+storage-based reduction and mixed-IR poison/undef checks.
+
+The scalar particle kernel retains 12 finite-result checks instead of 13;
+overflow-capable arithmetic remains checked. Scalar and batched layouts pass
+the independent particle oracle in both baseline and optimized modes. This
+does not establish bounds for arbitrary heap state or enable general checked
+SIMD loops; those are outside this proof's scope.
+
+An initial version removed all provably redundant conditional loop checks. That
+reduced the scalar particle kernel to 8 checks, but LLVM then speculated collision
+multiplies into selects, causing a substantial measured regression. The final
+policy preserves checks in conditional loop paths while still propagating their
+bounds. No global LLVM select-optimization thresholds or branch probabilities
+are changed. The rejected variant's source patch and measurements are retained
+in the benchmark workspace rather than reported as an improvement.
+
+The full `check-core` gate is attempted in the restricted development sandbox.
+Socket-dependent tests cannot complete successfully there and also fail with
+the stock compiler/runtime. An unrestricted core run is still required before
+release. The benchmark workspace retains the full test logs, stock failure
+comparison, patch, and repeated stock-versus-changed timing samples.
 
 ## Reading the measurements
 

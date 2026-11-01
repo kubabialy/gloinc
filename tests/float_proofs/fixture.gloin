@@ -1,0 +1,239 @@
+import "@arena";
+import "@process";
+import "@std";
+import "@strings";
+
+def overwrite64(target: &f64, value: f64) -> void { *target = value; }
+
+def evaluate64(mode: string, value: f64) -> f64 {
+    if strings.equal(mode, "conditional") {
+        def mut local: f64 = value * 1.0;
+
+        for def mut i: u64 = 0; i < 3; i = i + 1 {
+            if value > 0.0 { local = local * 0.5; }
+        }
+
+        return local;
+    }
+
+    if strings.equal(mode, "sum") { def half: f64 = value / 2.0; return half + half; }
+    if strings.equal(mode, "difference") { def half: f64 = value / 2.0; return half - half; }
+
+    if strings.equal(mode, "chain") { return (value * 0.5) * 2.0; }
+    if strings.equal(mode, "divide") { return (value / 2.0) / 0.5; }
+    if strings.equal(mode, "divzero") { return (value * 1.0) / 0.0; }
+
+    if strings.equal(mode, "join") {
+        def mut local: f64 = value * 1.0;
+        if value < 0.0 { local = local * -0.5; } else { local = local / 4.0; }
+
+        return local * 2.0;
+    }
+
+    if strings.equal(mode, "loop") {
+        def mut local: f64 = value * 1.0;
+
+        for def mut i: u64 = 0; i < 3; i = i + 1 { local = local * 0.5; }
+
+        return local;
+    }
+
+    if strings.equal(mode, "loopgrow") {
+        def mut local: f64 = 1.0;
+
+        for def mut i: u64 = 0; i < 1024; i = i + 1 { local = local * 2.0; }
+
+        return local * 0.0;
+    }
+
+    if strings.equal(mode, "late") {
+        def mut local: f64 = 1.0;
+
+        for def mut i: u64 = 0; i < 3; i = i + 1 {
+            local = local * 2.0;
+            if i == 0 { local = value; }
+        }
+
+        return local * 0.0;
+    }
+
+    if strings.equal(mode, "alias") {
+        def mut local: f64 = 0.5;
+
+        overwrite64(&local, value);
+
+        return local * 2.0;
+    }
+
+    if strings.equal(mode, "effect") {
+        std.println("before");
+
+        def local: f64 = value * 2.0;
+
+        std.println("after");
+
+        return local * 0.0;
+    }
+
+    if strings.equal(mode, "discard") {
+        def local: f64 = value * 2.0;
+
+        return 0.0;
+    }
+
+    if strings.equal(mode, "producer") {
+        def expanded: f64 = value * 2.0;
+
+        return expanded * 0.0;
+    }
+
+    if strings.equal(mode, "mask") {
+        def mut expanded: f64 = value * 2.0;
+        if expanded > 1024.0 { expanded = 1024.0; }
+
+        return expanded;
+    }
+
+    def finite: f64 = value * 1.0;
+    if strings.equal(mode, "scale") { return finite * 0.5; }
+    if strings.equal(mode, "left") { return -0.5 * finite; }
+    if strings.equal(mode, "grow") { return finite * 2.0; }
+    if strings.equal(mode, "zero") { return finite * 0.0; }
+    if strings.equal(mode, "round") { return finite * 0.9999999999999998 - 1.0; }
+
+    return finite;
+}
+
+def overwrite32(target: &f32, value: f32) -> void { *target = value; }
+
+def evaluate32(mode: string, value: f32) -> f32 {
+    if strings.equal(mode, "conditional") {
+        def mut local: f32 = value * 1.0;
+
+        for def mut i: u64 = 0; i < 3; i = i + 1 {
+            if value > 0.0 { local = local * 0.5; }
+        }
+
+        return local;
+    }
+
+    if strings.equal(mode, "sum") { def half: f32 = value / 2.0; return half + half; }
+    if strings.equal(mode, "difference") { def half: f32 = value / 2.0; return half - half; }
+
+    if strings.equal(mode, "chain") { return (value * 0.5) * 2.0; }
+    if strings.equal(mode, "divide") { return (value / 2.0) / 0.5; }
+    if strings.equal(mode, "divzero") { return (value * 1.0) / 0.0; }
+
+    if strings.equal(mode, "join") {
+        def mut local: f32 = value * 1.0;
+        if value < 0.0 { local = local * -0.5; } else { local = local / 4.0; }
+
+        return local * 2.0;
+    }
+
+    if strings.equal(mode, "loop") {
+        def mut local: f32 = value * 1.0;
+
+        for def mut i: u64 = 0; i < 3; i = i + 1 { local = local * 0.5; }
+
+        return local;
+    }
+
+    if strings.equal(mode, "loopgrow") {
+        def mut local: f32 = 1.0;
+
+        for def mut i: u64 = 0; i < 128; i = i + 1 { local = local * 2.0; }
+
+        return local * 0.0;
+    }
+
+    if strings.equal(mode, "late") {
+        def mut local: f32 = 1.0;
+
+        for def mut i: u64 = 0; i < 3; i = i + 1 {
+            local = local * 2.0;
+            if i == 0 { local = value; }
+        }
+
+        return local * 0.0;
+    }
+
+    if strings.equal(mode, "alias") {
+        def mut local: f32 = 0.5;
+
+        overwrite32(&local, value);
+
+        return local * 2.0;
+    }
+
+    if strings.equal(mode, "effect") {
+        std.println("before");
+
+        def local: f32 = value * 2.0;
+
+        std.println("after");
+
+        return local * 0.0;
+    }
+
+    if strings.equal(mode, "discard") {
+        def local: f32 = value * 2.0;
+
+        return 0.0;
+    }
+
+    if strings.equal(mode, "producer") {
+        def expanded: f32 = value * 2.0;
+
+        return expanded * 0.0;
+    }
+
+    def finite: f32 = value * 1.0;
+    if strings.equal(mode, "scale") { return finite * 0.5; }
+    if strings.equal(mode, "left") { return -0.5 * finite; }
+    if strings.equal(mode, "grow") { return finite * 2.0; }
+    if strings.equal(mode, "zero") { return finite * 0.0; }
+    if strings.equal(mode, "round") { return finite * 0.9999998807907104 - 1.0; }
+
+    return finite;
+}
+
+def main() -> i32 {
+    if process.arg_count() != 4 { return 2; }
+
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def width: result<string> = process.arg(&owner, 1);
+    if width.erroneous { return 2; }
+
+    def mode: result<string> = process.arg(&owner, 2);
+    if mode.erroneous { return 2; }
+
+    def text: result<string> = process.arg(&owner, 3);
+    if text.erroneous { return 2; }
+
+    if strings.equal(width.value, "64") {
+        def parsed: result<f64> = std.parse_f64(text.value);
+        if parsed.erroneous { return 2; }
+
+        def computed: f64             = evaluate64(mode.value, parsed.value);
+        def formatted: result<string> = std.format_f64(&owner, computed);
+
+        if formatted.erroneous { return 1; }
+
+        std.println(formatted.value);
+    } else {
+        def parsed: result<f32> = std.parse_f32(text.value);
+        if parsed.erroneous { return 2; }
+
+        def computed: f32             = evaluate32(mode.value, parsed.value);
+        def formatted: result<string> = std.format_f32(&owner, computed);
+
+        if formatted.erroneous { return 1; }
+
+        std.println(formatted.value);
+    }
+
+    return 0;
+}

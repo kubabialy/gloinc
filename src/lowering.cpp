@@ -2,6 +2,7 @@
 #include "compilation_timings.h"
 #include "dialect/GloinDialect.h"
 #include "gir_float_checks.h"
+#include "gir_float_batches.h"
 #include "gir_range_proofs.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
@@ -1291,8 +1292,11 @@ struct LowerGloinCorePass
     : mlir::PassWrapper<LowerGloinCorePass, mlir::OperationPass<mlir::ModuleOp>> {
     MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerGloinCorePass)
     void runOnOperation() override {
-        const auto proofs = prove_gloin_ranges(getOperation());
+        auto proofs = prove_gloin_ranges(getOperation());
+        promote_gloin_float_locals(getOperation());
+        remove_proven_gloin_float_checks(getOperation());
         combine_gloin_float_checks(getOperation());
+        version_gloin_float_batches(getOperation(), proofs);
         mlir::RewritePatternSet patterns(&getContext());
         populate_selection_lowering(patterns);
         patterns.add<LowerCheckedIntegerBinary, LowerArrayElementAddress,

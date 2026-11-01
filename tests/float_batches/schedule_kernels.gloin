@@ -1,0 +1,439 @@
+def pub fixed1632(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub fixed1732(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 17] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 17; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub fixed3232(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 32] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 32; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub small32(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 4] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 4; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub large32(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 64] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 64; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub dynamic32(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 32] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub heavy32(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 32] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 32; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub overlap_fixed32(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 17] = zeroed; data[0] = value;
+
+    def input: [const f32] = data[0..16]; def output: [f32] = data[1..17];
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 { output[i] = input[i] * scale; }
+
+    return data[16];
+}
+
+def pub rounding32(value: f32, factor: f32) -> f32 {
+    def mut data: [f32; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 { data[i] = value * factor - 1.0; }
+
+    return data[15];
+}
+
+def pub fixed1664(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub fixed1764(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 17] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 17; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub fixed3264(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 32] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 32; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub small64(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 4] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 4; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub large64(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 64] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 64; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub dynamic64(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 32] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub heavy64(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 32] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 32; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+        data[i] = x; x = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub overlap_fixed64(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 17] = zeroed; data[0] = value;
+
+    def input: [const f64] = data[0..16]; def output: [f64] = data[1..17];
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 { output[i] = input[i] * scale; }
+
+    return data[16];
+}
+
+def pub rounding64(value: f64, factor: f64) -> f64 {
+    def mut data: [f64; 16] = zeroed;
+
+    for def mut i: u64 = 0; i < 16; i = i + 1 { data[i] = value * factor - 1.0; }
+
+    return data[15];
+}
+
+def pub eight32(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 8] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 8; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub seven32(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 7] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 7; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub nine32(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 9] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 9; i = i + 1 {
+        def mut x: f32 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub eight64(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 8] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 8; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub seven64(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 7] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 7; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub nine64(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 9] = zeroed;
+    data[lane] = value;
+
+    for def mut i: u64 = 0; i < 9; i = i + 1 {
+        def mut x: f64 = data[i] * scale;
+
+        if x > 1024.0 { x = 1024.0; }
+        else if x < -1024.0 { x = -1024.0; }
+
+        data[i] = x;
+    }
+
+    return data[lane];
+}
+
+def pub overlap_eight32(value: f32, scale: f32, n: u64, lane: u64) -> f32 {
+    def mut data: [f32; 9] = zeroed; data[0] = value;
+
+    def input: [const f32] = data[0..8]; def output: [f32] = data[1..9];
+
+    for def mut i: u64 = 0; i < 8; i = i + 1 { output[i] = input[i] * scale; }
+
+    return data[8];
+}
+
+def pub overlap_eight64(value: f64, scale: f64, n: u64, lane: u64) -> f64 {
+    def mut data: [f64; 9] = zeroed; data[0] = value;
+
+    def input: [const f64] = data[0..8]; def output: [f64] = data[1..9];
+
+    for def mut i: u64 = 0; i < 8; i = i + 1 { output[i] = input[i] * scale; }
+
+    return data[8];
+}

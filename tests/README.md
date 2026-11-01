@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1134 tests**:
+The current source definitions and CTest discovery contain **1159 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -61,12 +61,17 @@ The current source definitions and CTest discovery contain **1134 tests**:
 | GloinFormatterSmoke | 1 |
 | GloinToolingSmoke | 2 |
 | GloinIntegratedStress | 1 |
+| GloinFloatProofSmoke | 4 |
+| GloinFloatChainSmoke | 4 |
+| GloinFloatBatchSmoke | 8 |
+| GloinFloatScheduleSmoke | 4 |
+| GloinFloatArraySmoke | 2 |
 | ContextLibraryTest | 30 |
 | ContextRuntimeTest | 40 |
 | MathLibraryTest | 14 |
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 18 |
-| HashmapLibraryTest | 9 |
+| HashmapLibraryTest | 12 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -94,6 +99,14 @@ modules (SPEC-029). The CLI also exercises `core_counter.gloin`, `hello_world.gl
 `strings_lab.gloin`, `text_lab.gloin`, `numbers_lab.gloin`, `io_copy.gloin`, `io_filter.gloin`, `file_tool.gloin`, `math_lab.gloin`, `simulation_lab.gloin`, `config_reader.gloin`, `statistics_tool.gloin`, `network_http.gloin`, `http_client.gloin`, `http_stream.gloin`, `json.gloin`, and `module_discovery.gloin`. The `.gloin` files under `examples/` pass `gloinc --check` on macOS and Ubuntu ARM64.
 
 ## Running and inspecting tests
+
+`GloinFloatProofSmoke` is written in Gloin. Its semantic driver runs 90 cases
+under native O0, native O2, and JIT: signed zero, subnormal rounding, separate
+rounding, scaling/division chains, branches, shrinking and growing loops, late
+backedge inputs, mutable aliases, discarded overflow, and observable trap order.
+Its structural driver checks 24 named f32/f64 kernels in LLVM-dialect output,
+requiring redundant finite checks to disappear and necessary checks to remain.
+See [floating SSA bounds](../docs/lowering.md#floating-ssa-bounds-2026-10-19).
 
 Adjacent GIR floating-check regressions cover f32/f64 multiplication followed by
 addition, both operand positions, discarded sums and separate rounding. Lowering
@@ -773,3 +786,68 @@ canonical formatters, all integer aliases and legacy `to_string` as recoverable
 results. The exact-widening case verifies a scalar i64 API and unchanged GIR
 sign-extension lowering. Existing parser/formatting/rounding/native-ABI tests
 retain their boundaries, lifetimes and independent oracles.
+
+## Floating check chains
+
+`tests/float_chains` adds 68 execution cases in each of native O0, native O2,
+and JIT, plus 24 structural f32/f64 cases. It covers straight-line arithmetic
+trees, discarded and escaping results, barriers, signed zero, subnormal
+underflow, separate rounding, and overflow that would otherwise be masked by
+zero multiplication or cancellation. Structural checks verify external-input
+freezing, including independent intervening arithmetic. The four
+`GloinFloatChainSmoke` tests are part of `check-core`.
+
+## Checked private-array batches
+
+The eight `GloinFloatBatchSmoke` tests are part of `check-core`.
+The 122-case JIT driver runs serially with a 240-second aggregate deadline;
+individual child deadlines and all assertions remain unchanged. Hosted x86_64
+recorded 53.41 seconds serially and 89.54 seconds under parallel load, with a
+separate run exceeding the former 90-second aggregate limit. GIR/operand-trap
+matrices also run serially on macOS and Linux: hosted macOS exhausted a
+10-second child compile deadline under four-worker contention. That child
+deadline remains unchanged. All four floating JIT drivers run serially;
+sanitizer builds allow 360 seconds per driver because instrumented startup is
+paid for every case. The hosted macOS sanitizer run and a local Linux sanitizer
+run both exceeded the former 90-second aggregate limits.
+`tests/float_batches` contains 122 source execution cases per JIT/native O0/native O2
+mode and 42 source structural cases. The mixed-IR driver checks 28 structural
+cases and 22 executions at each native optimization level. It compares fatal
+signals against a directly compiled trap control. All fixture construction and
+expectations are written in Gloin; `tests/support/lower_ir.cpp` only adapts the
+existing public lowering/native-emission APIs to a subprocess interface.
+
+Coverage includes overlap dependencies, signed zero, underflow, separate
+rounding, loop bounds/fallbacks, first and last failing lanes, masked overflow,
+discarded failures, effect and escape barriers, poison/undef, non-finite inputs,
+raw/volatile reads, width mismatches, missing initialization, stack restoration,
+and incompatible native layouts. The anchored-product case prevents stale
+finite proofs from erasing the mandatory check after expression combining.
+
+`coverage.gloin` adds 42 structural and 42 execution cases at each of native
+O0/O2. Exact predicate counts verify that the batch combiner handles multiple
+uses and intervening private stores, while retaining independent checks and
+refusing coverage through selects, conditional consumers, block boundaries,
+and memory reloads. Cases include raw multiplication/subtraction, negation and
+freeze, overflow followed by zero multiplication, discarded sinks, safe
+consumers that cannot anchor another check, fast-math rejection, and external
+or loaded poison/undef. Native failures must match the control trap signal.
+
+The four `GloinFloatScheduleSmoke` tests run 62 semantic cases in each of JIT,
+native O0 and native O2, plus 24 structural cases. They cover the scheduling
+hint's size/budget boundaries, overlapping views, overflow before clamps, signed
+zero, underflow and separate rounding. All drivers and fixtures are Gloin.
+
+Scheduling coverage also checks exact eight-iteration loops, refused seven/nine
+iteration bounds, four-iteration loops without a hint, and overlapping views at
+eight iterations. First and last overflowing lanes compare against the ordinary
+checked-overflow control signal in JIT and native O0/O2.
+
+## Private-array intervals (0.2.2 candidate)
+
+`tests/float_arrays/main.gloin` checks 64 structural cases across f32/f64,
+executing defined fixtures at native O0/O2. It covers clamped and growing loops,
+late writes, initialization, overlapping views, NaN/infinity, poison/undef,
+select conditions, signed zero, subnormals and retained overflow traps.
+The Gloin driver uses the existing mixed-IR adapter; unsupported-layout and
+undefined-input cases are structural only. Both suites belong to `check-core`.

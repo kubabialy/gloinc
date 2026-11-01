@@ -3,44 +3,84 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/PatternMatch.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+
+namespace {
+bool propagates_nonfinite(gloin::CheckedFloatBinaryOp op) {
+    if (!op) return false;
+    auto type = op.getResult().getType();
+    return (type.isF32() || type.isF64()) &&
+           (op.getKind() == "+" || op.getKind() == "-" || op.getKind() == "*");
+}
+
+void combine_run(llvm::ArrayRef<gloin::CheckedFloatBinaryOp> run,
+                 mlir::IRRewriter &rewriter) {
+    if (run.size() < 2) return;
+    llvm::SmallPtrSet<mlir::Operation *, 32> members;
+    for (auto op : run) members.insert(op);
+    llvm::SmallVector<gloin::CheckedFloatBinaryOp> removable;
+    for (auto op : run) {
+        // A single use in this straight-line run carries every non-finite
+        // result to a later checked operation. Following those uses must end
+        // at a retained check: SSA is acyclic within a block. Escaping and
+        // unused values retain their original mandatory checks.
+        if (op.getResult().hasOneUse() &&
+            members.contains(*op.getResult().getUsers().begin()))
+            removable.push_back(op);
+    }
+    if (removable.empty()) return;
+
+    // The public lowering API accepts poison/undef in mixed GIR/LLVM input.
+    // Freeze ALL external inputs, including those of independent intermediate
+    // checks: otherwise a later poison could hide an earlier deferred failure.
+    // Internal results cannot be poison once their inputs are concrete. IEEE
+    // +, -, * propagate non-finite values even for Inf * 0 or Inf - Inf.
+    // Freezing preserves every concrete input, and never licenses memory reads.
+    llvm::DenseMap<mlir::Value, mlir::Value> frozen;
+    rewriter.setInsertionPoint(run.front());
+    for (auto op : run) {
+        for (unsigned i = 0; i != 2; ++i) {
+            auto input = op->getOperand(i);
+            if (members.contains(input.getDefiningOp())) continue;
+            auto [it, inserted] = frozen.try_emplace(input);
+            if (inserted)
+                it->second = rewriter.create<mlir::LLVM::FreezeOp>(op.getLoc(), input);
+            rewriter.modifyOpInPlace(op, [&] { op->setOperand(i, it->second); });
+        }
+    }
+    for (auto op : removable) {
+        rewriter.setInsertionPoint(op);
+        if (op.getKind() == "+")
+            rewriter.replaceOpWithNewOp<mlir::arith::AddFOp>(op, op.getLhs(), op.getRhs());
+        else if (op.getKind() == "-")
+            rewriter.replaceOpWithNewOp<mlir::arith::SubFOp>(op, op.getLhs(), op.getRhs());
+        else
+            rewriter.replaceOpWithNewOp<mlir::arith::MulFOp>(op, op.getLhs(), op.getRhs());
+    }
+}
+} // namespace
 
 void combine_gloin_float_checks(mlir::ModuleOp module) {
     mlir::IRRewriter rewriter(module.getContext());
-    module.walk([&](gloin::CheckedFloatBinaryOp sum) {
-        if (sum.getKind() != "+") return;
-        auto product = mlir::dyn_cast_or_null<gloin::CheckedFloatBinaryOp>(sum->getPrevNode());
-        if (!product || product.getKind() != "*" || !product.getResult().hasOneUse() ||
-            *product.getResult().getUsers().begin() != sum.getOperation())
-            return;
-        const auto type = product.getResult().getType();
-        if ((!type.isF32() && !type.isF64()) || type != sum.getResult().getType()) return;
-
-        // With ordinary IEEE operations, a non-finite product necessarily makes
-        // the following sum non-finite, regardless of the other addend. The sum's
-        // mandatory finite check therefore detects both failures. Keep separate
-        // rounding: this is an ordinary multiply, with no fast-math or contraction.
-        //
-        // Exact adjacency and a single use ensure that no memory access, effect,
-        // other failure, branch, or escaping product is crossed. Both addends are
-        // already available in verified SSA. Never extend this to a merely
-        // read-only intervening operation: reads can fault. No loop/lifetime or
-        // alias assumptions are made here.
-        //
-        // Gloin currently reports both finite failures as the same fatal trap.
-        // If failure diagnostics become operation-specific, this rule must also
-        // retain which source operation failed. The arithmetic locations remain
-        // attached to their respective operations.
-        rewriter.setInsertionPoint(product);
-        // The public lowering boundary also accepts mixed GIR/LLVM input. If the
-        // other addend is poison, the original product could still trap before
-        // consuming it. Freeze that addend so poison cannot hide this failure.
-        // Concrete floating values, including NaNs and infinities, are unchanged.
-        const unsigned other = sum.getLhs() == product.getResult() ? 1 : 0;
-        auto frozen = rewriter.create<mlir::LLVM::FreezeOp>(
-            sum.getLoc(), sum->getOperand(other));
-        rewriter.modifyOpInPlace(sum, [&] { sum->setOperand(other, frozen.getResult()); });
-        rewriter.replaceOpWithNewOp<mlir::arith::MulFOp>(
-            product, product.getLhs(), product.getRhs());
-        // Keep the checked addition even if its result has no users.
-    });
+    llvm::SetVector<mlir::Block *> blocks;
+    module.walk([&](gloin::CheckedFloatBinaryOp op) { blocks.insert(op->getBlock()); });
+    for (auto *block : blocks) {
+        auto it = block->begin();
+        while (it != block->end()) {
+            auto first = mlir::dyn_cast<gloin::CheckedFloatBinaryOp>(&*it);
+            if (!propagates_nonfinite(first)) { ++it; continue; }
+            llvm::SmallVector<gloin::CheckedFloatBinaryOp> run;
+            // A fixed-size window bounds temporary storage without a recursive
+            // graph search. Every other operation is a barrier, even constants.
+            while (it != block->end() && run.size() != 64) {
+                auto op = mlir::dyn_cast<gloin::CheckedFloatBinaryOp>(&*it);
+                if (!propagates_nonfinite(op) || op.getType() != first.getType()) break;
+                run.push_back(op);
+                ++it;
+            }
+            combine_run(run, rewriter);
+        }
+    }
 }
