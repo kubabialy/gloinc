@@ -1,0 +1,230 @@
+import "@arena";
+import "@fs";
+import "@process";
+import "@std";
+import "@strings";
+import "@time";
+import "../support/tool_runner";
+import "../../tools/checks/common";
+
+// Predicate counts include the unchanged fallback and the batched fast copy.
+// Private stores separate checked expressions so the ordinary combiner cannot
+// produce these reductions; trap signals distinguish overflow from bad memory.
+def struct Case {
+    def name: string,
+    def body: string,
+    def predicates: u64,
+    def first: string,
+    def other: string,
+    def init: string,
+    def expected: string,
+    def trap: bool,
+    def fast: bool,
+}
+
+def struct Captured { def success: bool, def signal: i32, def text: string, }
+
+def cleanup_child(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def capture(memory: &arena.GeneralArena, executable: string, args: [const string]) -> result<Captured> {
+    def started: result<process.Child> = process.start_piped(memory, executable, args);
+    if started.erroneous { return started.error; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup_child(&child);
+
+    def input: [u8; 0]                   = zeroed;
+    def mut output: [u8; 1024]           = zeroed;
+    def mut errors: [u8; 8192]           = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration {nanoseconds: 30000000000});
+
+    if captured.erroneous { return captured.error; }
+
+    def outcome: process.Output = captured.value;
+    def zero: u64               = 0;
+
+    if outcome.stderr.len > zero { std.println(strings.view_bytes(outcome.stderr)); }
+
+    def text: result<string> = strings.concat(memory, strings.view_bytes(outcome.stdout), "", 1024);
+    if text.erroneous { return text.error; }
+
+    return Captured { success: outcome.status.success(), signal: outcome.status.signal, text: text.value };
+}
+
+def cleanup_tree(path: string) -> void {
+    def removed: result<void> = tool_runner.remove_fixture_tree(path, 8);
+    if removed.erroneous { std.println(removed.error.message); }
+}
+
+def occurrences(text: string, needle: string) -> u64 {
+    def mut rest: string              = text;
+    def mut count: u64                = 0;
+    def mut found: strings.FindResult = strings.find(rest, needle);
+
+    while found.found {
+        count = count + 1;
+
+        def start: u64           = found.offset + strings.byte_length(needle);
+        def next: result<string> = strings.slice_bytes(rest, start, strings.byte_length(rest) - start);
+
+        if next.erroneous { return 999; }
+
+        rest  = next.value;
+        found = strings.find(rest, needle);
+    }
+
+    return count;
+}
+
+def suite(memory: &arena.GeneralArena, bridge: string, mode: string, work: string) -> bool {
+    def control: string     = "module { func.func @main() -> i32 { \"llvm.intr.trap\"() : () -> () llvm.unreachable } }";
+    def saved: result<void> = tool_runner.record(memory, work, "control", ".mlir", control);
+
+    if saved.erroneous { std.println(saved.error.message); return false; }
+
+    def source: result<string> = tool_runner.joined(memory, work, "control.mlir");
+    if source.erroneous { return false; }
+
+    def binary: result<string> = tool_runner.joined(memory, work, "control");
+    if binary.erroneous { return false; }
+
+    def build_control: [string; 3] = {mode, source.value, binary.value};
+    def built: result<Captured>    = capture(memory, bridge, build_control[..]);
+
+    if built.erroneous { std.println(built.error.message); return false; }
+    if !built.value.success { return false; }
+
+    def empty: [string; 0]    = {};
+    def ran: result<Captured> = capture(memory, binary.value, empty[..]);
+
+    if ran.erroneous { return false; }
+
+    def expected_signal: i32 = ran.value.signal;
+    if expected_signal == 0 { return false; }
+
+    def template: string = "module {\n func.func @kernel(%first: $F, %other: $F, %condition: i1) -> $F {\n  %a = \"gloin.stack_alloc\"() <{element_type = !llvm.array<4 x $F>, source_type = !gloin.array<$F, 4>}> : () -> !llvm.ptr\n  %b = \"gloin.stack_alloc\"() <{element_type = !llvm.array<4 x $F>, source_type = !gloin.array<$F, 4>}> : () -> !llvm.ptr\n  %initA = llvm.mlir.$INIT : !llvm.array<4 x $F>\n  %initB = llvm.mlir.zero : !llvm.array<4 x $F>\n  \"gloin.store\"(%initA, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()\n  \"gloin.store\"(%initB, %b) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()\n  %zero = arith.constant 0 : i64\n  %four = arith.constant 4 : i64\n  %one = arith.constant 1 : i64\n  %two = arith.constant 2.0 : $F\n  %half = arith.constant 0.5 : $F\n  %z = arith.constant 0.0 : $F\n  cf.br ^loop(%zero : i64)\n ^loop(%i: i64):\n  %more = \"gloin.checked_int_compare\"(%i, %four) <{kind = \"<\", is_signed = false}> : (i64, i64) -> i1\n  cf.cond_br %more, ^body, ^exit\n ^body:\n  %pa = \"gloin.array_element_address\"(%a, %i) <{array_type = !llvm.array<4 x $F>, source_type = !gloin.array<$F, 4>}> : (!llvm.ptr, i64) -> !llvm.ptr\n  %pb = \"gloin.array_element_address\"(%b, %i) <{array_type = !llvm.array<4 x $F>, source_type = !gloin.array<$F, 4>}> : (!llvm.ptr, i64) -> !llvm.ptr\n  %p = \"gloin.checked_float_binary\"(%first, %two) <{kind = \"*\"}> : ($F, $F) -> $F\n  \"gloin.store\"(%p, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\n  %loaded = \"gloin.load\"(%pa) <{source_type = $F, layout_type = $F}> : (!llvm.ptr) -> $F\n  $BODY\n ^latch:\n  %next = \"gloin.checked_int_binary\"(%i, %one) <{kind = \"+\", is_signed = false}> : (i64, i64) -> i64\n  cf.br ^loop(%next : i64)\n ^exit:\n  %end = \"gloin.array_element_address\"(%b, %zero) <{array_type = !llvm.array<4 x $F>, source_type = !gloin.array<$F, 4>}> : (!llvm.ptr, i64) -> !llvm.ptr\n  %answer = \"gloin.load\"(%end) <{source_type = $F, layout_type = $F}> : (!llvm.ptr) -> $F\n  return %answer : $F\n }\n func.func @main() -> i32 {\n  %first = arith.constant $FIRST : $F\n  %other = $OTHER : $F\n  %condition = arith.constant false\n  %answer = func.call @kernel(%first, %other, %condition) : ($F, $F, i1) -> $F\n  %expected = arith.constant $EXPECTED : $F\n  %ok = arith.cmpf oeq, %answer, %expected : $F\n  %zero = arith.constant 0 : i32\n  %one = arith.constant 1 : i32\n  %exit = arith.select %ok, %zero, %one : i32\n  return %exit : i32\n }\n}";
+    def cases: [Case; 21] = {
+        Case { name: "finite", body: "%q = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "3.0", other: "arith.constant 5.0", init: "zero", expected: "11.0", trap: false, fast: true },
+        Case { name: "multiple-uses", body: "%q = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "loaded-operand", body: "%q = \"gloin.checked_float_binary\"(%p, %loaded) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 2, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "loaded-poison", body: "%q = \"gloin.checked_float_binary\"(%p, %loaded) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "arith.constant 5.0", init: "poison", expected: "0.0", trap: true, fast: true },
+        Case { name: "loaded-undef", body: "%q = \"gloin.checked_float_binary\"(%p, %loaded) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "arith.constant 5.0", init: "undef", expected: "0.0", trap: true, fast: true },
+        Case { name: "external-poison", body: "%q = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "llvm.mlir.poison", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "external-undef", body: "%q = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "llvm.mlir.undef", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "raw-product", body: "%raw = arith.mulf %p, %other : $F\n%q = \"gloin.checked_float_binary\"(%raw, %loaded) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "raw-zero", body: "%raw = arith.mulf %p, %z : $F\n%q = \"gloin.checked_float_binary\"(%raw, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "raw-subtract", body: "%raw = arith.subf %p, %p : $F\n%q = \"gloin.checked_float_binary\"(%raw, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "negate-freeze", body: "%raw = arith.negf %p : $F\n%held = llvm.freeze %raw : $F\n%q = \"gloin.checked_float_binary\"(%held, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "zero-consumer", body: "%q = \"gloin.checked_float_binary\"(%p, %z) <{kind = \"*\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 2, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "safe-consumer", body: "%q = \"gloin.checked_float_binary\"(%p, %half) <{kind = \"*\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 2, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "discarded-sink", body: "%q = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%z, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 3, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "independent", body: "%q = \"gloin.checked_float_binary\"(%other, %other) <{kind = \"*\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 4, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "reload", body: "%again = \"gloin.load\"(%pb) <{source_type = $F, layout_type = $F}> : (!llvm.ptr) -> $F\n%q = \"gloin.checked_float_binary\"(%again, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 4, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "select", body: "%chosen = arith.select %condition, %p, %z : $F\n%q = \"gloin.checked_float_binary\"(%chosen, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 4, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "conditional", body: "cf.cond_br %condition, ^yes, ^no\n^yes:\n%q = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch\n^no:\n\"gloin.store\"(%z, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 4, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "block-boundary", body: "cf.br ^later\n^later:\n%q = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 4, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "two-sinks", body: "%q = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\n%r = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"-\"}> : ($F, $F) -> $F\n\"gloin.store\"(%r, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 5, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: true },
+        Case { name: "fastmath", body: "%raw = arith.mulf %p, %other fastmath<fast> : $F\n%q = \"gloin.checked_float_binary\"(%raw, %loaded) <{kind = \"+\"}> : ($F, $F) -> $F\n\"gloin.store\"(%q, %pb) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\ncf.br ^latch", predicates: 2, first: "$HUGE", other: "arith.constant 5.0", init: "zero", expected: "0.0", trap: true, fast: false }
+    };
+    def widths: [string; 2]   = {"f32", "f64"};
+    def extremes: [string; 2] = {"3.0e38", "1.0e308"};
+
+    for def mut w: u64 = 0; w < 2; w = w + 1 {
+        for def mut i: u64 = 0; i < 21; i = i + 1 {
+            def item: Case                = cases[i];
+            def replacements: [string; 8] = {"$BODY", "$FIRST", "$OTHER", "$INIT", "$EXPECTED", "$HUGE", "$F", "$NONE"};
+            def values: [string; 8]       = {item.body, item.first, item.other, item.init, item.expected, extremes[w], widths[w], ""};
+            def mut text: string          = template;
+
+            for def mut j: u64 = 0; j < 8; j = j + 1 {
+                def replaced: result<string> = strings.replace_all(memory, text, replacements[j], values[j], 65536);
+                if replaced.erroneous { return false; }
+
+                text = replaced.value;
+            }
+
+            def name: result<string> = strings.concat(memory, item.name, widths[w], 256);
+            if name.erroneous { return false; }
+
+            def recorded: result<void> = tool_runner.record(memory, work, name.value, ".mlir", text);
+            if recorded.erroneous { std.println(recorded.error.message); return false; }
+
+            def leaf: result<string> = strings.concat(memory, name.value, ".mlir", 256);
+            if leaf.erroneous { return false; }
+
+            def input: result<string> = tool_runner.joined(memory, work, leaf.value);
+            if input.erroneous { return false; }
+
+            def output_leaf: result<string> = strings.concat(memory, name.value, ".lowered", 256);
+            if output_leaf.erroneous { return false; }
+
+            def output: result<string> = tool_runner.joined(memory, work, output_leaf.value);
+            if output.erroneous { return false; }
+
+            def emit_args: [string; 3]    = {"emit", input.value, output.value};
+            def emitted: result<Captured> = capture(memory, bridge, emit_args[..]);
+
+            if emitted.erroneous { std.println(emitted.error.message); return false; }
+            if !emitted.value.success { std.println(name.value); return false; }
+
+            def lowered: result<string> = common.read(memory, output.value, 262144);
+            if lowered.erroneous { return false; }
+
+            def found: strings.FindResult = strings.find(lowered.value, ": i64, i1)");
+            if found.found != item.fast { std.println(name.value); std.println(lowered.value); return false; }
+
+            if occurrences(lowered.value, "llvm.fcmp \"oge\"") != item.predicates { std.println(name.value); std.println(lowered.value); return false; }
+
+            {
+                def program: result<string> = tool_runner.joined(memory, work, name.value);
+                if program.erroneous { return false; }
+
+                def args: [string; 3]          = {mode, input.value, program.value};
+                def compiled: result<Captured> = capture(memory, bridge, args[..]);
+
+                if compiled.erroneous { std.println(compiled.error.message); return false; }
+                if !compiled.value.success { std.println(name.value); return false; }
+
+                def executed: result<Captured> = capture(memory, program.value, empty[..]);
+                if executed.erroneous { return false; }
+
+                def outcome: Captured = executed.value;
+                if !strings.is_empty(outcome.text) { return false; }
+
+                if item.trap { if outcome.signal != expected_signal { std.println(name.value); return false; } }
+                else { if !outcome.success { std.println(name.value); return false; } }
+            }
+        }
+    }
+
+    std.println("42 batch coverage structure and execution cases passed");
+
+    return true;
+}
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def bridge: result<string> = process.arg(&memory, 1);
+    if bridge.erroneous { return 2; }
+
+    def mode: result<string> = process.arg(&memory, 2);
+    if mode.erroneous { return 2; }
+
+    def parent: result<string> = process.arg(&memory, 3);
+    if parent.erroneous { return 2; }
+
+    def created: result<string> = fs.temp_dir(&memory, parent.value, "float-batch-coverage", 65536);
+    if created.erroneous { std.println(created.error.message); return 2; }
+
+    def work: string = created.value;
+    defer cleanup_tree(work);
+
+    if !suite(&memory, bridge.value, mode.value, work) { return 1; }
+
+    return 0;
+}

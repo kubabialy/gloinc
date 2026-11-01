@@ -1,0 +1,49 @@
+import "@std";
+
+def pub tree32(a: f32, b: f32, c: f32, d: f32) -> f32 { return (a * a + b * b) * c + d; }
+
+def pub subtract32(a: f32, b: f32, c: f32) -> f32 { return a * b - c; }
+
+def pub multiply32(a: f32, b: f32, c: f32) -> f32 { return (a + b) * c; }
+
+def pub add32(a: f32, b: f32, c: f32, d: f32) -> f32 { return (a + b) + (c + d); }
+
+def pub shared32(a: f32, b: f32, c: f32) -> f32 { def p: f32 = a * b; return p + p + c; }
+
+def pub discarded32(a: f32, b: f32, c: f32) -> f32 { def unused: f32 = (a + b) * c; return a; }
+
+def pub effect32(a: f32, b: f32, c: f32) -> f32 { def p: f32 = a * b; std.println("middle"); return p + c; }
+
+def pub branch32(a: f32, b: f32, c: f32, take: bool) -> f32 { def p: f32 = a * b; if take { return p + c; } return c; }
+
+def pub divisor32(a: f32, b: f32, c: f32) -> f32 { return (a * b) / c; }
+
+def pub read32(a: f32, b: f32, c: &const f32) -> f32 { def p: f32 = a * b; return p + *c; }
+
+def pub write32(a: f32, b: f32, c: &f32) -> f32 { def p: f32 = a * b; *c = a; return p + b; }
+
+def pub independent32(a: f32, b: f32, c: f32, d: f32) -> f32 { def p: f32 = a * b; def unused: f32 = c * d; return p + c; }
+
+def pub tree64(a: f64, b: f64, c: f64, d: f64) -> f64 { return (a * a + b * b) * c + d; }
+
+def pub subtract64(a: f64, b: f64, c: f64) -> f64 { return a * b - c; }
+
+def pub multiply64(a: f64, b: f64, c: f64) -> f64 { return (a + b) * c; }
+
+def pub add64(a: f64, b: f64, c: f64, d: f64) -> f64 { return (a + b) + (c + d); }
+
+def pub shared64(a: f64, b: f64, c: f64) -> f64 { def p: f64 = a * b; return p + p + c; }
+
+def pub discarded64(a: f64, b: f64, c: f64) -> f64 { def unused: f64 = (a + b) * c; return a; }
+
+def pub effect64(a: f64, b: f64, c: f64) -> f64 { def p: f64 = a * b; std.println("middle"); return p + c; }
+
+def pub branch64(a: f64, b: f64, c: f64, take: bool) -> f64 { def p: f64 = a * b; if take { return p + c; } return c; }
+
+def pub divisor64(a: f64, b: f64, c: f64) -> f64 { return (a * b) / c; }
+
+def pub read64(a: f64, b: f64, c: &const f64) -> f64 { def p: f64 = a * b; return p + *c; }
+
+def pub write64(a: f64, b: f64, c: &f64) -> f64 { def p: f64 = a * b; *c = a; return p + b; }
+
+def pub independent64(a: f64, b: f64, c: f64, d: f64) -> f64 { def p: f64 = a * b; def unused: f64 = c * d; return p + c; }

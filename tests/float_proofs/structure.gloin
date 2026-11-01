@@ -1,0 +1,137 @@
+// Named kernels let the Gloin driver verify the lowering proof, not just outputs.
+
+def chain32(value: f32) -> f32 { return (value * 0.5) * 2.0; }
+
+def join32(value: f32, take: bool) -> f32 {
+    def mut local: f32 = value * 1.0;
+    if take { local = local * -0.5; } else { local = local / 4.0; }
+
+    return local * 2.0;
+}
+
+def loop32(value: f32, n: u64) -> f32 {
+    def mut local: f32 = value * 1.0;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { local = local * 0.5; }
+
+    return local;
+}
+
+def growth32(n: u64) -> f32 {
+    def mut local: f32 = 1.0;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { local = local * 2.0; }
+
+    return local * 0.0;
+}
+
+def unknown32(value: f32) -> f32 { return value * 0.5; }
+
+def divisor32(value: f32, divisor: f32) -> f32 { return (value * 1.0) / divisor; }
+
+def divide32(value: f32) -> f32 { return (value / 2.0) / 0.5; }
+
+def overwrite32(target: &f32, value: f32) -> void { *target = value; }
+
+def alias32(value: f32) -> f32 {
+    def mut local: f32 = 0.5;
+
+    overwrite32(&local, value);
+
+    return local * 2.0;
+}
+
+def late32(value: f32, n: u64) -> f32 {
+    def mut local: f32 = 1.0;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        local = local * 2.0;
+        if i == 0 { local = value; }
+    }
+
+    return local * 0.0;
+}
+
+def chain64(value: f64) -> f64 { return (value * 0.5) * 2.0; }
+
+def join64(value: f64, take: bool) -> f64 {
+    def mut local: f64 = value * 1.0;
+    if take { local = local * -0.5; } else { local = local / 4.0; }
+
+    return local * 2.0;
+}
+
+def loop64(value: f64, n: u64) -> f64 {
+    def mut local: f64 = value * 1.0;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { local = local * 0.5; }
+
+    return local;
+}
+
+def growth64(n: u64) -> f64 {
+    def mut local: f64 = 1.0;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 { local = local * 2.0; }
+
+    return local * 0.0;
+}
+
+def unknown64(value: f64) -> f64 { return value * 0.5; }
+
+def divisor64(value: f64, divisor: f64) -> f64 { return (value * 1.0) / divisor; }
+
+def divide64(value: f64) -> f64 { return (value / 2.0) / 0.5; }
+
+def overwrite64(target: &f64, value: f64) -> void { *target = value; }
+
+def alias64(value: f64) -> f64 {
+    def mut local: f64 = 0.5;
+
+    overwrite64(&local, value);
+
+    return local * 2.0;
+}
+
+def late64(value: f64, n: u64) -> f64 {
+    def mut local: f64 = 1.0;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        local = local * 2.0;
+        if i == 0 { local = value; }
+    }
+
+    return local * 0.0;
+}
+
+def sum32(value: f32) -> f32 { def half: f32 = value / 2.0; return half + half; }
+
+def difference32(value: f32) -> f32 { def half: f32 = value / 2.0; return half - half; }
+
+def sum64(value: f64) -> f64 { def half: f64 = value / 2.0; return half + half; }
+
+def difference64(value: f64) -> f64 { def half: f64 = value / 2.0; return half - half; }
+
+def conditional32(value: f32, n: u64, take: bool) -> f32 {
+    def mut local: f32 = value * 1.0;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        if take { local = local * 0.5; }
+
+        local = local * 1.0;
+    }
+
+    return local;
+}
+
+def conditional64(value: f64, n: u64, take: bool) -> f64 {
+    def mut local: f64 = value * 1.0;
+
+    for def mut i: u64 = 0; i < n; i = i + 1 {
+        if take { local = local * 0.5; }
+
+        local = local * 1.0;
+    }
+
+    return local;
+}

@@ -28,3 +28,6 @@ selection before older pages' inline handlers, preserving their release text.
 Build `gloin_checks`, then run `build/gloin-check-docs` from the repository root after editing
 the site. Each versioned page links to the installed Markdown API guides for exact
 function signatures, ownership, costs, and errors.
+
+The prepared `0.2.2/` guide is a candidate. Published 0.2.1 remains the default
+until the release gates pass and publication is authorized.

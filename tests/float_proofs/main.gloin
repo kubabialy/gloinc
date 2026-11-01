@@ -1,0 +1,215 @@
+import "@arena";
+import "@process";
+import "@std";
+import "@strings";
+import "@time";
+
+def cleanup_child(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def invoke_finite(executable: string, fixture: string, width: string, mode: string, value: string, expected: string, trap: bool) -> bool {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def native_args: [string; 3] = {width, mode, value};
+    def jit_args: [string; 6]    = {"--jit", fixture, "--", width, mode, value};
+    def mut args: [const string] = native_args[..];
+
+    if !strings.is_empty(fixture) { args = jit_args[..]; }
+
+    def started: result<process.Child> = process.start_piped(&owner, executable, args);
+
+    if started.erroneous { std.println(started.error.message); return false; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup_child(&child);
+
+    def input: [u8; 0]                   = zeroed;
+    def mut output: [u8; 1024]           = zeroed;
+    def mut errors: [u8; 4096]           = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration {nanoseconds: 10000000000});
+
+    if captured.erroneous { std.println(captured.error.message); return false; }
+
+    def outcome: process.Output = captured.value;
+    def zero: u64               = 0;
+
+    if trap { return !outcome.status.exited && outcome.status.signal != 0 && strings.equal(strings.view_bytes(outcome.stdout), expected); }
+
+    def ok: bool = outcome.status.success() && strings.equal(strings.view_bytes(outcome.stdout), expected) && outcome.stderr.len == zero;
+    if !ok { std.println(width); std.println(mode); std.println(value); std.println(strings.view_bytes(outcome.stdout)); std.println(expected); }
+
+    return ok;
+}
+
+def suite(executable: string, fixture: string) -> bool {
+    def values: [string; 9] = {"0", "-0", "1", "-1", "2", "-2", "4", "-4", "0.5"};
+    def scaled: [string; 9] = {"0\n", "-0\n", "0.5\n", "-0.5\n", "1\n", "-1\n", "2\n", "-2\n", "0.25\n"};
+    def widths: [string; 2] = {"32", "64"};
+
+    for def mut w: u64 = 0; w < 2; w = w + 1 {
+        for def mut i: u64 = 0; i < 9; i = i + 1 {
+            def mut zero_text: string = "0\n";
+            if strings.starts_with(values[i], "-") { zero_text = "-0\n"; }
+            if !invoke_finite(executable, fixture, widths[w], "scale", values[i], scaled[i], false)
+                || !invoke_finite(executable, fixture, widths[w], "zero", values[i], zero_text, false) { return false; }
+        }
+
+        if !invoke_finite(executable, fixture, widths[w], "left", "4", "-2\n", false) { return false; }
+
+        def mut huge: string = "1e308";
+        if w == 0 { huge = "3e38"; }
+        if !invoke_finite(executable, fixture, widths[w], "chain", "4", "4\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "divide", "4", "4\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "sum", "4", "4\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "difference", "4", "0\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "chain", "-0", "-0\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "loop", "-0", "-0\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "join", "-4", "4\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "join", "4", "2\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "loop", "4", "0.5\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "conditional", "4", "0.5\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "conditional", "-4", "-4\n", false)
+            || !invoke_finite(executable, fixture, widths[w], "divzero", "0", "", true)
+            || !invoke_finite(executable, fixture, widths[w], "loopgrow", "0", "", true)
+            || !invoke_finite(executable, fixture, widths[w], "late", huge, "", true)
+            || !invoke_finite(executable, fixture, widths[w], "alias", huge, "", true)
+            || !invoke_finite(executable, fixture, widths[w], "discard", huge, "", true)
+            || !invoke_finite(executable, fixture, widths[w], "effect", huge, "before\n", true) { return false; }
+    }
+
+    if !invoke_finite(executable, fixture, "64", "scale", "1.7976931348623157e308", "8.988465674311579e+307\n", false)
+        || !invoke_finite(executable, fixture, "64", "scale", "-1.7976931348623157e308", "-8.988465674311579e+307\n", false)
+        || !invoke_finite(executable, fixture, "64", "scale", "4.9406564584124654e-324", "0\n", false)
+        || !invoke_finite(executable, fixture, "64", "round", "1.0000000000000002", "0\n", false)
+        || !invoke_finite(executable, fixture, "32", "round", "1.0000001192092896", "0\n", false)
+        || !invoke_finite(executable, fixture, "32", "scale", "1.401298464324817e-45", "0\n", false) { return false; }
+    if !invoke_finite(executable, fixture, "64", "chain", "1.7976931348623157e308", "1.7976931348623157e+308\n", false)
+        || !invoke_finite(executable, fixture, "64", "chain", "-1.7976931348623157e308", "-1.7976931348623157e+308\n", false)
+        || !invoke_finite(executable, fixture, "64", "divide", "1.7976931348623157e308", "1.7976931348623157e+308\n", false)
+        || !invoke_finite(executable, fixture, "64", "sum", "1.7976931348623157e308", "1.7976931348623157e+308\n", false)
+        || !invoke_finite(executable, fixture, "64", "difference", "1.7976931348623157e308", "0\n", false)
+        || !invoke_finite(executable, fixture, "64", "chain", "4.9406564584124654e-324", "0\n", false)
+        || !invoke_finite(executable, fixture, "32", "chain", "1.401298464324817e-45", "0\n", false) { return false; }
+    if !invoke_finite(executable, fixture, "64", "producer", "1e308", "", true)
+        || !invoke_finite(executable, fixture, "32", "producer", "3e38", "", true)
+        || !invoke_finite(executable, fixture, "64", "grow", "1e308", "", true)
+        || !invoke_finite(executable, fixture, "32", "grow", "3e38", "", true)
+        || !invoke_finite(executable, fixture, "64", "mask", "1e308", "", true) { return false; }
+
+    return true;
+}
+
+def occurrences(text: string, needle: string) -> u64 {
+    def mut rest: string              = text;
+    def mut count: u64                = 0;
+    def mut found: strings.FindResult = strings.find(rest, needle);
+
+    while found.found {
+        count = count + 1;
+
+        def start: u64           = found.offset + strings.byte_length(needle);
+        def next: result<string> = strings.slice_bytes(rest, start, strings.byte_length(rest) - start);
+
+        if next.erroneous { return 999; }
+
+        rest  = next.value;
+        found = strings.find(rest, needle);
+    }
+
+    return count;
+}
+
+def structure(compiler: string, source: string) -> bool {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def args: [string; 2]              = {"--emit-llvm", source};
+    def started: result<process.Child> = process.start_piped(&owner, compiler, args[..]);
+
+    if started.erroneous { return false; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup_child(&child);
+
+    def input: [u8; 0]                   = zeroed;
+    def mut output: [u8; 262144]         = zeroed;
+    def mut errors: [u8; 4096]           = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration {nanoseconds: 30000000000});
+
+    if captured.erroneous { return false; }
+
+    def outcome: process.Output = captured.value;
+    if !outcome.status.success() { std.println(strings.view_bytes(outcome.stderr)); return false; }
+
+    def ir: string          = strings.view_bytes(outcome.stdout);
+    def names: [string; 12] = {"chain", "join", "loop", "growth", "unknown", "divisor", "divide", "alias", "late", "sum", "difference", "conditional"};
+    def expected: [u64; 12] = {1, 1, 1, 1, 1, 2, 1, 1, 2, 1, 1, 2};
+    def widths: [string; 2] = {"32(", "64("};
+
+    for def mut w: u64 = 0; w < 2; w = w + 1 {
+        for def mut i: u64 = 0; i < 12; i = i + 1 {
+            def name: result<string> = strings.concat(&owner, names[i], widths[w], 128);
+            if name.erroneous { return false; }
+
+            def marker: result<string> = strings.concat(&owner, "llvm.func @", name.value, 128);
+            if marker.erroneous { return false; }
+
+            def start: strings.FindResult = strings.find(ir, marker.value);
+            if !start.found { std.println(marker.value); return false; }
+
+            def tail: result<string> = strings.slice_bytes(ir, start.offset, strings.byte_length(ir) - start.offset);
+            if tail.erroneous { return false; }
+
+            def end: strings.FindResult = strings.find(tail.value, "\n  }");
+            if !end.found { return false; }
+
+            def body: result<string> = strings.slice_bytes(tail.value, 0, end.offset);
+            if body.erroneous { return false; }
+            if occurrences(body.value, "llvm.fcmp \"oge\"") != expected[i]
+                || occurrences(body.value, "llvm.fcmp \"ole\"") != expected[i] {
+                std.println(name.value); std.println(body.value); return false;
+            }
+        }
+    }
+
+    std.println("24 floating proof structure cases passed");
+
+    return true;
+}
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def executable: result<string> = process.arg(&owner, 1);
+    if executable.erroneous { return 2; }
+
+    if strings.equal(executable.value, "--structure") {
+        def compiler: result<string> = process.arg(&owner, 2);
+        if compiler.erroneous { return 2; }
+
+        def source: result<string> = process.arg(&owner, 3);
+        if source.erroneous { return 2; }
+        if !structure(compiler.value, source.value) { return 1; }
+
+        return 0;
+    }
+
+    def mut fixture: string = "";
+
+    if process.arg_count() == 3 {
+        def path: result<string> = process.arg(&owner, 2);
+        if path.erroneous { return 2; }
+
+        fixture = path.value;
+    }
+
+    if !suite(executable.value, fixture) { std.println("finite arithmetic fixtures failed"); return 1; }
+
+    std.println("finite arithmetic fixtures passed");
+
+    return 0;
+}

@@ -1,0 +1,215 @@
+import "@arena";
+import "@fs";
+import "@process";
+import "@std";
+import "@strings";
+import "@time";
+import "../support/tool_runner";
+import "../../tools/checks/common";
+
+def struct Case {
+    def name: string,
+    def module: string,
+    def save: string,
+    def initializer: string,
+    def initialize: string,
+    def setup: string,
+    def entry: string,
+    def extra: string,
+    def first: string,
+    def fast: bool,
+    def execute: bool,
+    def trap: bool,
+}
+
+def struct Captured { def success: bool, def signal: i32, def text: string, }
+
+def cleanup_child(child: &process.Child) -> void {
+    def closed: result<void> = child.close();
+    if closed.erroneous { std.println(closed.error.message); }
+}
+
+def capture(memory: &arena.GeneralArena, executable: string, args: [const string]) -> result<Captured> {
+    def started: result<process.Child> = process.start_piped(memory, executable, args);
+    if started.erroneous { return started.error; }
+
+    def mut child: process.Child = started.value;
+    defer cleanup_child(&child);
+
+    def input: [u8; 0]                   = zeroed;
+    def mut output: [u8; 1024]           = zeroed;
+    def mut errors: [u8; 8192]           = zeroed;
+    def captured: result<process.Output> = child.communicate(input[..], output[..], errors[..], time.Duration {nanoseconds: 30000000000});
+
+    if captured.erroneous { return captured.error; }
+
+    def outcome: process.Output = captured.value;
+    def zero: u64               = 0;
+
+    if outcome.stderr.len > zero { std.println(strings.view_bytes(outcome.stderr)); }
+
+    def text: result<string> = strings.concat(memory, strings.view_bytes(outcome.stdout), "", 1024);
+    if text.erroneous { return text.error; }
+
+    return Captured { success: outcome.status.success(), signal: outcome.status.signal, text: text.value };
+}
+
+def cleanup_tree(path: string) -> void {
+    def removed: result<void> = tool_runner.remove_fixture_tree(path, 8);
+    if removed.erroneous { std.println(removed.error.message); }
+}
+
+def suite(memory: &arena.GeneralArena, bridge: string, mode: string, work: string) -> bool {
+    def control: string     = "module { func.func @main() -> i32 { \"llvm.intr.trap\"() : () -> () llvm.unreachable } }";
+    def saved: result<void> = tool_runner.record(memory, work, "control", ".mlir", control);
+
+    if saved.erroneous { std.println(saved.error.message); return false; }
+
+    def source: result<string> = tool_runner.joined(memory, work, "control.mlir");
+    if source.erroneous { return false; }
+
+    def binary: result<string> = tool_runner.joined(memory, work, "control");
+    if binary.erroneous { return false; }
+
+    def build_control: [string; 3] = {mode, source.value, binary.value};
+    def built: result<Captured>    = capture(memory, bridge, build_control[..]);
+
+    if built.erroneous { std.println(built.error.message); return false; }
+    if !built.value.success { return false; }
+
+    def empty: [string; 0]    = {};
+    def ran: result<Captured> = capture(memory, binary.value, empty[..]);
+
+    if ran.erroneous { return false; }
+
+    def expected_signal: i32 = ran.value.signal;
+    if expected_signal == 0 { return false; }
+
+    def template: string = "$MODULE {\n func.func @main() -> i32 {\n  $SAVE\n  %a = \"gloin.stack_alloc\"() <{element_type = !llvm.array<4 x $F>, source_type = !gloin.array<$F, 4>}> : () -> !llvm.ptr\n  %init = llvm.mlir.$INITIALIZER : !llvm.array<4 x $F>\n  $INITIALIZE\n  %zero = arith.constant 0 : i64\n  %four = arith.constant 4 : i64\n  %one = arith.constant 1 : i64\n  %code = arith.constant 0 : i32\n  %first_constant = arith.constant $FIRST : $F\n  %first = llvm.freeze %first_constant : $F\n  %two = arith.constant 2.0 : $F\n  $SETUP\n  $ENTRY\n  cf.br ^loop(%zero : i64)\n ^loop(%i: i64):\n  %more = \"gloin.checked_int_compare\"(%i, %four) <{kind = \"<\", is_signed = false}> : (i64, i64) -> i1\n  cf.cond_br %more, ^body, ^exit\n ^body:\n  %pa = \"gloin.array_element_address\"(%a, %i) <{array_type = !llvm.array<4 x $F>, source_type = !gloin.array<$F, 4>}> : (!llvm.ptr, i64) -> !llvm.ptr\n  %p = \"gloin.checked_float_binary\"(%first, %two) <{kind = \"*\"}> : ($F, $F) -> $F\n  $EXTRA\n  cf.cond_br %condition, ^yes, ^no\n ^yes:\n  %q = \"gloin.checked_float_binary\"(%p, %other) <{kind = \"+\"}> : ($F, $F) -> $F\n  \"gloin.store\"(%q, %pa) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\n  cf.br ^latch\n ^no:\n  \"gloin.store\"(%p, %pa) <{source_type = $F}> : ($F, !llvm.ptr) -> ()\n  cf.br ^latch\n ^latch:\n  %next = \"gloin.checked_int_binary\"(%i, %one) <{kind = \"+\", is_signed = false}> : (i64, i64) -> i64\n  cf.br ^loop(%next : i64)\n ^exit:\n  return %code : i32\n }\n}";
+    def cases: [Case; 14] = {
+        Case { name: "normal", module: "module", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true\n%other = arith.constant 0.0 : $F", entry: "", extra: "", first: "1.0", fast: true, execute: true, trap: false },
+        Case { name: "nan", module: "module", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true\n%other = arith.constant 0.0 : $F", entry: "", extra: "", first: "0.0", fast: true, execute: true, trap: true },
+        Case { name: "infinity", module: "module", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true\n%other = arith.constant 0.0 : $F", entry: "", extra: "", first: "$HUGE", fast: true, execute: true, trap: true },
+        Case { name: "poison", module: "module", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = llvm.mlir.poison : i1\n%other = llvm.mlir.poison : $F", entry: "", extra: "", first: "$HUGE", fast: true, execute: true, trap: true },
+        Case { name: "undef", module: "module", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = llvm.mlir.undef : i1\n%other = llvm.mlir.undef : $F", entry: "", extra: "", first: "$HUGE", fast: true, execute: true, trap: true },
+        Case { name: "loaded-poison", module: "module", save: "", initializer: "poison", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true", entry: "", extra: "%other = \"gloin.load\"(%pa) <{source_type = $F, layout_type = $F}> : (!llvm.ptr) -> $F", first: "$HUGE", fast: true, execute: true, trap: true },
+        Case { name: "loaded-undef", module: "module", save: "", initializer: "undef", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true", entry: "", extra: "%other = \"gloin.load\"(%pa) <{source_type = $F, layout_type = $F}> : (!llvm.ptr) -> $F", first: "$HUGE", fast: true, execute: true, trap: true },
+        Case { name: "unsafe-read", module: "module", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true\n%null = llvm.mlir.zero : !llvm.ptr", entry: "", extra: "%other = llvm.load %null : !llvm.ptr -> $F", first: "$HUGE", fast: false, execute: true, trap: true },
+        Case { name: "volatile", module: "module", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true\n%other = arith.constant 0.0 : $F", entry: "", extra: "%unused = llvm.load volatile %pa : !llvm.ptr -> $F", first: "$HUGE", fast: false, execute: true, trap: true },
+        Case { name: "width-mismatch", module: "module", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true\n%other = arith.constant 0.0 : $F", entry: "", extra: "%unused = \"gloin.load\"(%pa) <{source_type = $OTHER, layout_type = $OTHER}> : (!llvm.ptr) -> $OTHER", first: "$HUGE", fast: false, execute: true, trap: true },
+        Case { name: "missing-init", module: "module", save: "", initializer: "zero", initialize: "", setup: "%condition = arith.constant true\n%other = arith.constant 0.0 : $F", entry: "", extra: "", first: "$HUGE", fast: false, execute: true, trap: true },
+        Case { name: "restore", module: "module", save: "%saved = llvm.intr.stacksave : !llvm.ptr", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true\n%other = arith.constant 0.0 : $F", entry: "llvm.intr.stackrestore %saved : !llvm.ptr", extra: "", first: "$HUGE", fast: false, execute: false, trap: true },
+        Case { name: "layout32", module: "module attributes {llvm.data_layout = \"e-p:32:32\"}", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true\n%other = arith.constant 0.0 : $F", entry: "", extra: "", first: "$HUGE", fast: false, execute: false, trap: true },
+        Case { name: "stride", module: "module attributes {llvm.data_layout = \"e-f32:64-f64:128\"}", save: "", initializer: "zero", initialize: "\"gloin.store\"(%init, %a) <{source_type = !gloin.array<$F, 4>}> : (!llvm.array<4 x $F>, !llvm.ptr) -> ()", setup: "%condition = arith.constant true\n%other = arith.constant 0.0 : $F", entry: "", extra: "", first: "$HUGE", fast: false, execute: false, trap: true }
+    };
+    def widths: [string; 2]   = {"f32", "f64"};
+    def extremes: [string; 2] = {"3.0e38", "1.0e308"};
+
+    for def mut w: u64 = 0; w < 2; w = w + 1 {
+        for def mut i: u64 = 0; i < 14; i = i + 1 {
+            def item: Case                 = cases[i];
+            def replacements: [string; 12] = {"$MODULE", "$SAVE", "$INITIALIZER", "$INITIALIZE", "$SETUP", "$ENTRY", "$EXTRA", "$FIRST", "$HUGE", "$OTHER", "$F", "$NONE"};
+            def mut other: string          = "f32";
+
+            if w == 0 { other = "f64"; }
+
+            def values: [string; 12] = {item.module, item.save, item.initializer, item.initialize, item.setup, item.entry, item.extra, item.first, extremes[w], other, widths[w], ""};
+            def mut text: string     = template;
+
+            for def mut j: u64 = 0; j < 12; j = j + 1 {
+                def replaced: result<string> = strings.replace_all(memory, text, replacements[j], values[j], 65536);
+                if replaced.erroneous { return false; }
+
+                text = replaced.value;
+            }
+
+            if strings.equal(item.name, "nan") || strings.equal(item.name, "infinity") {
+                def mut arithmetic: string = "arith.addf %first_constant, %first_constant";
+                if strings.equal(item.name, "nan") { arithmetic = "arith.divf %first_constant, %first_constant"; }
+
+                def replaced: result<string> = strings.replace_all(memory, text, "llvm.freeze %first_constant", arithmetic, 65536);
+                if replaced.erroneous { return false; }
+
+                text = replaced.value;
+            }
+
+            def name: result<string> = strings.concat(memory, item.name, widths[w], 256);
+            if name.erroneous { return false; }
+
+            def recorded: result<void> = tool_runner.record(memory, work, name.value, ".mlir", text);
+            if recorded.erroneous { std.println(recorded.error.message); return false; }
+
+            def leaf: result<string> = strings.concat(memory, name.value, ".mlir", 256);
+            if leaf.erroneous { return false; }
+
+            def input: result<string> = tool_runner.joined(memory, work, leaf.value);
+            if input.erroneous { return false; }
+
+            def output_leaf: result<string> = strings.concat(memory, name.value, ".lowered", 256);
+            if output_leaf.erroneous { return false; }
+
+            def output: result<string> = tool_runner.joined(memory, work, output_leaf.value);
+            if output.erroneous { return false; }
+
+            def emit_args: [string; 3]    = {"emit", input.value, output.value};
+            def emitted: result<Captured> = capture(memory, bridge, emit_args[..]);
+
+            if emitted.erroneous { std.println(emitted.error.message); return false; }
+            if !emitted.value.success { std.println(name.value); return false; }
+
+            def lowered: result<string> = common.read(memory, output.value, 262144);
+            if lowered.erroneous { return false; }
+
+            def found: strings.FindResult = strings.find(lowered.value, ": i64, i1)");
+            if found.found != item.fast { std.println(name.value); std.println(lowered.value); return false; }
+
+            if item.execute {
+                def program: result<string> = tool_runner.joined(memory, work, name.value);
+                if program.erroneous { return false; }
+
+                def args: [string; 3]          = {mode, input.value, program.value};
+                def compiled: result<Captured> = capture(memory, bridge, args[..]);
+
+                if compiled.erroneous { std.println(compiled.error.message); return false; }
+                if !compiled.value.success { std.println(name.value); return false; }
+
+                def executed: result<Captured> = capture(memory, program.value, empty[..]);
+                if executed.erroneous { return false; }
+
+                def outcome: Captured = executed.value;
+                if !strings.is_empty(outcome.text) { return false; }
+
+                if item.trap { if outcome.signal != expected_signal { std.println(name.value); return false; } }
+                else { if !outcome.success { std.println(name.value); return false; } }
+            }
+        }
+    }
+
+    std.println("28 mixed-IR structure and 22 execution cases passed");
+
+    return true;
+}
+
+def main() -> i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def bridge: result<string> = process.arg(&memory, 1);
+    if bridge.erroneous { return 2; }
+
+    def mode: result<string> = process.arg(&memory, 2);
+    if mode.erroneous { return 2; }
+
+    def parent: result<string> = process.arg(&memory, 3);
+    if parent.erroneous { return 2; }
+
+    def created: result<string> = fs.temp_dir(&memory, parent.value, "float-batch-ir", 65536);
+    if created.erroneous { std.println(created.error.message); return 2; }
+
+    def work: string = created.value;
+    defer cleanup_tree(work);
+
+    if !suite(&memory, bridge.value, mode.value, work) { return 1; }
+
+    return 0;
+}

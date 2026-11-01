@@ -10,8 +10,16 @@ permissions:
 
 jobs:
   linux:
-    name: Ubuntu 24.04 x86_64 / LLVM 21.1.8
-    runs-on: ubuntu-24.04
+    name: Ubuntu 24.04 ${{ matrix.arch }} / LLVM 21.1.8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     # Fresh build, both package matrices, and serial/parallel complete audits.
     # Individual CTest and child-process deadlines remain separately bounded.
     timeout-minutes: 90
@@ -87,7 +95,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: compiler-linux-ci-reports
+          name: compiler-linux-${{ matrix.arch }}-ci-reports
           retention-days: 14
           if-no-files-found: error
           path: |

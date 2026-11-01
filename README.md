@@ -1,5 +1,10 @@
 # Gloin
 
+**0.2.2 release candidate:** this source tree includes checked-floating-point
+optimizations and their regression tests. See the [candidate notes](docs/release-notes-0.2.2.md)
+and [validation gates](docs/release-0.2.2.md#verification-boundary). The latest
+published download below remains 0.2.1 until candidate validation is complete.
+
 Gloin is an experimental language with explicit types, manual memory management,
 and native executables. Its compiler, `gloinc`, is built on LLVM/MLIR, with
 language operations represented in the GloinIR dialect.
