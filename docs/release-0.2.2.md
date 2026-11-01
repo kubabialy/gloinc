@@ -1,8 +1,7 @@
-# Gloinc 0.2.2 candidate release guide
+# Gloinc 0.2.2 release guide
 
 Version 0.2.2 is a compatible compiler optimization and correctness release.
 It adds conservative checked-float proofs and private-array SIMD batching.
-This candidate has not been published.
 The [release notes](release-notes-0.2.2.md) describe the changes and compatibility;
 the [0.2.2 HTML guide](site/0.2.2/index.html) teaches the supported language.
 
@@ -110,9 +109,11 @@ retains UBSan; leak detection is outside the macOS validation claim. See the
 
 ## Release provenance
 
-The candidate is based on upstream 0.2.1 commit
+This release is based on upstream 0.2.1 commit
 `e321d076656319b7b83a8e845652d49b5636a54f` plus the cumulative checked-float
-patch series and 0.2.2 release preparation. No 0.2.2 tag or release has been
-published by this preparation. Before publishing, record the final commit,
-platform run URLs, package checksums and verification results. The documentation
-root continues to open published 0.2.1; the 0.2.2 guide is labeled candidate.
+patch series and 0.2.2 release preparation. The publishing job runs only after
+the final master commit passes all three platform jobs. Release assets include
+`gloinc-0.2.2-provenance.json`, which identifies that commit, its source tree,
+the CI run and SHA-256 checksums. The validation archive contains platform
+environments, core/package results, complete-suite classifications and sanitizer
+evidence. The version tag must resolve to the recorded commit.

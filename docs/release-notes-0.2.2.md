@@ -1,12 +1,12 @@
-# Gloin 0.2.2 — release candidate
+# Gloin 0.2.2
 
 0.2.2 is a compatible compiler optimization and correctness release. It reduces
 redundant floating-point checks and enables SIMD in more proved-safe private-array
 loops. There are no new language features or standard-library APIs. Hash maps
 remain the functionality introduced in 0.2.1.
 
-This candidate is not published. See the [release guide](release-0.2.2.md),
-[candidate language guide](site/0.2.2/index.html), and
+See the [release guide](release-0.2.2.md),
+[language guide](site/0.2.2/index.html), and
 [preparation record](release-0.2.2-draft.md).
 
 ## Checked floating-point optimization

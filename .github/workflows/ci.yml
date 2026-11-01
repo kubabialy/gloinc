@@ -275,3 +275,21 @@ jobs:
             build-ci-sanitized/core.xml
             build-ci-sanitized/Testing/Temporary/
             build-ci-sanitized/CMakeCache.txt
+
+  release:
+    name: Publish validated 0.2.2 packages
+    needs: [linux, macos]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'kubabialy/gloinc' && contains(github.event.head_commit.message, '[publish v0.2.2]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Publish packages and validation provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-0.2.2.sh
