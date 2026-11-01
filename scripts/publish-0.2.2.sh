@@ -59,16 +59,24 @@ NODE
 # Preserve an existing published release; a rerun must never replace its assets.
 gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > release-evidence/releases.json
 release_state=$(node -e 'const r=require("./release-evidence/releases.json").find(r=>r.tag_name==="v0.2.2");process.stdout.write(r?(r.draft?"draft":"published"):"missing")')
+# Pin the tag explicitly: a draft release may not create its tag until published.
+tag_count=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag" \
+  --jq '[.[] | select(.ref == "refs/tags/v0.2.2")] | length')
+[[ "$tag_count" == 0 || "$tag_count" == 1 ]]
+if [[ "$tag_count" == 0 ]]; then
+  gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+    -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+fi
+tag_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
+[[ "$tag_commit" == "$GITHUB_SHA" ]]
 if [[ "$release_state" != missing ]]; then
-  tag_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
-  [[ "$tag_commit" == "$GITHUB_SHA" ]]
   if [[ "$release_state" == published ]]; then
     echo '0.2.2 is already published from this commit; preserving its assets.'
     exit 0
   fi
 else
   gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-    --draft --title 'Gloin 0.2.2' --notes-file release-evidence/release-notes.md
+    --verify-tag --draft --title 'Gloin 0.2.2' --notes-file release-evidence/release-notes.md
 fi
 gh release upload "$tag" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
 gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
