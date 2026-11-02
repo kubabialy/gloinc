@@ -433,3 +433,26 @@ Local reports are `build/ipv6-core.xml`, `build/ipv6-linux.xml`,
 development checks; hosted x86_64, complete release classification and live
 macOS utun interoperability remain release/deployment gates. The earlier IPv4
 performance measurements do not establish IPv6 performance.
+
+### IPv6 review validation, 2026-11-02
+
+Raw packet reads now reject oversized datagrams even when their initial bytes
+form a valid maximum-size packet. Regressions cover both raw and family-prefixed
+framing. Focused fixtures also independently check packed header bytes and
+pseudo-header sums, isolate reassembly failures, verify the checked ISN bridge,
+and deliver out-of-order fragments through endpoint UDP dispatch.
+
+The fresh macOS ARM64 core run passed **1,138 of 1,139 tests**; the existing
+filesystem/process signature matrix hit its 30-second timeout under concurrent
+load. That unchanged test passed alone in **7.90 seconds**. Every core case has
+a passing result; the original timeout report is retained alongside the rerun.
+**44 Linux ARM64 networking/TLS tests**, **49 relocated-package networking,
+packed and endian tests**, and **15 macOS native ASan/UBSan tests** passed with
+no skips. The installed server type-checks and compiles at `-O2`.
+
+Fresh isolated Linux TUN runs passed HTTP and verified HTTPS against kernel TCP
+and Python TLS peers for both IPv4 and IPv6, including IPv6 `ping -6`. The test
+catalog contains **1,186 tests**. Gloin formatting, nine HTML pages and updated
+Markdown link targets passed. Local reports and the original failed core run
+are retained under `build/ipv6-review-2026-11-02/reports/`. These checks do not
+extend the feature or platform limits stated above.
