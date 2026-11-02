@@ -1415,3 +1415,17 @@ TEST_F(NetworkLibraryTest, BufferedTlsAndHttpHttpsOverLossyGloinTcpWorkInAllMode
         }
     }
 }
+
+TEST_F(NetworkLibraryTest, Ipv6HeaderLayoutAndPseudoHeaderChecksumsWorkInAllModes) {
+    const auto file =
+        (std::filesystem::path(__FILE__).parent_path() / "fixtures/network/ipv6_headers.gloin")
+            .string();
+    expect_success(invoke({file}), "");
+    for (const auto *mode : {"-O0", "-O2"}) {
+        SCOPED_TRACE(mode);
+        const auto output = directory + "/ipv6-headers";
+        const auto compiled = invoke_raw({mode, "-o", output, file});
+        ASSERT_EQ(compiled.status, 0) << compiled.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(output, {output}, std::nullopt, {}, 30), 0);
+    }
+}

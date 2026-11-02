@@ -1,5 +1,7 @@
 # Packed network packets (0.3.0 development)
 
+For IPv6 wire records and pseudo-header checksums, see [IPv6](ipv6.md).
+
 `@packet` supplies byte-exact IPv4, UDP, and TCP header types, bounded packet
 validation, and checksum generation. It uses Gloin packed structs and endian
 integers directly. It performs no allocation or I/O. `@net` continues to provide

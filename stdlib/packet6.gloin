@@ -1,0 +1,104 @@
+// IPv6 wire representation and pseudo-header checksums. No packet dispatch.
+import "@packet";
+import "@memory";
+import "@status";
+
+def pub const ICMP: u8        = 58;
+def pub const MAX_PACKET: u64 = 65575;
+def pub const MAX_PREFIX: u64 = 1024;
+
+def pub packed struct(msb_first) Address {
+    def pub high: be_u64,
+    def pub low: be_u64,
+
+    def pub static unspecified() -> Address { return Address { high: 0, low: 0 }; }
+
+    def pub equal(self: &const Address, other: Address) -> bool { return self.high == other.high && self.low == other.low; }
+
+    def pub multicast(self: &const Address) -> bool { return self.high >= 0xff00000000000000; }
+
+    def pub unicast(self: &const Address) -> bool { return !self.multicast() && (self.high != 0 || self.low != 0); }
+}
+
+def pub packed struct(msb_first) Header {
+    def pub version: u4,
+    def pub dscp: u6,
+    def pub ecn: u2,
+    def pub flow_label: u20,
+    def pub payload_length: be_u16,
+    def pub next_header: u8,
+    def pub hop_limit: u8,
+    def pub source: Address,
+    def pub destination: Address,
+}
+
+def pub packed struct(msb_first) FragmentHeader {
+    def pub next_header: u8,
+    def pub reserved: u8,
+    def pub offset: u13,
+    def pub reserved_bits: u2,
+    def pub more: u1,
+    def pub identification: be_u32,
+}
+
+def packed struct(msb_first) PseudoHeader {
+    def source: Address, def destination: Address, def length: be_u32,
+    def zero: u24, def protocol: u8,
+}
+
+def packed struct(msb_first) Sum { def value: be_u16, }
+
+// omit == bytes.len verifies; otherwise omit identifies a two-byte checksum.
+def pub transport_checksum(source: Address, destination: Address, protocol: u8,
+    bytes: [const u8], omit: u64) -> result<be_u16> {
+    if bytes.len > 65535 || omit > bytes.len || (omit < bytes.len && bytes.len - omit < 2) {
+        return error("invalid IPv6 transport checksum bounds", status.INVALID, 0);
+    }
+
+    def length: result<be_u32> = be_u32(bytes.len);
+    if length.erroneous { return length.error; }
+
+    def mut pseudo: [u8; 40] = zeroed;
+    def written: result<void> = memory.write_packed<PseudoHeader>(pseudo[..], PseudoHeader {
+        source: source, destination: destination, length: length.value, zero: 0, protocol: protocol });
+
+    if written.erroneous { return written.error; }
+
+    def mut sum: packet.Checksum = packet.Checksum.create();
+    def added: result<void>      = sum.update(pseudo[..]);
+
+    if added.erroneous { return added.error; }
+
+    def before: result<void> = sum.update(bytes[..omit]);
+    if before.erroneous { return before.error; }
+
+    if omit < bytes.len {
+        def zero: [u8; 2]         = zeroed;
+        def skipped: result<void> = sum.update(zero[..]);
+
+        if skipped.erroneous { return skipped.error; }
+
+        def after: result<void> = sum.update(bytes[omit + 2..]);
+        if after.erroneous { return after.error; }
+    }
+
+    def value: result<be_u16> = sum.finish();
+    if value.erroneous { return value.error; }
+
+    return value.value;
+}
+
+def pub header(output: [u8], source: Address, destination: Address, protocol: u8, length: u64) -> result<void> {
+    if length < 40 || length > MAX_PACKET || output.len < length { return error("invalid IPv6 output length", status.OUT_OF_RANGE, 0); }
+
+    def size: u64             = length - 40;
+    def count: result<be_u16> = be_u16(size);
+
+    if count.erroneous { return count.error; }
+
+    def written: result<void> = memory.write_packed<Header>(output, Header { version: 6, dscp: 0, ecn: 0,
+        flow_label: 0, payload_length: count.value, next_header: protocol, hop_limit: 64, source: source, destination: destination });
+    if written.erroneous { return written.error; }
+
+    return;
+}
