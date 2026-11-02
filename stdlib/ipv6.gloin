@@ -1,0 +1,192 @@
+// Caller-owned IPv6 reassembly and UDP construction.
+import "@packet";
+import "@packet6";
+import "@memory";
+import "@status";
+
+def pub struct Datagram { def pub complete: bool, def pub bytes: [const u8], }
+
+def pub struct Reassembly {
+    def storage: [u8], def present: [u8], def timeout: u64,
+    def mut active: bool, def mut poisoned: bool,
+    def mut source: packet6.Address, def mut destination: packet6.Address,
+    def mut identification: be_u32, def mut protocol: u8,
+    def mut started: u64, def mut last_now: u64,
+    def mut head_size: u64, def mut previous: u64,
+    def mut final_size: u64, def mut have_end: bool,
+    def mut extent: u64, def mut more_extent: u64, def mut received: u64,
+    def mut not_ect: bool, def mut ect0: bool, def mut ect1: bool, def mut ce: bool,
+
+    // storage reserves MAX_PREFIX bytes before the fragmentable part. A poisoned
+    // tuple remains occupied until expiry so later fragments cannot resurrect it.
+    def pub static create(storage: [u8], present: [u8], timeout_ms: u64) -> result<Reassembly> {
+        if present.len == 0 || present.len > 65535 || storage.len < packet6.MAX_PREFIX + present.len
+            || timeout_ms == 0 || timeout_ms > 60000 { return error("invalid IPv6 reassembly storage or timeout", status.INVALID, 0); }
+
+        return Reassembly { storage: storage, present: present, timeout: timeout_ms,
+            active: false, poisoned: false, source: packet6.Address.unspecified(), destination: packet6.Address.unspecified(),
+            identification: 0, protocol: 0, started: 0, last_now: 0, head_size: 0, previous: 0,
+            final_size: 0, have_end: false, extent: 0, more_extent: 0, received: 0,
+            not_ect: false, ect0: false, ect1: false, ce: false };
+    }
+
+    def pub occupied(self: &const Reassembly) -> bool { return self.active; }
+
+    def pub matches(self: &const Reassembly, ip: packet6.Packet) -> bool {
+        return self.active && self.source.equal(ip.header.source) && self.destination.equal(ip.header.destination)
+            && self.identification == ip.identification;
+    }
+
+    def pub expire(self: &Reassembly, now_ms: u64) -> result<bool> {
+        if now_ms < self.last_now { return error("IPv6 clock moved backwards", status.INVALID, 0); }
+
+        self.last_now = now_ms;
+
+        if self.active && now_ms - self.started >= self.timeout { self.active = false; return true; }
+
+        return false;
+    }
+
+    def pub next_timeout_ms(self: &const Reassembly, now_ms: u64) -> result<u64> {
+        if now_ms < self.last_now { return error("IPv6 clock moved backwards", status.INVALID, 0); }
+        if !self.active { return 18446744073709551615; }
+        if now_ms - self.started >= self.timeout { return 0; }
+
+        return self.timeout - (now_ms - self.started);
+    }
+
+    def pub input(self: &Reassembly, bytes: [const u8], now_ms: u64) -> result<Datagram> {
+        def parsed: result<packet6.Packet> = packet6.parse(bytes);
+        if parsed.erroneous { return parsed.error; }
+
+        def ip: packet6.Packet = parsed.value;
+        if ip.discard { return error("discarded IPv6 extension", status.INVALID, 0); }
+
+        def expired: result<bool> = self.expire(now_ms);
+        if expired.erroneous { return expired.error; }
+        // Includes atomic fragments, which must not affect a matching assembly.
+        if !ip.fragmented { return Datagram { complete: true, bytes: ip.bytes }; }
+        if self.active && !self.matches(ip) { return error("IPv6 reassembly slot is occupied", status.WOULD_BLOCK, 0); }
+
+        if !self.active {
+            for def mut i: u64 = 0; i < self.present.len; i = i + 1 { self.present[i] = 0; }
+
+            self.active         = true; self.poisoned = false; self.source = ip.header.source; self.destination = ip.header.destination;
+            self.identification = ip.identification; self.protocol = ip.protocol; self.started = now_ms;
+            self.head_size      = 0; self.previous = 0; self.have_end = false; self.final_size = 0;
+            self.extent         = 0; self.more_extent = 0; self.received = 0;
+            self.not_ect        = false; self.ect0 = false; self.ect1 = false; self.ce = false;
+        }
+
+        if self.poisoned { return error("IPv6 fragment tuple is poisoned", status.INVALID, 0); }
+
+        def start: u64 = ip.fragment_offset;
+        def end: u64   = start + ip.payload.len;
+
+        if ip.protocol != self.protocol || end > self.present.len
+            || (self.head_size != 0 && self.head_size - 40 + end > 65535)
+            || (start == 0 && (ip.fragment_at - 40 + self.extent > 65535 || !packet6.first_fragment_complete(ip))) {
+            self.poisoned = true;
+
+            return error("invalid IPv6 reassembly extent or first header", status.INVALID, 0);
+        }
+        if (self.have_end && (end > self.final_size || (ip.more && end >= self.final_size)))
+            || (!ip.more && ((self.have_end && self.final_size != end) || self.extent > end || self.more_extent >= end)) {
+            self.poisoned = true;
+
+            return error("conflicting IPv6 final fragment", status.INVALID, 0);
+        }
+
+        for def mut i: u64 = start; i < end; i = i + 1 {
+            if self.present[i] != 0 {
+                self.poisoned = true;
+
+                return error("overlapping IPv6 fragments", status.INVALID, 0);
+            }
+        }
+
+        if start == 0 {
+            self.head_size = ip.fragment_at;
+            self.previous  = ip.previous_next;
+
+            for def mut i: u64 = 0; i < self.head_size; i = i + 1 {
+                self.storage[packet6.MAX_PREFIX - self.head_size + i] = bytes[i];
+            }
+        }
+
+        if ip.header.ecn == 0 { self.not_ect = true; }
+        if ip.header.ecn == 1 { self.ect1 = true; }
+        if ip.header.ecn == 2 { self.ect0 = true; }
+        if ip.header.ecn == 3 { self.ce = true; }
+        if self.not_ect && (self.ect0 || self.ect1 || self.ce) {
+            self.poisoned = true;
+
+            return error("inconsistent IPv6 fragment ECN", status.INVALID, 0);
+        }
+
+        for def mut i: u64 = start; i < end; i = i + 1 {
+            self.storage[packet6.MAX_PREFIX + i] = ip.payload[i - start];
+            self.present[i]                      = 1;
+        }
+
+        self.received = self.received + ip.payload.len;
+        if end > self.extent { self.extent = end; }
+        if ip.more && end > self.more_extent { self.more_extent = end; }
+        if !ip.more { self.have_end = true; self.final_size = end; }
+        if !self.have_end || self.head_size == 0 || self.received != self.final_size {
+            return Datagram { complete: false, bytes: bytes[..0] };
+        }
+
+        def first: u64                   = packet6.MAX_PREFIX - self.head_size;
+        def total: u64                   = self.head_size + self.final_size;
+        def read: result<packet6.Header> = memory.read_packed<packet6.Header>(self.storage[first..first + total]);
+
+        if read.erroneous { return read.error; }
+
+        def original: packet6.Header = read.value;
+        def length: u64              = total - 40;
+        def size: result<be_u16>     = be_u16(length);
+
+        if size.erroneous { return size.error; }
+
+        def mut ecn: u2 = 0;
+        if self.ect1 { ecn = 1; } if self.ect0 { ecn = 2; } if self.ce { ecn = 3; }
+
+        def written: result<void> = memory.write_packed<packet6.Header>(self.storage[first..], packet6.Header {
+            version: 6, dscp: original.dscp, ecn: ecn, flow_label: original.flow_label,
+            payload_length: size.value, next_header: original.next_header, hop_limit: original.hop_limit,
+            source: original.source, destination: original.destination });
+        if written.erroneous { return written.error; }
+
+        self.storage[first + self.previous] = self.protocol;
+        self.active                         = false;
+
+        return Datagram { complete: true, bytes: self.storage[first..first + total] };
+    }
+}
+
+def pub udp(output: [u8], source: packet6.Address, destination: packet6.Address,
+    source_port: be_u16, destination_port: be_u16, payload: [const u8]) -> result<u64> {
+    if payload.len > 65527 || output.len < 48 + payload.len || destination_port == 0 {
+        return error("invalid IPv6 UDP output", status.OUT_OF_RANGE, 0);
+    }
+
+    def size: u64              = 8 + payload.len;
+    def length: result<be_u16> = be_u16(size);
+
+    if length.erroneous { return length.error; }
+
+    def ip: result<void> = packet6.header(output, source, destination, packet.UDP, size + 40);
+    if ip.erroneous { return ip.error; }
+
+    def header: result<void> = memory.write_packed<packet.UdpHeader>(output[40..], packet.UdpHeader {
+        source_port: source_port, destination_port: destination_port, length: length.value, checksum: 0 });
+    if header.erroneous { return header.error; }
+
+    for def mut i: u64 = 0; i < payload.len; i = i + 1 { output[48 + i] = payload[i]; }
+
+    def sealed: result<void> = packet6.seal(output[..size + 40], packet.UDP);
+    if sealed.erroneous { return sealed.error; }
+
+    return size + 40;
+}

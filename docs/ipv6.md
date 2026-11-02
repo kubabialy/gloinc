@@ -97,3 +97,27 @@ and TIME_WAIT records retain all 128 address bits.
 32-bit MTU, checks the complete tuple and an outstanding TCP sequence, and only
 reduces the estimate. IPv6 reductions below 1,280 bytes are ignored. Callers
 must validate the invoking ICMP packet and quote before using this hook.
+
+## Reassembly and UDP construction
+
+`ipv6.Reassembly.create(storage, presence, timeout_ms)` borrows caller storage.
+The presence map holds up to 65,535 bytes; storage must contain an additional
+1,024 prefix bytes. The timeout must be between 1 and 60,000 milliseconds.
+Fragments may arrive out of order. The first fragment must contain all extension
+headers and the complete upper-layer header. Completion repairs the preceding
+Next Header field and removes the Fragment header from the returned view.
+
+Every overlap, including an identical duplicate, poisons the source/destination/
+identification tuple until its original deadline. Contradictory final extents,
+invalid first headers and inconsistent ECN also poison the tuple. New fragments
+cannot prolong that deadline. Atomic fragments are processed independently,
+even when they share the identification of a queued fragmented datagram.
+Completed views borrow the reassembly storage until its next use. Copying a
+reassembler aliases its buffers; drive one owner serially. Expiry and incomplete
+first headers currently discard without generating ICMP diagnostics.
+
+`ipv6.udp(output, source, destination, source_port, destination_port, payload)`
+builds and checksums one UDP datagram. Payloads may contain up to 65,527 bytes;
+output must hold the additional 48 header bytes. Destination port zero is
+rejected. The helper does not fragment or perform packet I/O. Source payload
+must remain unchanged while constructing the output.
