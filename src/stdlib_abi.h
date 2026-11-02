@@ -77,6 +77,7 @@ enum class StandardPrimitive {
     NetPacketWrite,
     NetIsnSeed,
     NetIsnNext,
+    NetIsn6Next,
     NetClose,
     FsMetadata,
     FsMkdir,
@@ -128,7 +129,7 @@ enum class StandardPrimitive {
     HashmapEqual,
     HashmapMask
 };
-inline constexpr std::array<std::string_view, 122> standard_primitive_names{"__std_parse_i32",
+inline constexpr std::array<std::string_view, 123> standard_primitive_names{"__std_parse_i32",
                                                                            "__std_format_i32",
                                                                            "__std_input",
                                                                            "__strings_copy",
@@ -200,6 +201,7 @@ inline constexpr std::array<std::string_view, 122> standard_primitive_names{"__s
 "__net_packet_write",
 "__net_isn_seed",
 "__net_isn_next",
+"__net_isn6_next",
 "__net_close",
                                                                            "__fs_metadata",
                                                                            "__fs_mkdir",
@@ -250,7 +252,7 @@ inline constexpr std::array<std::string_view, 122> standard_primitive_names{"__s
                                                                            "__strings_write",
                                                                            "__hashmap_equal",
                                                                            "__hashmap_mask"};
-inline constexpr std::array<std::string_view, 110> standard_runtime_names{
+inline constexpr std::array<std::string_view, 111> standard_runtime_names{
     "gloin_std_parse_i32",
     "gloin_std_format_i32",
     "gloin_std_input",
@@ -323,6 +325,7 @@ inline constexpr std::array<std::string_view, 110> standard_runtime_names{
 "gloin_net_packet_write",
 "gloin_net_isn_seed",
 "gloin_net_isn_next",
+"gloin_net_isn6_next",
 "gloin_net_close",
     "gloin_fs_metadata",
     "gloin_fs_mkdir",

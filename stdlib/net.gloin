@@ -5,6 +5,8 @@
 import "@arena";
 import "@status";
 import "@strings";
+import "@packet6";
+import "@memory";
 
 def pub const READABLE: i32 = 1;
 def pub const WRITABLE: i32 = 2;
@@ -883,6 +885,36 @@ def pub struct TcpIsnGenerator {
 
         return sequence;
     }
+
+    def pub next6(self: &TcpIsnGenerator, local: packet6.Address, local_port: be_u16,
+        remote: packet6.Address, remote_port: be_u16, now_us: u64) -> result<u32> {
+        if now_us < self.last_us || !local.unicast() || !remote.unicast() {
+            return error("invalid IPv6 ISN addresses or clock", status.INVALID, 0);
+        }
+
+        def mut left: [u8; 16]         = zeroed;
+        def mut right: [u8; 16]        = zeroed;
+        def written_left: result<void> = memory.write_packed<packet6.Address>(left[..], local);
+
+        if written_left.erroneous { return written_left.error; }
+
+        def written_right: result<void> = memory.write_packed<packet6.Address>(right[..], remote);
+        if written_right.erroneous { return written_right.error; }
+
+        def lp: result<u16> = u16(local_port); if lp.erroneous { return lp.error; }
+
+        def rp: result<u16> = u16(remote_port); if rp.erroneous { return rp.error; }
+
+        def mut sequence: u32 = 0;
+        def code: i32         = __net_isn6_next(&self.secret[0], &left[0], lp.value, &right[0], rp.value, now_us, &sequence);
+
+        if code != status.OK { return error("IPv6 ISN generation failed", code, 0); }
+
+        self.last_us = now_us;
+
+        return sequence;
+    }
+
 }
 
 def struct PacketDeviceState {

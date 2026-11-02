@@ -314,6 +314,7 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::str
             symbols[mangle("gloin_net_packet_write")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_packet_write), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_net_isn_seed")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_isn_seed), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_net_isn_next")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_isn_next), llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_net_isn6_next")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_isn6_next), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_net_tls_shutdown")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_tls_shutdown), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_net_close")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_net_close), llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_fs_metadata")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(&gloin_fs_metadata), llvm::JITSymbolFlags::Exported);

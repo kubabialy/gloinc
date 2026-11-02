@@ -38,6 +38,19 @@ int packet_family(const uint8_t *bytes, uint64_t length) {
         return AF_INET6;
     return 0;
 }
+int32_t initial_sequence(const uint8_t *secret, const uint8_t *tuple, size_t size,
+                         uint64_t microseconds, uint32_t *isn) {
+    std::array<uint8_t, 32> digest{};
+    size_t length = 0;
+    if (!EVP_Q_mac(nullptr, "HMAC", nullptr, "SHA256", nullptr, secret, 32, tuple, size,
+                   digest.data(), digest.size(), &length) ||
+        length != 32)
+        return GLOIN_STD_IO_ERROR;
+    const uint32_t hash = (uint32_t(digest[0]) << 24) | (uint32_t(digest[1]) << 16) |
+                          (uint32_t(digest[2]) << 8) | digest[3];
+    *isn = hash + uint32_t(microseconds / 4);
+    return GLOIN_STD_OK;
+}
 } // namespace
 extern "C" {
 int32_t gloin_net_tun_open(const char *name, uint64_t length, int32_t *fd, int32_t *framing,
@@ -173,16 +186,22 @@ int32_t gloin_net_isn_next(const uint8_t *secret, uint32_t local, uint16_t local
         uint8_t(local),        uint8_t(local_port >> 8),  uint8_t(local_port),
         uint8_t(remote >> 24), uint8_t(remote >> 16),     uint8_t(remote >> 8),
         uint8_t(remote),       uint8_t(remote_port >> 8), uint8_t(remote_port)};
-    std::array<uint8_t, 32> digest{};
-    size_t length = 0;
-    if (!EVP_Q_mac(nullptr, "HMAC", nullptr, "SHA256", nullptr, secret, 32, tuple.data(),
-                   tuple.size(), digest.data(), digest.size(), &length) ||
-        length != 32)
-        return GLOIN_STD_IO_ERROR;
-    const uint32_t hash = (uint32_t(digest[0]) << 24) | (uint32_t(digest[1]) << 16) |
-                          (uint32_t(digest[2]) << 8) | digest[3];
-    // RFC 9293: secret-dependent tuple hash plus a four-microsecond clock.
-    *isn = hash + uint32_t(microseconds / 4);
-    return GLOIN_STD_OK;
+    return initial_sequence(secret, tuple.data(), tuple.size(), microseconds, isn);
+}
+int32_t gloin_net_isn6_next(const uint8_t *secret, const uint8_t *local, uint16_t local_port,
+                            const uint8_t *remote, uint16_t remote_port, uint64_t microseconds,
+                            uint32_t *isn) {
+    if (isn)
+        *isn = 0;
+    if (!secret || !local || !remote || !isn || !local_port || !remote_port)
+        return GLOIN_STD_INVALID;
+    std::array<uint8_t, 36> tuple{};
+    memcpy(tuple.data(), local, 16);
+    tuple[16] = uint8_t(local_port >> 8);
+    tuple[17] = uint8_t(local_port);
+    memcpy(tuple.data() + 18, remote, 16);
+    tuple[34] = uint8_t(remote_port >> 8);
+    tuple[35] = uint8_t(remote_port);
+    return initial_sequence(secret, tuple.data(), tuple.size(), microseconds, isn);
 }
 }

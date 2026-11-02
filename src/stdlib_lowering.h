@@ -66,6 +66,8 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
         return mlir::LLVM::LLVMFunctionType::get(i32, {i32, i32, pointer, i64, pointer, pointer}, false);
     case StandardPrimitive::NetIsnSeed:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer}, false);
+    case StandardPrimitive::NetIsn6Next:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i16, pointer, i16, i64, pointer}, false);
     case StandardPrimitive::NetIsnNext:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, i32, i16, i32, i16, i64, pointer}, false);
     case StandardPrimitive::NetTlsBufferCreate:

@@ -188,6 +188,11 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
                       get_builtin_type("u64"), reference("u64"), reference("i32")};
     else if (kind == StandardPrimitive::NetIsnSeed)
         parameters = {reference("u8")};
+    else if (kind == StandardPrimitive::NetIsn6Next)
+        parameters = {std::make_shared<PointerType>(get_builtin_type("u8"), false, true),
+                      std::make_shared<PointerType>(get_builtin_type("u8"), false, true), get_builtin_type("u16"),
+                      std::make_shared<PointerType>(get_builtin_type("u8"), false, true), get_builtin_type("u16"),
+                      get_builtin_type("u64"), reference("u32")};
     else if (kind == StandardPrimitive::NetIsnNext)
         parameters = {std::make_shared<PointerType>(get_builtin_type("u8"), false, true),
                       get_builtin_type("u32"), get_builtin_type("u16"), get_builtin_type("u32"),

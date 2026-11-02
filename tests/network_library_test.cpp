@@ -1559,3 +1559,24 @@ TEST_F(NetworkLibraryTest, Ipv6CodecsMatchIndependentChecksumsExtensionsAndAlign
         EXPECT_EQ(llvm::sys::ExecuteAndWait(output, {output}, std::nullopt, {}, 30), 0);
     }
 }
+
+TEST_F(NetworkLibraryTest, Ipv6InitialSequenceBridgeWorksInAllModes) {
+    const auto file =
+        (std::filesystem::path(__FILE__).parent_path() / "fixtures/network/ipv6_isn.gloin")
+            .string();
+    const auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    const auto position = ir.out.find("callee = @gloin_net_isn6_next}");
+    ASSERT_NE(position, std::string::npos);
+    const auto line = ir.out.rfind('\n', position);
+    EXPECT_NE(ir.out.substr(line + 1, position - line).find("gloin.abi_call"), std::string::npos);
+    EXPECT_EQ(ir.out.find("llvm.call @gloin_net_isn6_next"), std::string::npos);
+    expect_success(invoke({file}), "");
+    for (const auto *mode : {"-O0", "-O2"}) {
+        SCOPED_TRACE(mode);
+        const auto output = directory + "/ipv6-isn";
+        const auto compiled = invoke_raw({mode, "-o", output, file});
+        ASSERT_EQ(compiled.status, 0) << compiled.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(output, {output}, std::nullopt, {}, 30), 0);
+    }
+}

@@ -309,3 +309,33 @@ TEST(NetRuntimeTest, Ipv6RawTransportChecksFamilyAndFullMaximumPacket) {
         }
     }
 }
+
+TEST(NetRuntimeTest, Ipv6InitialSequenceUsesAllAddressBitsAndIndependentKnownAnswer) {
+    std::array<uint8_t, 32> secret{};
+    for (size_t i = 0; i < secret.size(); ++i)
+        secret[i] = uint8_t(i);
+    const std::array<uint8_t, 16> local{0x20, 1, 0x0d, 0xb8, 0x12, 0x34, 0x56, 0x78,
+                                        0,    0, 0,    0,    0,    0,    0,    1};
+    std::array<uint8_t, 16> remote{0xfd, 0, 0xab, 0xcd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255};
+    uint32_t sequence = 0;
+    // Python hmac/hashlib: a7c9cf9e829b3d24de1b0bde5aeaa3a5...
+    ASSERT_EQ(
+        gloin_net_isn6_next(secret.data(), local.data(), 1234, remote.data(), 443, 0, &sequence),
+        GLOIN_STD_OK);
+    EXPECT_EQ(sequence, 2815020958u);
+    ASSERT_EQ(
+        gloin_net_isn6_next(secret.data(), local.data(), 1234, remote.data(), 443, 4, &sequence),
+        GLOIN_STD_OK);
+    EXPECT_EQ(sequence, 2815020959u);
+    for (size_t i = 0; i < remote.size(); ++i) {
+        remote[i] ^= 1;
+        ASSERT_EQ(gloin_net_isn6_next(secret.data(), local.data(), 1234, remote.data(), 443, 0,
+                                      &sequence),
+                  GLOIN_STD_OK);
+        EXPECT_NE(sequence, 2815020958u);
+        remote[i] ^= 1;
+    }
+    EXPECT_EQ(gloin_net_isn6_next(secret.data(), nullptr, 1234, remote.data(), 443, 0, &sequence),
+              GLOIN_STD_INVALID);
+    EXPECT_EQ(sequence, 0u);
+}

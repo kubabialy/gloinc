@@ -66,3 +66,13 @@ callers. Invalid/unsupported IP datagrams are discarded with `WOULD_BLOCK`;
 resume the readiness loop. Writes validate the declared packet length.
 The macOS adapter verifies/emits AF_INET or AF_INET6 in its four-byte prefix.
 Device addresses and routes remain externally configured.
+
+## Initial sequence numbers
+
+`net.TcpIsnGenerator.next6(local, local_port, remote, remote_port, now_us)`
+includes both complete 128-bit addresses and ports in HMAC-SHA256, using the
+same per-generator private secret and four-microsecond clock as IPv4. It
+rejects unspecified/multicast addresses, zero ports and backward clocks.
+Construct the generator once per serial endpoint owner. Its native call passes
+through a checked `gloin.abi_call`; the native ABI receives encoded address
+bytes rather than assuming a host struct layout.

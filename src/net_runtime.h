@@ -67,6 +67,9 @@ int32_t gloin_net_packet_read(int32_t fd, int32_t framing, uint8_t *bytes, uint6
                               uint64_t *count, int32_t *os_error);
 int32_t gloin_net_packet_write(int32_t fd, int32_t framing, const uint8_t *bytes, uint64_t length,
                                uint64_t *count, int32_t *os_error);
+int32_t gloin_net_isn6_next(const uint8_t *secret32, const uint8_t *local16, uint16_t local_port,
+                            const uint8_t *remote16, uint16_t remote_port, uint64_t microseconds,
+                            uint32_t *isn);
 int32_t gloin_net_isn_seed(uint8_t *secret32);
 int32_t gloin_net_isn_next(const uint8_t *secret32, uint32_t local, uint16_t local_port,
                            uint32_t remote, uint16_t remote_port, uint64_t microseconds,
