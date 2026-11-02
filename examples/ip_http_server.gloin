@@ -1,5 +1,5 @@
 // Gloin TCP/IP + HTTP/HTTPS over a preconfigured raw IP device.
-// IPv4 endpoint 10.0.0.2:8080. Usage: ip-http-server DEVICE [CERT.pem KEY.pem]
+// IPv4 10.0.0.2:8080 / IPv6 [fd00::2]:8080. Usage: DEVICE [--ipv6] [CERT.pem KEY.pem]
 // Linux example (inside an isolated namespace):
 //   ip tuntap add dev gloin0 mode tun
 //   ip addr add 10.0.0.1/24 dev gloin0
@@ -11,9 +11,7 @@ import "@vector";
 import "@net";
 import "@tcp";
 import "@tcp_tls";
-import "@ip_stack";
-import "@ipv4";
-import "@packet";
+import "./modules/ip_server_host";
 import "@http";
 import "@http_server";
 import "@http_service";
@@ -36,11 +34,6 @@ def struct AppBuffers {
     def mut encrypted_in: [u8; 4096],
     def mut encrypted_out: [u8; 4096],
     def mut response: [u8; 65536],
-}
-
-def struct FragmentBuffers {
-    def mut bytes: [u8; 65575],
-    def mut present: [u8; 65515],
 }
 
 def struct App {
@@ -253,7 +246,21 @@ def close_config(config: *net.TlsServerConfig) -> void {
 }
 
 def serve(owner: &arena.GeneralArena) -> result<void> {
-    if process.arg_count() != 2 && process.arg_count() != 4 { return error("usage: ip-http-server DEVICE [CERT.pem KEY.pem]"); }
+    def argc: u64 = process.arg_count();
+    if argc < 2 || argc > 5 { return error("usage: ip-http-server DEVICE [--ipv6] [CERT.pem KEY.pem]"); }
+
+    def mut version6: bool = false;
+
+    if argc >= 3 {
+        def option: result<string> = process.arg(owner, 2);
+        if option.erroneous { return option.error; }
+
+        version6 = strings.equal(option.value, "--ipv6");
+    }
+
+    def mut cert_index: u64 = 2;
+    if version6 { cert_index = 3; }
+    if argc != cert_index && argc != cert_index + 2 { return error("invalid IP server arguments"); }
 
     def name: result<string> = process.arg(owner, 1);
     if name.erroneous { return name.error; }
@@ -266,11 +273,11 @@ def serve(owner: &arena.GeneralArena) -> result<void> {
 
     def mut config: *net.TlsServerConfig = null;
 
-    if process.arg_count() == 4 {
-        def cert: result<string> = process.arg(owner, 2);
+    if argc == cert_index + 2 {
+        def cert: result<string> = process.arg(owner, cert_index);
         if cert.erroneous { return cert.error; }
 
-        def key: result<string> = process.arg(owner, 3);
+        def key: result<string> = process.arg(owner, cert_index + 1);
         if key.erroneous { return key.error; }
 
         def made: result<net.TlsServerConfig> = net.TlsServerConfig.load(owner, cert.value, key.value);
@@ -282,7 +289,11 @@ def serve(owner: &arena.GeneralArena) -> result<void> {
 
     def mut slots: vector.Vector<tcp.Slot> = vector.Vector<tcp.Slot>.empty(owner, 64);
     def mut apps: vector.Vector<App>       = vector.Vector<App>.empty(owner, 64);
-    def options: tcp.Options = tcp.Options { mss: 1460, max_retries: 12, idle_timeout_ms: 300000,
+    def mut mss: u16                       = 1460;
+
+    if version6 { mss = 1440; }
+
+    def options: tcp.Options = tcp.Options { mss: mss, max_retries: 12, idle_timeout_ms: 300000,
         time_wait_ms: 120000, no_delay: true };
 
     for def mut i: u64 = 0; i < 64; i = i + 1 {
@@ -293,34 +304,22 @@ def serve(owner: &arena.GeneralArena) -> result<void> {
         if !slots.push(slot.value) || !apps.push(App.create()) { return error("server slot allocation failed"); }
     }
 
-    def mut fragments: vector.Vector<ipv4.Reassembly> = vector.Vector<ipv4.Reassembly>.empty(owner, 4);
-
-    for def mut i: u64 = 0; i < 4; i = i + 1 {
-        def buffers: *FragmentBuffers     = owner.alloc(FragmentBuffers { bytes: zeroed, present: zeroed });
-        def slot: result<ipv4.Reassembly> = ipv4.Reassembly.create(buffers.bytes[..], buffers.present[..], 30000);
-
-        if slot.erroneous { return slot.error; }
-        if !fragments.push(slot.value) { return error("fragment slot allocation failed"); }
-    }
-
-    def ports: [be_u16; 1]              = {8080};
-    def udp_ports: [be_u16; 0]          = {};
-    def made: result<ip_stack.Endpoint> = ip_stack.Endpoint.create(0x0a000002, ports[..], udp_ports[..], slots.as_slice(), fragments.as_slice());
-
+    def made: result<ip_server_host.Host> = ip_server_host.Host.create(owner, slots.as_slice(), version6);
     if made.erroneous { return made.error; }
 
-    def mut endpoint: ip_stack.Endpoint          = made.value;
+    def mut endpoint: ip_server_host.Host        = made.value;
+    def table: &tcp.Table                        = endpoint.table();
     def mut history: vector.Vector<tcp.TimeWait> = vector.Vector<tcp.TimeWait>.empty(owner, 4096);
 
     for def mut i: u64 = 0; i < 4096; i = i + 1 {
         if !history.push(tcp.TimeWait.empty()) { return error("TIME_WAIT allocation failed"); }
     }
 
-    def attached: result<void> = endpoint.connections.time_wait_storage(history.as_slice());
+    def attached: result<void> = table.time_wait_storage(history.as_slice());
     if attached.erroneous { return attached.error; }
 
     def app: [App] = apps.as_slice();
-    defer cleanup(app, &endpoint.connections);
+    defer cleanup(app, table);
 
     def generator: result<net.TcpIsnGenerator> = net.TcpIsnGenerator.create();
     if generator.erroneous { return generator.error; }
@@ -331,7 +330,7 @@ def serve(owner: &arena.GeneralArena) -> result<void> {
     def mut body: [u8; 4096]         = zeroed;
     def mut pending: u64             = 0;
 
-    std.println("ready: 10.0.0.2:8080");
+    if version6 { std.println("ready: [fd00::2]:8080"); } else { std.println("ready: 10.0.0.2:8080"); }
 
     while true {
         def clock: result<time.Instant> = time.monotonic_now();
@@ -361,33 +360,24 @@ def serve(owner: &arena.GeneralArena) -> result<void> {
                 if count == 0 { reading = false; } else {
                     progress = true;
 
-                    def assembled: result<ipv4.Datagram> = endpoint.reassemble(input[..count], now);
+                    def assembled: result<ip_server_host.Datagram> = endpoint.reassemble(input[..count], now);
 
                     if assembled.erroneous {
                         // Malformed packets and exhausted bounded pools are dropped.
                     } else if assembled.value.complete {
-                        def datagram: [const u8]                 = assembled.value.bytes;
-                        def mut sequence: u32                    = 0;
-                        def tcp_packet: result<packet.TcpPacket> = packet.parse_tcp_ipv4(datagram);
+                        def datagram: [const u8]  = assembled.value.bytes;
+                        def selected: result<u32> = endpoint.sequence(&isn, datagram, micros);
 
-                        if tcp_packet.erroneous {
-                            // UDP and ICMP do not need an ISN.
-                        } else if tcp_packet.value.header.syn != 0 && tcp_packet.value.header.ack == 0 {
-                            def segment: packet.TcpPacket = tcp_packet.value;
-                            def selected: result<u32> = isn.next(segment.ip.header.destination, segment.header.destination_port,
-                                segment.ip.header.source, segment.header.source_port, micros);
+                        if selected.erroneous { return selected.error; }
 
-                            if selected.erroneous { return selected.error; }
+                        def sequence: u32 = selected.value;
 
-                            sequence = selected.value;
-                        }
-
-                        def fed: result<ip_stack.Event> = endpoint.input(datagram, sequence, now, output[..]);
+                        def fed: result<tcp.Input> = endpoint.input(datagram, sequence, now, output[..]);
 
                         if fed.erroneous {
                             // Reject malformed traffic without terminating unrelated connections.
                         } else {
-                            def event: ip_stack.Event = fed.value;
+                            def event: tcp.Input = fed.value;
                             pending = event.reply_bytes;
 
                             if event.created {
@@ -402,10 +392,10 @@ def serve(owner: &arena.GeneralArena) -> result<void> {
 
         for def mut i: u64 = 0; i < app.len; i = i + 1 {
             if app[i].active() {
-                def polled: result<bool> = app[i].poll(&endpoint.connections, body[..], now);
+                def polled: result<bool> = app[i].poll(table, body[..], now);
 
                 if polled.erroneous {
-                    def cancelled: result<void> = (*app[i].driver).cancel(&endpoint.connections);
+                    def cancelled: result<void> = (*app[i].driver).cancel(table);
                     if cancelled.erroneous { return cancelled.error; }
 
                     app[i].driver  = null;
@@ -415,22 +405,22 @@ def serve(owner: &arena.GeneralArena) -> result<void> {
                 } else if polled.value { progress = true; }
             }
 
-            def handle: result<tcp.Handle> = endpoint.connections.handle_at(i);
+            def handle: result<tcp.Handle> = table.handle_at(i);
 
             if handle.erroneous {
                 // Vacant slot.
             } else if !app[i].active() {
-                def state: result<i32> = endpoint.connections.state(handle.value);
+                def state: result<i32> = table.state(handle.value);
                 if state.erroneous { return state.error; }
 
                 if state.value == tcp.TIME_WAIT {
-                    def retired: result<void> = endpoint.connections.retire_time_wait(handle.value);
+                    def retired: result<void> = table.retire_time_wait(handle.value);
 
                     if retired.erroneous {
                         if retired.error.code != status.WOULD_BLOCK { return retired.error; }
                     }
                 } else if state.value == tcp.CLOSED || state.value == tcp.RESET || state.value == tcp.TIMED_OUT {
-                    def released: result<void> = endpoint.connections.release(handle.value);
+                    def released: result<void> = table.release(handle.value);
 
                     if released.erroneous {
                         if released.error.code != status.IN_PROGRESS { return released.error; }

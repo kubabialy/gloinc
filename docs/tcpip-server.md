@@ -1,21 +1,22 @@
 # TCP/IP and HTTP/HTTPS servers in Gloin
 
-The 0.3.0 development library implements an IPv4 endpoint and TCP byte streams
+The 0.3.0 development library implements IPv4 and IPv6 endpoints and TCP byte streams
 in Gloin. It accepts and emits raw IP packets. The operating system supplies a
 packet device, clocks and cryptographic services; it does not implement TCP for
 these connections. HTTP parsing and server state also run in Gloin. OpenSSL
 implements TLS over the Gloin byte stream.
 
 The [server example](../examples/ip_http_server.gloin) serves HTTP or HTTPS at
-`10.0.0.2:8080`, with 64 concurrent application slots, separate retained
+`10.0.0.2:8080` or `[fd00::2]:8080` with `--ipv6`, with 64 concurrent application slots, separate retained
 TIME_WAIT records, bounded request bodies, keep-alive, pipelining, deadlines,
 and explicit cleanup. `/echo` returns the request body, `/bytes` returns a
 65,536-byte deterministic binary body, and other paths return a short message.
 It uses one serial event loop. A stalled client does not require a thread and
 does not block other clients.
 
-This is an IPv4 host implementation with a deliberately bounded feature set.
-It does not implement IPv6, Ethernet/ARP, routing, IPsec, TCP SACK, window
+These are host implementations with a deliberately bounded feature set.
+They do not implement Ethernet/ARP/Neighbor Discovery, automatic IPv6 address
+configuration, routing, IPsec, TCP SACK, window
 scaling, timestamps, ECN negotiation, or an out-of-band urgent-data API. Urgent
 payload bytes remain in the ordinary byte stream. TCP send/receive storage is
 limited to 65,535 bytes per direction. UDP output is one datagram; callers must
@@ -27,6 +28,7 @@ adversarial tests, not a claim of exhaustive Internet-standard conformance.
 | Module | Responsibility |
 | --- | --- |
 | `@packet` | Packed IPv4/TCP/UDP headers, shape/checksum validation and checksum sealing. |
+| `@packet6`, `@ipv6`, `@ip6_stack` | Packed IPv6 headers, bounded extensions/reassembly, UDP/ICMPv6 and static unicast dispatch; see [IPv6](ipv6.md). |
 | `@ipv4` | Bounded fragment reassembly, UDP encoding, ICMP echo and unreachable replies. |
 | `@tcp` | Connections, rings, receive reordering, sequence numbers, flow/congestion control, retransmission and close timers; generation-checked connection tables. |
 | `@ip_stack` | Local unicast IPv4 dispatch, bounded reassembly pools, TCP listeners, UDP delivery, ICMP handling. |
@@ -38,7 +40,7 @@ adversarial tests, not a claim of exhaustive Internet-standard conformance.
 Packet layouts use `packed struct(msb_first)` and `be_u16`/`be_u32`. Numeric
 operations work on values; packed reads and writes encode their representation.
 There are no packet-buffer pointer casts or hand-maintained native structure
-offsets. See [the packet API](packets.md).
+offsets. See [the packet API](packets.md) and [IPv6 representation](ipv6.md).
 
 Protocol objects borrow caller-owned buffers. Keep their storage alive, use
 separate send/receive/presence/head/output regions, and drive one owner serially.
@@ -60,9 +62,8 @@ endpoint arena.
 active open. `accept(initial_syn, local, isn, buffers, options, now_ms)` creates a
 passive connection. Addresses and ports are endian-qualified values. The caller
 supplies send storage, receive storage, and a presence map with the same length
-as receive storage.
-IPv6 uses `Address6`, `connect6`, `accept6` and `Table.create6`; see
-[IPv6 TCP](ipv6.md#tcp-connections-and-tables) for address queries and MSS differences.
+as receive storage. IPv6 uses `Address6`, `connect6`, `accept6` and `Table.create6`;
+[the IPv6 guide](ipv6.md) covers address queries, MSS and MTU differences.
 
 - `input(packet, now_ms)` validates a packet and advances protocol state.
 - `emit(output, now_ms)` drives timers and emits at most one packet; zero means
@@ -145,7 +146,7 @@ allocating an unbounded queue.
 `net.PacketDevice.open(owner, name)` uses a named Linux TUN with `IFF_NO_PI`, or
 a named macOS `utunN` device. It never changes interface addresses or routes.
 Reads require 65,575 bytes of output capacity and return at most one IPv4 or
-IPv6 packet. Invalid/unsupported IP datagrams are discarded with `WOULD_BLOCK`.
+IPv6 packet. Invalid/unsupported datagrams are discarded with `WOULD_BLOCK`.
 Writes preserve packet boundaries; retry the same packet after `WOULD_BLOCK`.
 `wait(events, timeout_ms)` provides explicit readiness waits. The macOS adapter
 adds/removes its four-byte address-family prefix. Device access/configuration
@@ -167,7 +168,8 @@ sudo unshare --net -- python3 tests/tcpip/interop.py \
 
 The harness refuses the initial network namespace. It generates a temporary
 localhost certificate and verifies both HTTP and HTTPS without public services.
-For manual TLS use, pass the certificate and key after the device name. The
+Add `--ipv6` to the harness to test the IPv6 endpoint, including ICMPv6 echo.
+For manual use the CLI is `DEVICE [--ipv6] [CERT.pem KEY.pem]`. The
 certificate must cover the hostname used by clients. The macOS adapter is
 compiled and its framing tested; actual utun interface configuration is an
 external deployment step.

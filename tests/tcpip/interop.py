@@ -236,13 +236,20 @@ def main():
     parser.add_argument("--server", required=True)
     parser.add_argument("--reports", required=True)
     parser.add_argument("--benchmark", action="store_true")
+    parser.add_argument("--ipv6", action="store_true")
     args = parser.parse_args()
+    global HOST
+    if args.ipv6:
+        HOST = "fd00::2"
     assert os.readlink("/proc/self/ns/net") != os.readlink("/proc/1/ns/net"), "run under unshare --net"
     reports = pathlib.Path(args.reports)
     reports.mkdir(parents=True, exist_ok=True)
     command("ip", "link", "set", "lo", "up")
     command("ip", "tuntap", "add", "dev", "gloin0", "mode", "tun")
-    command("ip", "addr", "add", "10.0.0.1/24", "dev", "gloin0")
+    if args.ipv6:
+        command("ip", "-6", "addr", "add", "fd00::1/64", "dev", "gloin0", "nodad")
+    else:
+        command("ip", "addr", "add", "10.0.0.1/24", "dev", "gloin0")
     command("ip", "link", "set", "gloin0", "up")
     with tempfile.TemporaryDirectory(prefix="gloin-tcpip-cert-") as temp:
         cert, key = f"{temp}/cert.pem", f"{temp}/key.pem"
@@ -253,7 +260,7 @@ def main():
             label = "https" if secure else "http"
             context = ssl.create_default_context(cafile=cert) if secure else None
             log = open(reports / f"{label}.log", "wb")
-            server = subprocess.Popen([args.server, "gloin0"] + ([cert, key] if secure else []), stdout=log, stderr=log)
+            server = subprocess.Popen([args.server, "gloin0"] + (["--ipv6"] if args.ipv6 else []) + ([cert, key] if secure else []), stdout=log, stderr=log)
             try:
                 deadline = time.monotonic() + 10
                 while True:
@@ -269,6 +276,8 @@ def main():
                         time.sleep(0.05)
                 started = time.monotonic()
                 checks(context)
+                if args.ipv6 and not secure:
+                    command("ping", "-6", "-c", "3", "-W", "2", HOST)
                 assert server.poll() is None
                 results[label] = {"passed": True, "seconds": time.monotonic() - started}
                 if args.benchmark:

@@ -181,7 +181,8 @@ validating the input. Both export functions for module composition;
 See [formats, bounds, costs, failures, and resource verification](../docs/integrated-examples.md).
 
 `ip_http_server.gloin` serves concurrent HTTP/HTTPS over Gloin's independent
-IPv4/TCP stack using a configured Linux TUN or macOS utun device. It supports
+IPv4/IPv6 TCP stack using a configured Linux TUN or macOS utun device.
+Use `DEVICE [--ipv6] [CERT.pem KEY.pem]`; IPv6 serves `[fd00::2]:8080`. It supports
 bounded binary echo, keep-alive/pipelining, large responses, deadlines and
 connection reuse without per-request allocation. Device setup is external;
 see [TCP/IP servers](../docs/tcpip-server.md) and the isolated Linux acceptance

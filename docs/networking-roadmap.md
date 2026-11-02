@@ -1,14 +1,15 @@
 # Networking milestones after the first TCP and HTTP layer
 
-The 0.3.0 development library now includes an independent IPv4/TCP endpoint,
+The 0.3.0 development library now includes independent IPv4/IPv6 endpoints and shared TCP,
 raw packet adapters, bounded HTTP server sessions, and TLS over Gloin TCP.
 [The server guide](tcpip-server.md) records the implemented scope and tests.
 This roadmap also tracks separate OS-socket conveniences and application
 protocols that are not implied by the raw-packet server implementation.
 
 The 0.3.0 development [packed packet layer](packets.md) adds IPv4/UDP/TCP
-representations and bounded validation. The independent IPv4 endpoint now uses
-these representations for raw transport, reassembly and TCP state.
+representations and bounded validation. Both endpoints use packed/endian representations for raw transport, reassembly
+and TCP state. [IPv6](ipv6.md) supports static unicast addresses over TUN/utun;
+Neighbor Discovery and automatic address configuration remain future work.
 
 The 0.1.0 release provides nonblocking IPv4 TCP, a verified nonblocking TLS
 client, bounded multi-socket readiness waits, and a Gloin HTTP/HTTPS client
@@ -33,7 +34,7 @@ not claims that these features already work.
    before `bind`, and `shutdown_write` supports an orderly half close. Test
    restart behavior on macOS and Linux and preserve OS error categories in
    Gloin errors.
-2. Resolve hostnames and support IPv6. `resolve_ipv4` is synchronous and
+2. Resolve hostnames and support IPv6 in the OS socket API. `resolve_ipv4` is synchronous and
    documents that it can block. Add IPv6 and a nonblocking resolver interface.
    Callers must be able to choose an address and connect with a
    deadline. A failed candidate address must close cleanly before trying the

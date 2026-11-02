@@ -1,6 +1,6 @@
 # Independent TCP/IP and HTTP/HTTPS acceptance
 
-The maintained `NetworkLibraryTest` groups run the pure Gloin TCP/IPv4 engines,
+The maintained `NetworkLibraryTest` groups run the pure Gloin TCP/IPv4/IPv6 engines,
 HTTP sessions and buffered TLS adapters in JIT, `-O0` and `-O2`. They require no
 packet-device privileges. See [the server guide](../../docs/tcpip-server.md) for
 buffer ownership, supported protocols and limits.
@@ -10,7 +10,7 @@ TLS client talks to the Gloin server through a TUN device. The Gloin process
 implements TCP for its side of every connection. The script refuses to run in
 the initial network namespace, configures only its private namespace, generates
 a temporary localhost certificate, and terminates each server in `finally`.
-It needs Linux, Python 3, `ip`, OpenSSL and access to `/dev/net/tun`. Creating the
+It needs Linux, Python 3, `ip`, `ping`, OpenSSL and access to `/dev/net/tun`. Creating the
 namespace and configuring its device normally requires root or equivalent
 namespace/network capabilities.
 
@@ -29,6 +29,9 @@ connections (more than the server's 64 active slots), clean TLS/TCP closure,
 and rejection of ambiguous request framing without breaking another client.
 The timeout on each socket is ten seconds. The example binds the Gloin endpoint
 to `10.0.0.2:8080`; the namespace's kernel peer uses `10.0.0.1`.
+Add `--ipv6` to the same command to use `[fd00::2]:8080` and kernel peer
+`fd00::1`. The IPv6 run also verifies ICMPv6 echo with `ping -6`. Both families
+share the TCP/HTTP/TLS implementation. See [IPv6 scope](../../docs/ipv6.md).
 
 ## Measurements
 

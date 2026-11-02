@@ -5,7 +5,8 @@ representation-preserving aggregate copies and Gloin calls, is implemented.
 Packed memory layouts, exact-width integers, and checked integer constructors
 are implemented as the second feature. The standard library also adds bounded
 incremental HTTP/1.1 request-body decoding, packed IPv4/UDP/TCP packet codecs,
-an independent IPv4/TCP endpoint in Gloin, and HTTP/HTTPS server sessions.
+independent IPv4/IPv6 endpoints with shared TCP in Gloin, and HTTP/HTTPS server
+sessions.
 This is a minor release because it adds source-language behavior.
 The published baseline remains [0.2.1](release-notes-0.2.1.md); the compiler version,
 release assets, and numbered guides will be updated when the release is cut.
@@ -25,6 +26,7 @@ release assets, and numbered guides will be updated when the release is cut.
 | Packed networking | `@packet` IPv4/UDP/TCP headers, bounded decoding, and checksum sealing; reusable packed-only memory reads/writes. See [packet APIs](packets.md). |
 | HTTP request decoding | Implemented in `@http`: streaming and buffered fixed-length/chunked bodies, header-boundary inspection, output backpressure, exact consumed offsets, and caller-owned buffers. See the [request decoder](http-requests.md). |
 | Gloin TCP/IP | IPv4 reassembly, UDP/ICMP dispatch, TCP connections and generation-checked tables, flow/congestion control, retransmission, path-MTU reduction and separate TIME_WAIT storage. Raw Linux TUN/macOS utun adapters keep protocol state in Gloin. |
+| IPv6 host | Packed 128-bit addresses, bounded extensions/reassembly, UDP/ICMPv6 and shared TCP/HTTP/TLS over static-address TUN/utun. See [IPv6](ipv6.md). |
 | HTTP/HTTPS servers | Bounded incremental sessions, keep-alive/pipelining, fixed/chunked responses, deadlines, cancellation and fair per-connection progress; OpenSSL TLS over Gloin TCP through bounded BIO pairs. See the [server guide](tcpip-server.md). |
 | Validation | macOS ARM64 core, focused regressions, and independent endian and packed torture labs pass. Final release/platform/package validation remains pending. |
 
@@ -361,14 +363,14 @@ Independent Linux kernel peers verify HTTP and HTTPS, binary/chunked uploads,
 pipelining, large responses, stalled/concurrent clients and connection churn.
 Pure protocol and TLS fixtures also run through JIT and native builds. The
 [server guide](tcpip-server.md) documents ownership, timers, supported protocol
-features and remaining limitations; IPv6, Ethernet/ARP, TCP SACK/window scaling
+features and remaining limitations; Ethernet/ARP, TCP SACK/window scaling
 and full standards-conformance certification are outside this implementation.
 Measurement artifacts are retained under [TCP/IP benchmarks](benchmarks/tcpip-2026-10-30/).
 
 
 ### TCP/IP server validation, 2026-10-31
 
-The working development tree passed all **1,132 macOS ARM64 core tests**,
+The IPv4 milestone (`be603b1`) passed all **1,132 macOS ARM64 core tests**,
 **37 Linux ARM64 networking/TLS tests**, **13 macOS native networking/TLS
 ASan/UBSan tests**, and **44 networking/packed/endian tests using a relocated
 installed package**. Protocol fixtures run in JIT and native `-O0`/`-O2` modes.
@@ -385,3 +387,49 @@ reported without a general speedup claim. Parser median time differed by 1.1%.
 These checks cover the development implementation; complete final-release
 classification, hosted x86_64 gates and live macOS utun interoperability are
 not implied by them.
+
+### IPv6 host support
+
+`@packet6`, `@ipv6` and `@ip6_stack` add packed IPv6 addresses/headers, bounded
+extension parsing, fragment reassembly, UDP and ICMPv6. `@tcp` now shares its
+connection state machine across IPv4 and IPv6, including complete 128-bit tuple
+matching, TIME_WAIT records, MSS negotiation and validated Packet Too Big
+resegmentation. HTTP and TLS reuse the same table handles and stream adapters.
+
+The server example accepts `--ipv6` and serves `[fd00::2]:8080`. Raw packet
+reads now require 65,575 bytes of capacity. Explicit IPv6 constructors and
+address queries reject family mismatches; connection address queries return
+results. `TcpIsnGenerator.next6` includes every address bit in its secret-dependent
+sequence calculation. See [IPv6 APIs, ownership and migration](ipv6.md).
+
+This implements a static unicast host over externally configured TUN/utun.
+Neighbor Discovery, automatic address configuration, multicast membership,
+outbound fragmentation, jumbograms and IPv6 OS-socket/DNS APIs remain future
+work. ICMP support and reassembly diagnostic limits are stated in the guide.
+The implementation does not claim complete IPv6 conformance.
+
+
+### IPv6 development validation, 2026-10-31
+
+The IPv6 working tree passed **1,136 macOS ARM64 core tests**, **41 Linux ARM64
+networking/TLS tests**, **15 macOS native networking/TLS ASan/UBSan tests**, and
+**46 relocated-package networking/packed/endian tests**, with no skips. The
+installed server example both type-checks and compiles natively. The catalog
+contains **1,183 tests** and matches the source inventory. Gloin formatting,
+changed native implementation/test formatting, whitespace, nine HTML pages,
+and local links in the updated guides passed.
+
+Fresh independent Linux kernel/Python peers passed HTTP and verified HTTPS
+for **both IPv4 and IPv6** through isolated TUN interfaces. IPv6 ICMP echo also
+passed against `ping -6`. JIT/`-O0`/`-O2` fixtures cover independent wire checksums,
+all byte alignments modulo 16, extension limits, maximum UDP size, overlap
+poisoning, atomic fragments, incomplete first headers, contradictory final
+fragments, ICMP suppression/rate limits, validated MTU reduction, full-address
+ISNs and both families' seeded loss/reordering simulations.
+
+Local reports are `build/ipv6-core.xml`, `build/ipv6-linux.xml`,
+`build/ipv6-native-sanitized.xml`, `build/ipv6-relocated.xml`, and the two
+`build/ipv6-ipv4-interop.json` / `build/ipv6-ipv6-interop.json` records. These are
+development checks; hosted x86_64, complete release classification and live
+macOS utun interoperability remain release/deployment gates. The earlier IPv4
+performance measurements do not establish IPv6 performance.

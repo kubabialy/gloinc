@@ -8,8 +8,31 @@ import "@http_server";
 import "@http_service";
 import "@strings";
 import "@status";
+import "@packet6";
 
-def simulation(secure: bool, cert: string, key: string) -> i32 {
+def table(host: be_u32, ports: [const be_u16], slots: [tcp.Slot], version6: bool) -> result<tcp.Table> {
+    if version6 {
+        def low: result<be_u64> = be_u64(host); if low.erroneous { return low.error; }
+
+        def made: result<tcp.Table> = tcp.Table.create6(packet6.Address { high: 0x20010db800000000, low: low.value }, ports, slots);
+        if made.erroneous { return made.error; } return made.value;
+    }
+
+    def made: result<tcp.Table> = tcp.Table.create(host, ports, slots);
+    if made.erroneous { return made.error; } return made.value;
+}
+
+def connect(table: &tcp.Table, version6: bool) -> result<tcp.Handle> {
+    if version6 {
+        def made: result<tcp.Handle> = table.connect6(1234, tcp.Address6 { host: packet6.Address { high: 0x20010db800000000, low: 0xc0000202 }, port: 80 }, 4294967290, 0);
+        if made.erroneous { return made.error; } return made.value;
+    }
+
+    def made: result<tcp.Handle> = table.connect(1234, tcp.Address { host: 0xc0000202, port: 80 }, 4294967290, 0);
+    if made.erroneous { return made.error; } return made.value;
+}
+
+def simulation(secure: bool, version6: bool, cert: string, key: string) -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
@@ -32,16 +55,16 @@ def simulation(secure: bool, cert: string, key: string) -> i32 {
     def mut bslots: [tcp.Slot; 1] = {bslot.value};
     def empty: [be_u16; 0]        = {};
     def ports: [be_u16; 1]        = {80};
-    def amade: result<tcp.Table>  = tcp.Table.create(0xc0000201, empty[..], aslots[..]);
+    def amade: result<tcp.Table>  = table(0xc0000201, empty[..], aslots[..], version6);
 
     if amade.erroneous { return 3; }
 
-    def bmade: result<tcp.Table> = tcp.Table.create(0xc0000202, ports[..], bslots[..]);
+    def bmade: result<tcp.Table> = table(0xc0000202, ports[..], bslots[..], version6);
     if bmade.erroneous { return 4; }
 
     def mut a: tcp.Table           = amade.value;
     def mut b: tcp.Table           = bmade.value;
-    def opened: result<tcp.Handle> = a.connect(1234, tcp.Address { host: 0xc0000202, port: 80 }, 4294967290, 0);
+    def opened: result<tcp.Handle> = connect(&a, version6);
 
     if opened.erroneous { return 5; }
 
@@ -321,11 +344,17 @@ def main() -> i32 {
     def key: result<string> = process.arg(&owner, 2);
     if key.erroneous { return 91; }
 
-    def plain: i32 = simulation(false, cert.value, key.value);
+    def plain: i32 = simulation(false, false, cert.value, key.value);
     if plain != 0 { return plain; }
 
-    def secure: i32 = simulation(true, cert.value, key.value);
+    def secure: i32 = simulation(true, false, cert.value, key.value);
     if secure != 0 { return secure + 100; }
+
+    def plain6: i32 = simulation(false, true, cert.value, key.value);
+    if plain6 != 0 { return plain6; }
+
+    def secure6: i32 = simulation(true, true, cert.value, key.value);
+    if secure6 != 0 { return secure6 + 100; }
 
     return 0;
 }

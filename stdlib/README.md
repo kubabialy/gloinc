@@ -16,6 +16,8 @@ states. See [networking](../docs/networking.md) and the
 [local example](../examples/network_http.gloin).
 
 `@tcp`, `@ipv4`, and `@ip_stack` implement TCP/IP over raw IPv4 packets in Gloin.
+`@ipv6` and `@ip6_stack` add a static-address IPv6 host using the same TCP
+engine. See [IPv6](../docs/ipv6.md) for extensions, reassembly, ICMPv6 and limits.
 `@http_server` provides reusable HTTP/1.1 sessions, while `@tcp_tls` and
 `@http_service` provide bounded TLS and HTTP/HTTPS progress over those streams.
 `@net.PacketDevice` supplies Linux TUN/macOS utun transport. See the

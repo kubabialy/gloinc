@@ -260,7 +260,10 @@ sequence wrap, simultaneous open,
 flow/congestion control and close timers. Additional JIT/O0/O2 fixtures cover
 fragment ambiguity, UDP/ICMP dispatch, validated path-MTU quotes and
 resegmentation, generation handles, TIME_WAIT retirement, HTTP server framing,
-and verified HTTPS over lossy Gloin TCP. Native tests check raw packet framing,
+and verified HTTPS over lossy Gloin TCP for both families. IPv6 cases add
+independent header/checksum vectors, all alignments modulo 16, bounded extension
+chains, atomic fragments, overlap poisoning, maximum UDP size, endpoint fragment
+dispatch, ICMP suppression/rate limits and checked full-address ISN calls. Native tests check raw packet framing,
 secret-dependent ISNs, bounded TLS BIOs, hostname rejection and truncated EOF.
 [The raw-packet acceptance harness](tcpip/README.md) adds independent Linux
 kernel TCP and Python TLS peers, plus repeatable complete-server measurements.

@@ -1,7 +1,11 @@
-# IPv6 wire codecs (0.3.0 development)
+# IPv6 over raw packets (0.3.0 development)
 
 `@packet6` supplies packed IPv6 records and pseudo-header checksum construction.
 These helpers operate on caller-owned bytes without allocating storage.
+`@ipv6` and `@ip6_stack` build a bounded static-address host endpoint on them,
+sharing TCP, HTTP and TLS with IPv4. The OS supplies a TUN/utun packet device;
+OpenSSL supplies TLS and cryptographic services. The OS socket and DNS APIs
+in `@net` remain IPv4.
 
 | Type | Bytes | Representation |
 | --- | ---: | --- |
@@ -56,7 +60,7 @@ header, without attempting transport checksum verification or reassembly.
 
 All returned slices borrow caller storage. Keep those bytes live and unchanged
 while using a decoded view. AH/ESP, jumbograms and executing routing headers are
-unsupported; these codecs do not constitute a complete IPv6 host endpoint.
+unsupported; see the endpoint limits below.
 
 ## Raw packet transport
 
@@ -152,3 +156,23 @@ Detection, multicast membership, forwarding, outbound fragmentation, AH/ESP or
 jumbograms. Reassembly expiry and incomplete-header ICMP diagnostics are also
 unimplemented. Other received ICMP errors do not currently terminate or report
 errors to a connection. These limits preclude complete IPv6 node conformance.
+
+## Running the example
+
+Build `examples/ip_http_server.gloin` as described in the server guide. Its CLI is
+`ip-http-server DEVICE [--ipv6] [CERT.pem KEY.pem]`. IPv4 serves `10.0.0.2:8080`;
+`--ipv6` serves `[fd00::2]:8080`. One invocation uses one family. The same HTTP
+application supports binary echo, keep-alive, pipelining, bounded concurrent
+clients, deadlines and verified TLS.
+
+The isolated Linux acceptance harness configures the kernel peer as `fd00::1`:
+
+```sh
+sudo unshare --net -- python3 tests/tcpip/interop.py --ipv6 \
+  --server "$PWD/build/ip-http-server" --reports /tmp/gloin-ipv6
+```
+
+It exercises real kernel TCP and Python TLS over the TUN, and independently
+checks ICMPv6 echo using `ping -6`. See [acceptance details](../tests/tcpip/README.md).
+The macOS native framing path has automated tests; live utun interoperability
+still requires separate interface configuration and validation.

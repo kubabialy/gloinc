@@ -1,0 +1,128 @@
+// Version-specific packet dispatch for the shared HTTP server example.
+import "@arena";
+import "@vector";
+import "@packet";
+import "@packet6";
+import "@tcp";
+import "@net";
+import "@ipv4";
+import "@ipv6";
+import "@ip_stack";
+import "@ip6_stack";
+
+def struct Fragment4 { def mut bytes: [u8; 65575], def mut present: [u8; 65515], }
+
+def struct Fragment6 { def mut bytes: [u8; 66559], def mut present: [u8; 65535], }
+
+def pub struct Datagram { def pub complete: bool, def pub bytes: [const u8], }
+
+def pub struct Host {
+    def v4: *ip_stack.Endpoint, def v6: *ip6_stack.Endpoint,
+
+    def pub static create(owner: &arena.GeneralArena, slots: [tcp.Slot], version6: bool) -> result<Host> {
+        def values: [be_u16; 1]   = {8080};
+        def ports: *[be_u16; 1]   = owner.alloc(values);
+        def empty: [const be_u16] = (*ports)[..0];
+
+        if version6 {
+            def mut fragments: vector.Vector<ipv6.Reassembly> = vector.Vector<ipv6.Reassembly>.empty(owner, 4);
+
+            for def mut i: u64 = 0; i < 4; i = i + 1 {
+                def buffers: *Fragment6           = owner.alloc(Fragment6 { bytes: zeroed, present: zeroed });
+                def slot: result<ipv6.Reassembly> = ipv6.Reassembly.create(buffers.bytes[..], buffers.present[..], 60000);
+
+                if slot.erroneous { return slot.error; }
+                if !fragments.push(slot.value) { return error("IPv6 fragment allocation failed"); }
+            }
+
+            def made: result<ip6_stack.Endpoint> = ip6_stack.Endpoint.create(packet6.Address { high: 0xfd00000000000000, low: 2 },
+                (*ports)[..], empty, slots, fragments.as_slice());
+            if made.erroneous { return made.error; }
+
+            return Host { v4: null, v6: owner.alloc(made.value) };
+        }
+
+        def mut fragments: vector.Vector<ipv4.Reassembly> = vector.Vector<ipv4.Reassembly>.empty(owner, 4);
+
+        for def mut i: u64 = 0; i < 4; i = i + 1 {
+            def buffers: *Fragment4           = owner.alloc(Fragment4 { bytes: zeroed, present: zeroed });
+            def slot: result<ipv4.Reassembly> = ipv4.Reassembly.create(buffers.bytes[..], buffers.present[..], 30000);
+
+            if slot.erroneous { return slot.error; }
+            if !fragments.push(slot.value) { return error("IPv4 fragment allocation failed"); }
+        }
+
+        def made: result<ip_stack.Endpoint> = ip_stack.Endpoint.create(0x0a000002, (*ports)[..], empty, slots, fragments.as_slice());
+        if made.erroneous { return made.error; }
+
+        return Host { v4: owner.alloc(made.value), v6: null };
+    }
+
+    def pub table(self: &Host) -> &tcp.Table {
+        if self.v6 != null { return &self.v6.connections; }
+
+        return &self.v4.connections;
+    }
+
+    def pub reassemble(self: &Host, bytes: [const u8], now: u64) -> result<Datagram> {
+        if self.v6 != null {
+            def parsed: result<ipv6.Datagram> = (*self.v6).reassemble(bytes, now);
+            if parsed.erroneous { return parsed.error; }
+
+            return Datagram { complete: parsed.value.complete, bytes: parsed.value.bytes };
+        }
+
+        def parsed: result<ipv4.Datagram> = (*self.v4).reassemble(bytes, now);
+        if parsed.erroneous { return parsed.error; }
+
+        return Datagram { complete: parsed.value.complete, bytes: parsed.value.bytes };
+    }
+
+    def pub input(self: &Host, bytes: [const u8], isn: u32, now: u64, output: [u8]) -> result<tcp.Input> {
+        if self.v6 != null {
+            def fed: result<ip6_stack.Event> = (*self.v6).input(bytes, isn, now, output);
+            if fed.erroneous { return fed.error; }
+
+            return tcp.Input { connection: fed.value.connection, created: fed.value.created, reply_bytes: fed.value.reply_bytes };
+        }
+
+        def fed: result<ip_stack.Event> = (*self.v4).input(bytes, isn, now, output);
+        if fed.erroneous { return fed.error; }
+
+        return tcp.Input { connection: fed.value.connection, created: fed.value.created, reply_bytes: fed.value.reply_bytes };
+    }
+
+    def pub sequence(self: &const Host, generator: &net.TcpIsnGenerator, bytes: [const u8], now_us: u64) -> result<u32> {
+        if self.v6 != null {
+            def parsed: result<packet6.TcpPacket> = packet6.tcp(bytes);
+            if parsed.erroneous { return 0; }
+
+            def part: packet6.TcpPacket = parsed.value;
+            if part.header.syn == 0 || part.header.ack != 0 { return 0; }
+
+            def value: result<u32> = generator.next6(part.ip.header.destination, part.header.destination_port,
+                part.ip.header.source, part.header.source_port, now_us);
+            if value.erroneous { return value.error; } return value.value;
+        }
+
+        def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+        if parsed.erroneous { return 0; }
+
+        def part: packet.TcpPacket = parsed.value;
+        if part.header.syn == 0 || part.header.ack != 0 { return 0; }
+
+        def value: result<u32> = generator.next(part.ip.header.destination, part.header.destination_port,
+            part.ip.header.source, part.header.source_port, now_us);
+        if value.erroneous { return value.error; } return value.value;
+    }
+
+    def pub emit(self: &Host, output: [u8], now: u64) -> result<u64> {
+        if self.v6 != null {
+            def sent: result<u64> = (*self.v6).emit(output, now);
+            if sent.erroneous { return sent.error; } return sent.value;
+        }
+
+        def sent: result<u64> = (*self.v4).emit(output, now);
+        if sent.erroneous { return sent.error; } return sent.value;
+    }
+}
