@@ -1,4 +1,4 @@
-// IPv6 wire representation and pseudo-header checksums. No packet dispatch.
+// Bounded IPv6 wire parsing. Addresses and headers retain their representation.
 import "@packet";
 import "@memory";
 import "@status";
@@ -48,6 +48,188 @@ def packed struct(msb_first) PseudoHeader {
 
 def packed struct(msb_first) Sum { def value: be_u16, }
 
+def pub struct Packet {
+    def pub header: Header,
+    def pub bytes: [const u8],
+    def pub payload: [const u8],
+    def pub protocol: u8,
+    def pub offset: u64,
+    // Byte containing the Next Header value that selected protocol.
+    def pub previous_next: u64,
+    def pub fragmented: bool,
+    def pub fragment_at: u64,
+    def pub fragment_offset: u64,
+    def pub more: bool,
+    def pub identification: be_u32,
+    // Semantic option/routing errors retain the validated base header so the
+    // endpoint can apply ICMP suppression and send Parameter Problem correctly.
+    def pub discard: bool,
+    def pub problem_code: i32,
+    def pub problem_pointer: u64,
+}
+
+def pub parse(bytes: [const u8]) -> result<Packet> {
+    def read: result<Header> = memory.read_packed<Header>(bytes);
+    if read.erroneous { return read.error; }
+
+    def head: Header = read.value;
+    if head.version != 6 { return error("invalid IPv6 version", status.INVALID, 0); }
+
+    def length: result<u64> = u64(head.payload_length);
+    if length.erroneous { return length.error; }
+
+    def total: u64 = 40 + length.value;
+    if total > bytes.len { return error("truncated IPv6 payload", status.OUT_OF_RANGE, 0); }
+
+    def mut cursor: u64            = 40;
+    def mut previous: u64          = 6;
+    def mut protocol: u8           = head.next_header;
+    def mut extensions: u64        = 0;
+    def mut fragment_seen: bool    = false;
+    def mut fragmented: bool       = false;
+    def mut fragment_at: u64       = 0;
+    def mut fragment_offset: u64   = 0;
+    def mut more: bool             = false;
+    def mut identification: be_u32 = 0;
+    def mut discard: bool          = false;
+    def mut code: i32              = -1;
+    def mut pointer: u64           = 0;
+    def mut scanning: bool         = true;
+
+    // Continue a bounded structural walk after a semantic error so ICMP error
+    // suppression can inspect the actual upper-layer protocol. Keep the first
+    // error: a later option must not turn a silent discard into a reply.
+    while scanning {
+        if protocol == 0 || protocol == 43 || protocol == 60 {
+            if extensions == 8 || cursor + 8 > total || cursor > MAX_PREFIX - 8 {
+                return error("IPv6 extension chain exceeds bounds", status.OUT_OF_RANGE, 0);
+            }
+
+            if !discard && protocol == 0 && cursor != 40 { discard = true; code = 1; pointer = previous; }
+
+            def units: result<u64> = u64(bytes[cursor + 1]);
+            if units.erroneous { return units.error; }
+
+            def size: u64 = (units.value + 1) * 8;
+            if size > total - cursor || size > MAX_PREFIX - cursor {
+                return error("truncated or oversized IPv6 extension", status.OUT_OF_RANGE, 0);
+            }
+
+            if protocol == 43 {
+                // A local host cannot process source-routing instructions. A
+                // routing header with Segments Left zero is already exhausted.
+                if !discard && (bytes[cursor + 3] != 0 || bytes[cursor + 2] == 0) {
+                    discard = true; code = 0; pointer = cursor + 2;
+                }
+            } else {
+                def mut option: u64 = cursor + 2;
+
+                while option < cursor + size {
+                    def kind: u8 = bytes[option];
+
+                    if kind == 0 { option = option + 1; } else {
+                        if option + 2 > cursor + size { return error("short IPv6 option", status.INVALID, 0); }
+
+                        def count: result<u64> = u64(bytes[option + 1]);
+                        if count.erroneous { return count.error; }
+
+                        def end: u64 = option + 2 + count.value;
+                        if end > cursor + size { return error("IPv6 option overruns extension", status.INVALID, 0); }
+
+                        if !discard && kind >= 64 {
+                            discard = true; pointer = option;
+                            if kind >= 128 && (kind < 192 || !head.destination.multicast()) { code = 2; }
+                        }
+
+                        option = end;
+                    }
+                }
+            }
+
+            previous   = cursor;
+            protocol   = bytes[cursor];
+            cursor     = cursor + size;
+            extensions = extensions + 1;
+        } else if protocol == 44 {
+            if fragment_seen || extensions == 8 || cursor + 8 > total || cursor > MAX_PREFIX - 8 {
+                return error("invalid IPv6 fragment header chain", status.INVALID, 0);
+            }
+
+            def read_fragment: result<FragmentHeader> = memory.read_packed<FragmentHeader>(bytes[cursor..total]);
+            if read_fragment.erroneous { return read_fragment.error; }
+
+            def fragment: FragmentHeader = read_fragment.value;
+            def offset: result<u64>      = u64(fragment.offset);
+
+            if offset.erroneous { return offset.error; }
+
+            fragment_seen   = true;
+            fragment_at     = cursor;
+            fragment_offset = offset.value * 8;
+            more            = fragment.more != 0;
+            identification  = fragment.identification;
+            fragmented      = more || fragment_offset != 0;
+            protocol        = fragment.next_header;
+            cursor          = cursor + 8;
+            extensions      = extensions + 1;
+
+            if fragmented {
+                if cursor == total || (more && (total - cursor) % 8 != 0)
+                    || fragment_offset + total - cursor + fragment_at - 40 > 65535 {
+                    return error("invalid IPv6 fragment extent", status.INVALID, 0);
+                }
+
+                scanning = false;
+            } else {
+                // Atomic fragments are independent of any queued datagram.
+                previous = fragment_at;
+            }
+        } else { scanning = false; }
+    }
+
+    return Packet { header: head, bytes: bytes[..total], payload: bytes[cursor..total], protocol: protocol,
+        offset: cursor, previous_next: previous, fragmented: fragmented, fragment_at: fragment_at,
+        fragment_offset: fragment_offset, more: more, identification: identification,
+        discard: discard, problem_code: code, problem_pointer: pointer };
+}
+
+// Validate that offset-zero fragments contain every extension and the complete
+// upper-layer header. The packet's declared payload is the fragment, not the
+// original transport length; no transport checksum is evaluated yet.
+def pub first_fragment_complete(ip: Packet) -> bool {
+    def mut next: u8    = ip.protocol;
+    def mut cursor: u64 = 0;
+    def mut count: u64  = 0;
+
+    while next == 60 {
+        if count == 8 || cursor + 8 > ip.payload.len { return false; }
+
+        def size: result<u64> = u64(ip.payload[cursor + 1]);
+        if size.erroneous { return false; }
+
+        def extent: u64 = (size.value + 1) * 8;
+        if extent > ip.payload.len - cursor { return false; }
+
+        next   = ip.payload[cursor];
+        cursor = cursor + extent;
+        count  = count + 1;
+    }
+
+    if next == packet.TCP {
+        def read: result<packet.TcpHeader> = memory.read_packed<packet.TcpHeader>(ip.payload[cursor..]);
+        if read.erroneous { return false; }
+
+        def words: result<u64> = u64(read.value.header_words);
+        if words.erroneous { return false; }
+
+        return words.value >= 5 && words.value * 4 <= ip.payload.len - cursor;
+    }
+
+    if next == packet.UDP || next == ICMP { return ip.payload.len - cursor >= 8; }
+
+    return next == 59;
+}
+
 // omit == bytes.len verifies; otherwise omit identifies a two-byte checksum.
 def pub transport_checksum(source: Address, destination: Address, protocol: u8,
     bytes: [const u8], omit: u64) -> result<be_u16> {
@@ -86,6 +268,97 @@ def pub transport_checksum(source: Address, destination: Address, protocol: u8,
     if value.erroneous { return value.error; }
 
     return value.value;
+}
+
+def transport(bytes: [const u8], protocol: u8, verify: bool) -> result<Packet> {
+    def parsed: result<Packet> = parse(bytes);
+    if parsed.erroneous { return parsed.error; }
+
+    def ip: Packet = parsed.value;
+    if ip.discard || ip.fragmented || ip.protocol != protocol {
+        return error("IPv6 transport needs an accepted reassembled packet", status.INVALID, 0);
+    }
+
+    if verify {
+        def sum: result<be_u16> = transport_checksum(ip.header.source, ip.header.destination, protocol, ip.payload, ip.payload.len);
+        if sum.erroneous { return sum.error; }
+        if sum.value != 0 { return error("invalid IPv6 transport checksum", status.INVALID, 0); }
+    }
+
+    return ip;
+}
+
+def pub struct TcpPacket {
+    def pub ip: Packet, def pub header: packet.TcpHeader,
+    def pub options: [const u8], def pub payload: [const u8],
+}
+
+def pub tcp(bytes: [const u8]) -> result<TcpPacket> {
+    def parsed: result<Packet> = transport(bytes, packet.TCP, true);
+    if parsed.erroneous { return parsed.error; }
+
+    def ip: Packet                         = parsed.value;
+    def segment: result<packet.TcpSegment> = packet.tcp_segment(ip.payload);
+
+    if segment.erroneous { return segment.error; }
+
+    return TcpPacket { ip: ip, header: segment.value.header, options: segment.value.options, payload: segment.value.payload };
+}
+
+def pub struct UdpPacket { def pub ip: Packet, def pub header: packet.UdpHeader, def pub payload: [const u8], }
+
+def pub udp(bytes: [const u8]) -> result<UdpPacket> {
+    def parsed: result<Packet> = transport(bytes, packet.UDP, true);
+    if parsed.erroneous { return parsed.error; }
+
+    def ip: Packet                     = parsed.value;
+    def read: result<packet.UdpHeader> = memory.read_packed<packet.UdpHeader>(ip.payload);
+
+    if read.erroneous { return read.error; }
+
+    def length: result<u64> = u64(read.value.length);
+    if length.erroneous { return length.error; }
+    if length.value != ip.payload.len || length.value < 8 || read.value.checksum == 0 {
+        return error("invalid IPv6 UDP length or zero checksum", status.INVALID, 0);
+    }
+
+    return UdpPacket { ip: ip, header: read.value, payload: ip.payload[8..] };
+}
+
+def pub seal(bytes: [u8], protocol: u8) -> result<void> {
+    def parsed: result<Packet> = transport(bytes, protocol, false);
+    if parsed.erroneous { return parsed.error; }
+
+    def ip: Packet    = parsed.value;
+    def mut omit: u64 = 2;
+
+    if protocol == packet.TCP {
+        def segment: result<packet.TcpSegment> = packet.tcp_segment(ip.payload);
+        if segment.erroneous { return segment.error; }
+        if segment.value.header.reserved != 0 { return error("nonzero TCP reserved bits", status.INVALID, 0); }
+
+        omit = 16;
+    } else if protocol == packet.UDP {
+        def read: result<packet.UdpHeader> = memory.read_packed<packet.UdpHeader>(ip.payload);
+        if read.erroneous { return read.error; }
+
+        def length: result<u64> = u64(read.value.length);
+        if length.erroneous { return length.error; }
+        if length.value != ip.payload.len || length.value < 8 { return error("invalid IPv6 UDP length", status.INVALID, 0); }
+
+        omit = 6;
+    } else if protocol != ICMP || ip.payload.len < 8 { return error("invalid IPv6 checksum protocol", status.INVALID, 0); }
+
+    def sum: result<be_u16> = transport_checksum(ip.header.source, ip.header.destination, protocol, ip.payload, omit);
+    if sum.erroneous { return sum.error; }
+
+    def mut value: be_u16 = sum.value;
+    if protocol == packet.UDP && value == 0 { value = 65535; }
+
+    def written: result<void> = memory.write_packed<Sum>(bytes[ip.offset + omit..], Sum { value: value });
+    if written.erroneous { return written.error; }
+
+    return;
 }
 
 def pub header(output: [u8], source: Address, destination: Address, protocol: u8, length: u64) -> result<void> {

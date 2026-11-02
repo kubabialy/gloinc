@@ -1429,3 +1429,133 @@ TEST_F(NetworkLibraryTest, Ipv6HeaderLayoutAndPseudoHeaderChecksumsWorkInAllMode
         EXPECT_EQ(llvm::sys::ExecuteAndWait(output, {output}, std::nullopt, {}, 30), 0);
     }
 }
+
+namespace {
+WireBytes wire6(bool tcp, const WireBytes &payload, const WireBytes &options = {}) {
+    const size_t head = tcp ? 20 + options.size() : 8;
+    WireBytes bytes(40 + head + payload.size());
+    bytes[0] = 0x6a;
+    bytes[1] = 0xb1;
+    bytes[2] = 0x23;
+    bytes[3] = 0x45;
+    wire_u16(bytes, 4, head + payload.size());
+    bytes[6] = tcp ? 6 : 17;
+    bytes[7] = 64;
+    for (size_t at : {8u, 24u}) {
+        bytes[at] = 0x20;
+        bytes[at + 1] = 1;
+        bytes[at + 2] = 0xd;
+        bytes[at + 3] = 0xb8;
+    }
+    bytes[23] = 1;
+    bytes[39] = 2;
+    wire_u16(bytes, 40, 0x1234);
+    wire_u16(bytes, 42, 0xabcd);
+    if (tcp) {
+        bytes[44] = 0xff;
+        bytes[45] = 0xff;
+        bytes[46] = 0xff;
+        bytes[47] = 0xfe;
+        bytes[52] = uint8_t((head / 4) << 4);
+        bytes[53] = 0x12;
+        wire_u16(bytes, 54, 4096);
+        std::copy(options.begin(), options.end(), bytes.begin() + 60);
+    } else
+        wire_u16(bytes, 44, head + payload.size());
+    std::copy(payload.begin(), payload.end(), bytes.begin() + 40 + head);
+    WireBytes pseudo(bytes.begin() + 8, bytes.begin() + 40);
+    pseudo.insert(pseudo.end(), {0, 0, bytes[4], bytes[5], 0, 0, 0, bytes[6]});
+    pseudo.insert(pseudo.end(), bytes.begin() + 40, bytes.end());
+    auto sum = wire_checksum(pseudo);
+    if (!tcp && sum == 0)
+        sum = 65535;
+    wire_u16(bytes, tcp ? 56 : 46, sum);
+    return bytes;
+}
+WireBytes extension6(WireBytes bytes, uint8_t kind, WireBytes extension) {
+    extension[0] = bytes[6];
+    bytes[6] = kind;
+    bytes.insert(bytes.begin() + 40, extension.begin(), extension.end());
+    wire_u16(bytes, 4, bytes.size() - 40);
+    return bytes;
+}
+} // namespace
+
+TEST_F(NetworkLibraryTest, Ipv6CodecsMatchIndependentChecksumsExtensionsAndAlignmentInAllModes) {
+    std::string program =
+        read((std::filesystem::path(__FILE__).parent_path() / "fixtures/network/ipv6_wire.gloin")
+                 .string());
+    program += "\ndef main() -> i32 {\n";
+    unsigned index = 0;
+    auto add = [&](WireBytes bytes, unsigned protocol, bool valid, bool sealable, bool canonical,
+                   bool torture = false) {
+        const auto name = "v" + std::to_string(index++);
+        const auto boolean = [](bool v) { return v ? "true" : "false"; };
+        program += "def " + name + ": [u8; " + std::to_string(bytes.size()) +
+                   "] = " + wire_literal(bytes) + ";\n";
+        program += "if check(" + name + "[..]," + std::to_string(protocol) + "," + boolean(valid) +
+                   "," + boolean(sealable) + "," + boolean(canonical) + ") != 0 { return " +
+                   std::to_string(index) + "; }\n";
+        if (torture)
+            program += "if truncated(" + name + "[..]," + std::to_string(protocol) +
+                       ") != 0 || corrupted(" + name + "[..]," + std::to_string(protocol) +
+                       ") != 0 { return 240; }\n";
+    };
+    for (bool tcp : {false, true}) {
+        unsigned protocol = tcp ? 6 : 17;
+        auto base = wire6(tcp, {0, 255, 128, 3, 127});
+        add(base, protocol, true, true, true, true);
+        add(wire6(tcp, {}), protocol, true, true, true, true);
+        auto bad = base;
+        bad.back() ^= 1;
+        add(bad, protocol, false, true, false);
+        bad = base;
+        bad[0] = 0x4a;
+        add(bad, protocol, false, false, false);
+        bad = base;
+        bad[4] = 255;
+        add(bad, protocol, false, false, false);
+        auto padded = base;
+        padded.insert(padded.end(), {0xde, 0xad});
+        add(padded, protocol, true, true, true);
+        add(extension6(base, 0, {0, 0, 1, 4, 0, 0, 0, 0}), protocol, true, true, true);
+        add(extension6(base, 60, {0, 0, 0x1e, 2, 0xab, 0xcd, 0, 0}), protocol, true, true, true);
+        add(extension6(base, 43, {0, 0, 99, 0, 0, 0, 0, 0}), protocol, true, true, true);
+        add(extension6(base, 43, {0, 0, 99, 1, 0, 0, 0, 0}), protocol, false, false, false);
+        add(extension6(base, 44, {0, 0, 0, 0, 1, 2, 3, 4}), protocol, true, true, true);
+        auto twice = extension6(extension6(base, 44, {0, 0, 0, 0, 1, 2, 3, 4}), 44,
+                                {0, 0, 0, 0, 5, 6, 7, 8});
+        add(twice, protocol, false, false, false);
+        for (uint8_t action : {0x40, 0x80, 0xc0})
+            add(extension6(base, 60, {0, 0, action, 2, 1, 2, 0, 0}), protocol, false, false, false);
+        add(extension6(base, 60, {0, 0, 0x1e, 7, 0, 0, 0, 0}), protocol, false, false, false);
+        add(extension6(extension6(base, 0, {0, 0, 0, 0, 0, 0, 0, 0}), 60, {0, 0, 0, 0, 0, 0, 0, 0}),
+            protocol, false, false, false);
+    }
+    auto chain = wire6(false, {1, 2, 3});
+    for (int i = 0; i < 8; ++i)
+        chain = extension6(chain, 60, {0, 0, 0, 0, 0, 0, 0, 0});
+    add(chain, 17, true, true, true);
+    add(extension6(chain, 60, {0, 0, 0, 0, 0, 0, 0, 0}), 17, false, false, false);
+    auto zero = wire6(false, {0, 0});
+    wire_u16(zero, 46, 0);
+    add(zero, 17, false, true, false);
+    WireBytes pseudo(zero.begin() + 8, zero.begin() + 40);
+    pseudo.insert(pseudo.end(), {0, 0, 0, 10, 0, 0, 0, 17});
+    pseudo.insert(pseudo.end(), zero.begin() + 40, zero.end());
+    wire_u16(zero, 48, wire_checksum(pseudo));
+    wire_u16(zero, 46, 65535);
+    add(zero, 17, true, true, true);
+    for (const auto &options :
+         {WireBytes{2, 4, 5, 0xa0}, WireBytes{30, 3, 0xff, 0}, WireBytes(40, 1)})
+        add(wire6(true, {1, 2, 3}, options), 6, true, true, true);
+    add(wire6(true, {1}, {2, 3, 0, 0}), 6, false, false, false);
+    program += "return 0; }\n";
+    const auto file = source(program);
+    expect_success(invoke({file}), "");
+    for (const auto *mode : {"-O0", "-O2"}) {
+        const auto output = directory + "/ipv6-wire";
+        expect_success(invoke_raw({mode, "-o", output, file}), "");
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(output, {output}, std::nullopt, {}, 30), 0);
+    }
+}

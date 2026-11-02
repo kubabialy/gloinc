@@ -28,6 +28,10 @@ Internet checksums. `@memory.read_packed` and `write_packed` also support user-d
 packed records. See [packet APIs](../docs/packets.md) and the
 [runnable example](../examples/packet_headers.gloin).
 
+`@packet6` adds packed IPv6 addresses/headers, bounded extension parsing, and
+TCP/UDP/ICMPv6 pseudo-header checksum validation and sealing. See
+[IPv6 wire codecs](../docs/ipv6.md) for bounds and borrowed-view contracts.
+
 The 0.3.0 development `@http` module also provides `RequestDecoder` and
 `RequestReader` for bounded incremental fixed-length and chunked HTTP/1.1
 request bodies. They use caller-owned buffers and built-in results, perform no
