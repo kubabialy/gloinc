@@ -141,7 +141,8 @@ allocating an unbounded queue.
 
 `net.PacketDevice.open(owner, name)` uses a named Linux TUN with `IFF_NO_PI`, or
 a named macOS `utunN` device. It never changes interface addresses or routes.
-Reads require 65,535 bytes of output capacity and return at most one IPv4 packet.
+Reads require 65,575 bytes of output capacity and return at most one IPv4 or
+IPv6 packet. Invalid/unsupported IP datagrams are discarded with `WOULD_BLOCK`.
 Writes preserve packet boundaries; retry the same packet after `WOULD_BLOCK`.
 `wait(events, timeout_ms)` provides explicit readiness waits. The macOS adapter
 adds/removes its four-byte address-family prefix. Device access/configuration

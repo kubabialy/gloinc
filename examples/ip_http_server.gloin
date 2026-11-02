@@ -326,8 +326,8 @@ def serve(owner: &arena.GeneralArena) -> result<void> {
     if generator.erroneous { return generator.error; }
 
     def mut isn: net.TcpIsnGenerator = generator.value;
-    def mut input: [u8; 65535]       = zeroed;
-    def mut output: [u8; 65535]      = zeroed;
+    def mut input: [u8; 65575]       = zeroed;
+    def mut output: [u8; 65575]      = zeroed;
     def mut body: [u8; 4096]         = zeroed;
     def mut pending: u64             = 0;
 

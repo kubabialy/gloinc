@@ -890,7 +890,7 @@ def struct PacketDeviceState {
     def framing: i32,
 }
 
-// Raw IPv4 packet transport only: no host TCP sockets, routes or interface
+// Raw IPv4/IPv6 packet transport only: no host TCP sockets, routes or interface
 // addresses are configured here. Linux uses a named TUN; macOS uses utunN.
 // Opening may require privileges. Copies alias the descriptor; close before
 // resetting its owner arena. Preserve an unsent packet on WOULD_BLOCK.
@@ -918,7 +918,7 @@ def pub struct PacketDevice {
 
     def pub read(self: &PacketDevice, bytes: [u8]) -> result<ReadOutcome> {
         if !self.is_open() { return error("packet device is closed", status.CLOSED, 0); }
-        if bytes.len < 65535 { return error("packet receive storage needs 65535 bytes", status.OUT_OF_RANGE, 0); }
+        if bytes.len < 65575 { return error("packet receive storage needs 65575 bytes", status.OUT_OF_RANGE, 0); }
 
         def mut count: u64   = 0;
         def mut failure: i32 = 0;

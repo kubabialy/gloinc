@@ -57,3 +57,12 @@ header, without attempting transport checksum verification or reassembly.
 All returned slices borrow caller storage. Keep those bytes live and unchanged
 while using a decoded view. AH/ESP, jumbograms and executing routing headers are
 unsupported; these codecs do not constitute a complete IPv6 host endpoint.
+
+## Raw packet transport
+
+`net.PacketDevice` carries complete IPv4 or IPv6 packets over Linux TUN or
+macOS utun. Reads now require **65,575 bytes** of capacity, including for IPv4
+callers. Invalid/unsupported IP datagrams are discarded with `WOULD_BLOCK`;
+resume the readiness loop. Writes validate the declared packet length.
+The macOS adapter verifies/emits AF_INET or AF_INET6 in its four-byte prefix.
+Device addresses and routes remain externally configured.

@@ -1,6 +1,9 @@
 #include "net_runtime.h"
 #include "stdlib_runtime.h"
+#include <algorithm>
+#include <arpa/inet.h>
 #include <array>
+#include <cstring>
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <sys/socket.h>
@@ -169,7 +172,7 @@ TEST(NetRuntimeTest, RawPacketTransportPreservesDatagramsAndBoundsWithBothFramin
         ASSERT_EQ(fcntl(pair.fd[1], F_SETFL, O_NONBLOCK), 0);
         const std::array<uint8_t, 20> packet{0x45, 0, 0,   20, 0, 1, 0x40, 0, 64, 1,
                                              0,    0, 192, 0,  2, 1, 192,  0, 2,  2};
-        std::array<uint8_t, 65537> storage{};
+        std::array<uint8_t, 65577> storage{};
         storage.fill(0xa5);
         uint64_t count = 99;
         int32_t error = 99;
@@ -183,7 +186,7 @@ TEST(NetRuntimeTest, RawPacketTransportPreservesDatagramsAndBoundsWithBothFramin
             gloin_net_packet_read(pair.fd[1], framing, storage.data() + 1, 20, &count, &error),
             GLOIN_STD_INVALID);
         ASSERT_EQ(
-            gloin_net_packet_read(pair.fd[1], framing, storage.data() + 1, 65535, &count, &error),
+            gloin_net_packet_read(pair.fd[1], framing, storage.data() + 1, 65575, &count, &error),
             GLOIN_STD_OK);
         ASSERT_EQ(count, packet.size());
         for (size_t i = 0; i < packet.size(); ++i)
@@ -192,7 +195,7 @@ TEST(NetRuntimeTest, RawPacketTransportPreservesDatagramsAndBoundsWithBothFramin
         EXPECT_EQ(storage.back(), 0xa5);
         for (size_t i = packet.size() + 1; i < storage.size(); ++i)
             EXPECT_EQ(storage[i], 0xa5);
-        EXPECT_EQ(gloin_net_packet_read(pair.fd[1], framing, storage.data(), 65535, &count, &error),
+        EXPECT_EQ(gloin_net_packet_read(pair.fd[1], framing, storage.data(), 65575, &count, &error),
                   GLOIN_STD_WOULD_BLOCK);
         EXPECT_EQ(count, 0u);
         EXPECT_EQ(gloin_net_packet_write(pair.fd[0], framing, packet.data(), 19, &count, &error),
@@ -231,4 +234,78 @@ TEST(NetRuntimeTest, TcpInitialSequenceUsesSecretTupleAndWrappingFourMicrosecond
     ASSERT_EQ(gloin_net_isn_seed(second.data()), GLOIN_STD_OK);
     EXPECT_NE(first, second);
     EXPECT_EQ(gloin_net_isn_seed(nullptr), GLOIN_STD_INVALID);
+}
+
+TEST(NetRuntimeTest, Ipv6RawTransportChecksFamilyAndFullMaximumPacket) {
+    for (int framing : {0, 4}) {
+        Pipe pair;
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_DGRAM, 0, pair.fd), 0);
+        ASSERT_EQ(fcntl(pair.fd[0], F_SETFL, O_NONBLOCK), 0);
+        ASSERT_EQ(fcntl(pair.fd[1], F_SETFL, O_NONBLOCK), 0);
+        const int capacity = 262144;
+        ASSERT_EQ(setsockopt(pair.fd[0], SOL_SOCKET, SO_SNDBUF, &capacity, sizeof capacity), 0);
+        ASSERT_EQ(setsockopt(pair.fd[1], SOL_SOCKET, SO_RCVBUF, &capacity, sizeof capacity), 0);
+        std::array<uint8_t, 65575> packet{};
+        packet[0] = 0x60;
+        packet[4] = 255;
+        packet[5] = 255;
+        packet[6] = 59;
+        packet[7] = 64;
+        packet[8] = 0xfd;
+        packet[23] = 1;
+        packet[24] = 0xfd;
+        packet[39] = 2;
+        for (size_t i = 40; i < packet.size(); ++i)
+            packet[i] = uint8_t(i);
+        std::array<uint8_t, 65577> output{};
+        output.fill(0xa5);
+        uint64_t count = 0;
+        int32_t detail = 0;
+        ASSERT_EQ(gloin_net_packet_write(pair.fd[0], framing, packet.data(), packet.size(), &count,
+                                         &detail),
+                  GLOIN_STD_OK);
+        ASSERT_EQ(count, packet.size());
+        EXPECT_EQ(
+            gloin_net_packet_read(pair.fd[1], framing, output.data() + 1, 65535, &count, &detail),
+            GLOIN_STD_INVALID);
+        ASSERT_EQ(
+            gloin_net_packet_read(pair.fd[1], framing, output.data() + 1, 65575, &count, &detail),
+            GLOIN_STD_OK);
+        ASSERT_EQ(count, packet.size());
+        EXPECT_TRUE(std::equal(packet.begin(), packet.end(), output.begin() + 1));
+        EXPECT_EQ(output.front(), 0xa5);
+        EXPECT_EQ(output.back(), 0xa5);
+        // A larger datagram with a valid maximum-size prefix must not be
+        // silently truncated and returned as a different, valid packet.
+        std::array<uint8_t, 65580> oversized{};
+        const uint32_t ipv6_family = htonl(AF_INET6);
+        if (framing)
+            memcpy(oversized.data(), &ipv6_family, 4);
+        memcpy(oversized.data() + framing, packet.data(), packet.size());
+        oversized[size_t(framing) + packet.size()] = 0x42;
+        const size_t sent_size = size_t(framing) + packet.size() + 1;
+        ASSERT_EQ(send(pair.fd[0], oversized.data(), sent_size, 0), ssize_t(sent_size));
+        EXPECT_EQ(
+            gloin_net_packet_read(pair.fd[1], framing, output.data() + 1, 65575, &count, &detail),
+            GLOIN_STD_WOULD_BLOCK);
+        EXPECT_EQ(count, 0u);
+        EXPECT_EQ(output.front(), 0xa5);
+        EXPECT_EQ(output.back(), 0xa5);
+        EXPECT_EQ(gloin_net_packet_write(pair.fd[0], framing, packet.data(), packet.size() - 1,
+                                         &count, &detail),
+                  GLOIN_STD_INVALID);
+        if (framing) {
+            std::array<uint8_t, 44> mismatched{};
+            const uint32_t family = htonl(AF_INET);
+            memcpy(mismatched.data(), &family, 4);
+            mismatched[4] = 0x60;
+            mismatched[10] = 59;
+            ASSERT_EQ(send(pair.fd[0], mismatched.data(), mismatched.size(), 0),
+                      ssize_t(mismatched.size()));
+            EXPECT_EQ(gloin_net_packet_read(pair.fd[1], framing, output.data() + 1, 65575, &count,
+                                            &detail),
+                      GLOIN_STD_WOULD_BLOCK);
+            EXPECT_EQ(count, 0u);
+        }
+    }
 }

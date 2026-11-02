@@ -27,6 +27,17 @@ int32_t failure(int32_t *error, int saved = 0) {
         return GLOIN_STD_WOULD_BLOCK;
     return GLOIN_STD_IO_ERROR;
 }
+int packet_family(const uint8_t *bytes, uint64_t length) {
+    if (length < 20)
+        return 0;
+    if ((bytes[0] >> 4) == 4 && length <= 65535 && (bytes[0] & 15) >= 5 &&
+        uint64_t(bytes[0] & 15) * 4 <= length && ((uint64_t(bytes[2]) << 8) | bytes[3]) == length)
+        return AF_INET;
+    if ((bytes[0] >> 4) == 6 && length >= 40 && length <= 65575 &&
+        40 + ((uint64_t(bytes[4]) << 8) | bytes[5]) == length)
+        return AF_INET6;
+    return 0;
+}
 } // namespace
 extern "C" {
 int32_t gloin_net_tun_open(const char *name, uint64_t length, int32_t *fd, int32_t *framing,
@@ -98,20 +109,28 @@ int32_t gloin_net_packet_read(int32_t fd, int32_t framing, uint8_t *bytes, uint6
         *count = 0;
     if (error)
         *error = 0;
-    if (fd < 0 || !bytes || capacity < 65535 || !count || !error || (framing != 0 && framing != 4))
+    if (fd < 0 || !bytes || capacity < 65575 || !count || !error || (framing != 0 && framing != 4))
         return GLOIN_STD_INVALID;
     uint32_t family = 0;
-    iovec views[] = {{&family, size_t(framing)}, {bytes, 65535}};
-    const auto got = readv(fd, views, 2);
+    // Detect truncation without requiring extra capacity in the caller's view.
+    uint8_t overflow = 0;
+    iovec views[] = {{&family, size_t(framing)}, {bytes, 65575}, {&overflow, 1}};
+    const auto got = readv(fd, views, 3);
     if (got < 0)
         return failure(error);
     if (got == 0)
         return GLOIN_STD_EOF;
     if (got < framing)
         return GLOIN_STD_INVALID;
-    if (framing && ntohl(family) != AF_INET)
+    if (framing && ntohl(family) != AF_INET && ntohl(family) != AF_INET6)
         return GLOIN_STD_WOULD_BLOCK;
-    *count = uint64_t(got - framing);
+    const uint64_t size = uint64_t(got - framing);
+    if (size > 65575)
+        return GLOIN_STD_WOULD_BLOCK;
+    const int actual = packet_family(bytes, size);
+    if (!actual || (framing && ntohl(family) != uint32_t(actual)))
+        return GLOIN_STD_WOULD_BLOCK;
+    *count = size;
     return GLOIN_STD_OK;
 }
 int32_t gloin_net_packet_write(int32_t fd, int32_t framing, const uint8_t *bytes, uint64_t length,
@@ -120,11 +139,12 @@ int32_t gloin_net_packet_write(int32_t fd, int32_t framing, const uint8_t *bytes
         *count = 0;
     if (error)
         *error = 0;
-    if (fd < 0 || !bytes || length < 20 || length > 65535 || !count || !error ||
-        (framing != 0 && framing != 4) || (bytes[0] >> 4) != 4 ||
-        ((uint64_t(bytes[2]) << 8) | bytes[3]) != length)
+    if (fd < 0 || !bytes || !count || !error || (framing != 0 && framing != 4))
         return GLOIN_STD_INVALID;
-    uint32_t family = htonl(AF_INET);
+    const int actual = packet_family(bytes, length);
+    if (!actual)
+        return GLOIN_STD_INVALID;
+    uint32_t family = htonl(uint32_t(actual));
     iovec views[] = {{&family, size_t(framing)}, {const_cast<uint8_t *>(bytes), size_t(length)}};
     const auto sent = writev(fd, views, 2);
     if (sent < 0)

@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1181 tests**:
+The current source definitions and CTest discovery contain **1182 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -54,7 +54,7 @@ The current source definitions and CTest discovery contain **1181 tests**:
 | IoLibraryTest | 18 |
 | IoRuntimeTest | 14 |
 | NetworkLibraryTest | 26 |
-| NetRuntimeTest | 5 |
+| NetRuntimeTest | 6 |
 | TlsRuntimeTest | 8 |
 | TlsClientSmoke | 1 |
 | HttpClientSmoke | 1 |
@@ -267,7 +267,7 @@ kernel TCP and Python TLS peers, plus repeatable complete-server measurements.
 in JIT/native modes, including multi-buffer binary POSTs/responses, certificate
 rejection, deadlines despite progress, and connection cleanup. It also runs the
 packaged example with an ephemeral port. The zeroed-array acceptance case now
-checks a 64 KiB byte buffer in JIT and default native output. Five `NetRuntimeTest` cases check nonblocking and
+checks a 64 KiB byte buffer in JIT and default native output. Six `NetRuntimeTest` cases check nonblocking and
 close-on-exec flags, readiness, partial-I/O statuses, TLS client validation, and invalid arguments.
 Eight `TlsRuntimeTest` cases add independent direct-OpenSSL interoperability,
 TLS 1.2/1.3 and old-protocol rejection, reusable configuration lifetime,
