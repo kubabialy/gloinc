@@ -1,0 +1,153 @@
+import "@tcp";
+import "@packet";
+import "@packet6";
+import "@ip6_stack";
+import "@ipv6";
+import "@memory";
+
+def main() -> i32 {
+    def local: packet6.Address = packet6.Address { high: 0x20010db800000000, low: 1 };
+    def remote: tcp.Address6   = tcp.Address6 { host: packet6.Address { high: 0x20010db800000000, low: 2 }, port: 80 };
+    def mut tx: [u8; 4096]     = zeroed;
+    def mut rx: [u8; 4096]     = zeroed;
+    def mut map: [u8; 4096]    = zeroed;
+    def mut ptx: [u8; 4096]    = zeroed;
+    def mut prx: [u8; 4096]    = zeroed;
+    def mut pmap: [u8; 4096]   = zeroed;
+    def options: tcp.Options   = tcp.Options { mss: 1440, max_retries: 5, idle_timeout_ms: 30000, time_wait_ms: 2000, no_delay: true };
+    def slot: result<tcp.Slot> = tcp.Slot.create(tcp.Buffers { send: tx[..], receive: rx[..], present: map[..] }, options);
+
+    if slot.erroneous { return 1; }
+
+    def mut slots: [tcp.Slot; 1]            = {slot.value};
+    def ports: [be_u16; 0]                  = {};
+    def mut fragments: [ipv6.Reassembly; 0] = {};
+    def made: result<ip6_stack.Endpoint>    = ip6_stack.Endpoint.create(local, ports[..], ports[..], slots[..], fragments[..]);
+
+    if made.erroneous { return 2; }
+
+    def mut endpoint: ip6_stack.Endpoint = made.value;
+    def opened: result<tcp.Handle>       = endpoint.connections.connect6(1234, remote, 4294967294, 0);
+
+    if opened.erroneous { return 3; }
+
+    def handle: tcp.Handle    = opened.value;
+    def mut wire: [u8; 1500]  = zeroed;
+    def mut reply: [u8; 1500] = zeroed;
+    def syn: result<u64>      = endpoint.emit(wire[..], 0);
+
+    if syn.erroneous { return 4; }
+    if syn.value != 64 { return 5; }
+
+    def accepted: result<tcp.Connection> = tcp.Connection.accept6(wire[..64], remote, 4294967290,
+        tcp.Buffers { send: ptx[..], receive: prx[..], present: pmap[..] }, options, 0);
+    if accepted.erroneous { return 6; }
+
+    def mut peer: tcp.Connection = accepted.value;
+    def synack: result<u64>      = peer.emit(wire[..], 1);
+
+    if synack.erroneous { return 7; }
+
+    def input: result<ip6_stack.Event> = endpoint.input(wire[..synack.value], 0, 1, reply[..]);
+    if input.erroneous { return 8; }
+
+    def ack: result<u64> = endpoint.emit(wire[..], 2);
+    if ack.erroneous { return 9; }
+
+    def fed: result<void> = peer.input(wire[..ack.value], 2);
+    if fed.erroneous { return 10; }
+
+    def mut data: [u8; 1400] = zeroed;
+
+    for def mut i: u64 = 0; i < 1400; i = i + 1 {
+        def value: result<u8> = u8(i % 251); if value.erroneous { return 11; }
+
+        data[i] = value.value;
+    }
+
+    def queued: result<u64> = endpoint.connections.write(handle, data[..]);
+    if queued.erroneous { return 12; }
+    if queued.value != 1400 { return 13; }
+
+    def original: result<u64> = endpoint.emit(wire[..], 3);
+    if original.erroneous { return 14; }
+    if original.value != 1460 { return 15; }
+
+    def mut saved: [u8; 48] = zeroed;
+
+    for def mut i: u64 = 0; i < 48; i = i + 1 { saved[i] = wire[i]; }
+
+    def mut message: [u8; 96] = zeroed;
+    def outer: result<void>   = packet6.header(message[..], packet6.Address { high: 0x20010db8ffff0000, low: 1 }, local, 58, 96);
+
+    if outer.erroneous { return 16; }
+
+    for def mut trial: u64 = 0; trial < 5; trial = trial + 1 {
+        for def mut i: u64 = 0; i < 48; i = i + 1 { message[48 + i] = saved[i]; }
+
+        def mut mtu: be_u32 = 1280; if trial == 3 { mtu = 1279; }
+
+        def control: result<void> = memory.write_packed<ipv6.IcmpHeader>(message[40..], ipv6.IcmpHeader { kind: 2, code: 0, checksum: 0, rest: mtu });
+        if control.erroneous { return 17; }
+
+        if trial == 1 { message[71] = 3; }
+        if trial == 2 { message[92] = 0; }
+
+        def sealed: result<void> = packet6.seal(message[..], 58);
+        if sealed.erroneous { return 18; }
+
+        if trial == 0 { message[42] = 0; message[43] = 0; }
+
+        def event: result<ip6_stack.Event> = endpoint.input(message[..], 0, 4 + trial, reply[..]);
+
+        if trial == 0 { if !event.erroneous { return 19; } } else {
+            if event.erroneous { return 20; }
+            if event.value.reply_bytes != 0 { return 21; }
+        }
+
+        if trial != 4 {
+            def unchanged: result<u64> = endpoint.emit(wire[..], 4 + trial);
+            if unchanged.erroneous { return 22; }
+            if unchanged.value != 0 { return 23; }
+        }
+    }
+
+    def lengths: [u64; 2]      = {1280,240};
+    def sequences: [be_u32; 2] = {4294967295,1219};
+
+    for def mut i: u64 = 0; i < 2; i = i + 1 {
+        def emitted: result<u64> = endpoint.emit(wire[..], 9 + i);
+        if emitted.erroneous { return 24; }
+        if emitted.value != lengths[i] { return 25; }
+
+        def parsed: result<packet6.TcpPacket> = packet6.tcp(wire[..lengths[i]]);
+        if parsed.erroneous { return 26; }
+        if parsed.value.header.sequence != sequences[i] { return 27; }
+
+        def delivered: result<void> = peer.input(wire[..lengths[i]], 9 + i);
+        if delivered.erroneous { return 28; }
+    }
+
+    def mut body: [u8; 1400]   = zeroed;
+    def read: result<tcp.Read> = peer.read(body[..]);
+
+    if read.erroneous { return 29; }
+    if read.value.count != 1400 { return 30; }
+
+    for def mut i: u64 = 0; i < 1400; i = i + 1 { if body[i] != data[i] { return 31; } }
+
+    // Address queries never reinterpret families, including slot/table access.
+    def wrong: result<tcp.Address> = endpoint.connections.remote_address(handle);
+    if !wrong.erroneous { return 32; }
+
+    def right: result<tcp.Address6> = endpoint.connections.remote_address6(handle);
+    if right.erroneous { return 33; }
+
+    def address: tcp.Address6 = right.value;
+    if !address.host.equal(remote.host) || address.port != 80 { return 34; }
+
+    def mixed: result<tcp.Handle> = endpoint.connections.connect(1234, tcp.Address { host: 1, port: 80 }, 1, 11);
+    if !mixed.erroneous { return 35; }
+
+    return 0;
+}

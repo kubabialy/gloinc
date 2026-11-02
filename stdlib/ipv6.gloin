@@ -1,10 +1,14 @@
-// Caller-owned IPv6 reassembly and UDP construction.
+// Caller-owned IPv6 reassembly, UDP and ICMPv6 construction.
 import "@packet";
 import "@packet6";
 import "@memory";
 import "@status";
 
 def pub struct Datagram { def pub complete: bool, def pub bytes: [const u8], }
+
+def pub packed struct(msb_first) IcmpHeader {
+    def pub kind: u8, def pub code: u8, def pub checksum: be_u16, def pub rest: be_u32,
+}
 
 def pub struct Reassembly {
     def storage: [u8], def present: [u8], def timeout: u64,
@@ -189,4 +193,59 @@ def pub udp(output: [u8], source: packet6.Address, destination: packet6.Address,
     if sealed.erroneous { return sealed.error; }
 
     return size + 40;
+}
+
+def pub echo_reply(ip: packet6.Packet, output: [u8]) -> result<u64> {
+    if ip.fragmented || ip.discard || ip.protocol != packet6.ICMP { return error("invalid ICMPv6 packet", status.INVALID, 0); }
+
+    def read: result<IcmpHeader> = memory.read_packed<IcmpHeader>(ip.payload);
+    if read.erroneous { return read.error; }
+
+    def control: IcmpHeader = read.value;
+    def sum: result<be_u16> = packet6.transport_checksum(ip.header.source, ip.header.destination, packet6.ICMP, ip.payload, ip.payload.len);
+
+    if sum.erroneous { return sum.error; }
+    if sum.value != 0 { return error("invalid ICMPv6 checksum", status.INVALID, 0); }
+    if control.kind != 128 || control.code != 0 { return 0; }
+
+    def total: u64         = 40 + ip.payload.len;
+    def head: result<void> = packet6.header(output, ip.header.destination, ip.header.source, packet6.ICMP, total);
+
+    if head.erroneous { return head.error; }
+
+    for def mut i: u64 = 0; i < ip.payload.len; i = i + 1 { output[40 + i] = ip.payload[i]; }
+
+    output[40] = 129;
+
+    def sealed: result<void> = packet6.seal(output[..total], packet6.ICMP);
+    if sealed.erroneous { return sealed.error; }
+
+    return total;
+}
+
+// Caller rate-limits errors. Never answer an ICMPv6 error or a non-unicast
+// source. Quote at most 1232 bytes so the reply fits the IPv6 minimum MTU.
+def pub error_reply(ip: packet6.Packet, output: [u8], kind: u8, code: u8, rest: be_u32) -> result<u64> {
+    if !ip.header.source.unicast() || ip.header.destination.multicast() { return 0; }
+    if ip.protocol == packet6.ICMP && (ip.payload.len < 8 || ip.payload[0] < 128 || ip.payload[0] == 137) { return 0; }
+    // Reassemble before generating errors; a fragment may hide the ICMP type.
+    if ip.fragmented { return 0; }
+
+    def mut quoted: u64 = ip.bytes.len;
+    if quoted > 1232 { quoted = 1232; }
+
+    def total: u64         = 48 + quoted;
+    def head: result<void> = packet6.header(output, ip.header.destination, ip.header.source, packet6.ICMP, total);
+
+    if head.erroneous { return head.error; }
+
+    def control: result<void> = memory.write_packed<IcmpHeader>(output[40..], IcmpHeader { kind: kind, code: code, checksum: 0, rest: rest });
+    if control.erroneous { return control.error; }
+
+    for def mut i: u64 = 0; i < quoted; i = i + 1 { output[48 + i] = ip.bytes[i]; }
+
+    def sealed: result<void> = packet6.seal(output[..total], packet6.ICMP);
+    if sealed.erroneous { return sealed.error; }
+
+    return total;
 }

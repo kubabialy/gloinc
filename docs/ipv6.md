@@ -121,3 +121,34 @@ builds and checksums one UDP datagram. Payloads may contain up to 65,527 bytes;
 output must hold the additional 48 header bytes. Destination port zero is
 rejected. The helper does not fragment or perform packet I/O. Source payload
 must remain unchanged while constructing the output.
+
+## Static host endpoint and ICMPv6
+
+`ip6_stack.Endpoint.create(host, tcp_ports, udp_ports, slots, fragments)` represents
+one configured unicast address and borrows the supplied pools. Its `reassemble`,
+`input`, `emit` and `next_timeout_ms` methods follow the IPv4 endpoint ownership
+and progress rules in [the server guide](tcpip-server.md). `connections` exposes
+the shared TCP table. UDP events borrow payload bytes and retain both ports and
+the source address. No protocol engine allocates storage.
+
+The endpoint handles ICMPv6 echo, UDP port-unreachable, unknown Next Header and
+option/routing Parameter Problem replies. Error replies quote at most 1,232
+bytes, fitting the minimum 1,280-byte IPv6 MTU. They are limited to ten per
+1,000-millisecond window and suppressed for ICMP errors, redirects, fragments,
+unspecified/multicast sources and multicast destinations. This endpoint does
+not join multicast groups. A bounded structural walk after an option error
+prevents replying to ICMP errors hidden behind further extension headers.
+The suppression rules derive from [RFC 4443 §2.4](https://www.rfc-editor.org/rfc/rfc4443.html#section-2.4).
+
+Packet Too Big processing validates the checksum, quoted local source, remote
+address/ports, outstanding TCP sequence and a smaller MTU of at least 1,280
+bytes. TCP then resegments queued data. The implementation only reduces the
+estimate; it does not probe for increases or recover from filtered ICMP using
+packetization-layer MTU discovery. See [RFC 8201](https://www.rfc-editor.org/rfc/rfc8201.html).
+
+This bounded endpoint requires externally configured addresses and routes. It
+has no Neighbor Discovery, Router Advertisements, SLAAC, Duplicate Address
+Detection, multicast membership, forwarding, outbound fragmentation, AH/ESP or
+jumbograms. Reassembly expiry and incomplete-header ICMP diagnostics are also
+unimplemented. Other received ICMP errors do not currently terminate or report
+errors to a connection. These limits preclude complete IPv6 node conformance.

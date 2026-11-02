@@ -1594,3 +1594,18 @@ TEST_F(NetworkLibraryTest, Ipv6ReassemblyAndUdpBoundsWorkInAllModes) {
         EXPECT_EQ(llvm::sys::ExecuteAndWait(output, {output}, std::nullopt, {}, 30), 0);
     }
 }
+
+TEST_F(NetworkLibraryTest, Ipv6EndpointDispatchAndPathMtuAreBoundedInAllModes) {
+    for (const auto *name : {"ipv6_datagrams.gloin", "ipv6_mtu.gloin"}) {
+        SCOPED_TRACE(name);
+        const auto file =
+            (std::filesystem::path(__FILE__).parent_path() / "fixtures/network" / name).string();
+        expect_success(invoke({file}), "");
+        for (const auto *mode : {"-O0", "-O2"}) {
+            const auto output = directory + "/ipv6-endpoint";
+            const auto compiled = invoke_raw({mode, "-o", output, file});
+            ASSERT_EQ(compiled.status, 0) << compiled.err;
+            EXPECT_EQ(llvm::sys::ExecuteAndWait(output, {output}, std::nullopt, {}, 30), 0);
+        }
+    }
+}
