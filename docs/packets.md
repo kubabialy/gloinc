@@ -66,6 +66,12 @@ IPv4 total length; trailing capture padding or concatenated input remains outsid
 it. `UdpPacket` contains `ip`, `header`, `payload`, and `checksum_present`.
 `TcpPacket` contains `ip`, `header`, `options`, and `payload`.
 
+`packet.tcp_segment(bytes)` accepts bytes starting at a TCP header and returns
+`result<packet.TcpSegment>` with `header`, `options`, and `payload`. It checks
+the data offset and option framing, but does not verify a checksum or an IP
+header. The IP-specific codecs use this shared structural validator and then
+apply their own pseudo-header checksum checks. Its slices borrow the input.
+
 Headers are snapshots. Returned slices borrow the input and require it to remain
 live and unchanged while the parsed packet is in use. Copying a packet view
 copies these borrows. Reparse after mutating backing storage; a snapshot does

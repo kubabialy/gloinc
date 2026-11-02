@@ -308,8 +308,13 @@ def pub struct TcpPacket {
     def pub payload: [const u8],
 }
 
-def tcp_shape(packet: Ipv4Packet) -> result<TcpPacket> {
-    def read: result<TcpHeader> = memory.read_packed<TcpHeader>(packet.payload);
+// Structural validation only; checksum verification belongs to the IP codec.
+def pub struct TcpSegment {
+    def pub header: TcpHeader, def pub options: [const u8], def pub payload: [const u8],
+}
+
+def pub tcp_segment(bytes: [const u8]) -> result<TcpSegment> {
+    def read: result<TcpHeader> = memory.read_packed<TcpHeader>(bytes);
     if read.erroneous { return read.error; }
 
     def header: TcpHeader  = read.value;
@@ -318,14 +323,19 @@ def tcp_shape(packet: Ipv4Packet) -> result<TcpPacket> {
     if words.erroneous { return words.error; }
 
     def size: u64 = words.value * 4;
-    if size < 20 || size > packet.payload.len {
-        return error("invalid TCP data offset", status.INVALID, 0);
-    }
+    if size < 20 || size > bytes.len { return error("invalid TCP data offset", status.INVALID, 0); }
 
-    def options: [const u8] = packet.payload[20..size];
+    def options: [const u8] = bytes[20..size];
     if !options_valid(options, false) { return error("invalid TCP options", status.INVALID, 0); }
 
-    return TcpPacket { ip: packet, header: header, options: options, payload: packet.payload[size..] };
+    return TcpSegment { header: header, options: options, payload: bytes[size..] };
+}
+
+def tcp_shape(ip: Ipv4Packet) -> result<TcpPacket> {
+    def parsed: result<TcpSegment> = tcp_segment(ip.payload);
+    if parsed.erroneous { return parsed.error; }
+
+    return TcpPacket { ip: ip, header: parsed.value.header, options: parsed.value.options, payload: parsed.value.payload };
 }
 
 def pub parse_tcp_ipv4(bytes: [const u8]) -> result<TcpPacket> {
