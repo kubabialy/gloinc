@@ -76,3 +76,24 @@ rejects unspecified/multicast addresses, zero ports and backward clocks.
 Construct the generator once per serial endpoint owner. Its native call passes
 through a checked `gloin.abi_call`; the native ABI receives encoded address
 bytes rather than assuming a host struct layout.
+
+## TCP connections and tables
+
+The shared `@tcp` engine accepts both families. Use `tcp.Address6`,
+`Connection.connect6` / `accept6`, and `Table.create6` / `connect6` for IPv6.
+Each connection/table has one address family and rejects mixed-family input.
+Send/receive ownership and progress rules are unchanged; see [TCP](tcpip-server.md).
+IPv6 SYN output requires at least 64 bytes. `Options.defaults6()` uses MSS 1440
+for a 1500-byte link; an IPv6 peer omitting MSS defaults to 1220. Configure MSS
+and output storage for the actual path.
+
+`Connection.local_address()` and `remote_address()` now return
+`result<Address>`. Their `local_address6()` / `remote_address6()` counterparts
+return `result<Address6>`; wrong-family queries fail. Tables add
+`remote_address6(handle)` alongside their existing IPv4 query. Tuple matching
+and TIME_WAIT records retain all 128 address bits.
+
+`Table.packet_too_big6(local_port, remote, sequence, mtu)` accepts a big-endian
+32-bit MTU, checks the complete tuple and an outstanding TCP sequence, and only
+reduces the estimate. IPv6 reductions below 1,280 bytes are ignored. Callers
+must validate the invoking ICMP packet and quote before using this hook.

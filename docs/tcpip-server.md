@@ -61,10 +61,12 @@ active open. `accept(initial_syn, local, isn, buffers, options, now_ms)` creates
 passive connection. Addresses and ports are endian-qualified values. The caller
 supplies send storage, receive storage, and a presence map with the same length
 as receive storage.
+IPv6 uses `Address6`, `connect6`, `accept6` and `Table.create6`; see
+[IPv6 TCP](ipv6.md#tcp-connections-and-tables) for address queries and MSS differences.
 
 - `input(packet, now_ms)` validates a packet and advances protocol state.
 - `emit(output, now_ms)` drives timers and emits at most one packet; zero means
-  no packet is ready. Output needs at least 44 bytes; normally provide room for
+  no packet is ready. Output needs at least 44 bytes for IPv4 or 64 for IPv6; normally provide room for
   the configured MSS plus the IP/TCP headers.
 - `write(bytes)` copies the prefix that fits, returning the accepted count.
 - `read(output)` returns `{count, end}`. Zero bytes with `end == false` means
@@ -78,7 +80,8 @@ as receive storage.
 
 All supplied clocks must share one monotonic millisecond domain. Backward clocks
 return errors. `Options.defaults()` uses MSS 1460, 12 retries, a 300-second idle
-limit, a 120-second TIME_WAIT interval, and Nagle enabled. Handshake, idle,
+limit, a 120-second TIME_WAIT interval, and Nagle enabled.
+`Options.defaults6()` uses MSS 1440 with the same other defaults. Handshake, idle,
 retransmission, zero-window persistence and close state are bounded. Tests that
 shorten TIME_WAIT must account for the peer's retransmission backoff.
 

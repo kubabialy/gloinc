@@ -255,7 +255,8 @@ limits, built-in results, address construction, and socket alias close state.
 Streaming decoder cases vary every split with 1–3-byte reusable output buffers,
 stop at final-head/output boundaries, preserve following bytes, and enforce
 cumulative body limits. Independent TCP packet oracles and 24 seeded loss,
-reordering and duplication simulations cover sequence wrap, simultaneous open,
+reordering and duplication simulations run for both IPv4 and IPv6, covering
+sequence wrap, simultaneous open,
 flow/congestion control and close timers. Additional JIT/O0/O2 fixtures cover
 fragment ambiguity, UDP/ICMP dispatch, validated path-MTU quotes and
 resegmentation, generation handles, TIME_WAIT retirement, HTTP server framing,

@@ -1,6 +1,7 @@
-// IPv4 TCP connection engine. Packet I/O, clocks, storage and ISNs are caller-owned.
+// IPv4/IPv6 TCP connection engine. Packet I/O, clocks, storage and ISNs are caller-owned.
 // Sequence arithmetic uses a bounded u64 domain modulo 2^32; no signed overflow.
 import "@packet";
+import "@packet6";
 import "@memory";
 import "@status";
 
@@ -22,6 +23,112 @@ def pub struct Address {
     def pub port: be_u16,
 }
 
+def pub struct Address6 { def pub host: packet6.Address, def pub port: be_u16, }
+
+// A tagged internal endpoint. The public v4/v6 constructors never reinterpret
+// one family as another; all TCP state transitions are shared.
+def struct Peer {
+    def version: u8, def host: be_u32, def host6: packet6.Address, def port: be_u16,
+
+    def static v4(address: Address) -> Peer {
+        return Peer { version: 4, host: address.host, host6: packet6.Address.unspecified(), port: address.port };
+    }
+
+    def static v6(address: Address6) -> Peer {
+        return Peer { version: 6, host: 0, host6: address.host, port: address.port };
+    }
+
+    def same_host(self: &const Peer, other: Peer) -> bool {
+        return self.version == other.version && self.host == other.host && self.host6.equal(other.host6);
+    }
+
+    def equal(self: &const Peer, other: Peer) -> bool { return self.port == other.port && self.same_host(other); }
+
+    def ip_size(self: &const Peer) -> u64 { if self.version == 6 { return 40; } return 20; }
+
+    def default_mss(self: &const Peer) -> u64 { if self.version == 6 { return 1220; } return 536; }
+
+    def at_port(self: &const Peer, port: be_u16) -> Peer {
+        return Peer { version: self.version, host: self.host, host6: self.host6, port: port };
+    }
+
+    def as4(self: &const Peer) -> result<Address> {
+        if self.version != 4 { return error("TCP endpoint is IPv6", status.INVALID, 0); }
+
+        return Address { host: self.host, port: self.port };
+    }
+
+    def as6(self: &const Peer) -> result<Address6> {
+        if self.version != 6 { return error("TCP endpoint is IPv4", status.INVALID, 0); }
+
+        return Address6 { host: self.host6, port: self.port };
+    }
+}
+
+def struct Segment {
+    def local: Peer, def remote: Peer, def hop_limit: u8,
+    def header: packet.TcpHeader, def options: [const u8], def payload: [const u8],
+}
+
+def parse_segment(bytes: [const u8]) -> result<Segment> {
+    if bytes.len == 0 { return error("empty TCP packet", status.INVALID, 0); }
+
+    if bytes[0] / 16 == 6 {
+        def parsed: result<packet6.TcpPacket> = packet6.tcp(bytes);
+        if parsed.erroneous { return parsed.error; }
+
+        def part: packet6.TcpPacket = parsed.value;
+        if !part.ip.header.source.unicast() || !part.ip.header.destination.unicast() {
+            return error("TCP requires unicast IPv6 addresses", status.INVALID, 0);
+        }
+
+        return Segment { local: Peer.v6(Address6 { host: part.ip.header.destination, port: part.header.destination_port }),
+            remote: Peer.v6(Address6 { host: part.ip.header.source, port: part.header.source_port }),
+            hop_limit: part.ip.header.hop_limit, header: part.header, options: part.options, payload: part.payload };
+    }
+
+    def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+    if parsed.erroneous { return parsed.error; }
+
+    def part: packet.TcpPacket = parsed.value;
+
+    return Segment { local: Peer.v4(Address { host: part.ip.header.destination, port: part.header.destination_port }),
+        remote: Peer.v4(Address { host: part.ip.header.source, port: part.header.source_port }),
+        hop_limit: part.ip.header.ttl, header: part.header, options: part.options, payload: part.payload };
+}
+
+def write_ip(local: Peer, remote: Peer, output: [u8], total: u64, id: be_u16) -> result<void> {
+    if local.version == 6 {
+        def written: result<void> = packet6.header(output, local.host6, remote.host6, packet.TCP, total);
+        if written.erroneous { return written.error; }
+
+        return;
+    }
+
+    def length: result<be_u16> = be_u16(total);
+    if length.erroneous { return length.error; }
+
+    def written: result<void> = memory.write_packed<packet.Ipv4Header>(output, packet.Ipv4Header {
+        version: 4, header_words: 5, dscp: 0, ecn: 0, total_length: length.value,
+        identification: id, reserved: 0, dont_fragment: 1, more_fragments: 0,
+        fragment_offset: 0, ttl: 64, protocol: packet.TCP, checksum: 0, source: local.host, destination: remote.host });
+    if written.erroneous { return written.error; }
+
+    return;
+}
+
+def seal_tcp(local: Peer, bytes: [u8]) -> result<void> {
+    if local.version == 6 {
+        def sealed: result<void> = packet6.seal(bytes, packet.TCP);
+        if sealed.erroneous { return sealed.error; }
+    } else {
+        def sealed: result<void> = packet.seal_tcp_ipv4(bytes);
+        if sealed.erroneous { return sealed.error; }
+    }
+
+    return;
+}
+
 def pub struct Buffers {
     def pub send: [u8],
     def pub receive: [u8],
@@ -34,6 +141,11 @@ def pub struct Options {
     def pub idle_timeout_ms: u64,
     def pub time_wait_ms: u64,
     def pub no_delay: bool,
+
+    def pub static defaults6() -> Options {
+        return Options { mss: 1440, max_retries: 12, idle_timeout_ms: 300000,
+            time_wait_ms: 120000, no_delay: false };
+    }
 
     def pub static defaults() -> Options {
         return Options { mss: 1460, max_retries: 12, idle_timeout_ms: 300000,
@@ -60,9 +172,9 @@ def minimum(a: u64, b: u64) -> u64 { if a < b { return a; } return b; }
 
 def maximum(a: u64, b: u64) -> u64 { if a > b { return a; } return b; }
 
-def peer_mss(options: [const u8], local: u64) -> result<u64> {
+def peer_mss(options: [const u8], local: u64, fallback: u64) -> result<u64> {
     def mut cursor: u64  = 0;
-    def mut offered: u64 = 536;
+    def mut offered: u64 = fallback;
     def mut seen: bool   = false;
 
     while cursor < options.len {
@@ -96,9 +208,12 @@ def peer_mss(options: [const u8], local: u64) -> result<u64> {
     return minimum(local, offered);
 }
 
-def control_packet(local: Address, remote: Address, sequence: u64, acknowledgment: u64,
+def control_packet(local: Peer, remote: Peer, sequence: u64, acknowledgment: u64,
     ack_flag: u1, reset: u1, output: [u8]) -> result<u64> {
-    if output.len < 40 { return error("TCP reset output is too short", status.OUT_OF_RANGE, 0); }
+    def base: u64  = local.ip_size();
+    def total: u64 = base + 20;
+
+    if output.len < total { return error("TCP control output is too short", status.OUT_OF_RANGE, 0); }
 
     def seq: result<be_u32> = be_u32(sequence);
     if seq.erroneous { return seq.error; }
@@ -111,29 +226,25 @@ def control_packet(local: Address, remote: Address, sequence: u64, acknowledgmen
         sequence: seq.value, acknowledgment: ack.value, header_words: 5, reserved: 0,
         cwr: 0, ece: 0, urg: 0, ack: ack_flag, psh: 0, rst: reset, syn: 0, fin: 0,
         window: 0, checksum: 0, urgent_pointer: 0 };
-    def ip: result<void> = memory.write_packed<packet.Ipv4Header>(output, packet.Ipv4Header {
-        version: 4, header_words: 5, dscp: 0, ecn: 0, total_length: 40,
-        identification: 0, reserved: 0, dont_fragment: 1, more_fragments: 0,
-        fragment_offset: 0, ttl: 64, protocol: packet.TCP, checksum: 0,
-        source: local.host, destination: remote.host });
+    def ip: result<void> = write_ip(local, remote, output, total, 0);
 
     if ip.erroneous { return ip.error; }
 
-    def tcp: result<void> = memory.write_packed<packet.TcpHeader>(output[20..], header);
+    def tcp: result<void> = memory.write_packed<packet.TcpHeader>(output[base..], header);
     if tcp.erroneous { return tcp.error; }
 
-    def sealed: result<void> = packet.seal_tcp_ipv4(output[..40]);
+    def sealed: result<void> = seal_tcp(local, output[..total]);
     if sealed.erroneous { return sealed.error; }
 
-    return 40;
+    return total;
 }
 
 // Closed-port response. Never answer a reset with another reset.
 def pub reset_for(bytes: [const u8], output: [u8]) -> result<u64> {
-    def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+    def parsed: result<Segment> = parse_segment(bytes);
     if parsed.erroneous { return parsed.error; }
 
-    def segment: packet.TcpPacket = parsed.value;
+    def segment: Segment = parsed.value;
     if segment.header.rst != 0 { return 0; }
 
     def seq: result<u64> = u64(segment.header.sequence);
@@ -158,8 +269,7 @@ def pub reset_for(bytes: [const u8], output: [u8]) -> result<u64> {
     }
 
     def sent: result<u64> = control_packet(
-        Address { host: segment.ip.header.destination, port: segment.header.destination_port },
-        Address { host: segment.ip.header.source, port: segment.header.source_port },
+        segment.local, segment.remote,
         sequence, acknowledgment, flag, 1, output);
     if sent.erroneous { return sent.error; }
 
@@ -175,8 +285,8 @@ def remaining(start: u64, duration: u64, now: u64) -> u64 {
 
 // Copies alias the supplied buffers. Drive one connection value serially.
 def pub struct Connection {
-    def local: Address,
-    def mut remote: Address,
+    def local: Peer,
+    def mut remote: Peer,
     def buffers: Buffers,
     def options: Options,
     def mut phase: i32,
@@ -236,6 +346,24 @@ def pub struct Connection {
 
     def pub static connect(local: Address, remote: Address, isn: u32,
         buffers: Buffers, options: Options, now_ms: u64) -> result<Connection> {
+        def made: result<Connection> = Connection.open(Peer.v4(local), Peer.v4(remote), isn, buffers, options, now_ms);
+        if made.erroneous { return made.error; }
+
+        return made.value;
+    }
+
+    def pub static connect6(local: Address6, remote: Address6, isn: u32,
+        buffers: Buffers, options: Options, now_ms: u64) -> result<Connection> {
+        if !local.host.unicast() || !remote.host.unicast() { return error("TCP requires unicast IPv6 addresses", status.INVALID, 0); }
+
+        def made: result<Connection> = Connection.open(Peer.v6(local), Peer.v6(remote), isn, buffers, options, now_ms);
+        if made.erroneous { return made.error; }
+
+        return made.value;
+    }
+
+    def static open(local: Peer, remote: Peer, isn: u32,
+        buffers: Buffers, options: Options, now_ms: u64) -> result<Connection> {
         if local.port == 0 || remote.port == 0 || buffers.send.len == 0 || buffers.send.len > 65535
             || buffers.receive.len == 0 || buffers.receive.len > 65535
             || buffers.present.len != buffers.receive.len || options.mss < 64 || options.mss > 65495
@@ -251,7 +379,7 @@ def pub struct Connection {
         if segment.erroneous { return segment.error; }
 
         def initial_sequence: u64 = sequence.value;
-        def initial_mss: u64      = minimum(segment.value, 536);
+        def initial_mss: u64      = minimum(segment.value, local.default_mss());
 
         for def mut i: u64 = 0; i < buffers.present.len; i = i + 1 { buffers.present[i] = 0; }
 
@@ -273,18 +401,34 @@ def pub struct Connection {
 
     def pub static accept(bytes: [const u8], local: Address, isn: u32,
         buffers: Buffers, options: Options, now_ms: u64) -> result<Connection> {
-        def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+        def made: result<Connection> = Connection.accept_on(bytes, Peer.v4(local), isn, buffers, options, now_ms);
+        if made.erroneous { return made.error; }
+
+        return made.value;
+    }
+
+    def pub static accept6(bytes: [const u8], local: Address6, isn: u32,
+        buffers: Buffers, options: Options, now_ms: u64) -> result<Connection> {
+        def made: result<Connection> = Connection.accept_on(bytes, Peer.v6(local), isn, buffers, options, now_ms);
+        if made.erroneous { return made.error; }
+
+        return made.value;
+    }
+
+    def static accept_on(bytes: [const u8], local: Peer, isn: u32,
+        buffers: Buffers, options: Options, now_ms: u64) -> result<Connection> {
+        def parsed: result<Segment> = parse_segment(bytes);
         if parsed.erroneous { return parsed.error; }
 
-        def segment: packet.TcpPacket = parsed.value;
-        if segment.ip.header.destination != local.host || segment.header.destination_port != local.port
+        def segment: Segment = parsed.value;
+        if !segment.local.equal(local) || segment.hop_limit == 0
             || segment.header.syn == 0 || segment.header.ack != 0 || segment.header.rst != 0
             || segment.header.fin != 0 {
             return error("TCP listener requires an initial SYN", status.INVALID, 0);
         }
 
-        def peer: Address            = Address { host: segment.ip.header.source, port: segment.header.source_port };
-        def made: result<Connection> = Connection.connect(local, peer, isn, buffers, options, now_ms);
+        def peer: Peer               = segment.remote;
+        def made: result<Connection> = Connection.open(local, peer, isn, buffers, options, now_ms);
 
         if made.erroneous { return made.error; }
 
@@ -306,7 +450,7 @@ def pub struct Connection {
         return;
     }
 
-    def start_receive(self: &Connection, segment: packet.TcpPacket) -> result<void> {
+    def start_receive(self: &Connection, segment: Segment) -> result<void> {
         def sequence: result<u64> = u64(segment.header.sequence);
         if sequence.erroneous { return sequence.error; }
 
@@ -316,7 +460,7 @@ def pub struct Connection {
         def limit: result<u64> = u64(self.options.mss);
         if limit.erroneous { return limit.error; }
 
-        def negotiated: result<u64> = peer_mss(segment.options, limit.value);
+        def negotiated: result<u64> = peer_mss(segment.options, limit.value, self.local.default_mss());
         if negotiated.erroneous { return negotiated.error; }
 
         self.irs             = sequence.value;
@@ -331,10 +475,15 @@ def pub struct Connection {
     }
 
     def path_mtu(self: &Connection, mtu: u64, sequence: u64) -> bool {
-        if mtu < 68 || mtu > 65535 || self.una == self.next
-            || distance(self.una, sequence) >= distance(self.una, self.next) || mtu - 40 >= self.mss { return false; }
+        def overhead: u64  = self.local.ip_size() + 20;
+        def mut lower: u64 = 68;
+        def mut upper: u64 = 65535;
 
-        self.mss            = mtu - 40;
+        if self.local.version == 6 { lower = 1280; upper = packet6.MAX_PACKET; }
+        if mtu < lower || mtu > upper || self.una == self.next
+            || distance(self.una, sequence) >= distance(self.una, self.next) || mtu - overhead >= self.mss { return false; }
+
+        self.mss            = mtu - overhead;
         self.retransmit     = false;
         self.resegment      = self.send_sent != 0;
         self.resegment_next = self.una;
@@ -345,9 +494,21 @@ def pub struct Connection {
 
     def pub state(self: &const Connection) -> i32 { return self.phase; }
 
-    def pub local_address(self: &const Connection) -> Address { return self.local; }
+    def pub local_address(self: &const Connection) -> result<Address> {
+        def address: result<Address> = self.local.as4(); if address.erroneous { return address.error; } return address.value;
+    }
 
-    def pub remote_address(self: &const Connection) -> Address { return self.remote; }
+    def pub local_address6(self: &const Connection) -> result<Address6> {
+        def address: result<Address6> = self.local.as6(); if address.erroneous { return address.error; } return address.value;
+    }
+
+    def pub remote_address(self: &const Connection) -> result<Address> {
+        def address: result<Address> = self.remote.as4(); if address.erroneous { return address.error; } return address.value;
+    }
+
+    def pub remote_address6(self: &const Connection) -> result<Address6> {
+        def address: result<Address6> = self.remote.as6(); if address.erroneous { return address.error; } return address.value;
+    }
 
     def pub send_available(self: &const Connection) -> u64 { return self.buffers.send.len - self.send_used; }
 
@@ -516,7 +677,7 @@ def pub struct Connection {
         }
     }
 
-    def accept_data(self: &Connection, segment: packet.TcpPacket, sequence: u64, now_ms: u64) -> void {
+    def accept_data(self: &Connection, segment: Segment, sequence: u64, now_ms: u64) -> void {
         if self.receive_fin { self.ack_pending = true; return; }
 
         def free: u64 = self.buffers.receive.len - self.receive_ready;
@@ -575,12 +736,11 @@ def pub struct Connection {
     }
 
     def pub input(self: &Connection, bytes: [const u8], now_ms: u64) -> result<void> {
-        def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+        def parsed: result<Segment> = parse_segment(bytes);
         if parsed.erroneous { return parsed.error; }
 
-        def segment: packet.TcpPacket = parsed.value;
-        if segment.ip.header.destination != self.local.host || segment.ip.header.source != self.remote.host
-            || segment.header.destination_port != self.local.port || segment.header.source_port != self.remote.port {
+        def segment: Segment = parsed.value;
+        if !segment.local.equal(self.local) || !segment.remote.equal(self.remote) || segment.hop_limit == 0 {
             return error("TCP packet belongs to another connection", status.INVALID, 0);
         }
 
@@ -745,7 +905,8 @@ def pub struct Connection {
     }
 
     def pub emit(self: &Connection, output: [u8], now_ms: u64) -> result<u64> {
-        if output.len < 44 { return error("TCP output buffer needs at least 44 bytes", status.OUT_OF_RANGE, 0); }
+        def base: u64 = self.local.ip_size();
+        if output.len < base + 24 { return error("TCP output buffer is too short for IP and SYN headers", status.OUT_OF_RANGE, 0); }
 
         def clocked: result<void> = self.clock(now_ms);
         if clocked.erroneous { return clocked.error; }
@@ -826,13 +987,13 @@ def pub struct Connection {
             } else if self.resegment && distance(self.una, self.resegment_next) < self.peer_window {
                 offset       = distance(self.una, self.resegment_next);
                 count        = minimum(distance(self.resegment_next, self.resegment_end), self.mss);
-                count        = minimum(count, minimum(output.len - 40, self.peer_window - offset));
+                count        = minimum(count, minimum(output.len - base - 20, self.peer_window - offset));
                 sequence     = self.resegment_next;
                 again        = true;
                 resegmenting = true;
             } else if self.retransmit && self.una != self.next && self.peer_window != 0 {
                 count    = minimum(self.send_sent, self.mss);
-                count    = minimum(count, output.len - 40);
+                count    = minimum(count, output.len - base - 20);
                 offset   = 0;
                 sequence = self.una;
                 again    = true;
@@ -845,7 +1006,7 @@ def pub struct Connection {
                     count = minimum(self.send_used - self.send_sent, allowance - flight);
                     if !self.options.no_delay && !self.close_requested && flight != 0 && count < self.mss { count = 0; }
 
-                    count = minimum(count, minimum(self.mss, output.len - 40));
+                    count = minimum(count, minimum(self.mss, output.len - base - 20));
                     if count == 0 && self.send_sent == self.send_used && self.close_requested && !self.fin_sent { fin = 1; }
                 }
             }
@@ -856,10 +1017,7 @@ def pub struct Connection {
         def mut tcp_size: u64 = 20;
         if syn != 0 { tcp_size = 24; }
 
-        def total: u64             = 20 + tcp_size + count;
-        def length: result<be_u16> = be_u16(total);
-
-        if length.erroneous { return length.error; }
+        def total: u64 = base + tcp_size + count;
 
         def seq: result<be_u32> = be_u32(sequence);
         if seq.erroneous { return seq.error; }
@@ -873,11 +1031,7 @@ def pub struct Connection {
         def id: result<be_u16> = be_u16(self.identification);
         if id.erroneous { return id.error; }
 
-        def ip: result<void> = memory.write_packed<packet.Ipv4Header>(output, packet.Ipv4Header {
-            version: 4, header_words: 5, dscp: 0, ecn: 0, total_length: length.value,
-            identification: id.value, reserved: 0, dont_fragment: 1, more_fragments: 0,
-            fragment_offset: 0, ttl: 64, protocol: packet.TCP, checksum: 0,
-            source: self.local.host, destination: self.remote.host });
+        def ip: result<void> = write_ip(self.local, self.remote, output, total, id.value);
         if ip.erroneous { return ip.error; }
 
         def mut ack_flag: u1 = 1;
@@ -886,7 +1040,7 @@ def pub struct Connection {
         def mut words: u4 = 5;
         if syn != 0 { words = 6; }
 
-        def header: result<void> = memory.write_packed<packet.TcpHeader>(output[20..], packet.TcpHeader {
+        def header: result<void> = memory.write_packed<packet.TcpHeader>(output[base..], packet.TcpHeader {
             source_port: self.local.port, destination_port: self.remote.port,
             sequence: seq.value, acknowledgment: ack.value, header_words: words,
             reserved: 0, cwr: 0, ece: 0, urg: 0, ack: ack_flag, psh: 0, rst: 0, syn: syn, fin: fin,
@@ -903,21 +1057,21 @@ def pub struct Connection {
             def low: result<u8> = u8(offered.value % 256);
             if low.erroneous { return low.error; }
 
-            output[40] = 2;
-            output[41] = 4;
-            output[42] = high.value;
-            output[43] = low.value;
+            output[base + 20] = 2;
+            output[base + 21] = 4;
+            output[base + 22] = high.value;
+            output[base + 23] = low.value;
         }
 
         def mut slot: u64 = (self.send_head + offset) % self.buffers.send.len;
 
         for def mut i: u64 = 0; i < count; i = i + 1 {
-            output[20 + tcp_size + i] = self.buffers.send[slot];
+            output[base + tcp_size + i] = self.buffers.send[slot];
             slot = slot + 1;
             if slot == self.buffers.send.len { slot = 0; }
         }
 
-        def sealed: result<void> = packet.seal_tcp_ipv4(output[..total]);
+        def sealed: result<void> = seal_tcp(self.local, output[..total]);
         if sealed.erroneous { return sealed.error; }
 
         if resegmenting {
@@ -1003,8 +1157,8 @@ def pub struct Input {
 // No send/receive buffer ownership is retained here.
 def pub struct TimeWait {
     def mut occupied: bool,
-    def mut local: Address,
-    def mut remote: Address,
+    def mut local: Peer,
+    def mut remote: Peer,
     def mut sequence: u64,
     def mut acknowledgment: u64,
     def mut started: u64,
@@ -1012,18 +1166,18 @@ def pub struct TimeWait {
     def mut ack_pending: bool,
 
     def pub static empty() -> TimeWait {
-        return TimeWait { occupied: false, local: Address { host: 0, port: 0 }, remote: Address { host: 0, port: 0 },
+        return TimeWait { occupied: false, local: Peer.v4(Address { host: 0, port: 0 }), remote: Peer.v4(Address { host: 0, port: 0 }),
             sequence: 0, acknowledgment: 0, started: 0, duration: 0, ack_pending: false };
     }
 }
 
-// Serial, bounded connection table for one IPv4 host. Slots/buffers/listener
+// Serial, bounded connection table for one IPv4 or IPv6 host. Slots/buffers/listener
 // ports must remain alive and exclusively owned by this table. Each emit scans
 // at most slots.len connections and returns at most one packet, round-robin.
 // ISNs are supplied by the caller: use a cryptographic, tuple-aware source for
 // real networks. Explicit values permit deterministic protocol simulations.
 def pub struct Table {
-    def host: be_u32,
+    def host: Peer,
     def ports: [const be_u16],
     def slots: [Slot],
     def mut history: [TimeWait],
@@ -1032,7 +1186,25 @@ def pub struct Table {
     def mut last_now: u64,
 
     def pub static create(host: be_u32, ports: [const be_u16], slots: [Slot]) -> result<Table> {
-        if host == 0 || slots.len == 0 || slots.len > 4096 || ports.len > 4096 {
+        if host == 0 { return error("invalid TCP host", status.INVALID, 0); }
+
+        def made: result<Table> = Table.create_for(Peer.v4(Address { host: host, port: 0 }), ports, slots);
+        if made.erroneous { return made.error; }
+
+        return made.value;
+    }
+
+    def pub static create6(host: packet6.Address, ports: [const be_u16], slots: [Slot]) -> result<Table> {
+        if !host.unicast() { return error("invalid TCP IPv6 host", status.INVALID, 0); }
+
+        def made: result<Table> = Table.create_for(Peer.v6(Address6 { host: host, port: 0 }), ports, slots);
+        if made.erroneous { return made.error; }
+
+        return made.value;
+    }
+
+    def static create_for(host: Peer, ports: [const be_u16], slots: [Slot]) -> result<Table> {
+        if slots.len == 0 || slots.len > 4096 || ports.len > 4096 {
             return error("invalid TCP table configuration", status.INVALID, 0);
         }
 
@@ -1107,10 +1279,10 @@ def pub struct Table {
         while self.history_used != 0 && !self.history[self.history_used - 1].occupied { self.history_used = self.history_used - 1; }
     }
 
-    def history_for(self: &const Table, local_port: be_u16, remote: Address) -> u64 {
+    def history_for(self: &const Table, local_port: be_u16, remote: Peer) -> u64 {
         for def mut i: u64 = 0; i < self.history_used; i = i + 1 {
             if self.history[i].occupied && self.history[i].local.port == local_port
-                && self.history[i].remote.host == remote.host && self.history[i].remote.port == remote.port { return i; }
+                && self.history[i].remote.equal(remote) { return i; }
         }
 
         return self.history.len;
@@ -1129,12 +1301,11 @@ def pub struct Table {
         return;
     }
 
-    def find(self: &const Table, local_port: be_u16, remote: Address) -> u64 {
+    def find(self: &const Table, local_port: be_u16, remote: Peer) -> u64 {
         for def mut i: u64 = 0; i < self.slots.len; i = i + 1 {
             if self.slots[i].occupied {
                 def connection: &const Connection = &self.slots[i].connection;
-                if connection.local.port == local_port && connection.remote.host == remote.host
-                    && connection.remote.port == remote.port { return i; }
+                if connection.local.port == local_port && connection.remote.equal(remote) { return i; }
             }
         }
 
@@ -1161,16 +1332,29 @@ def pub struct Table {
     // sequence on the exact four-tuple before shrinking/resegmenting data.
     def pub packet_too_big(self: &Table, local_port: be_u16, remote: Address,
         sequence: be_u32, mtu: be_u16) -> result<bool> {
+        def size: result<u64> = u64(mtu); if size.erroneous { return size.error; }
+
+        def adjusted: result<bool> = self.adjust_mtu(local_port, Peer.v4(remote), sequence, size.value);
+        if adjusted.erroneous { return adjusted.error; } return adjusted.value;
+    }
+
+    def pub packet_too_big6(self: &Table, local_port: be_u16, remote: Address6,
+        sequence: be_u32, mtu: be_u32) -> result<bool> {
+        def size: result<u64> = u64(mtu); if size.erroneous { return size.error; }
+
+        def adjusted: result<bool> = self.adjust_mtu(local_port, Peer.v6(remote), sequence, size.value);
+        if adjusted.erroneous { return adjusted.error; } return adjusted.value;
+    }
+
+    def adjust_mtu(self: &Table, local_port: be_u16, remote: Peer, sequence: be_u32, mtu: u64) -> result<bool> {
+        if self.host.version != remote.version { return false; }
+
         def index: u64 = self.find(local_port, remote);
         if index == self.slots.len { return false; }
 
-        def size: result<u64> = u64(mtu);
-        if size.erroneous { return size.error; }
+        def seq: result<u64> = u64(sequence); if seq.erroneous { return seq.error; }
 
-        def seq: result<u64> = u64(sequence);
-        if seq.erroneous { return seq.error; }
-
-        return self.slots[index].connection.path_mtu(size.value, seq.value);
+        return self.slots[index].connection.path_mtu(mtu, seq.value);
     }
 
     def pub capacity(self: &const Table) -> u64 { return self.slots.len; }
@@ -1191,7 +1375,15 @@ def pub struct Table {
     def pub remote_address(self: &const Table, handle: Handle) -> result<Address> {
         if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
 
-        return self.slots[handle.index].connection.remote;
+        def address: result<Address> = self.slots[handle.index].connection.remote_address();
+        if address.erroneous { return address.error; } return address.value;
+    }
+
+    def pub remote_address6(self: &const Table, handle: Handle) -> result<Address6> {
+        if !self.valid(handle) { return error("stale TCP handle", status.CLOSED, 0); }
+
+        def address: result<Address6> = self.slots[handle.index].connection.remote_address6();
+        if address.erroneous { return address.error; } return address.value;
     }
 
     def pub write(self: &Table, handle: Handle, bytes: [const u8]) -> result<u64> {
@@ -1245,6 +1437,20 @@ def pub struct Table {
     }
 
     def pub connect(self: &Table, local_port: be_u16, remote: Address, isn: u32, now_ms: u64) -> result<Handle> {
+        def opened: result<Handle> = self.connect_to(local_port, Peer.v4(remote), isn, now_ms);
+        if opened.erroneous { return opened.error; } return opened.value;
+    }
+
+    def pub connect6(self: &Table, local_port: be_u16, remote: Address6, isn: u32, now_ms: u64) -> result<Handle> {
+        if !remote.host.unicast() { return error("TCP requires unicast IPv6", status.INVALID, 0); }
+
+        def opened: result<Handle> = self.connect_to(local_port, Peer.v6(remote), isn, now_ms);
+        if opened.erroneous { return opened.error; } return opened.value;
+    }
+
+    def connect_to(self: &Table, local_port: be_u16, remote: Peer, isn: u32, now_ms: u64) -> result<Handle> {
+        if self.host.version != remote.version { return error("TCP address family mismatch", status.INVALID, 0); }
+
         def clocked: result<void> = self.clock(now_ms);
         if clocked.erroneous { return clocked.error; }
 
@@ -1258,7 +1464,7 @@ def pub struct Table {
         if index == self.slots.len { return error("TCP connection table is full", status.WOULD_BLOCK, 0); }
 
         def old: &const Connection = &self.slots[index].connection;
-        def made: result<Connection> = Connection.connect(Address { host: self.host, port: local_port },
+        def made: result<Connection> = Connection.open(self.host.at_port(local_port),
             remote, isn, old.buffers, old.options, now_ms);
 
         if made.erroneous { return made.error; }
@@ -1267,19 +1473,19 @@ def pub struct Table {
     }
 
     def pub input(self: &Table, bytes: [const u8], isn: u32, now_ms: u64, output: [u8]) -> result<Input> {
-        def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+        def parsed: result<Segment> = parse_segment(bytes);
         if parsed.erroneous { return parsed.error; }
 
-        def segment: packet.TcpPacket = parsed.value;
-        if segment.ip.header.destination != self.host || segment.ip.header.ttl == 0 {
+        def segment: Segment = parsed.value;
+        if !segment.local.same_host(self.host) || segment.hop_limit == 0 {
             return error("TCP datagram is not for this host", status.INVALID, 0);
         }
 
         def clocked: result<void> = self.clock(now_ms);
         if clocked.erroneous { return clocked.error; }
 
-        def remote: Address = Address { host: segment.ip.header.source, port: segment.header.source_port };
-        def found: u64      = self.find(segment.header.destination_port, remote);
+        def remote: Peer = segment.remote;
+        def found: u64   = self.find(segment.header.destination_port, remote);
 
         if found != self.slots.len {
             def fed: result<void> = self.slots[found].connection.input(bytes, now_ms);
@@ -1327,8 +1533,8 @@ def pub struct Table {
             if index == self.slots.len { return error("TCP connection table is full", status.WOULD_BLOCK, 0); }
 
             def old: &const Connection = &self.slots[index].connection;
-            def made: result<Connection> = Connection.accept(bytes,
-                Address { host: self.host, port: segment.header.destination_port }, isn, old.buffers, old.options, now_ms);
+            def made: result<Connection> = Connection.accept_on(bytes,
+                self.host.at_port(segment.header.destination_port), isn, old.buffers, old.options, now_ms);
 
             if made.erroneous { return made.error; }
 

@@ -1,5 +1,6 @@
 import "@tcp";
 import "@packet";
+import "@packet6";
 
 def random(state: &u64) -> u64 {
     *state = (*state * 1664525 + 1013904223) % 4294967296;
@@ -21,7 +22,24 @@ def pub struct Flight {
     def mut direction: u64,
 }
 
-def simulation(seed: u64) -> i32 {
+def open_connection(local: tcp.Address, remote: tcp.Address, buffers: tcp.Buffers, opts: tcp.Options, sequence: u32, version6: bool) -> result<tcp.Connection> {
+    if version6 {
+        def low_local: result<be_u64> = be_u64(local.host); if low_local.erroneous { return low_local.error; }
+
+        def low_remote: result<be_u64> = be_u64(remote.host); if low_remote.erroneous { return low_remote.error; }
+
+        def made: result<tcp.Connection> = tcp.Connection.connect6(
+            tcp.Address6 { host: packet6.Address { high: 0x20010db800000000, low: low_local.value }, port: local.port },
+            tcp.Address6 { host: packet6.Address { high: 0x20010db800000000, low: low_remote.value }, port: remote.port },
+            sequence, buffers, opts, 0);
+        if made.erroneous { return made.error; } return made.value;
+    }
+
+    def made: result<tcp.Connection> = tcp.Connection.connect(local, remote, sequence, buffers, opts, 0);
+    if made.erroneous { return made.error; } return made.value;
+}
+
+def simulation(seed: u64, version6: bool) -> i32 {
     def mut atx: [u8; 1024] = zeroed;
     def mut arx: [u8; 257]  = zeroed;
     def mut amap: [u8; 257] = zeroed;
@@ -33,15 +51,13 @@ def simulation(seed: u64) -> i32 {
     def remote: tcp.Address = tcp.Address { host: 0xc0000202, port: 80 };
     def opts: tcp.Options = tcp.Options { mss: 64, max_retries: 12, idle_timeout_ms: 900000,
         time_wait_ms: 120000, no_delay: false };
-    def made: result<tcp.Connection> = tcp.Connection.connect(local, remote, 4294967294,
-        tcp.Buffers { send: atx[..], receive: arx[..], present: amap[..] }, opts, 0);
+    def made: result<tcp.Connection> = open_connection(local, remote, tcp.Buffers { send: atx[..], receive: arx[..], present: amap[..] }, opts, 4294967294, version6);
 
     if made.erroneous { return 1; }
 
     def mut a: tcp.Connection = made.value;
     // Active opens on both sides exercise simultaneous open, including SYN loss.
-    def other: result<tcp.Connection> = tcp.Connection.connect(remote, local, 4294967290,
-        tcp.Buffers { send: btx[..], receive: brx[..], present: bmap[..] }, opts, 0);
+    def other: result<tcp.Connection> = open_connection(remote, local, tcp.Buffers { send: btx[..], receive: brx[..], present: bmap[..] }, opts, 4294967290, version6);
     if other.erroneous { return 2; }
 
     def mut b: tcp.Connection   = other.value;
@@ -159,8 +175,11 @@ def simulation(seed: u64) -> i32 {
 
 def main() -> i32 {
     for def mut seed: u64 = 1; seed <= 24; seed = seed + 1 {
-        def outcome: i32 = simulation(seed * 167);
+        def outcome: i32 = simulation(seed * 167, false);
         if outcome != 0 { return outcome; }
+
+        def v6: i32 = simulation(seed * 167, true);
+        if v6 != 0 { return v6; }
     }
 
     return 0;
