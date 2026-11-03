@@ -205,3 +205,77 @@ TEST_F(ArenaRuntimeTest, AllocatorScopeFailuresAreIsolatedToTheCallingThread) {
     }
     EXPECT_TRUE(failing.live.empty());
 }
+
+TEST_F(ArenaRuntimeTest, OwnedBlocksReleaseIndependentlyAndPreserveBumpStorage) {
+    auto *sentinel = static_cast<unsigned char *>(gloin_arena_general_alloc(arena, 16, 16));
+    ASSERT_NE(sentinel, nullptr);
+    std::memset(sentinel, 0x5a, 16);
+    const auto baseline = backing.live.size();
+    std::vector<void *> blocks;
+    for (uint64_t alignment : {1, 8, 64, 4096}) {
+        const auto calls = backing.calls;
+        auto *block = gloin_arena_owned_alloc(arena, 37, alignment);
+        ASSERT_NE(block, nullptr);
+        EXPECT_EQ(reinterpret_cast<uintptr_t>(block) % alignment, 0u);
+        EXPECT_EQ(backing.calls, calls + 1);
+        std::memset(block, 0xa5, 37);
+        blocks.push_back(block);
+    }
+    for (size_t index : {1, 3, 0, 2}) {
+        auto *block = static_cast<unsigned char *>(blocks[index]);
+        for (size_t i = 0; i < 37; ++i)
+            EXPECT_EQ(block[i], 0xa5);
+        const auto live = backing.live.size();
+        gloin_arena_owned_release(arena, block);
+        EXPECT_EQ(backing.live.size(), live - 1);
+    }
+    EXPECT_EQ(backing.live.size(), baseline);
+    EXPECT_EQ(gloin_arena_general_alloc(arena, 1, 1), sentinel + 16);
+    for (size_t i = 0; i < 16; ++i)
+        EXPECT_EQ(sentinel[i], 0x5a);
+    gloin_arena_owned_release(arena, nullptr);
+}
+
+TEST_F(ArenaRuntimeTest, OwnedAllocationFailuresDoNotRetainStorageOrChangeLiveBlocks) {
+    auto *first = static_cast<unsigned char *>(gloin_arena_owned_alloc(arena, 16, 64));
+    ASSERT_NE(first, nullptr);
+    std::memset(first, 0x3c, 16);
+    const auto live = backing.live.size();
+    const auto calls = backing.calls;
+    for (uint64_t alignment : {uint64_t{0}, uint64_t{3}, uint64_t{1} << 63})
+        EXPECT_EQ(gloin_arena_owned_alloc(arena, 16, alignment), nullptr);
+    for (uint64_t size : {UINT64_MAX, uint64_t{1} << 63, (uint64_t{1} << 63) - 1})
+        EXPECT_EQ(gloin_arena_owned_alloc(arena, size, 4096), nullptr);
+    EXPECT_EQ(backing.calls, calls);
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        backing.fail_at = backing.calls;
+        EXPECT_EQ(gloin_arena_owned_alloc(arena, 2000000, 64), nullptr);
+        EXPECT_EQ(backing.live.size(), live);
+    }
+    for (size_t i = 0; i < 16; ++i)
+        EXPECT_EQ(first[i], 0x3c);
+    auto *retried = gloin_arena_owned_alloc(arena, 2000000, 64);
+    ASSERT_NE(retried, nullptr);
+    gloin_arena_owned_release(arena, first);
+    gloin_arena_owned_release(arena, retried);
+    EXPECT_EQ(backing.live.size(), 1u);
+}
+
+TEST_F(ArenaRuntimeTest, ResetAndDestroyReleaseOwnedBlocksThroughTheirOriginalAllocator) {
+    ASSERT_NE(gloin_arena_general_alloc(arena, 1, 1), nullptr);
+    const auto retained = backing.live.size();
+    for (int round = 0; round < 3; ++round) {
+        auto *first = gloin_arena_owned_alloc(arena, 0, 256);
+        auto *second = gloin_arena_owned_alloc(arena, 0, 256);
+        ASSERT_NE(first, nullptr);
+        ASSERT_NE(second, nullptr);
+        EXPECT_NE(first, second);
+        EXPECT_EQ(backing.live.size(), retained + 2);
+        gloin_arena_general_reset(arena);
+        EXPECT_EQ(backing.live.size(), retained);
+    }
+    ASSERT_NE(gloin_arena_owned_alloc(arena, 2000000, 4096), nullptr);
+    gloin_arena_general_destroy(arena);
+    arena = nullptr;
+    EXPECT_TRUE(backing.live.empty());
+}

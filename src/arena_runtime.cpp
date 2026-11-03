@@ -17,12 +17,20 @@ struct Block {
     size_t used;
     std::byte *data() { return reinterpret_cast<std::byte *>(this + 1); }
 };
+struct State;
+struct OwnedBlock {
+    State *owner;
+    OwnedBlock *previous;
+    OwnedBlock *next;
+    void *allocation;
+};
 struct State {
     gloin::arena::Allocator allocator;
     Block *head = nullptr;
     Block *tail = nullptr;
     Block *current = nullptr;
     size_t next_capacity = initial_capacity;
+    OwnedBlock *owned = nullptr;
 };
 
 void *reserve(Block *block, size_t size, size_t alignment) noexcept {
@@ -35,6 +43,21 @@ void *reserve(Block *block, size_t size, size_t alignment) noexcept {
 }
 void *allocate(void *, size_t size) noexcept { return std::malloc(size); }
 void release(void *, void *pointer) noexcept { std::free(pointer); }
+
+void release_owned(State *state, OwnedBlock *block) noexcept {
+    if (block->previous)
+        block->previous->next = block->next;
+    else
+        state->owned = block->next;
+    if (block->next)
+        block->next->previous = block->previous;
+    state->allocator.release(state->allocator.context, block->allocation);
+}
+
+void release_all_owned(State *state) noexcept {
+    while (state->owned)
+        release_owned(state, state->owned);
+}
 } // namespace
 
 extern "C" void gloin_arena_zero_bytes(void *bytes, uint64_t size) {
@@ -101,8 +124,52 @@ extern "C" void *gloin_arena_general_alloc(void *opaque, uint64_t bytes, uint64_
     return pointer;
 }
 
+extern "C" void *gloin_arena_owned_alloc(void *opaque, uint64_t bytes, uint64_t alignment) {
+    constexpr auto limit = static_cast<uint64_t>(std::numeric_limits<ptrdiff_t>::max());
+    if (!opaque || !alignment || (alignment & (alignment - 1)) || alignment > limit ||
+        bytes > limit)
+        return nullptr;
+    const auto size = static_cast<size_t>(std::max<uint64_t>(bytes, 1));
+    const auto align = static_cast<size_t>(std::max<uint64_t>(alignment, alignof(OwnedBlock)));
+    if (size > limit - sizeof(OwnedBlock) || size + sizeof(OwnedBlock) > limit - (align - 1))
+        return nullptr;
+    const auto total = sizeof(OwnedBlock) + size + align - 1;
+    auto *state = static_cast<State *>(opaque);
+    auto *allocation = state->allocator.allocate(state->allocator.context, total);
+    if (!allocation)
+        return nullptr;
+    void *storage = static_cast<std::byte *>(allocation) + sizeof(OwnedBlock);
+    size_t space = total - sizeof(OwnedBlock);
+    if (!std::align(align, size, storage, space)) {
+        state->allocator.release(state->allocator.context, allocation);
+        return nullptr;
+    }
+    // The aligned header immediately precedes the payload, allowing O(1)
+    // unlinking without searching other maps' storage or the bump blocks.
+    auto *header = static_cast<std::byte *>(storage) - sizeof(OwnedBlock);
+    auto *block = new (header) OwnedBlock{state, nullptr, state->owned, allocation};
+    if (state->owned)
+        state->owned->previous = block;
+    state->owned = block;
+    return storage;
+}
+
+extern "C" void gloin_arena_owned_release(void *opaque, void *storage) {
+    if (!storage)
+        return;
+    auto *state = static_cast<State *>(opaque);
+    auto *block =
+        reinterpret_cast<OwnedBlock *>(static_cast<std::byte *>(storage) - sizeof(OwnedBlock));
+    // Pointer validity is a caller obligation, as for raw memory.free. A live
+    // block from another owner must never corrupt either arena's linked list.
+    if (!state || block->owner != state)
+        std::abort();
+    release_owned(state, block);
+}
+
 extern "C" void gloin_arena_general_reset(void *opaque) {
     auto *state = static_cast<State *>(opaque);
+    release_all_owned(state);
     for (auto *block = state->head; block; block = block->next)
         block->used = 0;
     state->current = state->head;
@@ -112,6 +179,7 @@ extern "C" void gloin_arena_general_destroy(void *opaque) {
     if (!opaque)
         return;
     auto *state = static_cast<State *>(opaque);
+    release_all_owned(state);
     const auto allocator = state->allocator;
     auto *block = state->head;
     while (block) {

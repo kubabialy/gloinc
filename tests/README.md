@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1186 tests**:
+The current source definitions and CTest discovery contain **1189 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -39,7 +39,7 @@ The current source definitions and CTest discovery contain **1186 tests**:
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
 | ArenaTest | 21 |
-| ArenaRuntimeTest | 11 |
+| ArenaRuntimeTest | 14 |
 | AsyncTest | 2 |
 | ArrayStringTest | 4 |
 | UnlessTest | 1 |
@@ -569,11 +569,13 @@ The previous unchecked `Arena::new` test has been replaced by these executable
 source tests. Core fixtures cover success, invalid type-valued arguments, the
 required import, and use of a cleared handle.
 
-Eleven independent `ArenaRuntimeTest` cases exercise the actual native allocator,
+Fourteen independent `ArenaRuntimeTest` cases exercise the actual native allocator,
 including alignment through 64 KiB, mixed-size object contents across growth,
 zero-sized allocations, large blocks, reset retention/reuse, independent arenas,
 overflow, deterministic allocation failure, unchanged state on failure, and
-balanced releases. This target builds without the compiler/backend and runs under
+balanced releases. Individually releasable collection blocks also check arbitrary
+release order, repeated allocation failure, and reset/free cleanup while preserving
+unrelated bump storage. This target builds without the compiler/backend and runs under
 ASan/UBSan. On macOS, the external LLVM test preloads the test executable's ASan
 library before loading an instrumented arena runtime into `mlir-runner`.
 
