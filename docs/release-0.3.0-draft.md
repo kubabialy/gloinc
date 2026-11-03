@@ -28,6 +28,7 @@ release assets, and numbered guides will be updated when the release is cut.
 | Gloin TCP/IP | IPv4 reassembly, UDP/ICMP dispatch, TCP connections and generation-checked tables, flow/congestion control, retransmission, path-MTU reduction and separate TIME_WAIT storage. Raw Linux TUN/macOS utun adapters keep protocol state in Gloin. |
 | IPv6 host | Packed 128-bit addresses, bounded extensions/reassembly, UDP/ICMPv6 and shared TCP/HTTP/TLS over static-address TUN/utun. See [IPv6](ipv6.md). |
 | HTTP/HTTPS servers | Bounded incremental sessions, keep-alive/pipelining, fixed/chunked responses, deadlines, cancellation and fair per-connection progress; OpenSSL TLS over Gloin TCP through bounded BIO pairs. See the [server guide](tcpip-server.md). |
+| Hashmap allocation | Slots and occupancy bytes share one arena-owned block; growth releases the obsolete table, and failed creation retains no unpublished table. API and shared-map aliases are preserved. See [allocation costs and measurements](hashmaps.md#allocation-regression-measurement-2026-11-03). |
 | Validation | macOS ARM64 core, focused regressions, and independent endian and packed torture labs pass. Final release/platform/package validation remains pending. |
 
 The [endianness contract](endianness.md) defines byte-order behavior. The

@@ -97,9 +97,9 @@ Errors have static messages and zero `.os_error`. A failed `reserve` or
 never publishes a partially rebuilt table. A failed constructor has no map
 payload. Failed creation/growth retains no attempted table storage. Constructor
 validation and table allocation precede state allocation; failure to allocate
-the state releases the unpublished table. Removing an absent key and looking up an absent key are ordinary
-outcomes, not errors. The arena's own creation and lifetime requirements still
-apply.
+the state releases the unpublished table. Removing an absent key and looking up
+an absent key are ordinary outcomes, not errors. The arena's own creation and
+lifetime requirements still apply.
 
 `cap()` describes the live-entry threshold. Inserting a new key allocates only
 when length already equals that threshold. Replacement, removal, and `clear`
@@ -144,3 +144,48 @@ The typed storage bridge checks layout and capacity in GloinIR without
 initializing unused slots. It and the arena-owned block methods remain private
 to the canonical collection module; application code cannot release individual
 arena objects or obtain uninitialized typed storage through them.
+
+### Allocation regression measurement (2026-11-03)
+
+`HashmapLibraryTest.GrowingMapsReleaseOldTablesWithoutDisturbingTheirSharedArena`
+grows an `i64`/`i64` map from zero to 200,000 entries, interleaves growth of a
+second map in the same arena, and checks every value and an unrelated arena
+object. A native allocator hook tracks the exact requested sizes of live backing
+allocations, including arena state, block headers and alignment slack. Cleanup
+must release every tracked allocation.
+
+On macOS ARM64, using the same Release compiler and native arena runtime for
+both library versions:
+
+| Implementation | Peak live backing bytes |
+| --- | ---: |
+| Previous hashmap source (`97a1692`) | 30,867,922 |
+| Reclaiming hashmap source (`d4268df`) | 19,739,344 |
+
+That is a 36.05% reduction for this growth pattern. The regression permits at
+most 20 MiB: enough for the current and replacement tables during growth, the
+second map, and ordinary arena storage, but not all obsolete generations. It
+fails with the previous source and passes with the replacement. This measures
+requested backing bytes, not allocator RSS or insertion speed.
+
+`RepeatedConstructorFailuresReleaseTheUnpublishedTable` rejects ordinary arena
+block allocation during 32 consecutive constructors. The new implementation
+peaks at 503 backing bytes, including the temporary table and arena state;
+each failed constructor releases its unpublished table before the next attempt.
+Both tests record `peak_backing_bytes` in GoogleTest XML:
+
+```sh
+build/gloinc_test \
+  --gtest_filter='HashmapLibraryTest.GrowingMaps*:HashmapLibraryTest.RepeatedConstructor*' \
+  --gtest_output=xml:build/hashmap-memory.xml
+```
+
+Validation for this change on 2026-11-03:
+
+| Check | Result |
+| --- | --- |
+| macOS ARM64 `check-core` | 1,146/1,146 passed. |
+| Focused hashmap, arena and raw-storage lowering tests | 53/53 passed on macOS ARM64 and Linux ARM64; source cases exercise JIT, native `-O0` and `-O2`. |
+| Native arena ASan/UBSan | 14/14 passed on macOS ARM64. |
+| Installed, then relocated macOS package | 36/36 arena/hashmap tests passed. |
+| Tracked Gloin source formatting | All 294 files passed. |

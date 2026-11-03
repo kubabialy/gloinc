@@ -37,10 +37,10 @@ aligned capacity without initializing unused elements. Only `@vector` can call
 that bridge from source.
 
 Growth never moves existing objects. `reset()` invalidates all objects and keeps
-ordinary bump-allocation blocks for reuse, including large blocks. Never use old references after a
-reset, even if the same addresses are reused. `free()` releases blocks and the
-control object, and clears the receiving handle. Repeating free on that cleared
-handle is harmless; allocation/reset through it trap.
+ordinary bump-allocation blocks for reuse, including large blocks. Never use old
+references after a reset, even if the same addresses are reused. `free()` releases
+blocks and the control object, and clears the receiving handle. Repeating free
+on that cleared handle is harmless; allocation/reset through it trap.
 
 Copying an arena handle creates an alias, not an independent owner. Designate one
 owner and pass `&arena.GeneralArena` to helpers. Freeing through that owner makes
