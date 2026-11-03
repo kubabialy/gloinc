@@ -224,6 +224,12 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::str
             symbols[mangle("gloin_arena_general_alloc")] = llvm::orc::ExecutorSymbolDef(
                 llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_general_alloc),
                 llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_arena_owned_alloc")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_owned_alloc),
+                llvm::JITSymbolFlags::Exported);
+            symbols[mangle("gloin_arena_owned_release")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_owned_release),
+                llvm::JITSymbolFlags::Exported);
             symbols[mangle("gloin_arena_general_reset")] = llvm::orc::ExecutorSymbolDef(
                 llvm::orc::ExecutorAddr::fromPtr(&gloin_arena_general_reset),
                 llvm::JITSymbolFlags::Exported);

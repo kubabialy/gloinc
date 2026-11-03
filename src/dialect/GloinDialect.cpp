@@ -546,6 +546,21 @@ mlir::LogicalResult ArenaTypedPointerOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult RawReserveOp::verify() {
+    auto target = mlir::dyn_cast<gloin::GloinPointerType>(getSourceType());
+    auto raw = mlir::dyn_cast<gloin::GloinPointerType>(getStorage().getType());
+    bool typed = raw && raw.getNullable() && !raw.getReadOnly() && raw.getPointee().isInteger(8) &&
+                 getPointer().getType() == getSourceType();
+    bool layout = mlir::isa<mlir::LLVM::LLVMPointerType>(getStorage().getType()) &&
+                  getPointer().getType() == getStorage().getType();
+    if (!target || !target.getNullable() || target.getReadOnly() || (!typed && !layout) ||
+        !mlir::LLVM::isCompatibleType(getElementType()) ||
+        !matches_storage(target.getPointee(), getElementType()))
+        return emitOpError("requires writable nullable byte storage and a typed pointer matching "
+                           "its element layout");
+    return mlir::success();
+}
+
 mlir::LogicalResult RawPlaceOp::verify() {
   auto target = mlir::dyn_cast<gloin::GloinPointerType>(getSourceType());
   auto raw = mlir::dyn_cast<gloin::GloinPointerType>(getStorage().getType());

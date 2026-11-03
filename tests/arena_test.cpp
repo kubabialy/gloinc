@@ -343,6 +343,8 @@ TEST_F(ArenaTest, JitRejectsEveryMalformedRuntimeSignature) {
           "llvm.func @gloin_arena_general_alloc(!llvm.ptr, i64, i64, ...) -> !llvm.ptr",
           "llvm.func @gloin_arena_general_reset(!llvm.ptr) -> i32",
           "llvm.func @gloin_arena_general_destroy(i64)",
+          "llvm.func @gloin_arena_owned_alloc(!llvm.ptr, i64) -> !llvm.ptr",
+          "llvm.func @gloin_arena_owned_release(!llvm.ptr)",
           "llvm.func @gloin_arena_general_create() -> !llvm.ptr { %p = llvm.mlir.zero : !llvm.ptr "
           "llvm.return %p : !llvm.ptr }"}) {
         SCOPED_TRACE(declaration);

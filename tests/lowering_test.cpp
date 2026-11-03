@@ -697,6 +697,35 @@ TEST(LoweringTest, RawMemoryPlacementAndCallsUseGloinIR) {
     expect_exportable(*low);
 }
 
+TEST(LoweringTest, RawReservationRejectsForgedStorageAndElementTypes) {
+    mlir::MLIRContext context;
+    auto ir = [](const std::string &raw, const std::string &result, const std::string &element) {
+        return "module { func.func @reserve(%p: " + raw + ", %a: i64, %n: i64) -> " + result +
+               " attributes {gloin.layout_inputs = [!llvm.ptr, i64, i64], "
+               "gloin.layout_results = [!llvm.ptr]} { %r = \"gloin.raw_reserve\"(%p, %a, %n) "
+               "<{source_type = " +
+               result + ", element_type = " + element + "}> : (" + raw + ", i64, i64) -> " +
+               result + " return %r : " + result + " } }";
+    };
+    const std::string raw = "!gloin.ptr<i8, true, false>";
+    const std::string result = "!gloin.ptr<i64, true, false>";
+    auto valid = parse(context, ir(raw, result, "i64"));
+    ASSERT_TRUE(valid);
+    Diagnostics diagnostics;
+    auto lowered = lower_to_llvm(std::move(valid), diagnostics);
+    ASSERT_TRUE(lowered) << render(diagnostics);
+    expect_exportable(*lowered);
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    for (const auto *storage : {"!gloin.ptr<i8, true, true>", "!gloin.ptr<i32, true, false>",
+                                "!gloin.ptr<i8, false, false>"})
+        EXPECT_FALSE(parse(context, ir(storage, result, "i64")));
+    for (const auto *type : {"!gloin.ptr<i64, false, false>", "!gloin.ptr<i64, true, true>",
+                             "!gloin.ptr<i32, true, false>"})
+        EXPECT_FALSE(parse(context, ir(raw, type, "i64")));
+    EXPECT_FALSE(parse(context, ir(raw, result, "i32")));
+}
+
 TEST(LoweringTest, CheckedModuleRejectsDirectLLVMCalls) {
     mlir::MLIRContext context;
     auto module = parse(context, R"(

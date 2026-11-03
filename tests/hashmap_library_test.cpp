@@ -78,6 +78,65 @@ class HashmapLibraryTest : public gloin_test::CliFixture {
 };
 } // namespace
 
+TEST_F(HashmapLibraryTest, OwnedStorageAndTypedReservationWorkThroughCheckedIRInAllModes) {
+    for (const auto *name : {"arena", "memory", "status"})
+        source(read((library() / (std::string(name) + ".gloin")).string()),
+               std::string(name) + ".gloin");
+    source(R"(
+        import "@arena";
+        def struct Pair { def key: i64, def value: i64, }
+        def view(bytes: *u8, available: i64, count: i64) -> *Pair {
+            return __memory_reserve<Pair>(bytes, available, count);
+        }
+        def pub probe() -> i32 {
+            def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+            defer owner.free();
+            def sentinel: &i32 = owner.alloc(42);
+            def bytes: *u8 = owner.try_alloc_owned(64, 64);
+            if bytes == null { return 1; }
+            for def mut i: i64 = 0; i < 64; i = i + 1 { *(bytes + i) = 0xa5; }
+            if view(null, 48, 3) != null || view(bytes + 1, 48, 3) != null { return 2; }
+            if view(bytes + 8, 47, 3) != null || view(bytes + 8, 48, -1) != null { return 3; }
+            if view(bytes + 8, -1, 0) != null || view(bytes + 8, 0, 1) != null { return 4; }
+            if view(bytes + 8, 9223372036854775807, 9223372036854775807) != null { return 5; }
+            if view(bytes + 8, 0, 0) == null { return 6; }
+            def slots: *Pair = view(bytes + 8, 48, 3);
+            if slots == null { return 7; }
+            // Reserving typed capacity must never initialize or read empty entries.
+            for def mut i: i64 = 0; i < 64; i = i + 1 { if *(bytes + i) != 0xa5 { return 8; } }
+            *(slots + 1) = Pair { key: 17, value: 29 };
+            if (slots + 1).key != 17 || (slots + 1).value != 29 { return 9; }
+            for def mut i: i64 = 0; i < 64; i = i + 1 {
+                if (i < 24 || i >= 40) && *(bytes + i) != 0xa5 { return 10; }
+            }
+            owner.release_owned(bytes);
+            if *sentinel != 42 { return 11; }
+            // Remaining owned blocks are cleaned by reset/free, not by callers.
+            if owner.try_alloc_owned(128, 16) == null { return 12; }
+            owner.reset();
+            if owner.try_alloc_owned(128, 16) == null { return 13; }
+            return 0;
+        }
+    )",
+           "hashmap.gloin");
+    const auto file = source("import \"@hashmap\"; def main() -> i32 { return hashmap.probe(); }");
+    const auto ir = invoke({"--stdlib-dir", directory, "--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    EXPECT_NE(ir.out.find("gloin.raw_reserve"), std::string::npos);
+    for (const auto *symbol : {"gloin_arena_owned_alloc", "gloin_arena_owned_release"}) {
+        const auto position = ir.out.find(std::string("callee = @") + symbol);
+        ASSERT_NE(position, std::string::npos);
+        const auto line = ir.out.rfind('\n', position);
+        EXPECT_NE(ir.out.substr(line + 1, position - line).find("gloin.abi_call"),
+                  std::string::npos);
+        EXPECT_EQ(ir.out.find(std::string("llvm.call @") + symbol), std::string::npos);
+    }
+    execution_modes(file, 0, {"--stdlib-dir", directory});
+    for (const auto *body : {"memory.try_alloc_owned(16,8);", "memory.release_owned(null);",
+                             "__memory_reserve<i32>(null,4,1);"})
+        expect_error(invoke({program(std::string(body) + "return 0;")}), 1, "error:");
+}
+
 TEST_F(HashmapLibraryTest, GrowthRemovalAliasesAndIterationInJitAndNative) {
     auto file = program(R"(
         def made: result<hashmap.HashMap<i64, i64>> = hashmap.HashMap<i64, i64>.create(&memory, 0);

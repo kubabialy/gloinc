@@ -57,6 +57,13 @@ mlir::Value CodeGen::emit_memory_intrinsic(MemoryIntrinsic kind, const ValueType
     auto result = type;
     result.pointers.insert(result.pointers.begin(), {true, false});
     auto result_source = source_type(result);
+    if (kind == MemoryIntrinsic::Reserve) {
+        auto reserved = builder.create<gloin::RawReserveOp>(
+            location(), result_source, as_source_value(arguments[0], source_type(byte_pointer)),
+            arguments[1], arguments[2], mlir::TypeAttr::get(result_source),
+            mlir::TypeAttr::get(element_type));
+        return builder.create<gloin::ToLayoutOp>(location(), arguments[0].getType(), reserved);
+    }
     auto placed = builder.create<gloin::RawPlaceOp>(
         location(), result_source, as_source_value(arguments[0], source_type(byte_pointer)),
         arguments[1], as_source_value(arguments[2], source_type(type)),

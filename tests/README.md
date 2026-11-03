@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1189 tests**:
+The current source definitions and CTest discovery contain **1191 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -26,7 +26,7 @@ The current source definitions and CTest discovery contain **1189 tests**:
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
 | SelectionTest | 7 |
-| LoweringTest | 82 |
+| LoweringTest | 83 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -68,7 +68,7 @@ The current source definitions and CTest discovery contain **1189 tests**:
 | MathLibraryTest | 14 |
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 18 |
-| HashmapLibraryTest | 12 |
+| HashmapLibraryTest | 13 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -335,7 +335,7 @@ and installed/relocated package checks. See [the guide](../docs/integrated-examp
 
 ## Hash maps (0.2.1)
 
-Twelve `HashmapLibraryTest` cases cover growth, colliding probe chains and wraparound,
+Thirteen `HashmapLibraryTest` cases cover growth, colliding probe chains and wraparound,
 backward-shift deletion, shared aliases, mutable lookup, clear, and iteration.
 Every integer width, boolean keys, counted-byte string keys, aggregate values,
 and stored null pointers run through JIT and native `-O0`/`-O2` execution.
@@ -344,7 +344,9 @@ checks constructor/growth rollback and retry. Repeated replacement and churn
 through distinct keys within capacity must never allocate. Deletion tests skip
 entries at their home buckets while repairing wrapped chains; a 12,000-operation
 mixed workload checks every lookup against an independent array model. Bucket
-masking is checked against remainder across power-of-two capacities.
+masking is checked against remainder across power-of-two capacities. The private
+owned-storage bridge checks typed capacity, alignment, overflow, untouched empty
+slots, cleanup and GloinIR ABI calls in JIT/O0/O2.
 Rejection cases cover unsupported keys, private storage/primitives, receiver
 mutability, and discarded results. The suite also checks canonical module identity,
 replaceable library source, malformed native signatures, and the packaged example.

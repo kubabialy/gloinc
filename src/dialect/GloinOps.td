@@ -330,6 +330,14 @@ def ArenaTypedPointerOp : Gloin_Op<"arena_typed_pointer"> {
     let hasVerifier = 1;
 }
 
+def RawReserveOp : Gloin_Op<"raw_reserve", [Pure]> {
+    let summary = "Check uninitialized typed capacity in raw storage without reading or writing it";
+    let arguments = (ins AnyType:$storage, I64:$available, I64:$count,
+                     TypeAttr:$source_type, TypeAttr:$element_type);
+    let results = (outs AnyType:$pointer);
+    let hasVerifier = 1;
+}
+
 def RawPlaceOp : Gloin_Op<"raw_place"> {
     let summary = "Check raw storage and initialize one typed value";
     let arguments = (ins AnyType:$storage, I64:$available, AnyType:$initial,

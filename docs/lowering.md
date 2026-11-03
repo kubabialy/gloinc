@@ -55,6 +55,7 @@ compiler emits these checked Gloin operations:
 | `gloin.result_value`, `gloin.result_error` | Extract the semantically proven active variant | Runtime tag guard, then payload extraction |
 | `gloin.null` | Contextual nullable pointer null value | LLVM zero pointer |
 | `gloin.arena_typed_pointer` | Give raw arena byte storage a checked element pointer, trapping if a required allocation failed | Null guard when required, then the same LLVM address |
+| `gloin.raw_reserve` | Validate nullable raw storage, alignment, nonnegative byte/count bounds and typed capacity without initialization | Null on failure; checked capacity uses division to avoid size-product overflow |
 | `gloin.raw_place` | Check raw storage, available bytes, alignment, and source element type before placement | Conditional typed store and nullable result pointer |
 | `gloin.raw_padding` | Query padding for a target element type at a raw address | Native address alignment arithmetic |
 | `gloin.pointer_offset` | Checked pointer offset measured in pointee elements | Null guard, then LLVM GEP |

@@ -9,8 +9,10 @@ inline mlir::LLVM::LLVMFunctionType arena_runtime_type(mlir::MLIRContext &contex
     auto nothing = mlir::LLVM::LLVMVoidType::get(&context);
     if (kind == ArenaPrimitive::Create)
         return mlir::LLVM::LLVMFunctionType::get(pointer, {}, false);
-    if (kind == ArenaPrimitive::Allocate)
+    if (kind == ArenaPrimitive::Allocate || kind == ArenaPrimitive::OwnedAllocate)
         return mlir::LLVM::LLVMFunctionType::get(pointer, {pointer, integer, integer}, false);
+    if (kind == ArenaPrimitive::OwnedRelease)
+        return mlir::LLVM::LLVMFunctionType::get(nothing, {pointer, pointer}, false);
     if (kind == ArenaPrimitive::Zero)
         return mlir::LLVM::LLVMFunctionType::get(nothing, {pointer, integer}, false);
     return mlir::LLVM::LLVMFunctionType::get(nothing, {pointer}, false);

@@ -363,6 +363,13 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
         recording->bindings[name] = symbol;
         return std::make_shared<PointerType>(element, method_name == "try_reserve_typed", false);
     }
+    if (structure->owner && structure->owner->standard_name == "arena" &&
+        structure->name == "GeneralArena" &&
+        (method_name == "try_alloc_owned" || method_name == "release_owned") &&
+        (!current_module || current_module->standard_name != "hashmap")) {
+        log_error("Releasable arena storage is internal to @hashmap");
+        return nullptr;
+    }
     if (call->arguments.size() != signature->param_types.size() - offset) {
         log_error("Incorrect number of method arguments");
         return nullptr;

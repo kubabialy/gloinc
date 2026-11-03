@@ -37,7 +37,7 @@ aligned capacity without initializing unused elements. Only `@vector` can call
 that bridge from source.
 
 Growth never moves existing objects. `reset()` invalidates all objects and keeps
-all blocks for reuse, including large blocks. Never use old references after a
+ordinary bump-allocation blocks for reuse, including large blocks. Never use old references after a
 reset, even if the same addresses are reused. `free()` releases blocks and the
 control object, and clears the receiving handle. Repeating free on that cleared
 handle is harmless; allocation/reset through it trap.
@@ -106,3 +106,17 @@ operation adds pointer arithmetic or bounds checks. These methods support the
 caller-owned strings used by [standard input and formatting](standard-library.md).
 The private `__arena_zero_bytes` operation is restricted to `@arena` and lowers
 to `gloin_arena_zero_bytes(void *, u64)` after successful allocation.
+
+## Internal releasable collection storage (0.3.0 development)
+
+Collections can use a separate arena-owned block list for replaceable backing
+storage. A block has one checked, aligned native allocation and can be unlinked
+and released in constant time without moving ordinary arena objects. Reset/free
+release any remaining collection blocks; ordinary bump storage retains its
+existing reset/reuse policy. Allocation failure leaves both lists unchanged.
+
+The `try_alloc_owned` / `release_owned` methods are compiler-restricted to the
+canonical `@hashmap` module. Their native primitives remain private to `@arena`
+and use checked ABI calls. They do not expose individual release of ordinary
+arena allocations. Only an original live collection-block pointer (or null) may
+be released, through its owning arena.
