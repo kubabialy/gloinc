@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1191 tests**:
+The current source definitions and CTest discovery contain **1193 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -68,7 +68,7 @@ The current source definitions and CTest discovery contain **1191 tests**:
 | MathLibraryTest | 14 |
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 18 |
-| HashmapLibraryTest | 13 |
+| HashmapLibraryTest | 15 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -333,9 +333,9 @@ checks all three programs at one million records/samples with a 2 MiB soft stack
 limit, including rejection of one-over-limit inputs. It is required by `check-core`
 and installed/relocated package checks. See [the guide](../docs/integrated-examples.md).
 
-## Hash maps (0.2.1)
+## Hash maps (0.2.1 API, 0.3.0 allocation)
 
-Thirteen `HashmapLibraryTest` cases cover growth, colliding probe chains and wraparound,
+Fifteen `HashmapLibraryTest` cases cover growth, colliding probe chains and wraparound,
 backward-shift deletion, shared aliases, mutable lookup, clear, and iteration.
 Every integer width, boolean keys, counted-byte string keys, aggregate values,
 and stored null pointers run through JIT and native `-O0`/`-O2` execution.
@@ -347,6 +347,10 @@ mixed workload checks every lookup against an independent array model. Bucket
 masking is checked against remainder across power-of-two capacities. The private
 owned-storage bridge checks typed capacity, alignment, overflow, untouched empty
 slots, cleanup and GloinIR ABI calls in JIT/O0/O2.
+Native allocator accounting checks that growth releases obsolete tables while
+another map and ordinary allocations share the arena. Repeated state-allocation
+failures must release unpublished tables before arena cleanup. These checks
+bound requested backing bytes, not process RSS or elapsed time.
 Rejection cases cover unsupported keys, private storage/primitives, receiver
 mutability, and discarded results. The suite also checks canonical module identity,
 replaceable library source, malformed native signatures, and the packaged example.

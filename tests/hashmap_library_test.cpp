@@ -1,16 +1,53 @@
+#include "arena_runtime_internal.h"
+#include "compiler.h"
 #include "hashmap_runtime.h"
 #include "jit_runner.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Parser/Parser.h"
 #include "support/cli_fixture.h"
 #include "support/external_runner.h"
+#include <algorithm>
 #include <filesystem>
+#include <sstream>
 #include <tuple>
+#include <unordered_map>
 #ifdef __APPLE__
 #include <dlfcn.h>
 #endif
 
 namespace {
+struct Backing {
+    std::unordered_map<void *, size_t> live;
+    size_t bytes = 0, peak = 0, failures = 0;
+    bool reject_bump_blocks = false;
+    static void *allocate(void *context, size_t size) noexcept {
+        auto &self = *static_cast<Backing *>(context);
+        // Reject the arena's ordinary 64 KiB block while allowing its state
+        // and the small independently owned table used by the rollback test.
+        if (self.reject_bump_blocks && size >= 65536 && size < 65636) {
+            ++self.failures;
+            return nullptr;
+        }
+        auto *storage = std::malloc(size);
+        if (storage) {
+            self.live.emplace(storage, size);
+            self.bytes += size;
+            self.peak = std::max(self.peak, self.bytes);
+        }
+        return storage;
+    }
+    static void release(void *context, void *storage) noexcept {
+        auto &self = *static_cast<Backing *>(context);
+        auto found = self.live.find(storage);
+        EXPECT_NE(found, self.live.end());
+        if (found == self.live.end())
+            return;
+        self.bytes -= found->second;
+        self.live.erase(found);
+        std::free(storage);
+    }
+};
+
 class HashmapLibraryTest : public gloin_test::CliFixture {
   protected:
     std::string program(const std::string &body) {
@@ -49,6 +86,24 @@ class HashmapLibraryTest : public gloin_test::CliFixture {
                       value);
         }
     }
+    void measured(const std::string &file, Backing &backing) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(read(file), file, context, CompilationMode::Executable,
+                                       CompilationOutput::HighLevel, library().string());
+        std::ostringstream errors;
+        compiled.diagnostics->render(errors);
+        ASSERT_TRUE(compiled.success()) << errors.str();
+        ExecutionResult result;
+        {
+            gloin::arena::AllocatorScope allocator({&backing, Backing::allocate, Backing::release});
+            result = JitRunner::run(*compiled.module, {});
+        }
+        ASSERT_TRUE(result.success());
+        EXPECT_EQ(result.value, 0);
+        EXPECT_TRUE(backing.live.empty());
+        EXPECT_EQ(backing.bytes, 0u);
+        RecordProperty("peak_backing_bytes", std::to_string(backing.peak));
+    }
     void fail_allocation(unsigned number) {
         for (const auto *name : {"hashmap", "arena", "memory", "strings", "status"})
             source(read((library() / (std::string(name) + ".gloin")).string()),
@@ -65,18 +120,75 @@ class HashmapLibraryTest : public gloin_test::CliFixture {
         replace("state: state\n", "state: state, requests: 0\n");
         replace("__arena_general_alloc(self.state, size, alignment)",
                 "self.test_allocate(size, alignment)");
+        replace("__arena_owned_alloc(self.state, size, alignment)",
+                "self.test_allocate_owned(size, alignment)");
         const auto end = arena.rfind('}');
         ASSERT_NE(end, std::string::npos);
-        arena.insert(
-            end,
-            "def test_allocate(self: &GeneralArena, size: u64, alignment: u64) -> *u8 { "
-            "self.requests = self.requests + 1; if self.requests == " +
-                std::to_string(number) +
-                " { return null; } return __arena_general_alloc(self.state, size, alignment); }");
+        for (const auto &[method, primitive] :
+             {std::pair{"test_allocate", "__arena_general_alloc"},
+              std::pair{"test_allocate_owned", "__arena_owned_alloc"}})
+            arena.insert(end, "def " + std::string(method) +
+                                  "(self: &GeneralArena, size: u64, alignment: u64) -> *u8 { "
+                                  "self.requests = self.requests + 1; if self.requests == " +
+                                  std::to_string(number) + " { return null; } return " + primitive +
+                                  "(self.state, size, alignment); }");
         source(arena, "arena.gloin");
     }
 };
 } // namespace
+
+TEST_F(HashmapLibraryTest, GrowingMapsReleaseOldTablesWithoutDisturbingTheirSharedArena) {
+    const auto file = program(R"(
+        def sentinel: &i32 = memory.alloc(9173);
+        def first: result<hashmap.HashMap<i64, i64>> = hashmap.HashMap<i64, i64>.create(&memory, 0);
+        if first.erroneous { return 1; }
+        def mut map: hashmap.HashMap<i64, i64> = first.value;
+        def second: result<hashmap.HashMap<i64, i64>> = hashmap.HashMap<i64, i64>.create(&memory, 0);
+        if second.erroneous { return 2; }
+        def mut other: hashmap.HashMap<i64, i64> = second.value;
+        for def mut i: i64 = 0; i < 200000; i = i + 1 {
+            if !inserted(map.insert(i, i * 3), true) { return 3; }
+            if i % 1000 == 0 && !inserted(other.insert(i / 1000, -i), true) { return 4; }
+            if *sentinel != 9173 { return 5; }
+        }
+        if map.len() != 200000 || other.len() != 200 { return 6; }
+        for def mut i: i64 = 0; i < 200000; i = i + 1 {
+            def value: *const i64 = map.get(i);
+            if value == null { return 7; }
+            if *value != i * 3 { return 8; }
+        }
+        for def mut i: i64 = 0; i < 200; i = i + 1 {
+            def value: *const i64 = other.get(i);
+            if value == null { return 9; }
+            if *value != -i * 1000 { return 10; }
+        }
+        return 0;
+    )");
+    Backing backing;
+    measured(file, backing);
+    // 524288 final buckets, with 24-byte slots and one-byte flags. Rehash
+    // temporarily needs old + new tables (~18.75 MiB), plus the small second
+    // map and ordinary arena block. Retaining every generation exceeds 25 MiB.
+    EXPECT_LE(backing.peak, 20u * 1024 * 1024);
+}
+
+TEST_F(HashmapLibraryTest, RepeatedConstructorFailuresReleaseTheUnpublishedTable) {
+    const auto file = program(R"(
+        for def mut i: i64 = 0; i < 32; i = i + 1 {
+            def made: result<hashmap.HashMap<i64, i64>> = hashmap.HashMap<i64, i64>.create(&memory, 10);
+            if !made.erroneous { return 1; }
+            if made.error.code != status.NO_MEMORY { return 2; }
+        }
+        return 0;
+    )");
+    Backing backing;
+    backing.reject_bump_blocks = true;
+    measured(file, backing);
+    EXPECT_EQ(backing.failures, 32u);
+    // One attempted small table plus the arena control object fits easily;
+    // 32 retained attempts would exceed this bound before arena cleanup.
+    EXPECT_LE(backing.peak, 4096u);
+}
 
 TEST_F(HashmapLibraryTest, OwnedStorageAndTypedReservationWorkThroughCheckedIRInAllModes) {
     for (const auto *name : {"arena", "memory", "status"})
@@ -319,13 +431,13 @@ TEST_F(HashmapLibraryTest, StringsCompareCountedBytesAndValuesNeedNoDefaultIniti
 }
 
 TEST_F(HashmapLibraryTest, AllocationFailuresLeaveCreationAndGrowthRecoverable) {
-    for (unsigned failure = 1; failure <= 5; ++failure) {
+    for (unsigned failure = 1; failure <= 3; ++failure) {
         SCOPED_TRACE(failure);
         fail_allocation(failure);
         std::string body = R"(
             def made: result<hashmap.HashMap<i32, i32>> = hashmap.HashMap<i32, i32>.create(&memory, 6);
         )";
-        if (failure <= 3) {
+        if (failure <= 2) {
             body += R"(
                 if !made.erroneous { return 1; }
                 if made.error.code != status.NO_MEMORY || made.error.os_error != 0 { return 2; }
@@ -335,7 +447,7 @@ TEST_F(HashmapLibraryTest, AllocationFailuresLeaveCreationAndGrowthRecoverable) 
                 if !inserted(map.insert(7, 42), true) { return 4; }
                 return 0;
             )";
-            expect_run(invoke({"--stdlib-dir", directory, program(body)}), 0);
+            execution_modes(program(body), 0, {"--stdlib-dir", directory});
         } else {
             for (const bool after_removal : {false, true}) {
                 auto mutation =
@@ -373,7 +485,7 @@ TEST_F(HashmapLibraryTest, AllocationFailuresLeaveCreationAndGrowthRecoverable) 
 }
 
 TEST_F(HashmapLibraryTest, ReplacingAndChurningDistinctKeysWithinCapacityNeverAllocate) {
-    fail_allocation(4);
+    fail_allocation(3);
     auto file = program(R"(
         def made: result<hashmap.HashMap<i32, i32>> = hashmap.HashMap<i32, i32>.create(&memory, 6);
         if made.erroneous { return 1; }
@@ -397,7 +509,7 @@ TEST_F(HashmapLibraryTest, ReplacingAndChurningDistinctKeysWithinCapacityNeverAl
             i = i + 1;
         }
         if map.len() != 6 || map.cap() != 6 { return 6; }
-        // The next growth must encounter the still-pending fourth allocation.
+        // The next growth must encounter the still-pending third allocation.
         def growth: result<bool> = map.insert(10000, 42);
         if !growth.erroneous { return 7; }
         if growth.error.code != status.NO_MEMORY || map.len() != 6

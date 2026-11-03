@@ -14,11 +14,73 @@ def struct Slot<K, V> {
 }
 
 def struct State<K, V> {
+    def mut storage: *u8,
     def mut slots: *Slot<K, V>,
     def mut flags: *u8,
     def mut buckets: i64,
     def mut length: i64,
     def memory: &arena.GeneralArena,
+}
+
+def struct Storage<K, V> {
+    def bytes: *u8,
+    def slots: *Slot<K, V>,
+    def flags: *u8,
+}
+
+def bucket_count(capacity: i64) -> result<i64> {
+    if capacity < 0 { return error("negative hashmap capacity", status.INVALID, 0); }
+    if capacity == 0 { return 0; }
+
+    def mut buckets: i64 = 8;
+
+    while capacity > buckets - buckets / 4 {
+        if buckets > 4611686018427387903 {
+            return error("hashmap capacity overflow", status.OVERFLOW, 0);
+        }
+
+        buckets = buckets * 2;
+    }
+
+    return buckets;
+}
+
+// One independently releasable block: uninitialized slots, then occupancy bytes.
+def allocate_storage<K, V>(owner: &arena.GeneralArena, buckets: i64) -> result<Storage<K, V>> {
+    if buckets == 0 { return Storage<K, V> { bytes: null, slots: null, flags: null }; }
+
+    def size: i64 = memory.size_of<Slot<K, V>>();
+    if size == 9223372036854775807 || buckets > 9223372036854775807 / (size + 1) {
+        return error("hashmap storage size overflow", status.OVERFLOW, 0);
+    }
+
+    def slot_bytes: i64    = buckets * size;
+    def total: result<u64> = u64(slot_bytes + buckets);
+
+    if total.erroneous { return total.error; }
+
+    def alignment: result<u64> = u64(memory.align_of<Slot<K, V>>());
+    if alignment.erroneous { return alignment.error; }
+
+    def bytes: *u8 = owner.try_alloc_owned(total.value, alignment.value);
+    if bytes == null { return error("cannot allocate hashmap storage", status.NO_MEMORY, 0); }
+
+    def slots: *Slot<K, V> = __memory_reserve<Slot<K, V>>(bytes, slot_bytes, buckets);
+    if slots == null {
+        owner.release_owned(bytes);
+
+        return error("invalid hashmap storage layout", status.INVALID, 0);
+    }
+
+    def flags: *u8     = bytes + slot_bytes;
+    def mut index: i64 = 0;
+
+    while index < buckets {
+        *(flags + index) = 0;
+        index = index + 1;
+    }
+
+    return Storage<K, V> { bytes: bytes, slots: slots, flags: flags };
 }
 
 // No allocation. Mutation through any map alias invalidates the cursor.
@@ -55,25 +117,31 @@ def pub struct HashMap<K, V> {
     // Example: HashMap<string, i32>.create(&memory, 16).
     // capacity is an entry count; zero is valid. INVALID/OVERFLOW/NO_MEMORY.
     def pub static create(owner: &arena.GeneralArena, capacity: i64) -> result<HashMap<K, V>> {
-        if capacity < 0 { return error("negative hashmap capacity", status.INVALID, 0); }
+        def count: result<i64> = bucket_count(capacity);
+        if count.erroneous { return count.error; }
+
+        def buckets: i64                     = count.value;
+        def allocated: result<Storage<K, V>> = allocate_storage<K, V>(owner, buckets);
+
+        if allocated.erroneous { return allocated.error; }
+
+        def storage: Storage<K, V> = allocated.value;
 
         def state: *State<K, V> = owner.try_alloc(State<K, V> {
-            slots: null,
-            flags: null,
-            buckets: 0,
+            storage: storage.bytes,
+            slots: storage.slots,
+            flags: storage.flags,
+            buckets: buckets,
             length: 0,
             memory: owner
         });
-        if state == null { return error("cannot allocate hashmap state", status.NO_MEMORY, 0); }
+        if state == null {
+            owner.release_owned(storage.bytes);
 
-        def mut map: HashMap<K, V> = HashMap<K, V> {
-            state: state
-        };
+            return error("cannot allocate hashmap state", status.NO_MEMORY, 0);
+        }
 
-        def reserved: result<void> = map.reserve(capacity);
-        if reserved.erroneous { return reserved.error; }
-
-        return map;
+        return HashMap<K, V> { state: state };
     }
 
     // O(1), no allocation. Copies observe the same length and capacity.
@@ -88,25 +156,13 @@ def pub struct HashMap<K, V> {
 
     // Rebuild transactionally. Only occupied slots ever contain initialized K/V.
     def rehash(self: &HashMap<K, V>, buckets: i64) -> result<void> {
-        def size: i64 = memory.size_of<Slot<K, V>>();
-        if buckets > 9223372036854775807 / size {
-            return error("hashmap storage size overflow", status.OVERFLOW, 0);
-        }
+        def allocated: result<Storage<K, V>> = allocate_storage<K, V>(self.state.memory, buckets);
+        if allocated.erroneous { return allocated.error; }
 
-        def slots: *Slot<K, V> = self.state.memory.try_reserve_typed<Slot<K, V>>(buckets);
-        if slots == null { return error("cannot allocate hashmap slots", status.NO_MEMORY, 0); }
-
-        def flags: *u8 = self.state.memory.try_reserve_typed<u8>(buckets);
-        if flags == null { return error("cannot allocate hashmap flags", status.NO_MEMORY, 0); }
-
-        def mut index: i64 = 0;
-
-        while index < buckets {
-            *(flags + index) = 0;
-            index = index + 1;
-        }
-
-        index = 0;
+        def storage: Storage<K, V> = allocated.value;
+        def slots: *Slot<K, V>     = storage.slots;
+        def flags: *u8             = storage.flags;
+        def mut index: i64         = 0;
 
         while index < self.state.buckets {
             if *(self.state.flags + index) == 1 {
@@ -125,30 +181,26 @@ def pub struct HashMap<K, V> {
             index = index + 1;
         }
 
+        def previous: *u8 = self.state.storage;
+        self.state.storage = storage.bytes;
         self.state.slots   = slots;
         self.state.flags   = flags;
         self.state.buckets = buckets;
+        self.state.memory.release_owned(previous);
 
         return;
     }
 
     // Reserve total entry capacity. Expected O(n), worst O(n^2) on collisions.
-    // Failure preserves contents/capacity; attempted arena allocations remain owned.
+    // Failure preserves contents/capacity without retaining attempted storage.
     def pub reserve(self: &HashMap<K, V>, capacity: i64) -> result<void> {
         if capacity < 0 { return error("negative hashmap capacity", status.INVALID, 0); }
         if capacity <= self.cap() { return; }
 
-        def mut buckets: i64 = 8;
+        def count: result<i64> = bucket_count(capacity);
+        if count.erroneous { return count.error; }
 
-        while capacity > buckets - buckets / 4 {
-            if buckets > 4611686018427387903 {
-                return error("hashmap capacity overflow", status.OVERFLOW, 0);
-            }
-
-            buckets = buckets * 2;
-        }
-
-        def rebuilt: result<void> = self.rehash(buckets);
+        def rebuilt: result<void> = self.rehash(count.value);
         if rebuilt.erroneous { return rebuilt.error; }
 
         return;
