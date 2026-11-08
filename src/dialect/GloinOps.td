@@ -80,6 +80,27 @@ def PackedElementStoreOp : Gloin_Op<"packed_element_store", [MemoryEffects<[MemR
     let hasVerifier = 1;
 }
 
+def PackedSliceFromArrayOp : Gloin_Op<"packed_slice_from_array"> {
+    let arguments = (ins AnyType:$base, I64:$start, I64:$end, TypeAttr:$array_type,
+                         TypeAttr:$source_type, BoolAttr:$start_signed, BoolAttr:$end_signed);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def PackedSliceSubrangeOp : Gloin_Op<"packed_slice_subrange"> {
+    let arguments = (ins AnyType:$base, I64:$start, I64:$end, TypeAttr:$source_type,
+                         BoolAttr:$start_signed, BoolAttr:$end_signed);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def PackedSliceSelectOp : Gloin_Op<"packed_slice_select"> {
+    let arguments = (ins AnyType:$base, I64:$index, TypeAttr:$source_type,
+                         TypeAttr:$slot_type, BoolAttr:$index_signed);
+    let results = (outs AnyType:$slot);
+    let hasVerifier = 1;
+}
+
 // Checked function boundaries retain source identity in func signatures while
 // the existing function bodies still work with their LLVM-compatible layout.
 def FromLayoutOp : Gloin_Op<"from_layout", [Pure]> {

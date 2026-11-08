@@ -107,7 +107,10 @@ They may be embedded on byte boundaries, including endian-qualified elements
 such as `packed(msb_first) [be_u16; 2]`. Literal, repeated and `zeroed`
 construction, checked indexing, copies, calls and allocation are supported.
 Scalar elements cannot be borrowed as ordinary pointers or references. Borrowed
-packed views remain under implementation. See [packed storage](packed-storage.md).
+integer views use `packed(msb_first) [u3]` or `[const u3]` with the same qualifier,
+and ranges use the existing `array[start..end]` syntax. Byte-backed construction
+and dynamic slice allocation remain under implementation. See
+[packed storage](packed-storage.md).
 
 The initial field set excludes ordinary native-layout records, pointers, slices,
 strings, floats, enums, results, and `bool`. This keeps every admitted layout

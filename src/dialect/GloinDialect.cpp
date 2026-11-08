@@ -43,6 +43,8 @@ bool is_payloadless_enum_storage(mlir::Type type) {
 }
 
 bool matches_storage(mlir::Type source, mlir::Type storage) {
+    if (mlir::isa<gloin::GloinPackedSliceType>(source))
+        return storage == packed_slice_layout(source.getContext());
     if (auto array = mlir::dyn_cast<gloin::GloinPackedArrayType>(source))
         return packed_array_layout(array) == storage;
     if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(source))
@@ -136,9 +138,22 @@ GloinPackedSlotType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> error
     return mlir::success();
 }
 
+mlir::LogicalResult
+GloinPackedSliceType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> error,
+                             mlir::Type element, bool msb_first, bool read_only) {
+    if (!packed_integer_width(element))
+        return error() << "requires a packed integer element";
+    return mlir::success();
+}
+
 bool gloin::canWeakenSourceValue(mlir::Type actual, mlir::Type requested) {
   if (actual == requested)
     return true;
+  if (auto from = mlir::dyn_cast<gloin::GloinPackedSliceType>(actual)) {
+      auto to = mlir::dyn_cast<gloin::GloinPackedSliceType>(requested);
+      return to && from.getElement() == to.getElement() && from.getMsbFirst() == to.getMsbFirst() &&
+             (!from.getReadOnly() || to.getReadOnly());
+  }
   auto from = mlir::dyn_cast<gloin::GloinPointerType>(actual);
   auto to = mlir::dyn_cast<gloin::GloinPointerType>(requested);
   if (from && to)
@@ -762,6 +777,14 @@ mlir::LogicalResult SliceElementAddressOp::verify() {
 }
 
 mlir::LogicalResult SliceLengthOp::verify() {
+    if (auto packed = mlir::dyn_cast<gloin::GloinPackedSliceType>(getSourceType())) {
+        auto module = (*this)->getParentOfType<mlir::ModuleOp>();
+        if (getLayoutType() != packed_slice_layout(getContext()) ||
+            (getBase().getType() != packed && ((module && module->hasAttr("gloin.checked")) ||
+                                               getBase().getType() != getLayoutType())))
+            return emitOpError("requires a matching packed slice descriptor");
+        return mlir::success();
+    }
   auto source = mlir::dyn_cast<gloin::GloinSliceType>(getSourceType());
   if (!source || !matches_storage(source, getLayoutType()) ||
       (getBase().getType() != getSourceType() &&

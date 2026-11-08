@@ -1,5 +1,6 @@
 #include "codegen.h"
 #include "mlir/IR/Diagnostics.h"
+#include "packed_ir.h"
 #include "standard_runtime.h"
 #include "target_layout.h"
 #include <iostream>
@@ -8,6 +9,10 @@
 // using namespace gloin;
 
 namespace {
+bool is_packed_storage(const ValueType &type) {
+    return (type.is_array() && type.array_order != PackedBitOrder::None) ||
+           (type.is_slice() && type.slice_order != PackedBitOrder::None);
+}
 std::string nominal_ir_name(const SemanticData &data, size_t id) {
     return data.structures.at(id).name + "#" + std::to_string(id);
 }
@@ -870,7 +875,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     } else if (auto *index = dynamic_cast<const IndexExpression *>(expr)) {
         if (!checked_data)
             fail("Indexing requires checked semantic analysis");
-        if (checked_data->types.at(index->left.get()).array_order != PackedBitOrder::None) {
+        if (is_packed_storage(checked_data->types.at(index->left.get()))) {
             auto slot = gen_packed_slot(index, false);
             auto value = builder.create<gloin::PackedElementLoadOp>(
                 location(), source_type(checked_data->types.at(index)), slot,
@@ -924,8 +929,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     } else if (auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
         if (checked_data)
             if (auto *index = dynamic_cast<const IndexExpression *>(assign->left.get());
-                index &&
-                checked_data->types.at(index->left.get()).array_order != PackedBitOrder::None) {
+                index && is_packed_storage(checked_data->types.at(index->left.get()))) {
                 auto slot = gen_packed_slot(index, true);
                 auto right = as_source_value(gen_layout_expression(assign->right.get()),
                                              source_type(checked_data->types.at(index)));
@@ -1454,6 +1458,18 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
 
 mlir::Value CodeGen::gen_packed_slot(const IndexExpression *expr, bool writing) {
     const auto type = checked_data->types.at(expr->left.get());
+    if (type.is_slice()) {
+        auto source = source_type(type);
+        auto base = as_source_value(gen_layout_expression(expr->left.get()), source);
+        auto index = gen_integer_index(expr->index.get());
+        auto slot = gloin::GloinPackedSlotType::get(&context, source_type(*type.slice_element),
+                                                    type.slice_order == PackedBitOrder::MsbFirst,
+                                                    type.slice_read_only);
+        return builder.create<gloin::PackedSliceSelectOp>(
+            location(), slot, base, index, mlir::TypeAttr::get(source), mlir::TypeAttr::get(slot),
+            builder.getBoolAttr(
+                core_type_info(checked_data->types.at(expr->index.get()).builtin()).is_signed));
+    }
     auto base = gen_address(expr->left.get());
     if (!base) {
         if (writing)
@@ -1474,7 +1490,7 @@ mlir::Value CodeGen::gen_packed_slot(const IndexExpression *expr, bool writing) 
 
 mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_temporary) {
     auto array_type = checked_data->types.at(expr->left.get());
-    if (array_type.array_order != PackedBitOrder::None)
+    if (is_packed_storage(array_type))
         fail("Packed scalar elements have no ordinary address");
     if (array_type.is_slice()) {
         auto source = source_type(array_type);
@@ -1563,7 +1579,21 @@ mlir::Value CodeGen::gen_slice(const SliceExpression *expression) {
             mlir::TypeAttr::get(result_layout));
     }
     mlir::Value value;
-    if (base_type.is_array()) {
+    if (result_type.slice_order != PackedBitOrder::None) {
+        auto signed_bound = [&](const Expression *bound) {
+            return builder.getBoolAttr(
+                bound && core_type_info(checked_data->types.at(bound).builtin()).is_signed);
+        };
+        if (base_type.is_array())
+            value = builder.create<gloin::PackedSliceFromArrayOp>(
+                location(), result_source, base, start, end,
+                mlir::TypeAttr::get(source_type(base_type)), mlir::TypeAttr::get(result_source),
+                signed_bound(expression->start.get()), signed_bound(expression->end.get()));
+        else
+            value = builder.create<gloin::PackedSliceSubrangeOp>(
+                location(), result_source, base, start, end, mlir::TypeAttr::get(result_source),
+                signed_bound(expression->start.get()), signed_bound(expression->end.get()));
+    } else if (base_type.is_array()) {
         value = builder.create<gloin::SliceFromArrayOp>(
             location(), result_source, base, start, end,
             mlir::TypeAttr::get(lower_type(base_type)),
@@ -1786,6 +1816,8 @@ mlir::Type CodeGen::lower_type(ValueType value_type) {
     if (value_type.is_array())
         return mlir::LLVM::LLVMArrayType::get(lower_type(*value_type.array_element),
                                               value_type.array_length);
+    if (value_type.is_slice() && value_type.slice_order != PackedBitOrder::None)
+        return packed_slice_layout(&context);
     if (value_type.is_slice())
         return mlir::LLVM::LLVMStructType::getLiteral(
             &context, {mlir::LLVM::LLVMPointerType::get(&context), builder.getI64Type()}, false);
@@ -1855,6 +1887,10 @@ mlir::Type CodeGen::source_type(ValueType value_type) {
     if (value_type.is_array())
         return gloin::GloinArrayType::get(
             &context, source_type(*value_type.array_element), value_type.array_length);
+    if (value_type.is_slice() && value_type.slice_order != PackedBitOrder::None)
+        return gloin::GloinPackedSliceType::get(&context, source_type(*value_type.slice_element),
+                                                value_type.slice_order == PackedBitOrder::MsbFirst,
+                                                value_type.slice_read_only);
     if (value_type.is_slice())
         return gloin::GloinSliceType::get(
             &context, source_type(*value_type.slice_element), value_type.slice_read_only);

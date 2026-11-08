@@ -6,9 +6,11 @@ document are requirements, not evidence that the compiler supports them yet.
 Implemented: `alloc_aligned<T>`, `place_at<T>`, the shared `check_alignment<T>`
 validator, and fixed packed integer arrays with literal, repeated and zeroed
 construction, exact byte layouts, checked scalar indexing, embedding, and
-representation-preserving copies/calls. Packed-record elements and borrowed
-packed views remain pending. The complete contract below also describes these
-pending operations.
+representation-preserving copies/calls. Packed integer slices now borrow fixed
+arrays with `array[start..end]`, support nested subranges, `.len`, indexing, and
+read-only weakening. Byte-backed view construction, slice allocation,
+byte-boundary splits, subrange copies, and packed-record elements remain pending.
+The complete contract below also describes these pending operations.
 
 ## Types and representation
 
@@ -139,7 +141,12 @@ Fixed-array indexing uses `gloin.packed_array_select` to check bounds and produc
 an internal `!gloin.packed_slot` with the element's encoding and write capability.
 `gloin.packed_element_load` and `gloin.packed_element_store` consume that location;
 it cannot become an ordinary scalar pointer. Repeated construction uses
-`gloin.packed_array_repeat` with one captured fill. The initial access lowering
+`gloin.packed_array_repeat` with one captured fill. Packed slice construction,
+subranges and indexing retain explicit `gloin.packed_slice_from_array`,
+`gloin.packed_slice_subrange` and `gloin.packed_slice_select` operations. Slice
+index/range checks retain the source signedness of their bounds; byte/bit
+advancement divides before multiplying to avoid overflowing a full bit position.
+The initial access lowering
 specializes the eight possible bit positions and uses the bounded packed-field
 accesses in each arm. This is a correctness baseline; code-size and access-cost
 measurements and further GIR optimization remain pending.

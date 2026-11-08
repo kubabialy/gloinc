@@ -29,7 +29,8 @@ std::optional<ValueType> Sema::value_type(const std::shared_ptr<Type> &type) con
     }
     if (const auto *slice = dynamic_cast<const SliceType *>(type.get())) {
         auto element = value_type(slice->element);
-        return element ? std::optional<ValueType>(ValueType::slice(*element, slice->read_only))
+        return element ? std::optional<ValueType>(
+                             ValueType::slice(*element, slice->read_only, slice->bit_order))
                        : std::nullopt;
     }
     if (const auto *structure = dynamic_cast<const StructType *>(type.get())) {

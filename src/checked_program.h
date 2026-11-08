@@ -32,6 +32,7 @@ struct ValueType {
     PackedBitOrder array_order = PackedBitOrder::None;
     std::shared_ptr<ValueType> slice_element;
     bool slice_read_only = false;
+    PackedBitOrder slice_order = PackedBitOrder::None;
     std::shared_ptr<ValueType> result_value;
     bool error_type = false;
     ValueType() = default;
@@ -54,10 +55,12 @@ struct ValueType {
         type.array_order = order;
         return type;
     }
-    static ValueType slice(ValueType element, bool read_only) {
+    static ValueType slice(ValueType element, bool read_only,
+                           PackedBitOrder order = PackedBitOrder::None) {
         ValueType type;
         type.slice_element = std::make_shared<ValueType>(std::move(element));
         type.slice_read_only = read_only;
+        type.slice_order = order;
         return type;
     }
     static ValueType result(ValueType value) {
@@ -90,19 +93,16 @@ struct ValueType {
     }
     bool operator==(const ValueType &other) const {
         return scalar == other.scalar && structure == other.structure &&
-               const_size == other.const_size &&
-               pointers == other.pointers && array_length == other.array_length &&
-               array_order == other.array_order &&
+               const_size == other.const_size && pointers == other.pointers &&
+               array_length == other.array_length && array_order == other.array_order &&
                slice_read_only == other.slice_read_only && error_type == other.error_type &&
-               (array_element && other.array_element
-                    ? *array_element == *other.array_element
-                    : !array_element && !other.array_element) &&
-               (slice_element && other.slice_element
-                    ? *slice_element == *other.slice_element
-                    : !slice_element && !other.slice_element) &&
-               (result_value && other.result_value
-                    ? *result_value == *other.result_value
-                    : !result_value && !other.result_value);
+               slice_order == other.slice_order &&
+               (array_element && other.array_element ? *array_element == *other.array_element
+                                                     : !array_element && !other.array_element) &&
+               (slice_element && other.slice_element ? *slice_element == *other.slice_element
+                                                     : !slice_element && !other.slice_element) &&
+               (result_value && other.result_value ? *result_value == *other.result_value
+                                                   : !result_value && !other.result_value);
     }
 };
 struct CheckedField {

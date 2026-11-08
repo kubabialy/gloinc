@@ -333,6 +333,112 @@ TEST_F(PackedTest, DynamicPackedArrayUpdatesMatchBitOracleAtGuardPages) {
     }
 }
 
+TEST_F(PackedTest, PackedSlicesPreserveBitPositionsAliasesAndCapabilities) {
+    auto path = source(R"(
+        def identity<T>(value: T) -> T { return value; }
+        def read(view: packed(msb_first) [const u3], i: u64) -> u3 { return view[i]; }
+        def base(order: &u64, view: packed(msb_first) [u3]) -> packed(msb_first) [u3] {
+            *order = *order * 10 + 1; return view;
+        }
+        def bound(order: &u64, digit: u64, value: u64) -> u64 {
+            *order = *order * 10 + digit; return value;
+        }
+        def main() -> i32 {
+            def mut values: packed(msb_first) [u3; 17] = {5; 17};
+            def all: packed(msb_first) [u3] = values[..];
+            def readonly: packed(msb_first) [const u3] = all;
+            def mut first: u64 = 0;
+            while first < 8 {
+                def middle: packed(msb_first) [u3] = all[first..16];
+                def nested: packed(msb_first) [u3] = middle[1..3];
+                if nested.len != 2 { return 1; }
+                nested[0] = 2;
+                if read(readonly, first + 1) != 2 || values[first] != 5 || values[first + 2] != 5 { return 2; }
+                values[first + 1] = 5;
+                first = first + 1;
+            }
+            def copied: packed(msb_first) [u3] = identity<packed(msb_first) [u3]>(all[2..4]);
+            copied[1] = 7;
+            if readonly[3] != 7 { return 3; }
+            all[16] = 1;
+            if readonly[16] != 1 || values[15] != 5 { return 9; }
+            def empty: packed(msb_first) [u3] = all[17..17];
+            if empty[..].len != 0 { return 4; }
+            def mut order: u64 = 0;
+            def chosen: packed(msb_first) [u3] = base(&order, all)[bound(&order, 2, 2)..bound(&order, 3, 4)];
+            if order != 123 || chosen.len != 2 || chosen[1] != 7 { return 5; }
+            def mut signed: packed(lsb_first) [i13; 4] = {-4096, -1, 4095, 0};
+            def signed_view: packed(lsb_first) [i13] = signed[1..];
+            signed_view[1] = -4096;
+            if signed_view[0] != -1 || signed[2] != -4096 || signed[3] != 0 { return 6; }
+            def mut words: packed(lsb_first) [be_u16; 3] = {0x1234; 3};
+            def word_view: packed(lsb_first) [be_u16] = words[1..2];
+            word_view[0] = 0x5678;
+            if words[0] != 0x1234 || words[1] != 0x5678 || words[2] != 0x1234 { return 7; }
+            def mut nested_arrays: [packed(msb_first) [u3; 2]; 1] = {{3, 4}};
+            def native_view: [packed(msb_first) [u3; 2]] = nested_arrays[..];
+            if native_view[0][1] != 4 { return 8; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({path}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        auto executable = directory + "/packed-slices";
+        auto built = invoke_raw({optimization, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
+TEST_F(PackedTest, PackedSlicesRejectEncodingChangesTemporaryBorrowsAndWritesThroughConst) {
+    for (const auto *program :
+         {"def f(v: packed(msb_first) [u3]) -> packed(lsb_first) [u3] { return v; }",
+          "def f(v: packed(msb_first) [u3]) -> [u3] { return v; }",
+          "def f(v: [u3]) -> packed(msb_first) [u3] { return v; }",
+          "def f(v: packed(msb_first) [const u3]) -> packed(msb_first) [u3] { return v[..]; }",
+          "def f(v: packed(msb_first) [const u3]) -> void { v[0] = 1; }",
+          "def f(v: packed(msb_first) [u3]) -> &u3 { return &v[0]; }",
+          "def made() -> packed(msb_first) [u3; 2] { return {1, 2}; } def f() -> packed(msb_first) "
+          "[const u3] { return made()[..]; }"}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(program, "slice.gloin", context);
+        EXPECT_EQ(compiled.failed_stage, DiagnosticStage::Semantic)
+            << errors(*compiled.diagnostics);
+    }
+    mlir::MLIRContext context;
+    auto compiled = compile_source("def f(v: packed(msb_first) [const u3]) -> packed(msb_first) "
+                                   "[const u3] { return v[1..2]; }",
+                                   "slice-ir.gloin", context);
+    ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+    gloin::PackedSliceSubrangeOp range;
+    compiled.module->walk([&](gloin::PackedSliceSubrangeOp op) { range = op; });
+    ASSERT_TRUE(range);
+    auto type = mlir::cast<gloin::GloinPackedSliceType>(range.getSourceType());
+    auto writable = gloin::GloinPackedSliceType::get(&context, type.getElement(), true, false);
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    range.getValue().setType(writable);
+    EXPECT_TRUE(mlir::failed(range.verify()));
+}
+
+TEST_F(PackedTest, PackedSliceRangesAndIndicesTrapInEveryExecutionMode) {
+    for (const auto *operation : {"all[0..9]", "all[3..2]", "all[negative..3]", "all[0..negative]",
+                                  "all[8..8][0]", "all[negative]", "all[8]"}) {
+        auto path = source(
+            std::string("def main() -> i32 { def mut a: packed(msb_first) [u3; 8] = zeroed; ") +
+            "def all: packed(msb_first) [u3] = a[..]; def negative: i64 = -1; " + operation +
+            "; return 0; }");
+        auto result = invoke({path});
+        EXPECT_LT(result.status, 0) << result.err;
+        for (const auto *optimization : {"-O0", "-O2"}) {
+            auto executable = directory + "/slice-bounds";
+            auto built = invoke_raw({optimization, "-o", executable, path});
+            ASSERT_EQ(built.status, 0) << built.err;
+            EXPECT_LT(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 0);
+        }
+    }
+}
+
 TEST_F(PackedTest, EveryNativeWidthHasExactConstantBoundsAndCanonicalIdentity) {
     for (unsigned width = 1; width <= 64; ++width) {
         for (bool signed_value : {false, true}) {

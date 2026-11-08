@@ -164,21 +164,36 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 return nullptr;
             auto storage = resolve_type_from_string(name.substr(end + 2));
             auto array = std::dynamic_pointer_cast<ArrayType>(storage);
-            if (!array) {
-                log_error("Packed slices are not implemented yet");
+            auto slice = std::dynamic_pointer_cast<SliceType>(storage);
+            if (!array && !slice) {
+                log_error("Packed storage requires an array or slice");
                 return nullptr;
             }
-            auto element = resolve_core_type(array->element->to_string());
+            auto value = array ? array->element : slice->element;
+            auto element = resolve_core_type(value->to_string());
             if (!element || !core_type_info(*element).is_integer) {
-                log_error("Packed arrays currently require integer elements");
+                log_error("Packed storage currently requires integer elements");
                 return nullptr;
             }
+            if (slice)
+                return std::make_shared<SliceType>(value, slice->read_only,
+                                                   order == "msb_first" ? PackedBitOrder::MsbFirst
+                                                                        : PackedBitOrder::LsbFirst);
             return std::make_shared<ArrayType>(array->element, array->length,
                                                order == "msb_first" ? PackedBitOrder::MsbFirst
                                                                     : PackedBitOrder::LsbFirst);
         }
         if (name.starts_with("[") && name.ends_with("]")) {
-            const auto separator = name.rfind("; ");
+            size_t separator = std::string::npos;
+            unsigned depth = 0;
+            for (size_t i = 0; i < name.size(); ++i) {
+                if (name[i] == '[')
+                    ++depth;
+                if (name[i] == ']')
+                    --depth;
+                if (name[i] == ';' && depth == 1)
+                    separator = i;
+            }
             if (separator == std::string::npos) {
                 auto inner = name.substr(1, name.size() - 2);
                 const bool read_only = inner.starts_with("const ");
@@ -1059,10 +1074,6 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         auto array = std::dynamic_pointer_cast<ArrayType>(base);
         auto slice = std::dynamic_pointer_cast<SliceType>(base);
         auto pointer = std::dynamic_pointer_cast<PointerType>(base);
-        if (array && array->bit_order != PackedBitOrder::None) {
-            log_error("Packed array slicing is not implemented yet");
-            return nullptr;
-        }
         const bool vector_internal = current_module && current_module->standard_name == "vector";
         if (!array && !slice && !(pointer && vector_internal)) {
             if (base)
@@ -1093,8 +1104,13 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
                 log_error("Slice range bound must be an integer");
             return nullptr;
         }
-        return std::make_shared<SliceType>(array ? array->element :
-                                           slice ? slice->element : pointer->pointee, read_only);
+        return std::make_shared<SliceType>(array   ? array->element
+                                           : slice ? slice->element
+                                                   : pointer->pointee,
+                                           read_only,
+                                           array   ? array->bit_order
+                                           : slice ? slice->bit_order
+                                                   : PackedBitOrder::None);
     } else if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
         if (recording && (prefix->op == "&" || prefix->op == "*"))
             return check_pointer_unary(prefix);

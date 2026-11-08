@@ -40,7 +40,7 @@ std::shared_ptr<Type> Sema::check_typed_expression(const Expression *expression,
     }
     auto slice = std::dynamic_pointer_cast<SliceType>(actual);
     auto expected_slice = std::dynamic_pointer_cast<SliceType>(expected);
-    if (recording && slice && expected_slice &&
+    if (recording && slice && expected_slice && slice->bit_order == expected_slice->bit_order &&
         slice->element->equals(*expected_slice->element) &&
         (!slice->read_only || expected_slice->read_only)) {
         actual = expected_slice;
@@ -104,7 +104,8 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
     }
     if (const auto *index = dynamic_cast<const IndexExpression *>(expression)) {
         const auto &container = recording->types.at(index->left.get());
-        if (take_address && container.is_array() && container.array_order != PackedBitOrder::None) {
+        if (take_address && (container.array_order != PackedBitOrder::None ||
+                             container.slice_order != PackedBitOrder::None)) {
             log_error("Cannot take an ordinary reference to a packed scalar element");
             return {};
         }

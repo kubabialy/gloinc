@@ -299,7 +299,7 @@ struct LowerGloinSignaturesPass
                         return true;
                     if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(type))
                         return integer.getWidth() != integer_storage_bits(integer.getWidth());
-                    if (mlir::isa<gloin::GloinPackedArrayType>(type))
+                    if (mlir::isa<gloin::GloinPackedArrayType, gloin::GloinPackedSliceType>(type))
                         return true;
                     if (auto array = mlir::dyn_cast<gloin::GloinArrayType>(type))
                         return needs_adapter(array.getElement(), depth + 1);
@@ -402,6 +402,15 @@ struct LowerGloinSignaturesPass
         });
         module.walk([](gloin::PackedArraySelectOp select) {
             select.getSlot().setType(packed_slot_layout(select.getContext()));
+        });
+        module.walk([](gloin::PackedSliceSelectOp select) {
+            select.getSlot().setType(packed_slot_layout(select.getContext()));
+        });
+        module.walk([](gloin::PackedSliceFromArrayOp view) {
+            view.getValue().setType(packed_slice_layout(view.getContext()));
+        });
+        module.walk([](gloin::PackedSliceSubrangeOp view) {
+            view.getValue().setType(packed_slice_layout(view.getContext()));
         });
         module.walk(
             [](gloin::PackedElementLoadOp load) { load.getValue().setType(load.getLayoutType()); });
@@ -1516,8 +1525,9 @@ struct LowerSliceLength : mlir::OpRewritePattern<gloin::SliceLengthOp> {
     using OpRewritePattern::OpRewritePattern;
     mlir::LogicalResult matchAndRewrite(gloin::SliceLengthOp op,
                                          mlir::PatternRewriter &rewriter) const override {
-        rewriter.replaceOpWithNewOp<mlir::LLVM::ExtractValueOp>(
-            op, op.getBase(), llvm::ArrayRef<int64_t>{1});
+        const int64_t field = mlir::isa<gloin::GloinPackedSliceType>(op.getSourceType()) ? 2 : 1;
+        rewriter.replaceOpWithNewOp<mlir::LLVM::ExtractValueOp>(op, op.getBase(),
+                                                                llvm::ArrayRef<int64_t>{field});
         return mlir::success();
     }
 };
@@ -2069,31 +2079,32 @@ bool check_legality(mlir::ModuleOp module, bool final) {
         if (!final)
             allowed |=
                 mlir::isa<mlir::UnrealizedConversionCastOp>(op) ||
-                mlir::isa<gloin::StructDefinitionOp, gloin::FromLayoutOp, gloin::ToLayoutOp,
-                          gloin::AbiCallOp, gloin::SwitchOp, gloin::MatchOp, gloin::MatchYieldOp,
-                          gloin::CaseTestOp, gloin::ConstantOp, gloin::AssertOp,
-                          gloin::ExactIntegerWidenOp, gloin::EndianConvertOp,
-                          gloin::IntegerConvertOp, gloin::CheckedIntegerBinaryOp,
-                          gloin::CheckedFloatBinaryOp, gloin::RequireFiniteOp,
-                          gloin::CheckedIntegerCompareOp, gloin::CheckedFloatCompareOp,
-                          gloin::ArrayLiteralOp, gloin::RepeatArrayOp, gloin::ArrayFillOp,
-                          gloin::StructLiteralOp, gloin::ZeroedArrayOp, gloin::PackedArrayLiteralOp,
-                          gloin::PackedArrayRepeatOp, gloin::PackedArraySelectOp,
-                          gloin::PackedElementLoadOp, gloin::PackedElementStoreOp,
-                          gloin::PackedLiteralOp, gloin::PackedExtractOp, gloin::PackedLoadOp,
-                          gloin::PackedStoreOp, gloin::PackedAddressOp, gloin::StringLiteralOp,
-                          gloin::NullOp, gloin::ErrorLiteralOp, gloin::ErrorMessageOp,
-                          gloin::ErrorCodeOp, gloin::ErrorOsErrorOp, gloin::ResultSuccessOp,
-                          gloin::ResultFailureOp, gloin::ResultIsErrorOp, gloin::ResultValueOp,
-                          gloin::ResultErrorOp, gloin::ArenaTypedPointerOp, gloin::RawReserveOp,
-                          gloin::RawPackedPointerOp, gloin::RawPlaceOp, gloin::RawIsAlignedOp,
-                          gloin::RawPaddingOp, gloin::PointerOffsetOp, gloin::ArrayElementAddressOp,
-                          gloin::SliceFromArrayOp, gloin::SliceFromPointerOp,
-                          gloin::SliceSubrangeOp, gloin::SliceElementAddressOp,
-                          gloin::SliceLengthOp, gloin::ArenaFillOp, gloin::RequireNonNullOp,
-                          gloin::PointerCompareOp, gloin::StackAllocOp, gloin::LoadOp,
-                          gloin::StoreOp, gloin::CopyOp, gloin::FieldAddressOp,
-                          gloin::ExtractFieldOp, gloin::EnumConstantOp, gloin::EnumCompareOp>(op) ||
+                mlir::isa<
+                    gloin::StructDefinitionOp, gloin::FromLayoutOp, gloin::ToLayoutOp,
+                    gloin::AbiCallOp, gloin::SwitchOp, gloin::MatchOp, gloin::MatchYieldOp,
+                    gloin::CaseTestOp, gloin::ConstantOp, gloin::AssertOp,
+                    gloin::ExactIntegerWidenOp, gloin::EndianConvertOp, gloin::IntegerConvertOp,
+                    gloin::CheckedIntegerBinaryOp, gloin::CheckedFloatBinaryOp,
+                    gloin::RequireFiniteOp, gloin::CheckedIntegerCompareOp,
+                    gloin::CheckedFloatCompareOp, gloin::ArrayLiteralOp, gloin::RepeatArrayOp,
+                    gloin::ArrayFillOp, gloin::StructLiteralOp, gloin::ZeroedArrayOp,
+                    gloin::PackedArrayLiteralOp, gloin::PackedArrayRepeatOp,
+                    gloin::PackedArraySelectOp, gloin::PackedElementLoadOp,
+                    gloin::PackedElementStoreOp, gloin::PackedSliceFromArrayOp,
+                    gloin::PackedSliceSubrangeOp, gloin::PackedSliceSelectOp,
+                    gloin::PackedLiteralOp, gloin::PackedExtractOp, gloin::PackedLoadOp,
+                    gloin::PackedStoreOp, gloin::PackedAddressOp, gloin::StringLiteralOp,
+                    gloin::NullOp, gloin::ErrorLiteralOp, gloin::ErrorMessageOp, gloin::ErrorCodeOp,
+                    gloin::ErrorOsErrorOp, gloin::ResultSuccessOp, gloin::ResultFailureOp,
+                    gloin::ResultIsErrorOp, gloin::ResultValueOp, gloin::ResultErrorOp,
+                    gloin::ArenaTypedPointerOp, gloin::RawReserveOp, gloin::RawPackedPointerOp,
+                    gloin::RawPlaceOp, gloin::RawIsAlignedOp, gloin::RawPaddingOp,
+                    gloin::PointerOffsetOp, gloin::ArrayElementAddressOp, gloin::SliceFromArrayOp,
+                    gloin::SliceFromPointerOp, gloin::SliceSubrangeOp, gloin::SliceElementAddressOp,
+                    gloin::SliceLengthOp, gloin::ArenaFillOp, gloin::RequireNonNullOp,
+                    gloin::PointerCompareOp, gloin::StackAllocOp, gloin::LoadOp, gloin::StoreOp,
+                    gloin::CopyOp, gloin::FieldAddressOp, gloin::ExtractFieldOp,
+                    gloin::EnumConstantOp, gloin::EnumCompareOp>(op) ||
                 (op->getName().isRegistered() &&
                  (dialect == "func" || dialect == "arith" || dialect == "cf" || dialect == "scf" ||
                   dialect == "memref"));
@@ -2111,9 +2122,9 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                             mlir::isa<gloin::GloinIntegerType, gloin::GloinPointerType,
                                       gloin::GloinArrayType, gloin::GloinSliceType,
                                       gloin::GloinPackedArrayType, gloin::GloinPackedSlotType,
-                                      gloin::GloinEnumType, gloin::GloinStructType,
-                                      gloin::GloinStringType, gloin::GloinErrorType,
-                                      gloin::GloinResultType>(type);
+                                      gloin::GloinPackedSliceType, gloin::GloinEnumType,
+                                      gloin::GloinStructType, gloin::GloinStringType,
+                                      gloin::GloinErrorType, gloin::GloinResultType>(type);
             if (!legal) {
                 op->emitError(final ? "Type is not legal at LLVM export: "
                                     : "No supported lowering for type: ")

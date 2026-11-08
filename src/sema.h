@@ -174,14 +174,20 @@ struct ArrayType : public Type {
 struct SliceType : public Type {
     std::shared_ptr<Type> element;
     bool read_only;
-    SliceType(std::shared_ptr<Type> element, bool read_only)
-        : element(std::move(element)), read_only(read_only) {}
+    PackedBitOrder bit_order;
+    SliceType(std::shared_ptr<Type> element, bool read_only,
+              PackedBitOrder order = PackedBitOrder::None)
+        : element(std::move(element)), read_only(read_only), bit_order(order) {}
     std::string to_string() const override {
-        return "[" + std::string(read_only ? "const " : "") + element->to_string() + "]";
+        const std::string prefix = bit_order == PackedBitOrder::None       ? ""
+                                   : bit_order == PackedBitOrder::MsbFirst ? "packed(msb_first) "
+                                                                           : "packed(lsb_first) ";
+        return prefix + "[" + std::string(read_only ? "const " : "") + element->to_string() + "]";
     }
     bool equals(const Type &other) const override {
         const auto *slice = dynamic_cast<const SliceType *>(&other);
-        return slice && read_only == slice->read_only && element->equals(*slice->element);
+        return slice && read_only == slice->read_only && bit_order == slice->bit_order &&
+               element->equals(*slice->element);
     }
 };
 
