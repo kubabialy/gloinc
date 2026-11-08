@@ -10,8 +10,9 @@ representation-preserving copies/calls. Packed integer slices now borrow fixed
 arrays with `array[start..end]`, support nested subranges, `.len`, indexing, and
 read-only weakening. `storage_bytes<S>` and `check_slice_alignment<S>` provide
 checked extent and element-storage alignment queries for ordinary and packed
-slices. Byte-backed view construction, slice allocation,
-byte-boundary splits, subrange copies, and packed-record elements remain pending.
+slices. `view_packed<S>` now constructs bounded integer views over initialized
+byte slices. Slice allocation, byte-boundary splits, subrange copies, and
+packed-record elements remain pending.
 The complete contract below also describes these pending operations.
 
 ## Types and representation
@@ -116,6 +117,14 @@ does not itself construct a view or allocate storage. `check_slice_alignment<S>`
 checks the stored elements' minimum alignment (one for packed storage), rather
 than the borrowed descriptor's native alignment.
 
+`view_packed<S>` accepts `[u8]` for writable `S` and `[const u8]` for read-only
+`S` (writable bytes may weaken to read-only). Endian-qualified elements require
+a byte-aligned start, including for empty views. Empty native-integer views may
+start at an interior bit or exactly one past the byte buffer, but never beyond
+it. Construction reads/writes no backing bytes. Its error precedence is invalid
+element alignment, then unrepresentable extent, then insufficient capacity or
+out-of-range position. An empty byte buffer admits only offset zero/count zero.
+
 Alignment arguments are `u64` byte counts, positive powers of two, at least the
 stored type's minimum alignment, and within the target addressable range.
 They apply to the allocation base, not every element. Placement checks the
@@ -155,6 +164,8 @@ subranges and indexing retain explicit `gloin.packed_slice_from_array`,
 `gloin.packed_slice_subrange` and `gloin.packed_slice_select` operations. Slice
 index/range checks retain the source signedness of their bounds; byte/bit
 advancement divides before multiplying to avoid overflowing a full bit position.
+`gloin.checked_packed_view` validates byte-backed construction and returns an
+ordinary checked result; error payloads come from the Gloin wrapper.
 The initial access lowering
 specializes the eight possible bit positions and uses the bounded packed-field
 accesses in each arm. This is a correctness baseline; code-size and access-cost

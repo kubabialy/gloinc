@@ -101,6 +101,16 @@ def PackedSliceSelectOp : Gloin_Op<"packed_slice_select"> {
     let hasVerifier = 1;
 }
 
+// Validate a borrowed byte extent without accessing its backing memory.
+// Error policy/messages are supplied by the Gloin standard-library wrapper.
+def CheckedPackedViewOp : Gloin_Op<"checked_packed_view", [Pure]> {
+    let arguments = (ins AnyType:$bytes, I64:$bit_offset, I64:$count,
+                         AnyType:$invalid_error, AnyType:$overflow_error, AnyType:$bounds_error,
+                         TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
 // Checked function boundaries retain source identity in func signatures while
 // the existing function bodies still work with their LLVM-compatible layout.
 def FromLayoutOp : Gloin_Op<"from_layout", [Pure]> {

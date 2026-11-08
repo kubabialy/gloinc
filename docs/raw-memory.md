@@ -81,6 +81,16 @@ power of two, at least the stored elements' minimum alignment and no greater
 than `INT64_MAX`. Packed storage has minimum alignment one, independently of
 the slice descriptor's alignment. Invalid requests return `INVALID`.
 
+`view_packed<S>(bytes, bit_offset: u64, count: u64) -> result<S>` borrows initialized
+bytes as a packed integer slice, without reading or writing the backing memory.
+Writable `S` requires `[u8]`; read-only `S` accepts `[const u8]`. Offset is in
+bits and count in elements. Endian-qualified elements require a byte-aligned
+offset, even for an empty view. The complete extent is checked before a view is
+returned. Error precedence is `INVALID` for element alignment, `OVERFLOW` for
+unrepresentable extent, then `OUT_OF_RANGE` for position/capacity. Empty views
+may start at an interior bit or exactly one past the buffer; empty buffers allow
+only zero offset/count. Copying the descriptor retains the same borrowed owner.
+
 `place_at<T>(bytes: [u8], byte_offset: u64, value: T, alignment: u64) -> result<&T>`
 constructs a value in bounded writable storage. It first validates alignment,
 then the remaining byte capacity, then address-offset representability, then

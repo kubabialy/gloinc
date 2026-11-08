@@ -509,6 +509,109 @@ TEST_F(PackedTest, SliceStorageQueriesRequireSliceTypesAndKeepIntrinsicsPrivate)
     }
 }
 
+TEST_F(PackedTest, BoundedPackedViewsPreserveBytesAndHandleCapacityAlignmentAndOverflow) {
+    auto path = source(R"(
+        import "@memory";
+        import "@status";
+        def main() -> i32 {
+            def mut bytes: [u8; 4] = {0x11, 0xA5, 0x5A, 0x22};
+            def created: result<packed(msb_first) [u3]> = memory.view_packed<packed(msb_first) [u3]>(bytes[1..3], 3, 3);
+            if created.erroneous { return 1; }
+            def view: packed(msb_first) [u3] = created.value;
+            if view.len != 3 || view[0] != 1 || view[1] != 2 || view[2] != 5 { return 2; }
+            def borrowed: result<packed(msb_first) [const u3]> = memory.view_packed<packed(msb_first) [const u3]>(bytes[1..3], 3, 3);
+            if borrowed.erroneous { return 3; }
+            def readonly: packed(msb_first) [const u3] = borrowed.value;
+            view[1] = 7;
+            if readonly[1] != 7 || bytes[1] != 0xA7 || bytes[2] != 0xDA { return 4; }
+            def nested: packed(msb_first) [u3] = view[1..];
+            nested[1] = 1;
+            if readonly[2] != 1 || bytes[2] != 0x9A || bytes[0] != 0x11 || bytes[3] != 0x22 { return 5; }
+            def short: result<packed(msb_first) [u3]> = memory.view_packed<packed(msb_first) [u3]>(bytes[1..2], 3, 3);
+            if short.erroneous { if short.error.code != status.OUT_OF_RANGE { return 6; } }
+            else { return 7; }
+            def overflow: result<packed(msb_first) [u13]> = memory.view_packed<packed(msb_first) [u13]>(bytes[..], 0, 18446744073709551615);
+            if overflow.erroneous { if overflow.error.code != status.OVERFLOW || overflow.error.os_error != 0 { return 8; } }
+            else { return 9; }
+            def huge: result<packed(msb_first) [u3]> = memory.view_packed<packed(msb_first) [u3]>(bytes[..], 0, 18446744073709551615);
+            if huge.erroneous { if huge.error.code != status.OUT_OF_RANGE { return 10; } }
+            else { return 11; }
+            def invalid: result<packed(msb_first) [be_u16]> = memory.view_packed<packed(msb_first) [be_u16]>(bytes[..], 1, 18446744073709551615);
+            if invalid.erroneous { if invalid.error.code != status.INVALID { return 12; } }
+            else { return 13; }
+            def empty: result<packed(msb_first) [u3]> = memory.view_packed<packed(msb_first) [u3]>(bytes[0..0], 0, 0);
+            if empty.erroneous { return 14; }
+            def none: packed(msb_first) [u3] = empty.value;
+            if none.len != 0 { return 15; }
+            def past: result<packed(msb_first) [u3]> = memory.view_packed<packed(msb_first) [u3]>(bytes[..], 32, 0);
+            if past.erroneous { return 16; }
+            def outside: result<packed(msb_first) [u3]> = memory.view_packed<packed(msb_first) [u3]>(bytes[..], 33, 0);
+            if outside.erroneous { if outside.error.code != status.OUT_OF_RANGE { return 17; } }
+            else { return 18; }
+            def remote: result<packed(msb_first) [u3]> = memory.view_packed<packed(msb_first) [u3]>(bytes[..], 18446744073709551615, 1);
+            if remote.erroneous { if remote.error.code != status.OUT_OF_RANGE { return 19; } }
+            else { return 20; }
+            if bytes[0] != 0x11 || bytes[1] != 0xA7 || bytes[2] != 0x9A || bytes[3] != 0x22 { return 21; }
+            def mut wide: [u8; 9] = {255; 9};
+            def full: result<packed(msb_first) [u64]> = memory.view_packed<packed(msb_first) [u64]>(wide[..], 7, 1);
+            if full.erroneous { return 22; }
+            def number: packed(msb_first) [u64] = full.value;
+            if number[0] != 18446744073709551615 { return 23; }
+            number[0] = 0;
+            if wide[0] != 254 || wide[8] != 1 { return 24; }
+            def mut i: u64 = 1;
+            while i < 8 { if wide[i] != 0 { return 25; } i = i + 1; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({path}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        auto executable = directory + "/packed-byte-view";
+        auto built = invoke_raw({optimization, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
+TEST_F(PackedTest, PackedByteViewsRejectCapabilityAndTypeForgeries) {
+    for (const auto *program :
+         {"import \"@memory\"; def f(bytes: [const u8]) -> result<packed(msb_first) [u3]> { def r: "
+          "result<packed(msb_first) [u3]> = memory.view_packed<packed(msb_first) [u3]>(bytes, 0, "
+          "1); if r.erroneous { return r.error; } return r.value; }",
+          "import \"@memory\"; def f(bytes: [u8]) -> result<[u16]> { def r: result<[u16]> = "
+          "memory.view_packed<[u16]>(bytes, 0, 1); if r.erroneous { return r.error; } return "
+          "r.value; }",
+          "def f(bytes: __memory_slice_bytes<packed(msb_first) [u3]>) -> void {}"}) {
+        auto path = source(program);
+        auto result = invoke({"--check", path});
+        EXPECT_EQ(result.status, 1) << result.err;
+        EXPECT_NE(result.err.find("error:"), std::string::npos);
+    }
+    auto path = source(R"(
+        import "@memory";
+        def main() -> i32 {
+            def bytes: [u8; 1] = {0};
+            def r: result<packed(msb_first) [const u3]> = memory.view_packed<packed(msb_first) [const u3]>(bytes[..], 0, 1);
+            if r.erroneous { return 1; } return 0;
+        }
+    )");
+    mlir::MLIRContext context;
+    auto compiled = compile_source(read(path), path, context);
+    ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+    gloin::CheckedPackedViewOp view;
+    compiled.module->walk([&](gloin::CheckedPackedViewOp op) { view = op; });
+    ASSERT_TRUE(view);
+    auto type = mlir::cast<gloin::GloinPackedSliceType>(view.getSourceType());
+    EXPECT_TRUE(type.getReadOnly());
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    auto writable =
+        gloin::GloinPackedSliceType::get(&context, type.getElement(), type.getMsbFirst(), false);
+    view.setSourceType(writable);
+    view.getValue().setType(gloin::GloinResultType::get(&context, writable));
+    EXPECT_TRUE(mlir::failed(view.verify()));
+}
+
 TEST_F(PackedTest, EveryNativeWidthHasExactConstantBoundsAndCanonicalIdentity) {
     for (unsigned width = 1; width <= 64; ++width) {
         for (bool signed_value : {false, true}) {

@@ -17,6 +17,17 @@ mlir::Value CodeGen::emit_memory_primitive(MemoryPrimitive kind, mlir::ValueRang
 
 mlir::Value CodeGen::emit_memory_intrinsic(MemoryIntrinsic kind, const ValueType &type,
                                            mlir::ValueRange arguments) {
+    if (kind == MemoryIntrinsic::PackedView) {
+        auto bytes = ValueType::slice(ValueType(CoreType::U8), type.slice_read_only);
+        auto result = ValueType::result(type);
+        auto error = source_type(ValueType::error());
+        auto view = builder.create<gloin::CheckedPackedViewOp>(
+            location(), source_type(result), as_source_value(arguments[0], source_type(bytes)),
+            arguments[1], arguments[2], as_source_value(arguments[3], error),
+            as_source_value(arguments[4], error), as_source_value(arguments[5], error),
+            mlir::TypeAttr::get(source_type(type)), mlir::TypeAttr::get(lower_type(result)));
+        return builder.create<gloin::ToLayoutOp>(location(), lower_type(result), view);
+    }
     const bool slice_query = kind == MemoryIntrinsic::SliceUnit ||
                              kind == MemoryIntrinsic::SliceAlignment ||
                              kind == MemoryIntrinsic::SlicePacked;

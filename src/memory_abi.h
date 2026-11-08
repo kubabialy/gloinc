@@ -28,5 +28,6 @@ enum class MemoryIntrinsic {
     IsAligned,
     SliceUnit,
     SliceAlignment,
-    SlicePacked
+    SlicePacked,
+    PackedView
 };

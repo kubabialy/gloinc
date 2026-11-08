@@ -129,6 +129,18 @@ def pub place_at<T>(bytes: [u8], byte_offset: u64, value: T, alignment: u64) -> 
     return &*placed;
 }
 
+// S determines both the packed encoding and the required byte-slice capability.
+// This borrows initialized bytes without reading or modifying their contents.
+def pub view_packed<S>(bytes: __memory_slice_bytes<S>, bit_offset: u64, count: u64) -> result<S> {
+    def view: result<S> = __memory_view_packed<S>(bytes, bit_offset, count,
+        error("packed view requires a byte-aligned start", status.INVALID, 0),
+        error("packed view extent overflow", status.OVERFLOW, 0),
+        error("packed view is outside storage", status.OUT_OF_RANGE, 0));
+    if view.erroneous { return view.error; }
+
+    return view.value;
+}
+
 // Copy a packed representation from the prefix of bytes. No pointer escapes.
 // Packed layouts have alignment one and admit every bit pattern. Protocol
 // validation is the caller's job; native structs/pointers are rejected.

@@ -237,6 +237,18 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
             const auto type_arguments =
                 split_type_arguments(std::string_view(name).substr(open + 1,
                                                                    name.size() - open - 2));
+            if (current_module && current_module->standard_name == "memory" &&
+                base == "__memory_slice_bytes") {
+                auto slice = type_arguments.size() == 1
+                                 ? std::dynamic_pointer_cast<SliceType>(
+                                       resolve_type_from_string(type_arguments.front()))
+                                 : nullptr;
+                if (!slice || slice->bit_order == PackedBitOrder::None) {
+                    log_error("Packed byte views require a packed slice type");
+                    return nullptr;
+                }
+                return std::make_shared<SliceType>(get_builtin_type("u8"), slice->read_only);
+            }
             if (base == "result") {
                 if (type_arguments.size() != 1) {
                     log_error("result requires exactly one type argument");
@@ -625,7 +637,7 @@ std::shared_ptr<Type> Sema::check_generic_function_call(const CallExpression *ca
          name == "__memory_place" || name == "__memory_is_aligned" ||
          name == "__memory_slice_unit" || name == "__memory_slice_alignment" ||
          name == "__memory_slice_packed" || name == "__memory_packed_pointer" ||
-         name == "__memory_packed_mut_pointer"))
+         name == "__memory_packed_mut_pointer" || name == "__memory_view_packed"))
         return check_memory_intrinsic(call, name, argument_names);
     const FunctionDefinition *definition = nullptr;
     if (imported_module) {

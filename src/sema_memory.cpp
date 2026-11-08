@@ -36,6 +36,31 @@ std::shared_ptr<Type> Sema::check_memory_intrinsic(const CallExpression *call,
         log_error("Invalid raw memory intrinsic type argument");
         return nullptr;
     }
+    if (name == "__memory_view_packed") {
+        auto slice = std::dynamic_pointer_cast<SliceType>(type);
+        if (!slice || slice->bit_order == PackedBitOrder::None || call->arguments.size() != 6) {
+            log_error(
+                "Packed view construction requires a packed slice type, bytes, bounds and errors");
+            return nullptr;
+        }
+        const std::vector<std::shared_ptr<Type>> parameters{
+            std::make_shared<SliceType>(get_builtin_type("u8"), slice->read_only),
+            get_builtin_type("u64"),
+            get_builtin_type("u64"),
+            std::make_shared<ErrorType>(),
+            std::make_shared<ErrorType>(),
+            std::make_shared<ErrorType>()};
+        for (size_t i = 0; i < parameters.size(); ++i) {
+            auto actual = check_typed_expression(call->arguments[i].get(), parameters[i]);
+            if (!actual || !actual->equals(*parameters[i])) {
+                log_error("Packed view argument type or byte access capability mismatch");
+                return nullptr;
+            }
+        }
+        recording->memory_intrinsics.emplace(
+            call, std::make_pair(MemoryIntrinsic::PackedView, *value_type(type)));
+        return std::make_shared<ResultType>(type);
+    }
     if (name == "__memory_slice_unit" || name == "__memory_slice_alignment" ||
         name == "__memory_slice_packed") {
         if (!dynamic_cast<SliceType *>(type.get()) || !call->arguments.empty()) {
