@@ -109,7 +109,7 @@ construction, checked indexing, copies, calls and allocation are supported.
 Scalar elements cannot be borrowed as ordinary pointers or references. Borrowed
 integer views use `packed(msb_first) [u3]` or `[const u3]` with the same qualifier,
 and ranges use the existing `array[start..end]` syntax. `memory.view_packed<S>` borrows bounded initialized byte buffers.
-Dynamic slice allocation remains under implementation. See
+`arena.GeneralArena.alloc_slice<S>` allocates initialized ordinary or packed integer slices. See
 [packed storage](packed-storage.md).
 
 The initial field set excludes ordinary native-layout records, pointers, slices,

@@ -661,6 +661,73 @@ struct LowerArrayRepeat : PackedPattern<gloin::PackedArrayRepeatOp> {
     }
 };
 
+struct LowerInitializePackedSlice : PackedPattern<gloin::InitializeSliceOp> {
+    using PackedPattern::PackedPattern;
+    mlir::LogicalResult matchAndRewrite(gloin::InitializeSliceOp op,
+                                        mlir::PatternRewriter &rewriter) const override {
+        auto type = mlir::dyn_cast<gloin::GloinPackedSliceType>(op.getSourceType());
+        if (!type)
+            return mlir::failure();
+        auto field = *field_type(op, type.getElement());
+        auto loc = op.getLoc();
+        Access access{rewriter, loc, op.getStorage(), little};
+        auto zero = access.constant(rewriter.getI64Type(), 0);
+        auto one = access.constant(rewriter.getI64Type(), 1);
+        auto eight = access.constant(rewriter.getI64Type(), 8);
+        auto width = access.constant(rewriter.getI64Type(), field.bits);
+        auto whole = rewriter.create<mlir::arith::DivUIOp>(loc, op.getCount(), eight);
+        auto remainder = rewriter.create<mlir::arith::RemUIOp>(loc, op.getCount(), eight);
+        auto tail_bits = rewriter.create<mlir::arith::MulIOp>(loc, remainder, width);
+        auto rounded = rewriter.create<mlir::arith::AddIOp>(
+            loc, tail_bits, access.constant(rewriter.getI64Type(), 7));
+        auto tail = rewriter.create<mlir::arith::DivUIOp>(loc, rounded, eight);
+        auto budget = rewriter.create<mlir::arith::SubIOp>(
+            loc, access.constant(rewriter.getI64Type(), INT64_MAX), tail);
+        auto maximum = rewriter.create<mlir::arith::DivUIOp>(loc, budget, width);
+        rewriter.create<gloin::AssertOp>(
+            loc, rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ule, whole,
+                                                      maximum));
+        auto bytes = rewriter.create<mlir::arith::AddIOp>(
+            loc, rewriter.create<mlir::arith::MulIOp>(loc, whole, width), tail);
+        rewriter.create<gloin::AssertOp>(
+            loc, rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sge,
+                                                      op.getAvailable(), zero));
+        rewriter.create<gloin::AssertOp>(
+            loc, rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ule, bytes,
+                                                      op.getAvailable()));
+        auto present =
+            rewriter.create<gloin::RawIsAlignedOp>(loc, rewriter.getI1Type(), op.getStorage(), one);
+        rewriter.create<gloin::AssertOp>(loc, present);
+        // Establish initialized boundary bytes before any masked element store.
+        rewriter.create<mlir::LLVM::MemsetOp>(
+            loc, op.getStorage(), access.constant(rewriter.getI8Type(), 0), bytes, false);
+        auto loop = rewriter.create<mlir::scf::WhileOp>(loc, mlir::TypeRange{rewriter.getI64Type()},
+                                                        mlir::ValueRange{zero});
+        {
+            mlir::OpBuilder::InsertionGuard guard(rewriter);
+            auto *before =
+                rewriter.createBlock(&loop.getBefore(), {}, {rewriter.getI64Type()}, {loc});
+            auto more = rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult,
+                                                             before->getArgument(0), op.getCount());
+            rewriter.create<mlir::scf::ConditionOp>(loc, more, before->getArguments());
+            auto *body = rewriter.createBlock(&loop.getAfter(), {}, {rewriter.getI64Type()}, {loc});
+            auto slot = advance_slice(rewriter, loc, op.getStorage(), zero, body->getArgument(0),
+                                      field.bits);
+            auto slot_type = gloin::GloinPackedSlotType::get(op.getContext(), type.getElement(),
+                                                             type.getMsbFirst(), false);
+            rewriter.create<gloin::PackedElementStoreOp>(loc, slot, op.getFill(),
+                                                         mlir::TypeAttr::get(slot_type));
+            auto next = rewriter.create<mlir::arith::AddIOp>(loc, body->getArgument(0), one);
+            rewriter.create<mlir::scf::YieldOp>(loc, next.getResult());
+        }
+        rewriter.replaceOp(
+            op, slice_from_slot(rewriter, loc,
+                                slot_position(rewriter, loc, op.getStorage(), zero, zero),
+                                op.getCount()));
+        return mlir::success();
+    }
+};
+
 struct LowerExtract : PackedPattern<gloin::PackedExtractOp> {
     using PackedPattern::PackedPattern;
     mlir::LogicalResult matchAndRewrite(gloin::PackedExtractOp op,
@@ -822,11 +889,11 @@ mlir::LogicalResult gloin::PackedArrayLiteralOp::verify() {
 }
 
 void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian) {
-    patterns
-        .add<LowerCheckedView, LowerSliceFromArray, LowerSliceSubrange, LowerSliceSelect,
-             LowerLiteral, LowerArrayLiteral, LowerArrayRepeat, LowerArraySelect, LowerElementLoad,
-             LowerElementStore, LowerExtract, LowerLoad, LowerStore, LowerAddress>(
-            patterns.getContext(), little_endian);
+    patterns.add<LowerInitializePackedSlice, LowerCheckedView, LowerSliceFromArray,
+                 LowerSliceSubrange, LowerSliceSelect, LowerLiteral, LowerArrayLiteral,
+                 LowerArrayRepeat, LowerArraySelect, LowerElementLoad, LowerElementStore,
+                 LowerExtract, LowerLoad, LowerStore, LowerAddress>(patterns.getContext(),
+                                                                    little_endian);
 }
 
 mlir::LogicalResult gloin::PackedArrayRepeatOp::verify() {

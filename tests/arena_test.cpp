@@ -410,6 +410,209 @@ TEST_F(ArenaTest, AlignedAllocationFailureReturnsErrorAfterInitializerSideEffect
     EXPECT_EQ(result.value, 42);
 }
 
+TEST_F(ArenaTest, SliceAllocationUsesExactStorageBytesAlignmentAndCapturedFill) {
+    for (const auto &[type, fill, count, bytes] :
+         std::vector<std::tuple<std::string, std::string, unsigned, std::vector<unsigned>>>{
+             {"packed(msb_first) [u3]", "5", 3, {0xB6, 0x80}},
+             {"packed(lsb_first) [u3]", "5", 3, {0x6D, 0x01}},
+             {"packed(msb_first) [be_u16]", "0x1234", 2, {0x12, 0x34, 0x12, 0x34}},
+             {"[le_u16]", "0x1234", 2, {0x34, 0x12, 0x34, 0x12}},
+             {"packed(msb_first) [u3]", "5", 0, {}}}) {
+        SCOPED_TRACE(type);
+        auto library_text = library();
+        const std::string marker =
+            "return __memory_initialize_slice<S>(storage, size.value, count, fill);";
+        auto at = library_text.find(marker);
+        ASSERT_NE(at, std::string::npos);
+        std::string check =
+            "if size.value != " + std::to_string(bytes.size()) +
+            " || alignment != 64 { __arena_require(null); } "
+            "def extent: u64 = size.value; "
+            "def raw: [u8] = __memory_initialize_slice<[u8]>(storage, extent, extent, 255); "
+            "def initialized: S = __memory_initialize_slice<S>(storage, extent, count, fill); "
+            "if extent != 0 { def empty: [u8; 0] = zeroed; "
+            "def placed: result<&[u8; 0]> = memory.place_at<[u8; 0]>(raw, 0, empty, 64); "
+            "if placed.erroneous { __arena_require(null); } } ";
+        for (size_t i = 0; i < bytes.size(); ++i)
+            check += "if raw[" + std::to_string(i) + "] != " + std::to_string(bytes[i]) +
+                     " { __arena_require(null); } ";
+        check += "return initialized;";
+        library_text.replace(at, marker.size(), check);
+        source(library_text, "arena.gloin");
+        auto file = program("def r: result<" + type + "> = a.alloc_slice<" + type + ">(" +
+                            std::to_string(count) + ", " + fill +
+                            ", 64); "
+                            "if r.erroneous { return 1; } def view: " +
+                            type + " = r.value; if view.len != " + std::to_string(count) +
+                            " { return 2; } return 42;");
+        expect_run(invoke({"--stdlib-dir", directory, file}), 42);
+        for (const auto *mode : {"-O0", "-O2"}) {
+            auto executable = directory + "/slice-storage";
+            auto built = invoke_raw({"--stdlib-dir", directory, mode, "-o", executable, file});
+            ASSERT_EQ(built.status, 0) << built.err;
+            EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10),
+                      42);
+        }
+    }
+}
+
+TEST_F(ArenaTest, SliceAllocationSupportsOrdinaryValuesPackedUpdatesAndHugeEmptyElements) {
+    auto file = program(R"(
+        def mut calls: i32 = 0;
+        def r: result<packed(msb_first) [u13]> = a.alloc_slice<packed(msb_first) [u13]>(17, value(&calls), 64);
+        if r.erroneous { return 1; }
+        def view: packed(msb_first) [u13] = r.value;
+        def readonly: packed(msb_first) [const u13] = view;
+        def mut i: u64 = 0;
+        while i < view.len { if view[i] != 8191 { return 2; } i = i + 1; }
+        view[8] = 42;
+        if calls != 1 || readonly[8] != 42 || view[7] != 8191 || view[9] != 8191 { return 3; }
+        def empty: result<packed(lsb_first) [u13]> = a.alloc_slice<packed(lsb_first) [u13]>(0, value(&calls), 1);
+        if empty.erroneous { return 4; }
+        if calls != 2 { return 5; }
+        def ordinary: result<[Box]> = a.alloc_slice<[Box]>(3, Box { value: 99 }, 64);
+        if ordinary.erroneous { return 6; }
+        def boxes: [Box] = ordinary.value;
+        boxes[1].value = 42;
+        if boxes[0].value != 99 || boxes[1].value != 42 || boxes[2].value != 99 { return 7; }
+        def huge: result<[Empty]> = a.alloc_slice<[Empty]>(18446744073709551615, Empty {}, 1);
+        if huge.erroneous { return 8; }
+        def zero: [Empty] = huge.value;
+        if zero.len != 18446744073709551615 { return 9; }
+        def last: &Empty = &zero[18446744073709551614];
+        def tail: [Empty] = zero[18446744073709551614..];
+        if tail.len != 1 || last != &tail[0] { return 10; }
+        def past: [Empty] = zero[18446744073709551615..];
+        if past.len != 0 { return 11; }
+        return 42;
+    )",
+                        R"(
+        def value(calls: &i32) -> u13 { *calls = *calls + 1; return 8191; }
+        def struct Box { def mut value: u64, }
+        def struct Empty {}
+    )");
+    expect_run(invoke({file}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        auto executable = directory + "/allocated-slices";
+        auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
+TEST_F(ArenaTest, SliceAllocationErrorsPreserveInitializerEffectsAndPrivateCapabilities) {
+    for (const auto *type : {"[u13]", "packed(msb_first) [u13]"}) {
+        mlir::MLIRContext context;
+        auto text = std::string(R"(
+            import "@arena"; import "@status";
+            def value(calls: &i32) -> u13 { *calls = *calls + 1; return 7; }
+            def main() -> i32 {
+                def mut a: arena.GeneralArena = arena.GeneralArena.create(); defer a.free();
+                def mut calls: i32 = 0;
+                def r: result<)") +
+                    type + "> = a.alloc_slice<" + type + R"(>(3, value(&calls), 64);
+                if r.erroneous {
+                    if r.error.code == status.NO_MEMORY && r.error.os_error == 0 && calls == 1 { return 42; }
+                    return 1;
+                } return 2;
+            })";
+        auto compiled = compile_source(text, "slice-failure.gloin", context,
+                                       CompilationMode::Executable, CompilationOutput::LLVM);
+        ASSERT_TRUE(compiled.success());
+        fail_runtime_call(*compiled.module, ArenaPrimitive::Allocate);
+        auto result = JitRunner::run(*compiled.module);
+        ASSERT_TRUE(result.success());
+        EXPECT_EQ(result.value, 42);
+    }
+    for (const auto *body :
+         {"def r: result<[const u8]> = a.alloc_slice<[const u8]>(3, 0, 1); if r.erroneous { return "
+          "1; }",
+          "def r: result<u8> = a.alloc_slice<u8>(3, 0, 1); if r.erroneous { return 1; }",
+          "def r: [u8] = __memory_initialize_slice<[u8]>(null, 0, 0, 0);"}) {
+        auto file = program(std::string(body) + "return 0;");
+        EXPECT_EQ(invoke({"--check", file}).status, 1);
+    }
+}
+
+TEST_F(ArenaTest, HugeZeroSizedSlicesRejectNegativeSignedIndicesAndBounds) {
+    for (const auto *expression :
+         {"def item: Empty = view[negative];", "view[negative] = effect();",
+          "def part: [Empty] = view[negative..];", "def part: [Empty] = view[0..negative];"}) {
+        auto file = program(std::string(R"(
+            def r: result<[Empty]> = a.alloc_slice<[Empty]>(18446744073709551615, Empty {}, 1);
+            if r.erroneous { return 1; }
+            def view: [Empty] = r.value;
+            def negative: i64 = -2;
+        )") + expression + " return 0;",
+                            R"(
+            import "@std";
+            def struct Empty {}
+            def effect() -> Empty { std.println("unexpected RHS"); return Empty {}; }
+        )");
+        auto result = invoke({file});
+        EXPECT_LT(result.status, 0) << result.err;
+        EXPECT_TRUE(result.out.empty());
+        for (const auto *mode : {"-O0", "-O2"}) {
+            auto executable = directory + "/negative-empty-slice";
+            auto built = invoke_raw({mode, "-o", executable, file});
+            ASSERT_EQ(built.status, 0) << built.err;
+            const auto output = directory + "/trap.out";
+            const std::optional<llvm::StringRef> redirects[] = {llvm::StringRef(""), output,
+                                                                llvm::StringRef("")};
+            EXPECT_LT(
+                llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects, 10),
+                0);
+            EXPECT_TRUE(read(output).empty());
+        }
+    }
+}
+
+TEST_F(ArenaTest, InvalidSliceRequestsNeverAllocateAndGIRRejectsForgedCapabilities) {
+    auto library_text = library();
+    const std::string allocation =
+        "def storage: *u8 = __arena_general_alloc(self.state, size.value, alignment);";
+    size_t position = 0;
+    while ((position = library_text.find(allocation, position)) != std::string::npos) {
+        library_text.insert(position, "__arena_require(null); ");
+        position += allocation.size() + 23;
+    }
+    source(library_text, "arena.gloin");
+    auto file = program(
+        R"(
+        def mut calls: i32 = 0;
+        def invalid: result<packed(msb_first) [u13]> = a.alloc_slice<packed(msb_first) [u13]>(3, value(&calls), 3);
+        if invalid.erroneous { if invalid.error.code != status.INVALID { return 1; } }
+        else { return 2; }
+        def overflow: result<packed(msb_first) [u13]> = a.alloc_slice<packed(msb_first) [u13]>(18446744073709551615, value(&calls), 1);
+        if overflow.erroneous { if overflow.error.code != status.OVERFLOW { return 3; } }
+        else { return 4; }
+        if calls != 2 { return 5; }
+        return 42;
+    )",
+        R"(import "@status"; def value(calls: &i32) -> u13 { *calls = *calls + 1; return 7; })");
+    expect_run(invoke({"--stdlib-dir", directory, file}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        auto executable = directory + "/invalid-slice";
+        auto built = invoke_raw({"--stdlib-dir", directory, mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+    mlir::MLIRContext context;
+    auto compiled = compile_source(read(file), file, context);
+    ASSERT_TRUE(compiled.success());
+    gloin::InitializeSliceOp initialized;
+    compiled.module->walk([&](gloin::InitializeSliceOp op) { initialized = op; });
+    ASSERT_TRUE(initialized);
+    auto type = mlir::cast<gloin::GloinPackedSliceType>(initialized.getSourceType());
+    auto readonly =
+        gloin::GloinPackedSliceType::get(&context, type.getElement(), type.getMsbFirst(), true);
+    initialized.setSourceType(readonly);
+    initialized.getValue().setType(readonly);
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    EXPECT_TRUE(mlir::failed(initialized.verify()));
+}
+
 TEST_F(ArenaTest, CreationAndInfallibleAllocationFailureTrap) {
     GTEST_FLAG_SET(death_test_style, "threadsafe");
     for (auto kind : {ArenaPrimitive::Create, ArenaPrimitive::Allocate}) {

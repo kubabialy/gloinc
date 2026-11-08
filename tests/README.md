@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1211 tests**:
+The current source definitions and CTest discovery contain **1216 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -38,7 +38,7 @@ The current source definitions and CTest discovery contain **1211 tests**:
 | ResultTest | 11 |
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
-| ArenaTest | 22 |
+| ArenaTest | 27 |
 | ArenaRuntimeTest | 14 |
 | AsyncTest | 2 |
 | ArrayStringTest | 4 |
@@ -565,7 +565,7 @@ The suite participates in required, sanitizer, and installed/relocated package c
 
 ## Arena allocation (SPEC-028)
 
-Twenty-one `ArenaTest` cases exercise the source API, all scalar types, nested
+Twenty-seven `ArenaTest` cases exercise the source API, all scalar types, nested
 struct/string/pointer values, native layout, shallow copies, initialized references,
 fallible allocation, mutable receivers, stable linked objects, reset/handle
 aliasing, cleared-handle traps, evaluation order, deferred allocation, module
@@ -574,6 +574,13 @@ LLVM execution. They participate in required and installed/relocated package che
 The previous unchecked `Arena::new` test has been replaced by these executable
 source tests. Core fixtures cover success, invalid type-valued arguments, the
 required import, and use of a cleared handle.
+
+Slice-allocation regressions check exact native/endian/compact bytes and zeroed
+packed tails, requested base alignment, empty and full-u64 zero-sized views,
+read-only aliases, nested ordinary values, captured fill effects, recoverable
+allocation failure, no allocation on invalid requests, private intrinsics and
+GIR capability rejection. Negative signed indexing/ranges trap before assignment
+RHS effects even on huge zero-sized slices in JIT/native `-O0`/`-O2`.
 
 Fourteen independent `ArenaRuntimeTest` cases exercise the actual native allocator,
 including alignment through 64 KiB, mixed-size object contents across growth,

@@ -71,8 +71,10 @@ module {
                 ", %zero, %four) <{array_type = !llvm.array<4 x $F>, source_type = !gloin.slice<$F, true>,"
                 " layout_type = !llvm.struct<(ptr, i64)>}> : (!llvm.ptr, i64, i64) -> !llvm.struct<(ptr, i64)>\n";
             address = "%p" + name + " = \"gloin.slice_element_address\"(%slice_" + name +
-                ", %i) <{element_type = $F, source_type = !gloin.slice<$F, true>,"
-                " layout_type = !llvm.struct<(ptr, i64)>}> : (!llvm.struct<(ptr, i64)>, i64) -> !llvm.ptr";
+                      ", %i) <{index_signed = false, element_type = $F, source_type = "
+                      "!gloin.slice<$F, true>,"
+                      " layout_type = !llvm.struct<(ptr, i64)>}> : (!llvm.struct<(ptr, i64)>, i64) "
+                      "-> !llvm.ptr";
         } else {
             address = "%p" + name + " = \"gloin.array_element_address\"(%" + name +
                 ", %i) <{array_type = !llvm.array<4 x $F>, source_type = !gloin.array<$F, 4>}> : (!llvm.ptr, i64) -> !llvm.ptr";

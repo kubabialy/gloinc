@@ -807,6 +807,32 @@ mlir::LogicalResult ArenaFillOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult InitializeSliceOp::verify() {
+    mlir::Type element;
+    bool read_only = true;
+    if (auto slice = mlir::dyn_cast<GloinSliceType>(getSourceType())) {
+        element = slice.getElement();
+        read_only = slice.getReadOnly();
+    } else if (auto slice = mlir::dyn_cast<GloinPackedSliceType>(getSourceType())) {
+        element = slice.getElement();
+        read_only = slice.getReadOnly();
+    }
+    auto bytes =
+        GloinPointerType::get(getContext(), mlir::IntegerType::get(getContext(), 8), true, false);
+    auto module = (*this)->getParentOfType<mlir::ModuleOp>();
+    bool checked = module && module->hasAttr("gloin.checked");
+    bool typed = getStorage().getType() == bytes && getFill().getType() == element &&
+                 getValue().getType() == getSourceType();
+    bool layout = !checked && mlir::isa<mlir::LLVM::LLVMPointerType>(getStorage().getType()) &&
+                  getFill().getType() == getElementType() &&
+                  getValue().getType() == getLayoutType();
+    if (!element || read_only || !matches_storage(getSourceType(), getLayoutType()) ||
+        !matches_storage(element, getElementType()) || (!typed && !layout))
+        return emitOpError(
+            "requires writable byte storage, a writable slice and a matching captured fill/layout");
+    return mlir::success();
+}
+
 mlir::LogicalResult StackAllocOp::verify() {
   auto pointer = mlir::dyn_cast<gloin::GloinPointerType>(getAddress().getType());
   bool source_address = pointer && pointer.getPointee() == getSourceType() &&

@@ -11,7 +11,8 @@ arrays with `array[start..end]`, support nested subranges, `.len`, indexing, and
 read-only weakening. `storage_bytes<S>` and `check_slice_alignment<S>` provide
 checked extent and element-storage alignment queries for ordinary and packed
 slices. `view_packed<S>` now constructs bounded integer views over initialized
-byte slices. Slice allocation, byte-boundary splits, subrange copies, and
+byte slices. `alloc_slice<S>` allocates and initializes ordinary or packed integer
+slices with explicit base alignment. Byte-boundary splits, subrange copies, and
 packed-record elements remain pending.
 The complete contract below also describes these pending operations.
 
@@ -113,7 +114,10 @@ Its result is bounded by `INT64_MAX` bytes on the supported 64-bit targets.
 Calculation divides the packed count before multiplying, so a full bit count
 larger than `u64` does not spuriously overflow when the byte count fits.
 Zero-sized ordinary elements require zero bytes for every count; this query
-does not itself construct a view or allocate storage. `check_slice_alignment<S>`
+does not itself construct a view or allocate storage. Allocation of zero-sized
+ordinary elements accepts the full `u64` count range and performs no fill loop;
+the fill argument still evaluates once. Signed indices and range bounds retain
+explicit nonnegative checks even for these large slices. `check_slice_alignment<S>`
 checks the stored elements' minimum alignment (one for packed storage), rather
 than the borrowed descriptor's native alignment.
 
@@ -166,6 +170,9 @@ index/range checks retain the source signedness of their bounds; byte/bit
 advancement divides before multiplying to avoid overflowing a full bit position.
 `gloin.checked_packed_view` validates byte-backed construction and returns an
 ordinary checked result; error payloads come from the Gloin wrapper.
+`gloin.initialize_slice` validates writable raw storage and extent before any
+write, fills the element representation, zeroes packed trailing bits, and only
+then publishes the descriptor. Arena policy and allocation errors remain in Gloin.
 The initial access lowering
 specializes the eight possible bit positions and uses the bounded packed-field
 accesses in each arm. This is a correctness baseline; code-size and access-cost

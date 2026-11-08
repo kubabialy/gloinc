@@ -59,6 +59,24 @@ def pub struct GeneralArena {
         return &*placed;
     }
 
+    // S is a complete writable slice type; alignment applies to its storage base.
+    def pub alloc_slice<S>(self: &GeneralArena, count: u64, fill: __memory_slice_element<S>, alignment: u64) -> result<S> {
+        __arena_require(self.state);
+
+        def checked: result<void> = memory.check_slice_alignment<S>(alignment);
+        if checked.erroneous { return checked.error; }
+
+        def size: result<u64> = memory.storage_bytes<S>(count);
+        if size.erroneous { return size.error; }
+
+        def storage: *u8 = __arena_general_alloc(self.state, size.value, alignment);
+        if storage == null {
+            return error("slice arena allocation failed", status.NO_MEMORY, 0);
+        }
+
+        return __memory_initialize_slice<S>(storage, size.value, count, fill);
+    }
+
     // Source callers use alloc_many(fill, capacity). The compiler computes
     // capacity * sizeof(fill), allocates aligned storage, and copies fill into
     // every slot before returning a writable pointer to the first slot.

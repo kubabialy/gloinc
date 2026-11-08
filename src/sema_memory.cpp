@@ -36,6 +36,27 @@ std::shared_ptr<Type> Sema::check_memory_intrinsic(const CallExpression *call,
         log_error("Invalid raw memory intrinsic type argument");
         return nullptr;
     }
+    if (name == "__memory_initialize_slice") {
+        auto slice = std::dynamic_pointer_cast<SliceType>(type);
+        if (!slice || slice->read_only || call->arguments.size() != 4) {
+            log_error(
+                "Slice initialization requires a writable slice, storage, extent, count and fill");
+            return nullptr;
+        }
+        const std::vector<std::shared_ptr<Type>> parameters{
+            std::make_shared<PointerType>(get_builtin_type("u8"), true, false),
+            get_builtin_type("u64"), get_builtin_type("u64"), slice->element};
+        for (size_t i = 0; i < parameters.size(); ++i) {
+            auto actual = check_typed_expression(call->arguments[i].get(), parameters[i]);
+            if (!actual || !actual->equals(*parameters[i])) {
+                log_error("Slice initialization argument type mismatch");
+                return nullptr;
+            }
+        }
+        recording->memory_intrinsics.emplace(
+            call, std::make_pair(MemoryIntrinsic::InitializeSlice, *value_type(type)));
+        return type;
+    }
     if (name == "__memory_view_packed") {
         auto slice = std::dynamic_pointer_cast<SliceType>(type);
         if (!slice || slice->bit_order == PackedBitOrder::None || call->arguments.size() != 6) {

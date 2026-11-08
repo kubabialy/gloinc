@@ -111,6 +111,15 @@ def CheckedPackedViewOp : Gloin_Op<"checked_packed_view", [Pure]> {
     let hasVerifier = 1;
 }
 
+// Validate raw capacity/alignment before any write, initialize one captured fill,
+// and publish an ordinary or packed slice. Packed trailing bits are zeroed.
+def InitializeSliceOp : Gloin_Op<"initialize_slice"> {
+    let arguments = (ins AnyType:$storage, I64:$available, I64:$count, AnyType:$fill,
+                         TypeAttr:$source_type, TypeAttr:$layout_type, TypeAttr:$element_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
 // Checked function boundaries retain source identity in func signatures while
 // the existing function bodies still work with their LLVM-compatible layout.
 def FromLayoutOp : Gloin_Op<"from_layout", [Pure]> {
@@ -483,7 +492,7 @@ def SliceSubrangeOp : Gloin_Op<"slice_subrange"> {
     let summary = "Borrow a checked subrange of a slice";
     let arguments = (ins AnyType:$base, I64:$start, I64:$end,
                      TypeAttr:$source_type, TypeAttr:$layout_type,
-                     TypeAttr:$element_type);
+                     TypeAttr:$element_type, BoolAttr:$start_signed, BoolAttr:$end_signed);
     let results = (outs AnyType:$value);
     let hasVerifier = 1;
 }
@@ -491,7 +500,7 @@ def SliceSubrangeOp : Gloin_Op<"slice_subrange"> {
 def SliceElementAddressOp : Gloin_Op<"slice_element_address"> {
     let summary = "Address a slice element with a bounds check";
     let arguments = (ins AnyType:$base, I64:$index, TypeAttr:$source_type,
-                     TypeAttr:$layout_type, TypeAttr:$element_type);
+                     TypeAttr:$layout_type, TypeAttr:$element_type, BoolAttr:$index_signed);
     let results = (outs AnyType:$address);
     let hasVerifier = 1;
 }

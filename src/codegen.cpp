@@ -1502,7 +1502,9 @@ mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_t
         auto address = builder.create<gloin::SliceElementAddressOp>(
             location(), pointer, base, index, mlir::TypeAttr::get(source),
             mlir::TypeAttr::get(lower_type(array_type)),
-            mlir::TypeAttr::get(lower_type(*array_type.slice_element)));
+            mlir::TypeAttr::get(lower_type(*array_type.slice_element)),
+            builder.getBoolAttr(
+                core_type_info(checked_data->types.at(expr->index.get()).builtin()).is_signed));
         return builder.create<gloin::ToLayoutOp>(
             location(), mlir::LLVM::LLVMPointerType::get(&context), address);
     }
@@ -1579,11 +1581,11 @@ mlir::Value CodeGen::gen_slice(const SliceExpression *expression) {
             mlir::TypeAttr::get(result_layout));
     }
     mlir::Value value;
+    auto signed_bound = [&](const Expression *bound) {
+        return builder.getBoolAttr(
+            bound && core_type_info(checked_data->types.at(bound).builtin()).is_signed);
+    };
     if (result_type.slice_order != PackedBitOrder::None) {
-        auto signed_bound = [&](const Expression *bound) {
-            return builder.getBoolAttr(
-                bound && core_type_info(checked_data->types.at(bound).builtin()).is_signed);
-        };
         if (base_type.is_array())
             value = builder.create<gloin::PackedSliceFromArrayOp>(
                 location(), result_source, base, start, end,
@@ -1600,9 +1602,10 @@ mlir::Value CodeGen::gen_slice(const SliceExpression *expression) {
             mlir::TypeAttr::get(result_source), mlir::TypeAttr::get(result_layout));
     } else if (base_type.is_slice()) {
         value = builder.create<gloin::SliceSubrangeOp>(
-            location(), result_source, base, start, end,
-            mlir::TypeAttr::get(result_source), mlir::TypeAttr::get(result_layout),
-            mlir::TypeAttr::get(lower_type(*result_type.slice_element)));
+            location(), result_source, base, start, end, mlir::TypeAttr::get(result_source),
+            mlir::TypeAttr::get(result_layout),
+            mlir::TypeAttr::get(lower_type(*result_type.slice_element)),
+            signed_bound(expression->start.get()), signed_bound(expression->end.get()));
     } else {
         value = builder.create<gloin::SliceFromPointerOp>(
             location(), result_source, base, start, end,
