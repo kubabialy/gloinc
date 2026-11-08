@@ -23,7 +23,8 @@ std::optional<ValueType> Sema::value_type(const std::shared_ptr<Type> &type) con
     }
     if (const auto *array = dynamic_cast<const ArrayType *>(type.get())) {
         auto element = value_type(array->element);
-        return element ? std::optional<ValueType>(ValueType::array(*element, array->length))
+        return element ? std::optional<ValueType>(
+                             ValueType::array(*element, array->length, array->bit_order))
                        : std::nullopt;
     }
     if (const auto *slice = dynamic_cast<const SliceType *>(type.get())) {
@@ -353,6 +354,10 @@ void Sema::validate_struct_cycles() {
                 if (type.is_pointer() || type.is_slice() || type.is_result() || type.is_error())
                     return std::nullopt;
                 if (type.is_array()) {
+                    if (type.array_order != PackedBitOrder::None) {
+                        const auto &element = core_type_info(type.array_element->scalar);
+                        return ((element.bits * type.array_length + 7) / 8) * 8;
+                    }
                     auto element = field_bits(*type.array_element, true);
                     if (!element || (*element && type.array_length > (UINT64_MAX / 8) / *element))
                         return std::nullopt;

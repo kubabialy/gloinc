@@ -154,14 +154,20 @@ struct PointerType : public Type {
 struct ArrayType : public Type {
     std::shared_ptr<Type> element;
     size_t length;
-    ArrayType(std::shared_ptr<Type> element, size_t length)
-        : element(std::move(element)), length(length) {}
+    PackedBitOrder bit_order;
+    ArrayType(std::shared_ptr<Type> element, size_t length,
+              PackedBitOrder order = PackedBitOrder::None)
+        : element(std::move(element)), length(length), bit_order(order) {}
     std::string to_string() const override {
-        return "[" + element->to_string() + "; " + std::to_string(length) + "]";
+        const std::string prefix = bit_order == PackedBitOrder::None       ? ""
+                                   : bit_order == PackedBitOrder::MsbFirst ? "packed(msb_first) "
+                                                                           : "packed(lsb_first) ";
+        return prefix + "[" + element->to_string() + "; " + std::to_string(length) + "]";
     }
     bool equals(const Type &other) const override {
         const auto *array = dynamic_cast<const ArrayType *>(&other);
-        return array && length == array->length && element->equals(*array->element);
+        return array && length == array->length && bit_order == array->bit_order &&
+               element->equals(*array->element);
     }
 };
 

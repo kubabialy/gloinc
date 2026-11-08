@@ -29,6 +29,7 @@ struct ValueType {
     std::vector<PointerLayer> pointers; // Outermost first; base retains its nominal identity.
     std::shared_ptr<ValueType> array_element;
     size_t array_length = 0;
+    PackedBitOrder array_order = PackedBitOrder::None;
     std::shared_ptr<ValueType> slice_element;
     bool slice_read_only = false;
     std::shared_ptr<ValueType> result_value;
@@ -45,10 +46,12 @@ struct ValueType {
         type.const_size = value;
         return type;
     }
-    static ValueType array(ValueType element, size_t length) {
+    static ValueType array(ValueType element, size_t length,
+                           PackedBitOrder order = PackedBitOrder::None) {
         ValueType type;
         type.array_element = std::make_shared<ValueType>(std::move(element));
         type.array_length = length;
+        type.array_order = order;
         return type;
     }
     static ValueType slice(ValueType element, bool read_only) {
@@ -89,6 +92,7 @@ struct ValueType {
         return scalar == other.scalar && structure == other.structure &&
                const_size == other.const_size &&
                pointers == other.pointers && array_length == other.array_length &&
+               array_order == other.array_order &&
                slice_read_only == other.slice_read_only && error_type == other.error_type &&
                (array_element && other.array_element
                     ? *array_element == *other.array_element

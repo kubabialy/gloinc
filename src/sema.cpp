@@ -155,6 +155,28 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 return nullptr;
             return std::make_shared<PointerType>(pointee, name[0] == '*', read_only);
         }
+        if (name.starts_with("packed(")) {
+            const auto end = name.find(") ");
+            if (end == std::string::npos)
+                return nullptr;
+            const auto order = name.substr(7, end - 7);
+            if (order != "msb_first" && order != "lsb_first")
+                return nullptr;
+            auto storage = resolve_type_from_string(name.substr(end + 2));
+            auto array = std::dynamic_pointer_cast<ArrayType>(storage);
+            if (!array) {
+                log_error("Packed slices are not implemented yet");
+                return nullptr;
+            }
+            auto element = resolve_core_type(array->element->to_string());
+            if (!element || !core_type_info(*element).is_integer) {
+                log_error("Packed arrays currently require integer elements");
+                return nullptr;
+            }
+            return std::make_shared<ArrayType>(array->element, array->length,
+                                               order == "msb_first" ? PackedBitOrder::MsbFirst
+                                                                    : PackedBitOrder::LsbFirst);
+        }
         if (name.starts_with("[") && name.ends_with("]")) {
             const auto separator = name.rfind("; ");
             if (separator == std::string::npos) {
@@ -982,6 +1004,10 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         }
         auto target = expected_array;
         if (array->repeated) {
+            if (target->bit_order != PackedBitOrder::None) {
+                log_error("Packed repeated initialization is not implemented yet");
+                return nullptr;
+            }
             if (array->elements.size() != 2)
                 return nullptr;
             size_t count = 0;
@@ -1017,6 +1043,10 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         auto base = check_expression(index->left.get());
         auto array = std::dynamic_pointer_cast<ArrayType>(base);
         auto slice = std::dynamic_pointer_cast<SliceType>(base);
+        if (array && array->bit_order != PackedBitOrder::None) {
+            log_error("Packed array indexing is not implemented yet");
+            return nullptr;
+        }
         if (!array && !slice) {
             if (base)
                 log_error("Indexing requires a fixed array or slice");
@@ -1037,6 +1067,10 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         auto array = std::dynamic_pointer_cast<ArrayType>(base);
         auto slice = std::dynamic_pointer_cast<SliceType>(base);
         auto pointer = std::dynamic_pointer_cast<PointerType>(base);
+        if (array && array->bit_order != PackedBitOrder::None) {
+            log_error("Packed array slicing is not implemented yet");
+            return nullptr;
+        }
         const bool vector_internal = current_module && current_module->standard_name == "vector";
         if (!array && !slice && !(pointer && vector_internal)) {
             if (base)

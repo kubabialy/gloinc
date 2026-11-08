@@ -130,6 +130,14 @@ bool GloinParser::generic_type_prefix_ahead() const {
     int depth = 0;
     for (size_t i = open; i + 1 < tokens.size(); ++i) {
         auto type = tokens[i].type;
+        if (type == GLOIN_TOKEN_PACKED) {
+            if (i + 3 >= tokens.size() || tokens[i + 1].type != GLOIN_TOKEN_LPAREN ||
+                tokens[i + 2].type != GLOIN_TOKEN_IDENTIFIER ||
+                tokens[i + 3].type != GLOIN_TOKEN_RPAREN)
+                return false;
+            i += 3;
+            continue;
+        }
         if (type == GLOIN_TOKEN_LT)
             ++depth;
         else if (type == GLOIN_TOKEN_GT)
@@ -512,6 +520,16 @@ std::unique_ptr<Identifier> GloinParser::parse_type_impl() {
         advance_token();
         if (accept(GLOIN_TOKEN_CONST))
             text += "const ";
+    }
+    if (accept(GLOIN_TOKEN_PACKED)) {
+        expect(GLOIN_TOKEN_LPAREN, "Expected '(' after packed storage qualifier");
+        auto order = parse_name()->value;
+        if (order != "msb_first" && order != "lsb_first")
+            fail("Packed storage requires msb_first or lsb_first");
+        expect(GLOIN_TOKEN_RPAREN, "Expected ')' after packed storage order");
+        if (current_token.type != GLOIN_TOKEN_LBRACKET)
+            fail("Packed storage qualifier requires an array or slice");
+        text += "packed(" + order + ") ";
     }
     if (accept(GLOIN_TOKEN_LBRACKET)) {
         const bool read_only = accept(GLOIN_TOKEN_CONST);

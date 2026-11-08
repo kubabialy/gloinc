@@ -55,6 +55,13 @@ def GloinSlice : Gloin_Type<"GloinSlice", "slice"> {
     let assemblyFormat = "`<` $element `,` $readOnly `>`";
 }
 
+def GloinPackedArray : Gloin_Type<"GloinPackedArray", "packed_array"> {
+    let summary = "Fixed array with exact integer bit stride and explicit storage order";
+    let parameters = (ins "Type":$element, "uint64_t":$length, "bool":$msbFirst);
+    let assemblyFormat = "`<` $element `,` $length `,` $msbFirst `>`";
+    let genVerifyDecl = 1;
+}
+
 def GloinEnum : Gloin_Type<"GloinEnum", "enum"> {
     let summary = "Nominal source enum type";
     let parameters = (ins StringRefParameter<"Qualified enum name">:$name);

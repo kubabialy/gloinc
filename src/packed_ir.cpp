@@ -8,6 +8,26 @@
 #include <bit>
 #include <functional>
 
+std::optional<uint64_t> packed_integer_width(mlir::Type type) {
+    if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(type))
+        return integer.getWidth();
+    if (auto integer = mlir::dyn_cast<mlir::IntegerType>(type)) {
+        const auto width = integer.getWidth();
+        if (integer.isSignless() && (width == 8 || width == 16 || width == 32 || width == 64))
+            return width;
+    }
+    return std::nullopt;
+}
+
+mlir::Type packed_array_layout(gloin::GloinPackedArrayType type) {
+    const auto bits = packed_integer_width(type.getElement());
+    if (!bits || type.getLength() > 1048576)
+        return {};
+    auto bytes = mlir::LLVM::LLVMArrayType::get(mlir::IntegerType::get(type.getContext(), 8),
+                                                (*bits * type.getLength() + 7) / 8);
+    return mlir::LLVM::LLVMStructType::getLiteral(type.getContext(), {bytes});
+}
+
 namespace {
 gloin::StructDefinitionOp definition(mlir::Operation *op, mlir::Type type) {
     auto nominal = mlir::dyn_cast<gloin::GloinStructType>(type);
@@ -43,6 +63,13 @@ std::optional<Field> field_type(mlir::Operation *op, mlir::Type source, bool arr
                                 unsigned depth = 0) {
     if (depth > 64)
         return std::nullopt;
+    if (auto array = mlir::dyn_cast<gloin::GloinPackedArrayType>(source)) {
+        auto layout = packed_array_layout(array);
+        auto size = layout ? byte_size(layout) : std::nullopt;
+        if (!size)
+            return std::nullopt;
+        return Field{source, layout, *size * 8, 0, false, true};
+    }
     if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(source)) {
         if (array_element)
             return std::nullopt;
@@ -265,6 +292,28 @@ struct LowerLiteral : PackedPattern<gloin::PackedLiteralOp> {
         return mlir::success();
     }
 };
+struct LowerArrayLiteral : PackedPattern<gloin::PackedArrayLiteralOp> {
+    using PackedPattern::PackedPattern;
+    mlir::LogicalResult matchAndRewrite(gloin::PackedArrayLiteralOp op,
+                                        mlir::PatternRewriter &rewriter) const override {
+        auto type = mlir::cast<gloin::GloinPackedArrayType>(op.getSourceType());
+        auto field = *field_type(op, type.getElement());
+        if (!field.byte_aligned)
+            field.msb = type.getMsbFirst();
+        auto storage = temporary(rewriter, op.getLoc(), op.getLayoutType());
+        Access access{rewriter, op.getLoc(), storage, little, false};
+        auto bytes = access.constant(rewriter.getI64Type(), *byte_size(op.getLayoutType()));
+        rewriter.create<mlir::LLVM::MemsetOp>(
+            op.getLoc(), storage, access.constant(rewriter.getI8Type(), 0), bytes, false);
+        for (auto element : op.getElements()) {
+            access.write(field, element);
+            field.offset += field.bits;
+        }
+        rewriter.replaceOp(op, access.load(op.getLayoutType(), 0));
+        return mlir::success();
+    }
+};
+
 struct LowerExtract : PackedPattern<gloin::PackedExtractOp> {
     using PackedPattern::PackedPattern;
     mlir::LogicalResult matchAndRewrite(gloin::PackedExtractOp op,
@@ -409,7 +458,24 @@ mlir::LogicalResult gloin::PackedAddressOp::verify() {
     return emitOpError("requires a matching aggregate pointer without strengthening access");
 }
 
+mlir::LogicalResult gloin::PackedArrayLiteralOp::verify() {
+    auto type = mlir::dyn_cast<gloin::GloinPackedArrayType>(getSourceType());
+    if (!type || packed_array_layout(type) != getLayoutType() ||
+        getElements().size() != type.getLength() ||
+        (getValue().getType() != getSourceType() &&
+         (is_checked(*this) || getValue().getType() != getLayoutType())))
+        return emitOpError("requires a complete packed array with its exact byte layout");
+    auto field = field_type(*this, type.getElement());
+    if (!field)
+        return emitOpError("requires a supported packed element type");
+    for (auto element : getElements())
+        if (!matches_value(*this, element, *field))
+            return emitOpError("requires each element with its declared source type");
+    return mlir::success();
+}
+
 void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian) {
-    patterns.add<LowerLiteral, LowerExtract, LowerLoad, LowerStore, LowerAddress>(
-        patterns.getContext(), little_endian);
+    patterns
+        .add<LowerLiteral, LowerArrayLiteral, LowerExtract, LowerLoad, LowerStore, LowerAddress>(
+            patterns.getContext(), little_endian);
 }

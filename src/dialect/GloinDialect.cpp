@@ -43,15 +43,17 @@ bool is_payloadless_enum_storage(mlir::Type type) {
 }
 
 bool matches_storage(mlir::Type source, mlir::Type storage) {
-  if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(source))
-      return storage.isSignlessInteger(integer_storage_bits(integer.getWidth()));
-  if (mlir::isa<gloin::GloinPointerType>(source))
-    return mlir::isa<mlir::LLVM::LLVMPointerType>(storage);
-  if (auto array = mlir::dyn_cast<gloin::GloinArrayType>(source)) {
-    auto layout = mlir::dyn_cast<mlir::LLVM::LLVMArrayType>(storage);
-    return layout && array.getLength() == layout.getNumElements() &&
-           matches_storage(array.getElement(), layout.getElementType());
-  }
+    if (auto array = mlir::dyn_cast<gloin::GloinPackedArrayType>(source))
+        return packed_array_layout(array) == storage;
+    if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(source))
+        return storage.isSignlessInteger(integer_storage_bits(integer.getWidth()));
+    if (mlir::isa<gloin::GloinPointerType>(source))
+        return mlir::isa<mlir::LLVM::LLVMPointerType>(storage);
+    if (auto array = mlir::dyn_cast<gloin::GloinArrayType>(source)) {
+        auto layout = mlir::dyn_cast<mlir::LLVM::LLVMArrayType>(storage);
+        return layout && array.getLength() == layout.getNumElements() &&
+               matches_storage(array.getElement(), layout.getElementType());
+    }
   if (mlir::isa<gloin::GloinSliceType>(source)) {
     auto record = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(storage);
     return record && !record.isOpaque() && record.getBody().size() == 2 &&
@@ -115,6 +117,14 @@ mlir::LogicalResult gloin::GloinIntegerType::verify(
     if (signedness != gloin::IntegerSignedness::Signed &&
         signedness != gloin::IntegerSignedness::Unsigned)
         return error() << "requires integer signedness";
+    return mlir::success();
+}
+
+mlir::LogicalResult
+GloinPackedArrayType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> error,
+                             mlir::Type element, uint64_t length, bool msb_first) {
+    if (!packed_integer_width(element) || length > 1048576)
+        return error() << "requires integer elements and a length no greater than 1048576";
     return mlir::success();
 }
 
@@ -500,6 +510,12 @@ mlir::LogicalResult StructLiteralOp::verify() {
 }
 
 mlir::LogicalResult ZeroedArrayOp::verify() {
+    if (auto packed = mlir::dyn_cast<gloin::GloinPackedArrayType>(getSourceType())) {
+        if (packed_array_layout(packed) != getLayoutType() ||
+            (getValue().getType() != getSourceType() && getValue().getType() != getLayoutType()))
+            return emitOpError("requires the exact packed array byte layout");
+        return mlir::success();
+    }
   auto array = mlir::dyn_cast<mlir::LLVM::LLVMArrayType>(getLayoutType());
   auto source = mlir::dyn_cast<gloin::GloinArrayType>(getSourceType());
   if (!array || !source || source.getLength() != array.getNumElements() ||

@@ -221,7 +221,7 @@ struct PrepareAggregateCopy : mlir::OpRewritePattern<gloin::StoreOp> {
     using OpRewritePattern::OpRewritePattern;
     mlir::LogicalResult matchAndRewrite(gloin::StoreOp op,
                                          mlir::PatternRewriter &rewriter) const override {
-        if (!mlir::isa<gloin::GloinStructType, gloin::GloinArrayType,
+        if (!mlir::isa<gloin::GloinStructType, gloin::GloinArrayType, gloin::GloinPackedArrayType,
                        gloin::GloinResultType>(op.getSourceType()))
             return mlir::failure();
         auto load = op.getValue().getDefiningOp<gloin::LoadOp>();
@@ -299,6 +299,8 @@ struct LowerGloinSignaturesPass
                         return true;
                     if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(type))
                         return integer.getWidth() != integer_storage_bits(integer.getWidth());
+                    if (mlir::isa<gloin::GloinPackedArrayType>(type))
+                        return true;
                     if (auto array = mlir::dyn_cast<gloin::GloinArrayType>(type))
                         return needs_adapter(array.getElement(), depth + 1);
                     if (auto result = mlir::dyn_cast<gloin::GloinResultType>(type))
@@ -390,6 +392,9 @@ struct LowerGloinSignaturesPass
             repeat.getValue().setType(repeat.getLayoutType());
         });
         module.walk([](gloin::StructLiteralOp literal) {
+            literal.getValue().setType(literal.getLayoutType());
+        });
+        module.walk([](gloin::PackedArrayLiteralOp literal) {
             literal.getValue().setType(literal.getLayoutType());
         });
         module.walk([](gloin::PackedLiteralOp literal) {
@@ -2065,7 +2070,7 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                     gloin::RequireFiniteOp, gloin::CheckedIntegerCompareOp,
                     gloin::CheckedFloatCompareOp, gloin::ArrayLiteralOp, gloin::RepeatArrayOp,
                     gloin::ArrayFillOp, gloin::StructLiteralOp, gloin::ZeroedArrayOp,
-                    gloin::PackedLiteralOp, gloin::PackedExtractOp, gloin::PackedLoadOp,
+                    gloin::PackedArrayLiteralOp, gloin::PackedLiteralOp, gloin::PackedExtractOp, gloin::PackedLoadOp,
                     gloin::PackedStoreOp, gloin::PackedAddressOp, gloin::StringLiteralOp,
                     gloin::NullOp, gloin::ErrorLiteralOp, gloin::ErrorMessageOp, gloin::ErrorCodeOp,
                     gloin::ErrorOsErrorOp, gloin::ResultSuccessOp, gloin::ResultFailureOp,
@@ -2092,11 +2097,11 @@ bool check_legality(mlir::ModuleOp module, bool final) {
             const bool legal =
                 final ? mlir::LLVM::isCompatibleOuterType(type)
                       : ns == "builtin" || ns == "llvm" ||
-                            mlir::isa<gloin::GloinIntegerType, gloin::GloinPointerType, gloin::GloinArrayType,
-                                      gloin::GloinSliceType,
-                                      gloin::GloinEnumType, gloin::GloinStructType,
-                                      gloin::GloinStringType, gloin::GloinErrorType,
-                                      gloin::GloinResultType>(type);
+                            mlir::isa<gloin::GloinIntegerType, gloin::GloinPointerType,
+                                      gloin::GloinArrayType, gloin::GloinSliceType,
+                                      gloin::GloinPackedArrayType, gloin::GloinEnumType,
+                                      gloin::GloinStructType, gloin::GloinStringType,
+                                      gloin::GloinErrorType, gloin::GloinResultType>(type);
             if (!legal) {
                 op->emitError(final ? "Type is not legal at LLVM export: "
                                     : "No supported lowering for type: ")

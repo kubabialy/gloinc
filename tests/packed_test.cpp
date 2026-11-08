@@ -17,6 +17,110 @@ std::string errors(const Diagnostics &diagnostics) {
 }
 } // namespace
 
+TEST_F(PackedTest, PackedArrayIdentityRejectsImplicitRepresentationChanges) {
+    for (const auto &types : std::vector<std::pair<std::string, std::string>>{
+             {"packed(msb_first) [u3; 3]", "packed(lsb_first) [u3; 3]"},
+             {"packed(msb_first) [u3; 3]", "[u3; 3]"},
+             {"packed(msb_first) [be_u16; 2]", "packed(msb_first) [le_u16; 2]"},
+             {"packed(msb_first) [u3; 3]", "packed(msb_first) [u3; 4]"}}) {
+        mlir::MLIRContext context;
+        auto compiled =
+            compile_source("def f(x: " + types.first + ") -> " + types.second + " { return x; }",
+                           "identity.gloin", context);
+        EXPECT_EQ(compiled.failed_stage, DiagnosticStage::Semantic);
+    }
+    for (const auto *element : {"bool", "f32", "*u8", "[u8; 2]"}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(std::string("def f(x: packed(msb_first) [") + element +
+                                           "; 2]) -> void {}",
+                                       "element.gloin", context);
+        EXPECT_EQ(compiled.failed_stage, DiagnosticStage::Semantic);
+    }
+}
+
+TEST_F(PackedTest, PackedArrayLiteralVerifierRejectsForgedExtentAndEncoding) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source("def f() -> packed(msb_first) [u13; 2] { return {1, 2}; }",
+                                   "array.gloin", context);
+    ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+    gloin::PackedArrayLiteralOp literal;
+    compiled.module->walk([&](gloin::PackedArrayLiteralOp op) { literal = op; });
+    ASSERT_TRUE(literal);
+    EXPECT_TRUE(mlir::succeeded(mlir::verify(*compiled.module)));
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    auto original = literal.getLayoutType();
+    auto bytes = mlir::LLVM::LLVMArrayType::get(mlir::IntegerType::get(&context, 8), 3);
+    literal.setLayoutType(mlir::LLVM::LLVMStructType::getLiteral(&context, {bytes}));
+    EXPECT_TRUE(mlir::failed(literal.verify()));
+    literal.setLayoutType(original);
+    auto source = mlir::cast<gloin::GloinPackedArrayType>(literal.getSourceType());
+    literal.setSourceType(
+        gloin::GloinPackedArrayType::get(&context, source.getElement(), 2, false));
+    EXPECT_TRUE(mlir::failed(literal.verify()));
+    literal.setSourceType(source);
+    auto element = literal.getElements()[0];
+    auto element_type = element.getType();
+    element.setType(mlir::IntegerType::get(&context, 16));
+    EXPECT_TRUE(mlir::failed(literal.verify()));
+    element.setType(element_type);
+    EXPECT_TRUE(mlir::succeeded(mlir::verify(*compiled.module)));
+}
+
+TEST_F(PackedTest, PackedArrayConstructionMatchesIndependentBitOracle) {
+    std::ostringstream program;
+    program << "import \"@memory\"; def main() -> i32 { "
+               "def raw: *u8 = memory.alloc(32, 8); if raw == null { return 1; } "
+               "defer memory.free(raw);\n";
+    unsigned id = 0;
+    for (unsigned width : {1, 3, 7, 8, 9, 13, 16, 24, 31, 32, 33, 63, 64}) {
+        for (bool sign : {false, true}) {
+            for (bool msb : {false, true}) {
+                auto mask = llvm::APInt::getLowBitsSet(64, width).getZExtValue();
+                std::vector<uint64_t> values{mask, uint64_t{1} << (width - 1),
+                                             UINT64_C(0x123456789abcdef0) & mask};
+                std::vector<unsigned> expected((width * 3 + 7) / 8, 0);
+                for (unsigned i = 0; i < 3; ++i) {
+                    for (unsigned j = 0; j < width; ++j) {
+                        unsigned stream = i * width + j;
+                        unsigned physical = msb ? 7 - stream % 8 : stream % 8;
+                        unsigned numeric = msb ? width - 1 - j : j;
+                        expected[stream / 8] |= ((values[i] >> numeric) & 1) << physical;
+                    }
+                }
+                auto type = std::string("packed(") + (msb ? "msb_first" : "lsb_first") + ") [" +
+                            (sign ? "i" : "u") + std::to_string(width) + "; 3]";
+                program << "*raw = 165; *(raw + " << expected.size() + 1 << ") = 90;\n"
+                        << "def p" << id << ": *" << type << " = memory.place<" << type
+                        << ">(raw + 1, " << expected.size() << ", {";
+                for (unsigned i = 0; i < 3; ++i) {
+                    if (i)
+                        program << ", ";
+                    if (sign)
+                        program << llvm::APInt(width, values[i]).getSExtValue();
+                    else
+                        program << values[i];
+                }
+                program << "}); if p" << id++ << " == null { return 2; }\n";
+                for (unsigned i = 0; i < expected.size(); ++i)
+                    program << "if *(raw + " << i + 1 << ") != " << expected[i]
+                            << " { return 3; }\n";
+                program << "if *raw != 165 || *(raw + " << expected.size() + 1
+                        << ") != 90 { return 4; }\n";
+            }
+        }
+    }
+    program << "return 42; }";
+    auto path = source(program.str());
+    expect_run(invoke({path}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        auto executable = directory + "/array-oracle";
+        auto built = invoke_raw({optimization, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
 TEST_F(PackedTest, EveryNativeWidthHasExactConstantBoundsAndCanonicalIdentity) {
     for (unsigned width = 1; width <= 64; ++width) {
         for (bool signed_value : {false, true}) {

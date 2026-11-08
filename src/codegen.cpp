@@ -646,7 +646,7 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                 fail("Unsupported array initializer spelling");
             auto type = checked_type(array_lit);
             auto source = source_type(checked_data->types.at(array_lit));
-            auto element_source = mlir::cast<gloin::GloinArrayType>(source).getElement();
+            auto element_source = source_type(*checked_data->types.at(array_lit).array_element);
             if (array_lit->repeated) {
                 auto fill = as_source_value(gen_layout_expression(array_lit->elements[0].get()),
                                             element_source);
@@ -659,6 +659,12 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             for (const auto &element : array_lit->elements)
                 elements.push_back(as_source_value(gen_layout_expression(element.get()),
                                                    element_source));
+            if (checked_data->types.at(array_lit).array_order != PackedBitOrder::None) {
+                auto value = builder.create<gloin::PackedArrayLiteralOp>(
+                    location(), source, elements, mlir::TypeAttr::get(source),
+                    mlir::TypeAttr::get(type));
+                return builder.create<gloin::ToLayoutOp>(location(), type, value);
+            }
             auto value = builder.create<gloin::ArrayLiteralOp>(
                 location(), source, elements, mlir::TypeAttr::get(source),
                 mlir::TypeAttr::get(type));
@@ -1725,6 +1731,12 @@ CodeGen::generate_unchecked_for_testing(const std::vector<std::unique_ptr<Statem
 mlir::Type CodeGen::lower_type(ValueType value_type) {
     if (value_type.is_pointer())
         return mlir::LLVM::LLVMPointerType::get(&context);
+    if (value_type.is_array() && value_type.array_order != PackedBitOrder::None) {
+        const auto bits = core_type_info(value_type.array_element->builtin()).bits;
+        auto bytes = mlir::LLVM::LLVMArrayType::get(builder.getI8Type(),
+                                                    (bits * value_type.array_length + 7) / 8);
+        return mlir::LLVM::LLVMStructType::getLiteral(&context, {bytes});
+    }
     if (value_type.is_array())
         return mlir::LLVM::LLVMArrayType::get(lower_type(*value_type.array_element),
                                               value_type.array_length);
@@ -1790,6 +1802,10 @@ mlir::Type CodeGen::source_type(ValueType value_type) {
         return gloin::GloinPointerType::get(
             &context, source_type(value_type.pointee()), layer.nullable, layer.read_only);
     }
+    if (value_type.is_array() && value_type.array_order != PackedBitOrder::None)
+        return gloin::GloinPackedArrayType::get(&context, source_type(*value_type.array_element),
+                                                value_type.array_length,
+                                                value_type.array_order == PackedBitOrder::MsbFirst);
     if (value_type.is_array())
         return gloin::GloinArrayType::get(
             &context, source_type(*value_type.array_element), value_type.array_length);

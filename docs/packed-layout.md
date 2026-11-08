@@ -101,6 +101,12 @@ kinds). They retain each element's full byte extent. Embedded arrays of
 endian-qualified scalars are deferred because their element addresses would
 require an unaligned pointer capability. Bitfield arrays such as `[u3; 8]` are
 also deferred; ordinary arrays outside packed records retain native slot stride.
+Explicit `packed(msb_first) [u3; 8]` and `packed(lsb_first) [u3; 8]`
+integer-array values now provide compact storage (three bytes in this example).
+They may be embedded on byte boundaries, including endian-qualified elements
+such as `packed(msb_first) [be_u16; 2]`. Literal and `zeroed` construction,
+copies, calls and allocation are supported; indexing and borrowed views remain
+under implementation. See [packed storage](packed-storage.md).
 
 The initial field set excludes ordinary native-layout records, pointers, slices,
 strings, floats, enums, results, and `bool`. This keeps every admitted layout

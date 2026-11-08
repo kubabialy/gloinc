@@ -3,8 +3,12 @@
 **Status: accepted design; implementation in progress.** This extends the
 [existing packed-record contract](packed-layout.md). Syntax and APIs in this
 document are requirements, not evidence that the compiler supports them yet.
-The first implementation step provides `alloc_aligned<T>`, `place_at<T>` and
-the shared `check_alignment<T>` validator. Compact arrays and views remain pending.
+Implemented: `alloc_aligned<T>`, `place_at<T>`, the shared `check_alignment<T>`
+validator, and fixed packed integer-array values with literal/zero construction,
+exact byte layouts, embedding, and representation-preserving copies/calls.
+Repeated initialization, indexing, packed-record elements, and borrowed packed
+views remain pending. The complete contract below also describes these pending
+operations.
 
 ## Types and representation
 

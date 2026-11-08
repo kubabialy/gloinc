@@ -48,6 +48,14 @@ def PackedAddressOp : Gloin_Op<"packed_address", [Pure]> {
     let hasVerifier = 1;
 }
 
+def PackedArrayLiteralOp : Gloin_Op<"packed_array_literal", [Pure]> {
+    let summary = "Encode integer elements into exact packed array bytes";
+    let arguments = (ins Variadic<AnyType>:$elements, TypeAttr:$source_type,
+                         TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
 // Checked function boundaries retain source identity in func signatures while
 // the existing function bodies still work with their LLVM-compatible layout.
 def FromLayoutOp : Gloin_Op<"from_layout", [Pure]> {
