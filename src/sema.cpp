@@ -1004,10 +1004,6 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         }
         auto target = expected_array;
         if (array->repeated) {
-            if (target->bit_order != PackedBitOrder::None) {
-                log_error("Packed repeated initialization is not implemented yet");
-                return nullptr;
-            }
             if (array->elements.size() != 2)
                 return nullptr;
             size_t count = 0;
@@ -1043,10 +1039,6 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         auto base = check_expression(index->left.get());
         auto array = std::dynamic_pointer_cast<ArrayType>(base);
         auto slice = std::dynamic_pointer_cast<SliceType>(base);
-        if (array && array->bit_order != PackedBitOrder::None) {
-            log_error("Packed array indexing is not implemented yet");
-            return nullptr;
-        }
         if (!array && !slice) {
             if (base)
                 log_error("Indexing requires a fixed array or slice");

@@ -121,6 +121,218 @@ TEST_F(PackedTest, PackedArrayConstructionMatchesIndependentBitOracle) {
     }
 }
 
+TEST_F(PackedTest, PackedArrayAccessPreservesEvaluationOrderAndNeighborBits) {
+    auto path = source(R"(
+        def fill(count: &u64) -> u3 { *count = *count + 1; return 5; }
+        def base(order: &u64, p: &packed(msb_first) [u3; 17]) -> &packed(msb_first) [u3; 17] {
+            *order = *order * 10 + 3; return p;
+        }
+        def index(order: &u64) -> u64 { *order = *order * 10 + 1; return 2; }
+        def rhs(order: &u64) -> u3 { *order = *order * 10 + 2; return 3; }
+        def made() -> packed(lsb_first) [i13; 3] { return {-4096, -1, 4095}; }
+        def main() -> i32 {
+            def mut count: u64 = 0;
+            def empty: packed(msb_first) [u3; 0] = {fill(&count); 0};
+            def mut values: packed(msb_first) [u3; 17] = {fill(&count); 17};
+            if count != 2 { return 1; }
+            def mut order: u64 = 0;
+            (*base(&order, &values))[index(&order)] = rhs(&order);
+            if order != 312 { return 2; }
+            def mut i: u64 = 0;
+            while i < 17 {
+                if i == 2 { if values[i] != 3 { return 3; } }
+                else { if values[i] != 5 { return 4; } }
+                i = i + 1;
+            }
+            values[1] = values[2];
+            if values[0] != 5 || values[1] != 3 || values[2] != 3 || values[3] != 5 { return 5; }
+            if made()[0] != -4096 || made()[1] != -1 || made()[2] != 4095 { return 6; }
+            def mut endian: packed(lsb_first) [be_u16; 3] = {0x1234; 3};
+            endian[1] = 0x5678;
+            if endian[0] != 0x1234 || endian[1] != 0x5678 || endian[2] != 0x1234 { return 7; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({path}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        auto executable = directory + "/access";
+        auto built = invoke_raw({optimization, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
+TEST_F(PackedTest, PackedArrayBoundsTrapBeforeAssignmentValue) {
+    for (const auto *index : {"-1", "8", "18446744073709551615", "0"}) {
+        auto index_type = std::string(index) == "-1" ? "i64" : "u64";
+        auto path = source(std::string(R"(
+            import "@std";
+            def rhs() -> u3 { std.print("rhs"); return 1; }
+            def main() -> i32 {
+                def mut values: packed(lsb_first) [u3; 8] = zeroed;
+                def index: )") +
+                           index_type + " = " + index + "; values[index] = rhs(); return 0; }");
+        if (std::string(index) == "0") {
+            auto text = read(path);
+            text.replace(text.find("[u3; 8]"), 7, "[u3; 0]");
+            path = source(text, "empty.gloin");
+        }
+        auto result = invoke({path});
+        EXPECT_LT(result.status, 0) << result.err;
+        EXPECT_TRUE(result.out.empty());
+        for (const auto *optimization : {"-O0", "-O2"}) {
+            auto executable = directory + "/bounds";
+            auto built = invoke_raw({optimization, "-o", executable, path});
+            ASSERT_EQ(built.status, 0) << built.err;
+            auto output = directory + "/output";
+            const std::optional<llvm::StringRef> redirects[] = {std::nullopt, output, std::nullopt};
+            EXPECT_LT(
+                llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects, 10),
+                0);
+            EXPECT_TRUE(read(output).empty());
+        }
+    }
+}
+
+TEST_F(PackedTest, PackedScalarElementsRejectAddressesAndReadonlyWrites) {
+    for (const auto *program :
+         {"def f(p: &packed(msb_first) [u3; 2]) -> &u3 { return &(*p)[0]; }",
+          "def f(p: &const packed(msb_first) [u3; 2]) -> void { (*p)[0] = 1; }",
+          "def f() -> void { def a: packed(msb_first) [u3; 2] = {1; 2}; a[0] = 2; }",
+          "def take<T>(p: &T) -> void {} def f(p: &packed(msb_first) [u3; 2]) -> void { "
+          "take<u3>(&(*p)[0]); }"}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(program, "access.gloin", context);
+        EXPECT_EQ(compiled.failed_stage, DiagnosticStage::Semantic)
+            << errors(*compiled.diagnostics);
+    }
+    mlir::MLIRContext context;
+    auto compiled = compile_source(
+        "def f(p: &const packed(msb_first) [u3; 2], i: u64) -> u3 { return (*p)[i]; }",
+        "slot.gloin", context);
+    ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+    gloin::PackedArraySelectOp selection;
+    compiled.module->walk([&](gloin::PackedArraySelectOp op) { selection = op; });
+    ASSERT_TRUE(selection);
+    auto type = mlir::cast<gloin::GloinPackedSlotType>(selection.getSlotType());
+    EXPECT_TRUE(type.getReadOnly());
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    auto forged = gloin::GloinPackedSlotType::get(&context, type.getElement(), true, false);
+    selection.setSlotType(forged);
+    selection.getSlot().setType(forged);
+    EXPECT_TRUE(mlir::failed(selection.verify()));
+}
+
+TEST_F(PackedTest, DynamicPackedArrayUpdatesMatchBitOracleAtGuardPages) {
+    std::string program;
+    std::ostringstream harness, cases;
+    harness << R"(
+        #include <stdint.h>
+        #include <string.h>
+        #include <sys/mman.h>
+        #include <unistd.h>
+        typedef uint64_t (*Update)(unsigned char *, uint64_t, uint64_t);
+        struct Case { Update update; unsigned width, msb, sign; };
+    )";
+    unsigned id = 0;
+    for (unsigned width : {1, 3, 7, 8, 9, 13, 16, 24, 31, 32, 33, 63, 64}) {
+        for (bool msb : {false, true}) {
+            for (bool sign : {false, true}) {
+                auto name = "array_" + std::to_string(id++);
+                auto scalar = std::string(sign ? "i" : "u") + std::to_string(width);
+                auto wide = sign ? "i64" : "u64";
+                auto array = std::string("packed(") + (msb ? "msb_first" : "lsb_first") + ") [" +
+                             scalar + "; 9]";
+                program +=
+                    "def " + name + "(p: &" + array + ", index: u64, value: " + wide + ") -> " +
+                    wide + " { def narrowed: result<" + scalar + "> = " + scalar +
+                    "(value); if narrowed.erroneous { return 0; } (*p)[index] = narrowed.value; "
+                    "def widened: result<" +
+                    wide + "> = " + wide +
+                    "((*p)[index]); if widened.erroneous { return 0; } return widened.value; }\n";
+                harness << "extern uint64_t " << name << "(unsigned char *, uint64_t, uint64_t);\n";
+                cases << "{" << name << "," << width << "," << msb << "," << sign << "},\n";
+            }
+        }
+    }
+    harness << "static struct Case cases[] = {\n" << cases.str() << "};\n";
+    harness << R"(
+        void *gloin_process_arguments_push(int64_t argc, void *argv) {
+            static char scope; (void)argc; (void)argv; return &scope;
+        }
+        int32_t gloin_process_arguments_pop(void *scope) { (void)scope; return 0; }
+        int guard_driver(void) {
+            long page = sysconf(_SC_PAGESIZE);
+            if (page <= 0) return 1;
+            unsigned char *pages = mmap(0, page * 3, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            if (pages == MAP_FAILED || mprotect(pages + page, page, PROT_READ | PROT_WRITE)) return 2;
+            uint64_t random = UINT64_C(0x123456789abcdef);
+            for (unsigned c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+                struct Case t = cases[c];
+                unsigned size = (9 * t.width + 7) / 8;
+                uint64_t mask = t.width == 64 ? UINT64_MAX : (UINT64_C(1) << t.width) - 1;
+                for (unsigned index = 0; index < 9; ++index) {
+                    for (unsigned sample = 0; sample < 70; ++sample) {
+                        random ^= random << 13; random ^= random >> 7; random ^= random << 17;
+                        uint64_t bits = (sample < 64 ? UINT64_C(1) << sample : random) & mask;
+                        if (sample == 64) bits = mask;
+                        if (sample == 65) bits = 0;
+                        uint64_t value = bits;
+                        if (t.sign && (bits & (UINT64_C(1) << (t.width - 1)))) value |= ~mask;
+                        for (unsigned edge = 0; edge < 2; ++edge) {
+                            unsigned char *p = edge ? pages + page * 2 - size : pages + page;
+                            unsigned char expected[72];
+                            for (unsigned i = 0; i < size; ++i)
+                                p[i] = expected[i] = (unsigned char)(random >> ((i % 8) * 8));
+                            for (unsigned j = 0; j < t.width; ++j) {
+                                unsigned stream = index * t.width + j;
+                                unsigned physical = t.msb ? 7 - stream % 8 : stream % 8;
+                                unsigned numeric = t.msb ? t.width - 1 - j : j;
+                                unsigned char bit = 1u << physical;
+                                expected[stream / 8] = (expected[stream / 8] & ~bit) |
+                                    (((bits >> numeric) & 1) ? bit : 0);
+                            }
+                            if (t.update(p, index, value) != value) return 3;
+                            if (memcmp(p, expected, size)) return 4;
+                        }
+                    }
+                }
+            }
+            return munmap(pages, page * 3) ? 5 : 0;
+        }
+    )";
+    auto harness_path = source(harness.str(), "array-guard.c");
+    auto cc = llvm::sys::findProgramByName("cc");
+    ASSERT_TRUE(static_cast<bool>(cc)) << cc.getError().message();
+    for (auto optimization : {NativeOptimization::O0, NativeOptimization::O2}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(program, "array-guard.gloin", context,
+                                       CompilationMode::Module, CompilationOutput::LLVM);
+        ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+        mlir::OpBuilder builder(&context);
+        builder.setInsertionPointToEnd(compiled.module->getBody());
+        auto entry_type = mlir::LLVM::LLVMFunctionType::get(builder.getI32Type(), {});
+        auto driver = builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(),
+                                                             "guard_driver", entry_type);
+        auto main =
+            builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "main", entry_type);
+        builder.setInsertionPointToStart(main.addEntryBlock(builder));
+        auto result =
+            builder.create<mlir::LLVM::CallOp>(builder.getUnknownLoc(), driver, mlir::ValueRange{});
+        builder.create<mlir::LLVM::ReturnOp>(builder.getUnknownLoc(), result.getResults());
+        auto object = directory + "/arrays.o";
+        ASSERT_TRUE(emit_native(*compiled.module, object, NativeOutput::Object, optimization,
+                                gloin_test::gloinc, *compiled.diagnostics))
+            << errors(*compiled.diagnostics);
+        auto executable = directory + "/array-guard";
+        ASSERT_EQ(llvm::sys::ExecuteAndWait(*cc, {*cc, harness_path, object, "-o", executable},
+                                            std::nullopt, {}, 30),
+                  0);
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 0);
+    }
+}
+
 TEST_F(PackedTest, EveryNativeWidthHasExactConstantBoundsAndCanonicalIdentity) {
     for (unsigned width = 1; width <= 64; ++width) {
         for (bool signed_value : {false, true}) {

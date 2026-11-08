@@ -128,6 +128,14 @@ GloinPackedArrayType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> erro
     return mlir::success();
 }
 
+mlir::LogicalResult
+GloinPackedSlotType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> error,
+                            mlir::Type element, bool msb_first, bool read_only) {
+    if (!packed_integer_width(element))
+        return error() << "requires a packed integer element";
+    return mlir::success();
+}
+
 bool gloin::canWeakenSourceValue(mlir::Type actual, mlir::Type requested) {
   if (actual == requested)
     return true;

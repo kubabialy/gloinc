@@ -56,6 +56,30 @@ def PackedArrayLiteralOp : Gloin_Op<"packed_array_literal", [Pure]> {
     let hasVerifier = 1;
 }
 
+def PackedArrayRepeatOp : Gloin_Op<"packed_array_repeat", [Pure]> {
+    let arguments = (ins AnyType:$element, TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+// Effectful: selection traps on an invalid index before subsequent expressions.
+def PackedArraySelectOp : Gloin_Op<"packed_array_select"> {
+    let arguments = (ins AnyType:$base, I64:$index, TypeAttr:$source_type, TypeAttr:$slot_type);
+    let results = (outs AnyType:$slot);
+    let hasVerifier = 1;
+}
+
+def PackedElementLoadOp : Gloin_Op<"packed_element_load", [MemoryEffects<[MemRead]>]> {
+    let arguments = (ins AnyType:$slot, TypeAttr:$slot_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def PackedElementStoreOp : Gloin_Op<"packed_element_store", [MemoryEffects<[MemRead, MemWrite]>]> {
+    let arguments = (ins AnyType:$slot, AnyType:$value, TypeAttr:$slot_type);
+    let hasVerifier = 1;
+}
+
 // Checked function boundaries retain source identity in func signatures while
 // the existing function bodies still work with their LLVM-compatible layout.
 def FromLayoutOp : Gloin_Op<"from_layout", [Pure]> {

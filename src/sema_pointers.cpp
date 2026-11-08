@@ -103,6 +103,11 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
         return {type, !pointer.pointers.front().read_only, true};
     }
     if (const auto *index = dynamic_cast<const IndexExpression *>(expression)) {
+        const auto &container = recording->types.at(index->left.get());
+        if (take_address && container.is_array() && container.array_order != PackedBitOrder::None) {
+            log_error("Cannot take an ordinary reference to a packed scalar element");
+            return {};
+        }
         if (auto slice = std::dynamic_pointer_cast<SliceType>(
                 check_expression(index->left.get())))
             return {type, !slice->read_only, true};

@@ -650,6 +650,12 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             if (array_lit->repeated) {
                 auto fill = as_source_value(gen_layout_expression(array_lit->elements[0].get()),
                                             element_source);
+                if (checked_data->types.at(array_lit).array_order != PackedBitOrder::None) {
+                    auto value = builder.create<gloin::PackedArrayRepeatOp>(
+                        location(), source, fill, mlir::TypeAttr::get(source),
+                        mlir::TypeAttr::get(type));
+                    return builder.create<gloin::ToLayoutOp>(location(), type, value);
+                }
                 auto value = builder.create<gloin::RepeatArrayOp>(
                     location(), source, fill, mlir::TypeAttr::get(source),
                     mlir::TypeAttr::get(type));
@@ -864,6 +870,13 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     } else if (auto *index = dynamic_cast<const IndexExpression *>(expr)) {
         if (!checked_data)
             fail("Indexing requires checked semantic analysis");
+        if (checked_data->types.at(index->left.get()).array_order != PackedBitOrder::None) {
+            auto slot = gen_packed_slot(index, false);
+            auto value = builder.create<gloin::PackedElementLoadOp>(
+                location(), source_type(checked_data->types.at(index)), slot,
+                mlir::TypeAttr::get(slot.getType()), mlir::TypeAttr::get(checked_type(index)));
+            return builder.create<gloin::ToLayoutOp>(location(), checked_type(index), value);
+        }
         auto address = gen_array_address(index, true);
         return load_value(checked_type(index), address,
                           checked_data->types.at(index));
@@ -909,6 +922,17 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return builder.create<mlir::arith::CmpIOp>(location(), mlir::arith::CmpIPredicate::sgt,
                                                        left, right);
     } else if (auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
+        if (checked_data)
+            if (auto *index = dynamic_cast<const IndexExpression *>(assign->left.get());
+                index &&
+                checked_data->types.at(index->left.get()).array_order != PackedBitOrder::None) {
+                auto slot = gen_packed_slot(index, true);
+                auto right = as_source_value(gen_layout_expression(assign->right.get()),
+                                             source_type(checked_data->types.at(index)));
+                builder.create<gloin::PackedElementStoreOp>(location(), slot, right,
+                                                            mlir::TypeAttr::get(slot.getType()));
+                return right;
+            }
         if (checked_data)
             if (auto *member = dynamic_cast<const MemberAccessExpression *>(assign->left.get())) {
                 auto type = checked_data->types.at(member->left.get());
@@ -1428,8 +1452,30 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
     return nullptr;
 }
 
+mlir::Value CodeGen::gen_packed_slot(const IndexExpression *expr, bool writing) {
+    const auto type = checked_data->types.at(expr->left.get());
+    auto base = gen_address(expr->left.get());
+    if (!base) {
+        if (writing)
+            fail("Packed assignment requires addressable storage");
+        auto value = gen_layout_expression(expr->left.get());
+        base = create_entry_alloca(lower_type(type), type);
+        store_value(value, base, type);
+    }
+    auto index = gen_integer_index(expr->index.get());
+    auto pointer = source_address(base, source_type(type), writing);
+    auto slot = gloin::GloinPackedSlotType::get(
+        &context, source_type(*type.array_element), type.array_order == PackedBitOrder::MsbFirst,
+        mlir::cast<gloin::GloinPointerType>(pointer.getType()).getReadOnly());
+    return builder.create<gloin::PackedArraySelectOp>(location(), slot, pointer, index,
+                                                      mlir::TypeAttr::get(source_type(type)),
+                                                      mlir::TypeAttr::get(slot));
+}
+
 mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_temporary) {
     auto array_type = checked_data->types.at(expr->left.get());
+    if (array_type.array_order != PackedBitOrder::None)
+        fail("Packed scalar elements have no ordinary address");
     if (array_type.is_slice()) {
         auto source = source_type(array_type);
         auto base = as_source_value(gen_layout_expression(expr->left.get()), source);

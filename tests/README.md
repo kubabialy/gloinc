@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1200 tests**:
+The current source definitions and CTest discovery contain **1204 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -20,7 +20,7 @@ The current source definitions and CTest discovery contain **1200 tests**:
 | VariablesTest | 17 |
 | NumericTest | 12 |
 | EndianTest | 7 |
-| PackedTest | 16 |
+| PackedTest | 20 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
 | ControlFlowTest | 12 |
@@ -655,7 +655,7 @@ member access on a function remains an error.
 
 ## Packed memory layouts and exact-width integers (0.3.0)
 
-Sixteen `PackedTest` cases cover all native integer widths from 1 through 64,
+Twenty `PackedTest` cases cover all native integer widths from 1 through 64,
 constant conversion bounds across every native/endian width and sign pair,
 recoverable runtime narrowing failures and arithmetic traps, generic arithmetic,
 arrays, and results.
@@ -680,6 +680,12 @@ IR verifiers reject forged byte extents and element encodings; semantic checks
 reject implicit ordinary/packed/order conversions. `run/packed_array_values.gloin`
 checks exact sizes, embedded endian arrays, zeroed tail bits, and preservation of
 nonzero tail bits through copies, generic calls, results and aligned allocation.
+Dynamic indexed updates use 52 signed/width/order combinations, nine indices
+and 70 inputs per index at both guard-page edges in native `-O0`/`-O2`, comparing
+all bytes against an independent oracle. JIT/native checks cover destination,
+index and RHS ordering, captured repeated fills (including empty arrays),
+temporary reads, endian elements, and bounds traps before RHS side effects.
+Semantic/IR checks reject scalar borrows and strengthened write capabilities.
 
 The required core gate also runs `run/packed.gloin` in JIT and native modes. It
 exhausts all 65,536 `u13`/`u3` combinations in each bit order and checks six-byte
