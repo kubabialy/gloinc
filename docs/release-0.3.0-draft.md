@@ -8,6 +8,11 @@ incremental HTTP/1.1 request-body decoding, packed IPv4/UDP/TCP packet codecs,
 independent IPv4/IPv6 endpoints with shared TCP in Gloin, and HTTP/HTTPS server
 sessions.
 This is a minor release because it adds source-language behavior.
+The allocation and compact-array/view extension is still in progress. Its
+[accepted storage contract](packed-storage.md) covers explicit alignment,
+bounded placement, packed slices, byte-level concurrency boundaries and GIR
+optimization requirements. The existing endian/packed implementation does not
+complete that release milestone.
 The published baseline remains [0.2.1](release-notes-0.2.1.md); the compiler version,
 release assets, and numbered guides will be updated when the release is cut.
 
@@ -23,6 +28,7 @@ release assets, and numbered guides will be updated when the release is cut.
 | Packed access performance | Bounded word loads/stores with alignment one, field masks, and explicit target byte order. Construction keeps direct byte encoding. See the [measurement report](packed-performance.md). |
 | Exact-width integer values | Implemented: `u1`–`u64` and `i1`–`i64`, with arithmetic checked at their declared widths and separate native storage slots. |
 | Checked integer constructors | Implemented: `T(value)` always returns `result<T>`, including widening and endian-only changes; callers handle errors through `.erroneous` or `match`. |
+| Explicit allocation and compact storage | Accepted design; implementation pending. See [packed storage](packed-storage.md) for alignment, placement, packed arrays/views and access-footprint guarantees. |
 | Packed networking | `@packet` IPv4/UDP/TCP headers, bounded decoding, and checksum sealing; reusable packed-only memory reads/writes. See [packet APIs](packets.md). |
 | HTTP request decoding | Implemented in `@http`: streaming and buffered fixed-length/chunked bodies, header-boundary inspection, output backpressure, exact consumed offsets, and caller-owned buffers. See the [request decoder](http-requests.md). |
 | Gloin TCP/IP | IPv4 reassembly, UDP/ICMP dispatch, TCP connections and generation-checked tables, flow/congestion control, retransmission, path-MTU reduction and separate TIME_WAIT storage. Raw Linux TUN/macOS utun adapters keep protocol state in Gloin. |

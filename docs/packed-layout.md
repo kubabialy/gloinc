@@ -4,6 +4,9 @@
 contract for packed records, exact-width integers, and checked integer
 constructors. See the [0.3.0 draft](release-0.3.0-draft.md) for validation and release
 status and the [endianness contract](endianness.md) for byte-order types.
+The [accepted packed-storage extension](packed-storage.md) defines additional
+allocation, compact-array and view work required for 0.3.0. It is not yet
+implemented; the limitations below describe the current compiler.
 
 ## Representation model
 
