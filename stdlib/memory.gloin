@@ -37,7 +37,23 @@ def pub place<T>(storage: *u8, available: i64, value: T) -> *T {
 def pub check_alignment<T>(alignment: u64) -> result<void> {
     def minimum: result<u64> = u64(align_of<T>());
     if minimum.erroneous { return minimum.error; }
-    if alignment < minimum.value || alignment > 9223372036854775807 {
+
+    def checked: result<void> = check_byte_alignment(alignment, minimum.value);
+    if checked.erroneous { return checked.error; }
+
+    return;
+}
+
+// A slice's element storage alignment can differ from its descriptor alignment.
+def pub check_slice_alignment<S>(alignment: u64) -> result<void> {
+    def checked: result<void> = check_byte_alignment(alignment, __memory_slice_alignment<S>());
+    if checked.erroneous { return checked.error; }
+
+    return;
+}
+
+def check_byte_alignment(alignment: u64, minimum: u64) -> result<void> {
+    if alignment < minimum || alignment > 9223372036854775807 {
         return error("invalid storage alignment", status.INVALID, 0);
     }
 
@@ -52,6 +68,32 @@ def pub check_alignment<T>(alignment: u64) -> result<void> {
     }
 
     return;
+}
+
+// S is an ordinary or packed slice type. This only computes its zero-offset
+// storage extent; it neither allocates nor creates a borrowed view.
+def pub storage_bytes<S>(count: u64) -> result<u64> {
+    def unit: u64 = __memory_slice_unit<S>();
+    if unit == 0 { return 0; }
+
+    def limit: u64 = 9223372036854775807;
+
+    if __memory_slice_packed<S>() {
+        def whole: u64 = count / 8;
+        def tail: u64  = ((count % 8) * unit + 7) / 8;
+
+        if whole > (limit - tail) / unit {
+            return error("slice storage extent overflow", status.OVERFLOW, 0);
+        }
+
+        return whole * unit + tail;
+    }
+
+    if count > limit / unit {
+        return error("slice storage extent overflow", status.OVERFLOW, 0);
+    }
+
+    return count * unit;
 }
 
 // Construct in bounded byte storage. Even zero-sized objects need a nonempty

@@ -17,16 +17,35 @@ mlir::Value CodeGen::emit_memory_primitive(MemoryPrimitive kind, mlir::ValueRang
 
 mlir::Value CodeGen::emit_memory_intrinsic(MemoryIntrinsic kind, const ValueType &type,
                                            mlir::ValueRange arguments) {
+    const bool slice_query = kind == MemoryIntrinsic::SliceUnit ||
+                             kind == MemoryIntrinsic::SliceAlignment ||
+                             kind == MemoryIntrinsic::SlicePacked;
+    if (slice_query && !type.is_slice())
+        fail("Checked slice layout query requires a slice type");
+    if (kind == MemoryIntrinsic::SlicePacked)
+        return builder.create<mlir::arith::ConstantIntOp>(
+            location(), type.slice_order != PackedBitOrder::None, 1);
+    if (slice_query && type.slice_order != PackedBitOrder::None)
+        return builder.create<mlir::arith::ConstantIntOp>(
+            location(),
+            kind == MemoryIntrinsic::SliceAlignment
+                ? 1
+                : core_type_info(type.slice_element->builtin()).bits,
+            64);
     auto target = native_target_layout();
     if (!target)
         fail(llvm::toString(target.takeError()));
-    auto element_type = lower_type(type);
+    auto element_type = lower_type(slice_query ? *type.slice_element : type);
     auto layout = measure_type_layout(element_type, llvm::DataLayout(target->data_layout));
     if (!layout)
         fail(llvm::toString(layout.takeError()));
     if (layout->size > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
         layout->alignment > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
         fail("Raw memory element layout exceeds the signed size range");
+    if (slice_query)
+        return builder.create<mlir::arith::ConstantIntOp>(
+            location(), kind == MemoryIntrinsic::SliceAlignment ? layout->alignment : layout->size,
+            64);
     if (kind == MemoryIntrinsic::SizeOf || kind == MemoryIntrinsic::AlignOf)
         return builder.create<mlir::arith::ConstantIntOp>(
             location(), kind == MemoryIntrinsic::SizeOf ? layout->size : layout->alignment, 64);

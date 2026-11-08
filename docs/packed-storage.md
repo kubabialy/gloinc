@@ -8,7 +8,9 @@ validator, and fixed packed integer arrays with literal, repeated and zeroed
 construction, exact byte layouts, checked scalar indexing, embedding, and
 representation-preserving copies/calls. Packed integer slices now borrow fixed
 arrays with `array[start..end]`, support nested subranges, `.len`, indexing, and
-read-only weakening. Byte-backed view construction, slice allocation,
+read-only weakening. `storage_bytes<S>` and `check_slice_alignment<S>` provide
+checked extent and element-storage alignment queries for ordinary and packed
+slices. Byte-backed view construction, slice allocation,
 byte-boundary splits, subrange copies, and packed-record elements remain pending.
 The complete contract below also describes these pending operations.
 
@@ -106,6 +108,13 @@ writable byte slice and returns `result<&T>`; it constructs a value, unlike
 `view_packed<S>`, which borrows initialized bytes without changing them.
 Read-only bytes cannot produce a writable view. `storage_bytes<S>` returns
 `result<u64>` for the minimal zero-offset byte extent of `count` elements.
+Its result is bounded by `INT64_MAX` bytes on the supported 64-bit targets.
+Calculation divides the packed count before multiplying, so a full bit count
+larger than `u64` does not spuriously overflow when the byte count fits.
+Zero-sized ordinary elements require zero bytes for every count; this query
+does not itself construct a view or allocate storage. `check_slice_alignment<S>`
+checks the stored elements' minimum alignment (one for packed storage), rather
+than the borrowed descriptor's native alignment.
 
 Alignment arguments are `u64` byte counts, positive powers of two, at least the
 stored type's minimum alignment, and within the target addressable range.

@@ -69,6 +69,18 @@ power-of-two byte alignment at least `align_of<T>()` and no greater than the
 target's signed addressable range (currently 64-bit). Invalid requests return
 `status.INVALID` with OS error zero, without accessing storage.
 
+`storage_bytes<S>(count: u64) -> result<u64>` computes the zero-offset storage
+extent for an ordinary or packed slice type. Ordinary elements use native slot
+sizes; packed integers use their bit widths, rounding only the final extent to
+bytes. Sizes above `INT64_MAX` bytes return `OVERFLOW`, without an intermediate
+arithmetic trap. This query does not allocate or borrow. Empty ordinary element
+types have zero byte extent for every count.
+
+`check_slice_alignment<S>(alignment: u64) -> result<void>` validates a positive
+power of two, at least the stored elements' minimum alignment and no greater
+than `INT64_MAX`. Packed storage has minimum alignment one, independently of
+the slice descriptor's alignment. Invalid requests return `INVALID`.
+
 `place_at<T>(bytes: [u8], byte_offset: u64, value: T, alignment: u64) -> result<&T>`
 constructs a value in bounded writable storage. It first validates alignment,
 then the remaining byte capacity, then address-offset representability, then

@@ -36,6 +36,18 @@ std::shared_ptr<Type> Sema::check_memory_intrinsic(const CallExpression *call,
         log_error("Invalid raw memory intrinsic type argument");
         return nullptr;
     }
+    if (name == "__memory_slice_unit" || name == "__memory_slice_alignment" ||
+        name == "__memory_slice_packed") {
+        if (!dynamic_cast<SliceType *>(type.get()) || !call->arguments.empty()) {
+            log_error("Slice layout queries require a slice type and no value arguments");
+            return nullptr;
+        }
+        const auto kind = name == "__memory_slice_unit"        ? MemoryIntrinsic::SliceUnit
+                          : name == "__memory_slice_alignment" ? MemoryIntrinsic::SliceAlignment
+                                                               : MemoryIntrinsic::SlicePacked;
+        recording->memory_intrinsics.emplace(call, std::make_pair(kind, *value_type(type)));
+        return get_builtin_type(kind == MemoryIntrinsic::SlicePacked ? "bool" : "u64");
+    }
     if (name == "__memory_packed_pointer" || name == "__memory_packed_mut_pointer") {
         const auto *record = dynamic_cast<const StructType *>(type.get());
         if (!record || !record->is_packed || record->fields.empty()) {

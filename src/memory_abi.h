@@ -25,5 +25,8 @@ enum class MemoryIntrinsic {
     PackedPointer,
     PackedMutPointer,
     Reserve,
-    IsAligned
+    IsAligned,
+    SliceUnit,
+    SliceAlignment,
+    SlicePacked
 };

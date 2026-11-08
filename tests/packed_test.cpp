@@ -439,6 +439,76 @@ TEST_F(PackedTest, PackedSliceRangesAndIndicesTrapInEveryExecutionMode) {
     }
 }
 
+TEST_F(PackedTest, SliceStorageSizesUseBitOrNativeStrideAndCheckUnsignedBoundaries) {
+    auto path = source(R"(
+        import "@memory";
+        import "@status";
+        def struct Empty {}
+        def main() -> i32 {
+            def compact: result<u64> = memory.storage_bytes<packed(msb_first) [u13]>(8);
+            if compact.erroneous { return 1; }
+            if compact.value != 13 { return 2; }
+            def native: result<u64> = memory.storage_bytes<[u13]>(8);
+            if native.erroneous { return 3; }
+            if native.value != 16 { return 4; }
+            def tail: result<u64> = memory.storage_bytes<packed(lsb_first) [const i13]>(3);
+            if tail.erroneous { return 5; }
+            if tail.value != 5 { return 6; }
+            def huge: result<u64> = memory.storage_bytes<packed(msb_first) [u3]>(18446744073709551615);
+            if huge.erroneous { return 7; }
+            if huge.value != 6917529027641081856 { return 8; }
+            def largest: result<u64> = memory.storage_bytes<packed(msb_first) [u13]>(5675921253449092804);
+            if largest.erroneous { return 9; }
+            if largest.value != 9223372036854775807 { return 10; }
+            def overflow: result<u64> = memory.storage_bytes<packed(msb_first) [u13]>(5675921253449092805);
+            if overflow.erroneous {
+                if overflow.error.code != status.OVERFLOW || overflow.error.os_error != 0 { return 11; }
+            } else { return 12; }
+            def native_overflow: result<u64> = memory.storage_bytes<[u64]>(1152921504606846976);
+            if native_overflow.erroneous {
+                if native_overflow.error.code != status.OVERFLOW { return 13; }
+            } else { return 14; }
+            def empty: result<u64> = memory.storage_bytes<[Empty]>(18446744073709551615);
+            if empty.erroneous { return 15; }
+            if empty.value != 0 { return 16; }
+            def zero: result<u64> = memory.storage_bytes<packed(msb_first) [be_u64]>(0);
+            if zero.erroneous { return 17; }
+            if zero.value != 0 { return 18; }
+            def aligned: result<void> = memory.check_slice_alignment<packed(lsb_first) [be_u64]>(1);
+            if aligned.erroneous { return 19; }
+            def weak: result<void> = memory.check_slice_alignment<[u64]>(1);
+            if weak.erroneous { if weak.error.code != status.INVALID { return 20; } }
+            else { return 21; }
+            def bad: result<void> = memory.check_slice_alignment<packed(msb_first) [u3]>(3);
+            if bad.erroneous { if bad.error.code != status.INVALID { return 22; } }
+            else { return 23; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({path}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        auto executable = directory + "/storage-size";
+        auto built = invoke_raw({optimization, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
+TEST_F(PackedTest, SliceStorageQueriesRequireSliceTypesAndKeepIntrinsicsPrivate) {
+    for (const auto *program :
+         {"import \"@memory\"; def main() -> i32 { def r: result<u64> = "
+          "memory.storage_bytes<u13>(8); if r.erroneous { return 1; } return 0; }",
+          "import \"@memory\"; def main() -> i32 { def r: result<u64> = "
+          "memory.storage_bytes<packed(msb_first) [u13; 8]>(8); if r.erroneous { return 1; } "
+          "return 0; }",
+          "def f() -> u64 { return __memory_slice_unit<packed(msb_first) [u13]>(); }"}) {
+        auto path = source(program);
+        auto result = invoke({"--check", path});
+        EXPECT_EQ(result.status, 1) << result.err;
+        EXPECT_NE(result.err.find("error:"), std::string::npos);
+    }
+}
+
 TEST_F(PackedTest, EveryNativeWidthHasExactConstantBoundsAndCanonicalIdentity) {
     for (unsigned width = 1; width <= 64; ++width) {
         for (bool signed_value : {false, true}) {
