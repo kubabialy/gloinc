@@ -27,7 +27,8 @@ class StringLibraryTest : public gloin_test::CliFixture {
         return std::filesystem::exists(path) ? path : root / "../share/gloinc/stdlib";
     }
     void copy_modules() {
-        for (const auto *file : {"std.gloin", "strings.gloin", "arena.gloin", "status.gloin"})
+        for (const auto *file :
+             {"memory.gloin", "std.gloin", "strings.gloin", "arena.gloin", "status.gloin"})
             source(read((library() / file).string()), file);
     }
 };

@@ -338,6 +338,13 @@ def RawReserveOp : Gloin_Op<"raw_reserve", [Pure]> {
     let hasVerifier = 1;
 }
 
+def RawIsAlignedOp : Gloin_Op<"raw_is_aligned", [Pure]> {
+    let summary = "Test non-null byte storage against a positive power-of-two byte alignment";
+    let arguments = (ins AnyType:$storage, I64:$alignment);
+    let results = (outs I1:$aligned);
+    let hasVerifier = 1;
+}
+
 def RawPlaceOp : Gloin_Op<"raw_place"> {
     let summary = "Check raw storage and initialize one typed value";
     let arguments = (ins AnyType:$storage, I64:$available, AnyType:$initial,

@@ -31,6 +31,14 @@ mlir::Value CodeGen::emit_memory_intrinsic(MemoryIntrinsic kind, const ValueType
         return builder.create<mlir::arith::ConstantIntOp>(
             location(), kind == MemoryIntrinsic::SizeOf ? layout->size : layout->alignment, 64);
 
+    if (kind == MemoryIntrinsic::IsAligned) {
+        ValueType raw(CoreType::U8);
+        raw.pointers.push_back({true, false});
+        return builder.create<gloin::RawIsAlignedOp>(
+            location(), builder.getI1Type(), as_source_value(arguments[0], source_type(raw)),
+            arguments[1]);
+    }
+
     if (kind == MemoryIntrinsic::PackedPointer || kind == MemoryIntrinsic::PackedMutPointer) {
         const bool read_only = kind == MemoryIntrinsic::PackedPointer;
         ValueType raw(CoreType::U8);

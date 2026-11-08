@@ -3,6 +3,8 @@
 **Status: accepted design; implementation in progress.** This extends the
 [existing packed-record contract](packed-layout.md). Syntax and APIs in this
 document are requirements, not evidence that the compiler supports them yet.
+The first implementation step provides `alloc_aligned<T>`, `place_at<T>` and
+the shared `check_alignment<T>` validator. Compact arrays and views remain pending.
 
 ## Types and representation
 
@@ -117,6 +119,9 @@ no storage. Failed placement writes nothing. Initializer arguments have already
 been evaluated according to ordinary call evaluation order. Empty fixed-array
 placement must obey the existing non-null reference contract; zero-length views
 grant access to no elements.
+`place_at` requires a nonempty backing byte slice even for an empty object;
+zero-sized placement at its one-past address is allowed when aligned. See the
+[implemented placement contract](raw-memory.md#checked-explicit-placement-030-development).
 
 ## GloinIR and optimization requirements
 

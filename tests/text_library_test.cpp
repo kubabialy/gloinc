@@ -34,7 +34,8 @@ class TextLibraryTest : public gloin_test::CliFixture {
                                                         : root / "../share/gloinc/stdlib";
     }
     void copy_modules() {
-        for (const auto *name : {"strings.gloin", "std.gloin", "status.gloin", "arena.gloin"})
+        for (const auto *name :
+             {"memory.gloin", "strings.gloin", "std.gloin", "status.gloin", "arena.gloin"})
             source(read((library() / name).string()), name);
     }
     // Per-handle deterministic failure injection, while retaining the actual

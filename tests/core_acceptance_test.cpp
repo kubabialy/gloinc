@@ -53,6 +53,17 @@ class CoreAcceptanceTest : public gloin_test::CliFixture {
 
 TEST_F(CoreAcceptanceTest, RunMinimal) { runs("run/minimal.gloin", "42"); }
 
+TEST_F(CoreAcceptanceTest, AlignedAllocationAndBoundedPlacementPreserveBytesAndFailures) {
+    const auto file = fixture("run/aligned_storage.gloin");
+    expect_run(invoke({file}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/aligned-storage";
+        auto built = invoke_raw({optimization, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+
 TEST_F(CoreAcceptanceTest, PackedBytesAndSpareBitsSurviveUpdatesCopiesAndCallsInAllModes) {
     runs("run/packed.gloin", "42");
     for (const auto *optimization : {"-O0", "-O2"}) {

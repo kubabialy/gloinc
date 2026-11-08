@@ -28,6 +28,9 @@ class ArenaTest : public gloin_test::CliFixture {
         auto path = root / "stdlib/arena.gloin";
         if (!std::filesystem::exists(path))
             path = root / "../share/gloinc/stdlib/arena.gloin";
+        // Override fixtures replace @arena but retain its checked dependencies.
+        for (const auto *dependency : {"memory.gloin", "status.gloin"})
+            source(read((path.parent_path() / dependency).string()), dependency);
         return read(path.string());
     }
     void expect_trap(const std::string &file) {
@@ -373,6 +376,32 @@ TEST_F(ArenaTest, TryAllocationFailureReturnsNullAfterInitializerSideEffects) {
         }
     )",
                                    "try-failure.gloin", context, CompilationMode::Executable,
+                                   CompilationOutput::LLVM);
+    ASSERT_TRUE(compiled.success());
+    fail_runtime_call(*compiled.module, ArenaPrimitive::Allocate);
+    auto result = JitRunner::run(*compiled.module);
+    ASSERT_TRUE(result.success());
+    EXPECT_EQ(result.value, 42);
+}
+
+TEST_F(ArenaTest, AlignedAllocationFailureReturnsErrorAfterInitializerSideEffects) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        import "@arena";
+        import "@status";
+        def value(count: &i32) -> i32 { *count = *count + 1; return 7; }
+        def main() -> i32 {
+            def mut a: arena.GeneralArena = arena.GeneralArena.create(); defer a.free();
+            def mut count: i32 = 0;
+            def p: result<&i32> = a.alloc_aligned<i32>(value(&count), 64);
+            if p.erroneous {
+                if p.error.code == status.NO_MEMORY && count == 1 { return 42; }
+                return 1;
+            }
+            return 2;
+        }
+    )",
+                                   "aligned-failure.gloin", context, CompilationMode::Executable,
                                    CompilationOutput::LLVM);
     ASSERT_TRUE(compiled.success());
     fail_runtime_call(*compiled.module, ArenaPrimitive::Allocate);

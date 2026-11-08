@@ -584,8 +584,8 @@ std::shared_ptr<Type> Sema::check_generic_function_call(const CallExpression *ca
         name == "__memory_reserve")
         return check_memory_intrinsic(call, name, argument_names);
     if (!imported_module && current_module && current_module->standard_name == "memory" &&
-        (name == "__memory_size_of" || name == "__memory_align_of" ||
-         name == "__memory_padding" || name == "__memory_place" ||
+        (name == "__memory_size_of" || name == "__memory_align_of" || name == "__memory_padding" ||
+         name == "__memory_place" || name == "__memory_is_aligned" ||
          name == "__memory_packed_pointer" || name == "__memory_packed_mut_pointer"))
         return check_memory_intrinsic(call, name, argument_names);
     const FunctionDefinition *definition = nullptr;

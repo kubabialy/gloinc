@@ -1217,6 +1217,33 @@ struct LowerRawReserve : mlir::OpRewritePattern<gloin::RawReserveOp> {
     }
 };
 
+struct LowerRawIsAligned : mlir::OpRewritePattern<gloin::RawIsAlignedOp> {
+    using OpRewritePattern::OpRewritePattern;
+    mlir::LogicalResult matchAndRewrite(gloin::RawIsAlignedOp op,
+                                        mlir::PatternRewriter &rewriter) const override {
+        auto loc = op.getLoc();
+        auto zero = rewriter.create<mlir::arith::ConstantIntOp>(loc, 0, 64);
+        auto one = rewriter.create<mlir::arith::ConstantIntOp>(loc, 1, 64);
+        auto mask = rewriter.create<mlir::arith::SubIOp>(loc, op.getAlignment(), one);
+        auto power_bits = rewriter.create<mlir::arith::AndIOp>(loc, op.getAlignment(), mask);
+        auto power = rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq,
+                                                          power_bits, zero);
+        auto positive = rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sgt,
+                                                             op.getAlignment(), zero);
+        auto address =
+            rewriter.create<mlir::LLVM::PtrToIntOp>(loc, rewriter.getI64Type(), op.getStorage());
+        auto nonnull = rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne,
+                                                            address, zero);
+        auto bits = rewriter.create<mlir::arith::AndIOp>(loc, address, mask);
+        auto aligned =
+            rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq, bits, zero);
+        auto valid = rewriter.create<mlir::arith::AndIOp>(loc, power, positive);
+        auto present = rewriter.create<mlir::arith::AndIOp>(loc, nonnull, aligned);
+        rewriter.replaceOpWithNewOp<mlir::arith::AndIOp>(op, valid, present);
+        return mlir::success();
+    }
+};
+
 struct LowerRawPlace : mlir::OpRewritePattern<gloin::RawPlaceOp> {
     const IntegerRepresentation &representation;
     LowerRawPlace(mlir::MLIRContext *context, const IntegerRepresentation &representation)
@@ -1691,9 +1718,10 @@ struct LowerGloinCorePass
                  LowerCheckedFloatBinary, LowerRequireFinite, LowerCheckedIntegerCompare,
                  LowerCheckedFloatCompare, LowerZeroedArray, LowerStringLiteral, LowerNull,
                  LowerArenaTypedPointer, LowerRawReserve, LowerRawPackedPointer, LowerRawPadding,
-                 LowerPointerOffset, LowerRequireNonNull, LowerPointerCompare, LowerSliceFromArray,
-                 LowerSliceFromPointer, LowerSliceSubrange, LowerSliceLength, LowerStackAlloc,
-                 LowerFieldAddress, LowerEnumConstant, LowerEnumCompare>(&getContext());
+                 LowerRawIsAligned, LowerPointerOffset, LowerRequireNonNull, LowerPointerCompare,
+                 LowerSliceFromArray, LowerSliceFromPointer, LowerSliceSubrange, LowerSliceLength,
+                 LowerStackAlloc, LowerFieldAddress, LowerEnumConstant, LowerEnumCompare>(
+                &getContext());
         mlir::GreedyRewriteConfig config;
         config.setListener(&listener);
         if (mlir::failed(mlir::applyPatternsGreedily(getOperation(), std::move(patterns), config)))
@@ -2043,8 +2071,8 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                     gloin::ErrorOsErrorOp, gloin::ResultSuccessOp, gloin::ResultFailureOp,
                     gloin::ResultIsErrorOp, gloin::ResultValueOp, gloin::ResultErrorOp,
                     gloin::ArenaTypedPointerOp, gloin::RawReserveOp, gloin::RawPackedPointerOp,
-                    gloin::RawPlaceOp, gloin::RawPaddingOp, gloin::PointerOffsetOp,
-                    gloin::ArrayElementAddressOp, gloin::SliceFromArrayOp,
+                    gloin::RawPlaceOp, gloin::RawIsAlignedOp, gloin::RawPaddingOp,
+                    gloin::PointerOffsetOp, gloin::ArrayElementAddressOp, gloin::SliceFromArrayOp,
                     gloin::SliceFromPointerOp, gloin::SliceSubrangeOp, gloin::SliceElementAddressOp,
                     gloin::SliceLengthOp, gloin::ArenaFillOp, gloin::RequireNonNullOp,
                     gloin::PointerCompareOp, gloin::StackAllocOp, gloin::LoadOp, gloin::StoreOp,

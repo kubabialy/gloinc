@@ -561,6 +561,17 @@ mlir::LogicalResult RawReserveOp::verify() {
     return mlir::success();
 }
 
+mlir::LogicalResult RawIsAlignedOp::verify() {
+    auto raw = mlir::dyn_cast<gloin::GloinPointerType>(getStorage().getType());
+    auto module = (*this)->getParentOfType<mlir::ModuleOp>();
+    bool typed = raw && raw.getNullable() && !raw.getReadOnly() && raw.getPointee().isInteger(8);
+    bool layout = mlir::isa<mlir::LLVM::LLVMPointerType>(getStorage().getType()) && module &&
+                  !module->hasAttr("gloin.checked");
+    if (!typed && !layout)
+        return emitOpError("requires a nullable writable byte pointer");
+    return mlir::success();
+}
+
 mlir::LogicalResult RawPlaceOp::verify() {
   auto target = mlir::dyn_cast<gloin::GloinPointerType>(getSourceType());
   auto raw = mlir::dyn_cast<gloin::GloinPointerType>(getStorage().getType());

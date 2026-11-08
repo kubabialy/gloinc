@@ -61,3 +61,30 @@ general FFI. Alignment padding and typed placement remain distinct
 Lowering checks size and alignment, conditionally stores the initializer, and
 converts the operations to LLVM. The native ABI is declared in
 [memory_runtime.h](../src/memory_runtime.h).
+
+## Checked explicit placement (0.3.0 development)
+
+`check_alignment<T>(alignment: u64) -> result<void>` validates a positive
+power-of-two byte alignment at least `align_of<T>()` and no greater than the
+target's signed addressable range (currently 64-bit). Invalid requests return
+`status.INVALID` with OS error zero, without accessing storage.
+
+`place_at<T>(bytes: [u8], byte_offset: u64, value: T, alignment: u64) -> result<&T>`
+constructs a value in bounded writable storage. It first validates alignment,
+then the remaining byte capacity, then address-offset representability, then
+the destination address's requested alignment. Insufficient capacity returns
+`OUT_OF_RANGE`; an unrepresentable offset returns `OVERFLOW`; a misaligned
+address returns `INVALID`. All errors use OS error zero and leave storage
+unchanged. Arguments, including the initializer, have already been evaluated.
+
+Even a zero-sized value needs a nonempty backing slice so a live non-null address
+can be obtained. Such a value may be placed at the slice's one-past address if
+that address meets its requested alignment. An empty backing slice returns
+`OUT_OF_RANGE`. The returned reference borrows the byte storage and does not
+extend its lifetime. Placement retains representation-preserving copy semantics.
+The requested alignment affects placement only, not the type's layout or stride.
+
+Validation and error policy are written in Gloin. The verified
+`gloin.raw_is_aligned` operation checks an address without reading memory or
+exposing pointer-to-integer conversions to source code. Typed initialization
+continues through `gloin.raw_place`.

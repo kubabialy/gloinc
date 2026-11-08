@@ -1,3 +1,6 @@
+import "@memory";
+import "@status";
+
 // GeneralArena owns native blocks. Copies alias that ownership; free exactly
 // once through the designated owner. Helpers should receive &GeneralArena.
 def pub struct GeneralArena {
@@ -32,6 +35,28 @@ def pub struct GeneralArena {
         __arena_require(self.state);
 
         return __arena_general_alloc(self.state, size, alignment);
+    }
+
+    // Stronger base alignment does not change T's representation or array stride.
+    def pub alloc_aligned<T>(self: &GeneralArena, value: T, alignment: u64) -> result<&T> {
+        __arena_require(self.state);
+
+        def checked: result<void> = memory.check_alignment<T>(alignment);
+        if checked.erroneous { return checked.error; }
+
+        def size: result<u64> = u64(memory.size_of<T>());
+        if size.erroneous { return size.error; }
+
+        def storage: *u8 = __arena_general_alloc(self.state, size.value, alignment);
+        if storage == null {
+            return error("aligned arena allocation failed", status.NO_MEMORY, 0);
+        }
+
+        def placed: *T = memory.place<T>(storage, memory.size_of<T>(), value);
+
+        // The allocation contract guarantees success; dereference retains the
+        // ordinary null guard before producing a non-null reference.
+        return &*placed;
     }
 
     // Source callers use alloc_many(fill, capacity). The compiler computes

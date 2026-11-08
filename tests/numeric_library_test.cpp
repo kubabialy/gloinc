@@ -305,7 +305,7 @@ return 0;
 }
 TEST_F(NumericLibraryTest, AllocationFailureAndInvalidPrecisionAreRecoverable) {
     // Retain actual source APIs; deterministically fail all byte allocations.
-    for (auto name : {"std.gloin", "status.gloin", "strings.gloin", "arena.gloin"})
+    for (auto name : {"memory.gloin", "std.gloin", "status.gloin", "strings.gloin", "arena.gloin"})
         source(read((library() / name).string()), name);
     auto arena = read((library() / "arena.gloin").string());
     const std::string call = "__arena_general_alloc(self.state, size, 1)";

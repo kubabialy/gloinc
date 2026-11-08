@@ -697,6 +697,40 @@ TEST(LoweringTest, RawMemoryPlacementAndCallsUseGloinIR) {
     expect_exportable(*low);
 }
 
+TEST(LoweringTest, RawAlignmentChecksRetainTypedStorageAndRejectForgedPointers) {
+    mlir::MLIRContext context;
+    auto high = compile_source(R"(
+        import "@memory";
+        def main() -> i32 {
+            def mut bytes: [u8; 8] = zeroed;
+            def value: result<&u8> = memory.place_at<u8>(bytes[..], 3, 42, 1);
+            if value.erroneous { return 1; }
+            return 42;
+        }
+    )",
+                               "aligned-placement.gloin", context, CompilationMode::Executable);
+    ASSERT_TRUE(high.success()) << render(*high.diagnostics);
+    unsigned checks = 0;
+    high.module->walk([&](gloin::RawIsAlignedOp op) {
+        EXPECT_TRUE(mlir::isa<gloin::GloinPointerType>(op.getStorage().getType()));
+        ++checks;
+    });
+    EXPECT_GT(checks, 0u);
+    Diagnostics diagnostics;
+    auto lowered = lower_to_llvm(std::move(high.module), diagnostics);
+    ASSERT_TRUE(lowered) << render(diagnostics);
+    expect_exportable(*lowered);
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    for (const std::string type : {"!gloin.ptr<i32, true, false>", "!gloin.ptr<i8, true, true>",
+                                   "!gloin.ptr<i8, false, false>", "!llvm.ptr"}) {
+        EXPECT_FALSE(
+            parse(context, "module attributes {gloin.checked} { func.func @check(%p: " + type +
+                               ", %a: i64) -> i1 { %r = \"gloin.raw_is_aligned\"(%p, %a) : (" +
+                               type + ", i64) -> i1 return %r : i1 } }"));
+    }
+}
+
 TEST(LoweringTest, RawReservationRejectsForgedStorageAndElementTypes) {
     mlir::MLIRContext context;
     auto ir = [](const std::string &raw, const std::string &result, const std::string &element) {

@@ -27,6 +27,17 @@ copies are shallow; referenced memory does not become owned by the arena.
 allocation fails; initializer side effects have already occurred. `alloc` and
 `create` trap on allocation failure. Fatal traps do not run deferred cleanup.
 
+In 0.3.0 development, `alloc_aligned<T>(value: T, alignment: u64) -> result<&T>`
+adds checked explicit base alignment. It uses the
+[alignment validation contract](raw-memory.md#checked-explicit-placement-030-development),
+returning `INVALID` for invalid alignment and `NO_MEMORY` for allocation failure,
+both with OS error zero. The initializer is evaluated once before validation;
+an invalid request performs no allocation. Success preserves the value's
+representation and does not change its type, size, or array stride. The arena
+owns the storage, with the same alias/reset/free rules as ordinary allocation.
+Calling through a cleared arena handle still traps. This method is implemented
+in Gloin using the existing checked native allocation ABI and typed placement.
+
 Gloin 0.0.4 also provides `alloc_many(fill, capacity: i64) -> &T`.
 It allocates aligned space for `capacity` elements of the fill value's type,
 checks negative capacity and byte-size overflow, and copies the captured fill
