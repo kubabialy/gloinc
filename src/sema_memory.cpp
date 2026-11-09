@@ -36,6 +36,21 @@ std::shared_ptr<Type> Sema::check_memory_intrinsic(const CallExpression *call,
         log_error("Invalid raw memory intrinsic type argument");
         return nullptr;
     }
+    if (name == "__memory_packed_bit_offset") {
+        auto slice = std::dynamic_pointer_cast<SliceType>(type);
+        if (!slice || slice->bit_order == PackedBitOrder::None || call->arguments.size() != 1) {
+            log_error("Packed bit offset requires one matching packed slice");
+            return nullptr;
+        }
+        auto actual = check_typed_expression(call->arguments.front().get(), type);
+        if (!actual || !actual->equals(*type)) {
+            log_error("Packed bit offset slice type mismatch");
+            return nullptr;
+        }
+        recording->memory_intrinsics.emplace(
+            call, std::make_pair(MemoryIntrinsic::PackedBitOffset, *value_type(type)));
+        return get_builtin_type("u64");
+    }
     if (name == "__memory_initialize_slice") {
         auto slice = std::dynamic_pointer_cast<SliceType>(type);
         if (!slice || slice->read_only || call->arguments.size() != 4) {

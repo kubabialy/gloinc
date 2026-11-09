@@ -612,6 +612,119 @@ TEST_F(PackedTest, PackedByteViewsRejectCapabilityAndTypeForgeries) {
     EXPECT_TRUE(mlir::failed(view.verify()));
 }
 
+TEST_F(PackedTest, CheckedPackedSplitsMatchPhysicalByteBoundariesAndPreserveViews) {
+    for (const auto *order : {"msb_first", "lsb_first"}) {
+        for (unsigned width : {3, 8, 13}) {
+            auto scalar = "u" + std::to_string(width);
+            auto type = std::string("packed(") + order + ") [" + scalar + "]";
+            auto readonly = std::string("packed(") + order + ") [const " + scalar + "]";
+            auto path = source(
+                "import \"@memory\"; import \"@status\"; def main() -> i32 { "
+                "def mut bytes: [u8; 32] = {0xA5; 32}; "
+                "def mut offset: u64 = 0; while offset < 8 { "
+                "def r: result<" +
+                type + "> = memory.view_packed<" + type +
+                ">(bytes[..], offset, 16); "
+                "if r.erroneous { return 1; } def view: " +
+                type +
+                " = r.value; "
+                "def mut split_index: u64 = 0; while split_index <= 16 { "
+                "def boundary: u64 = offset + split_index * " +
+                std::to_string(width) +
+                "; "
+                "def disjoint: bool = split_index == 0 || split_index == 16 || (boundary + 7) / 8 "
+                "== boundary / 8; "
+                "def split: result<memory.PackedSplit<" +
+                type + ">> = memory.split_packed<" + type +
+                ">(view, split_index); "
+                "if split.erroneous { if disjoint || split.error.code != status.INVALID || "
+                "split.error.os_error != 0 { return 2; } } "
+                "else { if !disjoint { return 3; } def pair: memory.PackedSplit<" +
+                type +
+                "> = split.value; "
+                "if pair.left.len != split_index || pair.right.len != 16 - split_index { return 4; "
+                "} "
+                "if split_index > 0 { if pair.left[split_index - 1] != view[split_index - 1] { "
+                "return 5; } } "
+                "if split_index < 16 { if pair.right[0] != view[split_index] { return 6; } } } "
+                "split_index = split_index + 1; } "
+                "def out: result<memory.PackedSplit<" +
+                type + ">> = memory.split_packed<" + type +
+                ">(view, 18446744073709551615); "
+                "if out.erroneous { if out.error.code != status.OUT_OF_RANGE { return 7; } } else "
+                "{ return 8; } "
+                "def empty: " +
+                readonly +
+                " = view[0..0]; "
+                "def none: result<memory.PackedSplit<" +
+                readonly + ">> = memory.split_packed<" + readonly +
+                ">(empty, 0); "
+                "if none.erroneous { return 9; } offset = offset + 1; } "
+                "def mut i: u64 = 0; while i < 32 { if bytes[i] != 0xA5 { return 10; } i = i + 1; "
+                "} return 42; }");
+            expect_run(invoke({path}), 42);
+            for (const auto *mode : {"-O0", "-O2"}) {
+                auto executable = directory + "/packed-splits";
+                auto built = invoke_raw({mode, "-o", executable, path});
+                ASSERT_EQ(built.status, 0) << built.err;
+                EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10),
+                          42);
+            }
+        }
+    }
+}
+
+TEST_F(PackedTest, PackedSplitAliasesRetainCapabilitiesAndRejectOrdinarySlices) {
+    auto path = source(R"(
+        import "@memory";
+        def main() -> i32 {
+            def mut values: packed(msb_first) [u3; 16] = {5; 16};
+            def r: result<memory.PackedSplit<packed(msb_first) [u3]>> = memory.split_packed<packed(msb_first) [u3]>(values[..], 8);
+            if r.erroneous { return 1; }
+            def pair: memory.PackedSplit<packed(msb_first) [u3]> = r.value;
+            def readonly: packed(msb_first) [const u3] = values[..];
+            pair.left[7] = 1; pair.right[0] = 2;
+            if values[7] != 1 || readonly[8] != 2 || values[6] != 5 || values[9] != 5 { return 2; }
+            def mut endian: packed(lsb_first) [be_u16; 2] = {0x1234; 2};
+            def e: result<memory.PackedSplit<packed(lsb_first) [const be_u16]>> = memory.split_packed<packed(lsb_first) [const be_u16]>(endian[..], 1);
+            if e.erroneous { return 3; }
+            def words: memory.PackedSplit<packed(lsb_first) [const be_u16]> = e.value;
+            if words.left[0] != 0x1234 || words.right[0] != 0x1234 { return 4; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({path}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        auto executable = directory + "/split-aliases";
+        auto built = invoke_raw({mode, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+    mlir::MLIRContext context;
+    auto compiled = compile_source(read(path), path, context);
+    ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+    gloin::PackedSliceBitOffsetOp offset;
+    compiled.module->walk([&](gloin::PackedSliceBitOffsetOp op) { offset = op; });
+    ASSERT_TRUE(offset);
+    auto type = mlir::cast<gloin::GloinPackedSliceType>(offset.getSourceType());
+    offset.setSourceType(
+        gloin::GloinSliceType::get(&context, type.getElement(), type.getReadOnly()));
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    EXPECT_TRUE(mlir::failed(offset.verify()));
+    for (const auto *text :
+         {"import \"@memory\"; def f(s: [u8]) -> void { def r: result<memory.PackedSplit<[u8]>> = "
+          "memory.split_packed<[u8]>(s, 0); if r.erroneous { return; } }",
+          "def f(s: packed(msb_first) [u3]) -> u64 { return "
+          "__memory_packed_bit_offset<packed(msb_first) [u3]>(s); }",
+          "import \"@memory\"; def f(s: packed(msb_first) [const u3]) -> void { def r: "
+          "result<memory.PackedSplit<packed(msb_first) [const u3]>> = "
+          "memory.split_packed<packed(msb_first) [const u3]>(s, 0); if r.erroneous { return; } def "
+          "p: memory.PackedSplit<packed(msb_first) [const u3]> = r.value; p.right[0] = 1; }"}) {
+        EXPECT_EQ(invoke({"--check", source(text)}).status, 1);
+    }
+}
+
 TEST_F(PackedTest, EveryNativeWidthHasExactConstantBoundsAndCanonicalIdentity) {
     for (unsigned width = 1; width <= 64; ++width) {
         for (bool signed_value : {false, true}) {

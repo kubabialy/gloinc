@@ -141,6 +141,27 @@ def pub view_packed<S>(bytes: __memory_slice_bytes<S>, bit_offset: u64, count: u
     return view.value;
 }
 
+def pub struct PackedSplit<S> {
+    def pub left: S,
+    def pub right: S,
+}
+
+// Success proves disjoint byte footprints for this pair, not exclusive access.
+def pub split_packed<S>(view: S, index: u64) -> result<PackedSplit<S>> {
+    def start_bit: u64 = __memory_packed_bit_offset<S>(view);
+
+    if index > view.len {
+        return error("packed split is outside the view", status.OUT_OF_RANGE, 0);
+    }
+
+    def width_modulo_byte: u64 = __memory_slice_unit<S>() % 8;
+    if index != 0 && index != view.len && (start_bit + (index % 8) * width_modulo_byte) % 8 != 0 {
+        return error("packed split would share a boundary byte", status.INVALID, 0);
+    }
+
+    return PackedSplit<S> { left: view[..index], right: view[index..] };
+}
+
 // Copy a packed representation from the prefix of bytes. No pointer escapes.
 // Packed layouts have alignment one and admit every bit pattern. Protocol
 // validation is the caller's job; native structs/pointers are rejected.

@@ -17,6 +17,10 @@ mlir::Value CodeGen::emit_memory_primitive(MemoryPrimitive kind, mlir::ValueRang
 
 mlir::Value CodeGen::emit_memory_intrinsic(MemoryIntrinsic kind, const ValueType &type,
                                            mlir::ValueRange arguments) {
+    if (kind == MemoryIntrinsic::PackedBitOffset)
+        return builder.create<gloin::PackedSliceBitOffsetOp>(
+            location(), builder.getI64Type(), as_source_value(arguments[0], source_type(type)),
+            mlir::TypeAttr::get(source_type(type)));
     if (kind == MemoryIntrinsic::InitializeSlice) {
         ValueType bytes(CoreType::U8);
         bytes.pointers.push_back({true, false});

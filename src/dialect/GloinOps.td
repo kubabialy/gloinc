@@ -101,6 +101,13 @@ def PackedSliceSelectOp : Gloin_Op<"packed_slice_select"> {
     let hasVerifier = 1;
 }
 
+def PackedSliceBitOffsetOp : Gloin_Op<"packed_slice_bit_offset", [Pure]> {
+    let summary = "Read the normalized starting bit without touching backing bytes";
+    let arguments = (ins AnyType:$base, TypeAttr:$source_type);
+    let results = (outs I64:$offset);
+    let hasVerifier = 1;
+}
+
 // Validate a borrowed byte extent without accessing its backing memory.
 // Error policy/messages are supplied by the Gloin standard-library wrapper.
 def CheckedPackedViewOp : Gloin_Op<"checked_packed_view", [Pure]> {

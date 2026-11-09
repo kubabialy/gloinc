@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1216 tests**:
+The current source definitions and CTest discovery contain **1218 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -20,7 +20,7 @@ The current source definitions and CTest discovery contain **1216 tests**:
 | VariablesTest | 17 |
 | NumericTest | 12 |
 | EndianTest | 7 |
-| PackedTest | 27 |
+| PackedTest | 29 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
 | ControlFlowTest | 12 |
@@ -662,7 +662,7 @@ member access on a function remains an error.
 
 ## Packed memory layouts and exact-width integers (0.3.0)
 
-Twenty-seven `PackedTest` cases cover all native integer widths from 1 through 64,
+Twenty-nine `PackedTest` cases cover all native integer widths from 1 through 64,
 constant conversion bounds across every native/endian width and sign pair,
 recoverable runtime narrowing failures and arithmetic traps, generic arithmetic,
 arrays, and results.
@@ -707,6 +707,10 @@ nine-byte integer footprints, exact and insufficient capacities, empty and
 one-past positions, maximum offsets/counts, error precedence, and no-write
 failures in JIT/native `-O0`/`-O2`. GIR rejects forged writable views from
 read-only bytes.
+Split tests cover all eight starting bits and every boundary of `u3`, `u8`,
+and `u13` views in both orders, endian elements, empty endpoints, maximum
+out-of-range positions, unchanged backing bytes, returned aliases, read-only
+capabilities, private queries and GIR type rejection in JIT/native `-O0`/`-O2`.
 
 The required core gate also runs `run/packed.gloin` in JIT and native modes. It
 exhausts all 65,536 `u13`/`u3` combinations in each bit order and checks six-byte

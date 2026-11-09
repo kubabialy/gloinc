@@ -652,7 +652,8 @@ std::shared_ptr<Type> Sema::check_generic_function_call(const CallExpression *ca
          name == "__memory_place" || name == "__memory_is_aligned" ||
          name == "__memory_slice_unit" || name == "__memory_slice_alignment" ||
          name == "__memory_slice_packed" || name == "__memory_packed_pointer" ||
-         name == "__memory_packed_mut_pointer" || name == "__memory_view_packed"))
+         name == "__memory_packed_mut_pointer" || name == "__memory_view_packed" ||
+         name == "__memory_packed_bit_offset"))
         return check_memory_intrinsic(call, name, argument_names);
     const FunctionDefinition *definition = nullptr;
     if (imported_module) {

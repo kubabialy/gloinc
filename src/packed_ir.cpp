@@ -526,6 +526,16 @@ struct LowerSliceSubrange : PackedPattern<gloin::PackedSliceSubrangeOp> {
     }
 };
 
+struct LowerSliceBitOffset : PackedPattern<gloin::PackedSliceBitOffsetOp> {
+    using PackedPattern::PackedPattern;
+    mlir::LogicalResult matchAndRewrite(gloin::PackedSliceBitOffsetOp op,
+                                        mlir::PatternRewriter &rewriter) const override {
+        rewriter.replaceOpWithNewOp<mlir::LLVM::ExtractValueOp>(op, op.getBase(),
+                                                                llvm::ArrayRef<int64_t>{1});
+        return mlir::success();
+    }
+};
+
 struct LowerSliceSelect : PackedPattern<gloin::PackedSliceSelectOp> {
     using PackedPattern::PackedPattern;
     mlir::LogicalResult matchAndRewrite(gloin::PackedSliceSelectOp op,
@@ -889,11 +899,11 @@ mlir::LogicalResult gloin::PackedArrayLiteralOp::verify() {
 }
 
 void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian) {
-    patterns.add<LowerInitializePackedSlice, LowerCheckedView, LowerSliceFromArray,
-                 LowerSliceSubrange, LowerSliceSelect, LowerLiteral, LowerArrayLiteral,
-                 LowerArrayRepeat, LowerArraySelect, LowerElementLoad, LowerElementStore,
-                 LowerExtract, LowerLoad, LowerStore, LowerAddress>(patterns.getContext(),
-                                                                    little_endian);
+    patterns.add<LowerSliceBitOffset, LowerInitializePackedSlice, LowerCheckedView,
+                 LowerSliceFromArray, LowerSliceSubrange, LowerSliceSelect, LowerLiteral,
+                 LowerArrayLiteral, LowerArrayRepeat, LowerArraySelect, LowerElementLoad,
+                 LowerElementStore, LowerExtract, LowerLoad, LowerStore, LowerAddress>(
+        patterns.getContext(), little_endian);
 }
 
 mlir::LogicalResult gloin::PackedArrayRepeatOp::verify() {
@@ -993,5 +1003,13 @@ mlir::LogicalResult gloin::CheckedPackedViewOp::verify() {
         !matches(getOverflowError(), error) || !matches(getBoundsError(), error))
         return emitOpError(
             "requires matching byte access capability, checked result layout and errors");
+    return mlir::success();
+}
+
+mlir::LogicalResult gloin::PackedSliceBitOffsetOp::verify() {
+    auto slice = mlir::dyn_cast<gloin::GloinPackedSliceType>(getSourceType());
+    if (!slice || (getBase().getType() != slice &&
+                   (is_checked(*this) || getBase().getType() != packed_slice_layout(getContext()))))
+        return emitOpError("requires a matching packed slice descriptor");
     return mlir::success();
 }

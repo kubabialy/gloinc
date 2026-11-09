@@ -91,6 +91,13 @@ unrepresentable extent, then `OUT_OF_RANGE` for position/capacity. Empty views
 may start at an interior bit or exactly one past the buffer; empty buffers allow
 only zero offset/count. Copying the descriptor retains the same borrowed owner.
 
+`split_packed<S>(view: S, index: u64) -> result<PackedSplit<S>>` returns `left`
+and `right` packed views with the same encoding and access capability. An
+out-of-range split returns `OUT_OF_RANGE`; a split whose two nonempty sides
+share a physical boundary byte returns `INVALID`. Splits at either endpoint
+succeed. It changes no backing bytes and proves disjoint footprints only for
+the returned pair, without excluding other aliases or providing synchronization.
+
 `place_at<T>(bytes: [u8], byte_offset: u64, value: T, alignment: u64) -> result<&T>`
 constructs a value in bounded writable storage. It first validates alignment,
 then the remaining byte capacity, then address-offset representability, then

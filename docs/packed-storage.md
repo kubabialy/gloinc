@@ -12,8 +12,8 @@ read-only weakening. `storage_bytes<S>` and `check_slice_alignment<S>` provide
 checked extent and element-storage alignment queries for ordinary and packed
 slices. `view_packed<S>` now constructs bounded integer views over initialized
 byte slices. `alloc_slice<S>` allocates and initializes ordinary or packed integer
-slices with explicit base alignment. Byte-boundary splits, subrange copies, and
-packed-record elements remain pending.
+slices with explicit base alignment. `split_packed<S>` checks byte-disjoint
+partitions. Subrange copies and packed-record elements remain pending.
 The complete contract below also describes these pending operations.
 
 ## Types and representation
@@ -78,12 +78,22 @@ reads are permitted; disjoint-byte accesses may proceed independently, subject
 to valid lifetimes and publication/synchronization. This defines the storage
 boundary for future concurrency support, not a thread runtime or race detector.
 
-Ordinary subranges provide no exclusivity guarantee. A checked partition helper
-must reject a split between two nonempty views unless the split is byte-aligned.
+Ordinary subranges provide no exclusivity guarantee.
+`memory.split_packed<S>(view, index)` returns `result<memory.PackedSplit<S>>` with
+`left` and `right` views. It rejects a split between two nonempty views unless
+the split is byte-aligned.
 For integer stride `W` and initial bit offset `s`, the condition is
 `(s + k * W) % 8 == 0`. Zero-based `u3` and `u13` views can split every eight
 elements. Success proves disjoint footprints of the returned pair only; other
 aliases remain possible. It does not authorize `noalias` metadata.
+`PackedSplit<S>` is an ordinary result carrier, not an exclusivity capability;
+manually constructing one does not establish disjointness.
+The helper preserves encoding, read-only capability and borrowed ownership; it
+reads or writes no backing bytes. Out-of-range positions return `OUT_OF_RANGE`
+before boundary checks; a shared boundary byte returns `INVALID`, both with OS
+error zero. Splits at either end succeed, including for an empty view at an
+interior bit offset. The boundary calculation uses reduced offsets and widths
+so it never computes a potentially overflowing full bit product.
 
 Whole-object copies preserve every representation byte. Packed subrange copies
 preserve bits outside their destination and have overlapping-copy semantics.
@@ -101,6 +111,7 @@ a.alloc_slice<S>(count, fill, alignment)
 memory.place_at<T>(bytes, byte_offset, value, alignment)
 memory.view_packed<S>(bytes, bit_offset, count)
 memory.storage_bytes<S>(count)
+memory.split_packed<S>(view, index)
 ```
 
 `alloc_aligned<T>` returns `result<&T>`. `alloc_slice<S>` takes a complete writable
@@ -173,6 +184,8 @@ ordinary checked result; error payloads come from the Gloin wrapper.
 `gloin.initialize_slice` validates writable raw storage and extent before any
 write, fills the element representation, zeroes packed trailing bits, and only
 then publishes the descriptor. Arena policy and allocation errors remain in Gloin.
+Split validation is Gloin code using existing checked subranges and the private
+`gloin.packed_slice_bit_offset` descriptor query.
 The initial access lowering
 specializes the eight possible bit positions and uses the bounded packed-field
 accesses in each arm. This is a correctness baseline; code-size and access-cost

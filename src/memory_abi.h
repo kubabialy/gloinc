@@ -30,5 +30,6 @@ enum class MemoryIntrinsic {
     SliceAlignment,
     SlicePacked,
     PackedView,
-    InitializeSlice
+    InitializeSlice,
+    PackedBitOffset
 };
