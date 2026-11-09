@@ -17,6 +17,227 @@ std::string errors(const Diagnostics &diagnostics) {
 }
 } // namespace
 
+TEST_F(PackedTest, PackedCopyPreservesOverlapRecordTailsAndFailureAtomicity) {
+    auto path = source(R"(
+        import "@memory";
+        import "@arena";
+        import "@status";
+        def packed struct(msb_first) Item { def x: u3, }
+        def packed struct(msb_first) Empty {}
+        def main() -> i32 {
+            def mut values: packed(msb_first) [u3; 8] = {0, 1, 2, 3, 4, 5, 6, 7};
+            def view: packed(msb_first) [u3] = values[..];
+            def copied: result<void> = memory.copy_packed<packed(msb_first) [u3]>(view[1..], view[..7]);
+            if copied.erroneous { return 1; }
+            if values[0] != 0 || values[1] != 0 || values[2] != 1 || values[7] != 6 { return 2; }
+            def reverse: result<void> = memory.copy_packed<packed(msb_first) [u3]>(view[..7], view[1..]);
+            if reverse.erroneous { return 3; }
+            if values[0] != 0 || values[1] != 1 || values[6] != 6 || values[7] != 6 { return 4; }
+            def mismatch: result<void> = memory.copy_packed<packed(msb_first) [u3]>(view[5..6], view[..2]);
+            if !mismatch.erroneous { return 5; }
+            if mismatch.error.code != status.OUT_OF_RANGE || mismatch.error.os_error != 0 || values[5] != 5 { return 6; }
+            def mut bytes: [u8; 6] = {165, 167, 95, 225, 127, 90};
+            def r: result<packed(lsb_first) [Item]> = memory.view_packed<packed(lsb_first) [Item]>(bytes[1..5], 0, 4);
+            if r.erroneous { return 7; }
+            def records: packed(lsb_first) [Item] = r.value;
+            def moved: result<void> = memory.copy_packed<packed(lsb_first) [Item]>(records[1..], records[..3]);
+            if moved.erroneous { return 8; }
+            if bytes[0] != 165 || bytes[1] != 167 || bytes[2] != 167 || bytes[3] != 95 || bytes[4] != 225 || bytes[5] != 90 { return 9; }
+            def same: result<void> = memory.copy_packed<packed(lsb_first) [Item]>(records, records);
+            if same.erroneous { return 10; }
+            def mut a: arena.GeneralArena = arena.GeneralArena.create(); defer a.free();
+            def e: result<packed(msb_first) [Empty]> = a.alloc_slice<packed(msb_first) [Empty]>(18446744073709551615, Empty {}, 1);
+            if e.erroneous { return 11; }
+            def empty: packed(msb_first) [Empty] = e.value;
+            def zero_copy: result<void> = memory.copy_packed<packed(msb_first) [Empty]>(empty, empty);
+            if zero_copy.erroneous { return 12; }
+            def no_elements: result<void> = memory.copy_packed<packed(msb_first) [u3]>(view[0..0], view[1..1]);
+            if no_elements.erroneous { return 13; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({path}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        auto executable = directory + "/packed-copy";
+        auto built = invoke_raw({mode, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
+TEST_F(PackedTest, PackedCopyMatchesIndependentBitOracleAtGuardPages) {
+    std::string program = "import \"@memory\";\n";
+    std::ostringstream harness, cases;
+    harness << R"(
+        #include <stdint.h>
+        #include <stdlib.h>
+        #include <string.h>
+        #include <sys/mman.h>
+        #include <unistd.h>
+        typedef int32_t (*Copy)(unsigned char *, uint64_t, uint64_t, uint64_t);
+        struct Case { Copy copy; unsigned width, msb, aligned; };
+    )";
+    unsigned id = 0;
+    for (const auto *element : {"u1", "u3", "i13", "u64", "be_u32", "le_u16"}) {
+        auto info = core_type_info(*resolve_core_type(element));
+        for (bool msb : {false, true}) {
+            auto name = "copy_" + std::to_string(id++);
+            auto type =
+                std::string("packed(") + (msb ? "msb_first" : "lsb_first") + ") [" + element + "]";
+            program += "def " + name +
+                       "(p: &[u8; 64], destination: u64, source: u64, count: u64) -> i32 { "
+                       "def d: result<" +
+                       type + "> = memory.view_packed<" + type +
+                       ">((*p)[..], destination, count); "
+                       "if d.erroneous { return 1; } def output: " +
+                       type +
+                       " = d.value; "
+                       "def s: result<" +
+                       type + "> = memory.view_packed<" + type +
+                       ">((*p)[..], source, count); "
+                       "if s.erroneous { return 2; } def input: " +
+                       type +
+                       " = s.value; "
+                       "def copied: result<void> = memory.copy_packed<" +
+                       type +
+                       ">(output, input); "
+                       "if copied.erroneous { return 3; } return 0; }\n";
+            harness << "extern int32_t " << name
+                    << "(unsigned char *, uint64_t, uint64_t, uint64_t);\n";
+            cases << "{" << name << "," << info.bits << "," << msb << ","
+                  << (info.byte_order != ByteOrder::Native) << "},\n";
+        }
+    }
+    harness << "static struct Case cases[] = {\n" << cases.str() << "};\n";
+    harness << R"(
+        void *gloin_process_arguments_push(int64_t argc, void *argv) {
+            static char scope; (void)argc; (void)argv; return &scope;
+        }
+        int32_t gloin_process_arguments_pop(void *scope) { (void)scope; return 0; }
+        // Imported but unused allocation wrappers must never run during a copy.
+        void *gloin_memory_alloc(int64_t bytes, int64_t alignment) { (void)bytes; (void)alignment; abort(); }
+        void gloin_memory_free(void *pointer) { (void)pointer; abort(); }
+        int guard_driver(void) {
+            long page = sysconf(_SC_PAGESIZE);
+            if (page < 64) return 1;
+            unsigned char *pages = mmap(0, page * 3, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            if (pages == MAP_FAILED || mprotect(pages + page, page, PROT_READ | PROT_WRITE)) return 2;
+            uint64_t random = UINT64_C(0x123456789abcdef);
+            for (unsigned c = 0; c < sizeof(cases)/sizeof(cases[0]); ++c) {
+                struct Case test = cases[c];
+                for (unsigned end = 0; end != 2; ++end) {
+                    unsigned char *data = pages + page + (end ? page - 64 : 0);
+                    for (unsigned count = 0; count <= 7; count += count < 1 ? 1 : 2) {
+                        for (unsigned d = 0; d != 8; ++d) for (unsigned s = 0; s != 8; ++s) {
+                            unsigned dst[] = {d, 8 + d, 512 - count * test.width - d};
+                            unsigned src[] = {s, 8 + s, 512 - count * test.width - s};
+                            for (unsigned di = 0; di != 3; ++di) for (unsigned si = 0; si != 3; ++si) {
+                                unsigned destination = dst[di], source = src[si];
+                                if (test.aligned && ((destination | source) % 8)) continue;
+                                unsigned char original[64], expected[64];
+                                for (unsigned i = 0; i != 64; ++i) {
+                                    random ^= random << 13; random ^= random >> 7; random ^= random << 17;
+                                    data[i] = original[i] = expected[i] = (unsigned char)random;
+                                }
+                                for (unsigned bit = 0; bit < count * test.width; ++bit) {
+                                    unsigned input = source + bit, output = destination + bit;
+                                    unsigned shift_in = test.msb ? 7 - input % 8 : input % 8;
+                                    unsigned shift_out = test.msb ? 7 - output % 8 : output % 8;
+                                    unsigned value = (original[input / 8] >> shift_in) & 1;
+                                    expected[output / 8] = (expected[output / 8] & ~(1u << shift_out)) | (value << shift_out);
+                                }
+                                if (test.copy(data, destination, source, count)) return 3;
+                                if (memcmp(data, expected, sizeof(expected))) return 4;
+                            }
+                        }
+                    }
+                }
+            }
+            return munmap(pages, page * 3) ? 5 : 0;
+        }
+    )";
+    auto harness_path = source(harness.str(), "copy-guard.c");
+    auto cc = llvm::sys::findProgramByName("cc");
+    ASSERT_TRUE(static_cast<bool>(cc)) << cc.getError().message();
+    for (auto optimization : {NativeOptimization::O0, NativeOptimization::O2}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(program, "copy-guard.gloin", context,
+                                       CompilationMode::Module, CompilationOutput::LLVM);
+        ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+        mlir::OpBuilder builder(&context);
+        builder.setInsertionPointToEnd(compiled.module->getBody());
+        auto entry = mlir::LLVM::LLVMFunctionType::get(builder.getI32Type(), {});
+        auto driver =
+            builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "guard_driver", entry);
+        auto main = builder.create<mlir::LLVM::LLVMFuncOp>(builder.getUnknownLoc(), "main", entry);
+        builder.setInsertionPointToStart(main.addEntryBlock(builder));
+        auto result =
+            builder.create<mlir::LLVM::CallOp>(builder.getUnknownLoc(), driver, mlir::ValueRange{});
+        builder.create<mlir::LLVM::ReturnOp>(builder.getUnknownLoc(), result.getResults());
+        auto object = directory + "/copy.o";
+        ASSERT_TRUE(emit_native(*compiled.module, object, NativeOutput::Object, optimization,
+                                gloin_test::gloinc, *compiled.diagnostics))
+            << errors(*compiled.diagnostics);
+        auto executable = directory + "/copy-guard";
+        ASSERT_EQ(llvm::sys::ExecuteAndWait(*cc, {*cc, harness_path, object, "-o", executable},
+                                            std::nullopt, {}, 30),
+                  0);
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 0);
+    }
+}
+
+TEST_F(PackedTest, PackedCopyRejectsEncodingChangesReadonlyDestinationsAndForgedGIR) {
+    for (const auto *program :
+         {"def f(a: packed(msb_first) [const u3]) -> result<void> { def copied: result<void> = "
+          "memory.copy_packed<packed(msb_first) [const u3]>(a, a); if copied.erroneous { return "
+          "copied.error; } return; }",
+          "def f(a: packed(msb_first) [u3], b: packed(lsb_first) [u3]) -> result<void> { def "
+          "copied: result<void> = memory.copy_packed<packed(msb_first) [u3]>(a, b); if "
+          "copied.erroneous { return copied.error; } return; }",
+          "def f(a: packed(msb_first) [be_u16], b: packed(msb_first) [le_u16]) -> result<void> { "
+          "def copied: result<void> = memory.copy_packed<packed(msb_first) [be_u16]>(a, b); if "
+          "copied.erroneous { return copied.error; } return; }",
+          "def f(a: [u8]) -> result<void> { def copied: result<void> = memory.copy_packed<[u8]>(a, "
+          "a); if copied.erroneous { return copied.error; } return; }",
+          "def f(a: packed(msb_first) [u3]) -> void { __memory_copy_packed<packed(msb_first) "
+          "[u3]>(a, a); }"}) {
+        auto file = source(std::string("import \"@memory\"; ") + program);
+        auto result = invoke({"--check", file});
+        EXPECT_EQ(result.status, 1) << result.err;
+    }
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        import "@memory";
+        def f(a: packed(msb_first) [u3], b: packed(msb_first) [const u3]) -> result<void> {
+            def copied: result<void> = memory.copy_packed<packed(msb_first) [u3]>(a, b);
+            if copied.erroneous { return copied.error; }
+            return;
+        }
+    )",
+                                   "copy-ir.gloin", context);
+    ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+    gloin::PackedSliceCopyOp copy;
+    compiled.module->walk([&](gloin::PackedSliceCopyOp op) { copy = op; });
+    ASSERT_TRUE(copy);
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    auto destination = mlir::cast<gloin::GloinPackedSliceType>(copy.getSourceType());
+    auto source = copy.getSource().getType();
+    auto readonly =
+        gloin::GloinPackedSliceType::get(&context, destination.getElement(), true, true);
+    copy.setSourceType(readonly);
+    EXPECT_TRUE(mlir::failed(copy.verify()));
+    copy.setSourceType(destination);
+    copy.getDestination().setType(readonly);
+    EXPECT_TRUE(mlir::failed(copy.verify()));
+    copy.getDestination().setType(destination);
+    copy.getSource().setType(
+        gloin::GloinPackedSliceType::get(&context, destination.getElement(), false, true));
+    EXPECT_TRUE(mlir::failed(copy.verify()));
+    copy.getSource().setType(source);
+    EXPECT_TRUE(mlir::succeeded(mlir::verify(*compiled.module)));
+}
+
 TEST_F(PackedTest, PackedRecordElementsPreserveBytesReferencesAndIndependentOrders) {
     auto path = source(R"(
         import "@memory";

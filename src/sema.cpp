@@ -253,6 +253,18 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 }
                 return std::make_shared<SliceType>(get_builtin_type("u8"), slice->read_only);
             }
+            if (current_module && current_module->standard_name == "memory" &&
+                base == "__memory_const_slice") {
+                auto slice = type_arguments.size() == 1
+                                 ? std::dynamic_pointer_cast<SliceType>(
+                                       resolve_type_from_string(type_arguments.front()))
+                                 : nullptr;
+                if (!slice || slice->read_only || slice->bit_order == PackedBitOrder::None) {
+                    log_error("Packed copy requires a writable packed destination slice type");
+                    return nullptr;
+                }
+                return std::make_shared<SliceType>(slice->element, true, slice->bit_order);
+            }
             if (current_module && current_module->standard_name == "arena" &&
                 base == "__memory_slice_element") {
                 auto slice = type_arguments.size() == 1
@@ -657,7 +669,7 @@ std::shared_ptr<Type> Sema::check_generic_function_call(const CallExpression *ca
          name == "__memory_slice_unit" || name == "__memory_slice_alignment" ||
          name == "__memory_slice_packed" || name == "__memory_packed_pointer" ||
          name == "__memory_packed_mut_pointer" || name == "__memory_view_packed" ||
-         name == "__memory_packed_bit_offset"))
+         name == "__memory_packed_bit_offset" || name == "__memory_copy_packed"))
         return check_memory_intrinsic(call, name, argument_names);
     const FunctionDefinition *definition = nullptr;
     if (imported_module) {

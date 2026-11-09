@@ -162,6 +162,18 @@ def pub split_packed<S>(view: S, index: u64) -> result<PackedSplit<S>> {
     return PackedSplit<S> { left: view[..index], right: view[index..] };
 }
 
+// Copy matching packed encodings with snapshot semantics for overlapping views.
+// Only destination element bits change; source capability may be read-only.
+def pub copy_packed<S>(destination: S, source: __memory_const_slice<S>) -> result<void> {
+    if destination.len != source.len {
+        return error("packed copy requires equal element counts", status.OUT_OF_RANGE, 0);
+    }
+
+    __memory_copy_packed<S>(destination, source);
+
+    return;
+}
+
 // Copy a packed representation from the prefix of bytes. No pointer escapes.
 // Packed layouts have alignment one and admit every bit pattern. Protocol
 // validation is the caller's job; native structs/pointers are rejected.

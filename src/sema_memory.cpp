@@ -36,6 +36,26 @@ std::shared_ptr<Type> Sema::check_memory_intrinsic(const CallExpression *call,
         log_error("Invalid raw memory intrinsic type argument");
         return nullptr;
     }
+    if (name == "__memory_copy_packed") {
+        auto slice = std::dynamic_pointer_cast<SliceType>(type);
+        if (!slice || slice->read_only || slice->bit_order == PackedBitOrder::None ||
+            call->arguments.size() != 2) {
+            log_error("Packed copy requires a writable packed destination and matching source");
+            return nullptr;
+        }
+        const std::vector<std::shared_ptr<Type>> parameters{
+            type, std::make_shared<SliceType>(slice->element, true, slice->bit_order)};
+        for (size_t i = 0; i < parameters.size(); ++i) {
+            auto actual = check_typed_expression(call->arguments[i].get(), parameters[i]);
+            if (!actual || !actual->equals(*parameters[i])) {
+                log_error("Packed copy argument encoding or access capability mismatch");
+                return nullptr;
+            }
+        }
+        recording->memory_intrinsics.emplace(
+            call, std::make_pair(MemoryIntrinsic::PackedCopy, *value_type(type)));
+        return get_builtin_type("void");
+    }
     if (name == "__memory_packed_bit_offset") {
         auto slice = std::dynamic_pointer_cast<SliceType>(type);
         if (!slice || slice->bit_order == PackedBitOrder::None || call->arguments.size() != 1) {

@@ -109,6 +109,12 @@ def PackedSliceSelectOp : Gloin_Op<"packed_slice_select"> {
     let hasVerifier = 1;
 }
 
+// Equal-length, same-encoding memmove semantics; boundary bytes are read and written.
+def PackedSliceCopyOp : Gloin_Op<"packed_slice_copy", [MemoryEffects<[MemRead, MemWrite]>]> {
+    let arguments = (ins AnyType:$destination, AnyType:$source, TypeAttr:$source_type);
+    let hasVerifier = 1;
+}
+
 def PackedSliceBitOffsetOp : Gloin_Op<"packed_slice_bit_offset", [Pure]> {
     let summary = "Read the normalized starting bit without touching backing bytes";
     let arguments = (ins AnyType:$base, TypeAttr:$source_type);

@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1223 tests**:
+The current source definitions and CTest discovery contain **1226 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -20,7 +20,7 @@ The current source definitions and CTest discovery contain **1223 tests**:
 | VariablesTest | 17 |
 | NumericTest | 12 |
 | EndianTest | 7 |
-| PackedTest | 32 |
+| PackedTest | 35 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
 | ControlFlowTest | 12 |
@@ -583,7 +583,11 @@ GIR capability rejection. Packed-record element regressions preserve independent
 specified bytes and spare bits through fill, copies, calls, nested arrays,
 references and allocation; they exercise zero-sized full-u64 counts, backed
 one-past references, invalid encoding/capabilities and negative signed bounds
-in JIT/native `-O0`/`-O2`. A lowering regression rejects forged nested nominal
+in JIT/native `-O0`/`-O2`. Packed-copy regressions check forward/backward/self
+overlap, zero-width/full-count copies, no writes on unequal lengths, read-only
+source capability, encoding rejection, record spare bits, and an independent
+bit-at-a-time oracle at both guard-page boundaries for native and qualified
+integers in both orders. A lowering regression rejects forged nested nominal
 element extents in slice initialization and source/layout bridges. Negative
 signed indexing/ranges trap before assignment RHS effects even on huge
 zero-sized slices in JIT/native `-O0`/`-O2`.

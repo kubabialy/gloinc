@@ -99,6 +99,14 @@ share a physical boundary byte returns `INVALID`. Splits at either endpoint
 succeed. It changes no backing bytes and proves disjoint footprints only for
 the returned pair, without excluding other aliases or providing synchronization.
 
+`copy_packed<S>(destination: S, source) -> result<void>` copies equal-length
+packed views of the same encoding. `S` must be writable; the source may be
+read-only. A length mismatch returns `OUT_OF_RANGE` with OS error zero and
+writes nothing. Overlap in either direction is supported, destination boundary
+bits are preserved, and packed records retain spare bytes/bits. Empty and
+zero-width copies access no bytes. This provides no synchronization or ownership
+guarantee.
+
 `place_at<T>(bytes: [u8], byte_offset: u64, value: T, alignment: u64) -> result<&T>`
 constructs a value in bounded writable storage. It first validates alignment,
 then the remaining byte capacity, then address-offset representability, then

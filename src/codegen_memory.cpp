@@ -17,6 +17,15 @@ mlir::Value CodeGen::emit_memory_primitive(MemoryPrimitive kind, mlir::ValueRang
 
 mlir::Value CodeGen::emit_memory_intrinsic(MemoryIntrinsic kind, const ValueType &type,
                                            mlir::ValueRange arguments) {
+    if (kind == MemoryIntrinsic::PackedCopy) {
+        auto source = type;
+        source.slice_read_only = true;
+        builder.create<gloin::PackedSliceCopyOp>(location(),
+                                                 as_source_value(arguments[0], source_type(type)),
+                                                 as_source_value(arguments[1], source_type(source)),
+                                                 mlir::TypeAttr::get(source_type(type)));
+        return {};
+    }
     if (kind == MemoryIntrinsic::PackedBitOffset)
         return builder.create<gloin::PackedSliceBitOffsetOp>(
             location(), builder.getI64Type(), as_source_value(arguments[0], source_type(type)),

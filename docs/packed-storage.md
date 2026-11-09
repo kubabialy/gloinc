@@ -14,9 +14,9 @@ slices. `view_packed<S>` now constructs bounded integer views over initialized
 byte slices. `alloc_slice<S>` allocates and initializes ordinary or packed integer
 slices with explicit base alignment. `split_packed<S>` checks byte-disjoint
 partitions. Packed-record elements now support the same array/slice operations,
-retaining complete record bytes and ordinary element references. Subrange copies
-remain pending.
-The complete contract below also describes these pending operations.
+retaining complete record bytes and ordinary element references.
+`copy_packed<S>` now provides checked overlap-safe subrange copies. Further
+GloinIR optimization and cross-platform validation remain in progress.
 
 ## Types and representation
 
@@ -101,8 +101,15 @@ error zero. Splits at either end succeed, including for an empty view at an
 interior bit offset. The boundary calculation uses reduced offsets and widths
 so it never computes a potentially overflowing full bit product.
 
-Whole-object copies preserve every representation byte. Packed subrange copies
-preserve bits outside their destination and have overlapping-copy semantics.
+Whole-object copies preserve every representation byte.
+`memory.copy_packed<S>(destination, source)` returns `result<void>` and requires
+a writable packed destination type `S` and a matching read-only source encoding
+(writable source views may weaken). Both views must have equal element counts.
+A mismatch returns `OUT_OF_RANGE` with OS error zero before touching bytes.
+Success behaves as if all source element values were captured before any write:
+copying preserves destination boundary bits and works for overlapping views in
+either direction, including different bit offsets. Packed-record elements copy
+every representation byte. Empty and zero-width copies access no backing bytes.
 Schema/encoding changes require explicit value conversion. Copying does not
 grant synchronization or make concurrent overlapping access valid.
 
@@ -118,6 +125,7 @@ memory.place_at<T>(bytes, byte_offset, value, alignment)
 memory.view_packed<S>(bytes, bit_offset, count)
 memory.storage_bytes<S>(count)
 memory.split_packed<S>(view, index)
+memory.copy_packed<S>(destination, source)
 ```
 
 `alloc_aligned<T>` returns `result<&T>`. `alloc_slice<S>` takes a complete writable
@@ -196,6 +204,10 @@ ordinary checked result; error payloads come from the Gloin wrapper.
 `gloin.initialize_slice` validates writable raw storage and extent before any
 write, fills the element representation, zeroes packed trailing bits, and only
 then publishes the descriptor. Arena policy and allocation errors remain in Gloin.
+`gloin.packed_slice_copy` retains matching encodings and read/write effects,
+checks equal counts, then selects traversal direction using byte addresses and
+normalized bit offsets. Each iteration captures the whole source element before
+storing it through the bounded packed access operations.
 Split validation is Gloin code using existing checked subranges and the private
 `gloin.packed_slice_bit_offset` descriptor query.
 The initial access lowering
