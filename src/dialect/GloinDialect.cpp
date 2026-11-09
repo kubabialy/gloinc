@@ -45,10 +45,11 @@ bool is_payloadless_enum_storage(mlir::Type type) {
 gloin::StructDefinitionOp struct_definition(mlir::Operation *operation, mlir::Type source);
 
 bool matches_storage(mlir::Operation *owner, mlir::Type source, mlir::Type storage) {
-    if (mlir::isa<gloin::GloinPackedSliceType>(source))
-        return storage == packed_slice_layout(source.getContext());
+    if (auto slice = mlir::dyn_cast<gloin::GloinPackedSliceType>(source))
+        return packed_element_width(slice.getElement(), owner) &&
+               storage == packed_slice_layout(source.getContext());
     if (auto array = mlir::dyn_cast<gloin::GloinPackedArrayType>(source))
-        return packed_array_layout(array) == storage;
+        return packed_array_layout(array, owner) == storage;
     if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(source))
         return storage.isSignlessInteger(integer_storage_bits(integer.getWidth()));
     if (mlir::isa<gloin::GloinPointerType>(source))
@@ -128,24 +129,26 @@ mlir::LogicalResult gloin::GloinIntegerType::verify(
 mlir::LogicalResult
 GloinPackedArrayType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> error,
                              mlir::Type element, uint64_t length, bool msb_first) {
-    if (!packed_integer_width(element) || length > 1048576)
-        return error() << "requires integer elements and a length no greater than 1048576";
+    if ((!packed_integer_width(element) && !mlir::isa<GloinStructType>(element)) ||
+        length > 1048576)
+        return error() << "requires integer or nominal record elements and a length no greater "
+                          "than 1048576";
     return mlir::success();
 }
 
 mlir::LogicalResult
 GloinPackedSlotType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> error,
                             mlir::Type element, bool msb_first, bool read_only) {
-    if (!packed_integer_width(element))
-        return error() << "requires a packed integer element";
+    if (!packed_integer_width(element) && !mlir::isa<GloinStructType>(element))
+        return error() << "requires an integer or nominal packed record element";
     return mlir::success();
 }
 
 mlir::LogicalResult
 GloinPackedSliceType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> error,
                              mlir::Type element, bool msb_first, bool read_only) {
-    if (!packed_integer_width(element))
-        return error() << "requires a packed integer element";
+    if (!packed_integer_width(element) && !mlir::isa<GloinStructType>(element))
+        return error() << "requires an integer or nominal packed record element";
     return mlir::success();
 }
 
@@ -540,7 +543,7 @@ mlir::LogicalResult StructLiteralOp::verify() {
 
 mlir::LogicalResult ZeroedArrayOp::verify() {
     if (auto packed = mlir::dyn_cast<gloin::GloinPackedArrayType>(getSourceType())) {
-        if (packed_array_layout(packed) != getLayoutType() ||
+        if (packed_array_layout(packed, getOperation()) != getLayoutType() ||
             (getValue().getType() != getSourceType() && getValue().getType() != getLayoutType()))
             return emitOpError("requires the exact packed array byte layout");
         return mlir::success();
@@ -784,7 +787,7 @@ mlir::LogicalResult SliceElementAddressOp::verify() {
 mlir::LogicalResult SliceLengthOp::verify() {
     if (auto packed = mlir::dyn_cast<gloin::GloinPackedSliceType>(getSourceType())) {
         auto module = (*this)->getParentOfType<mlir::ModuleOp>();
-        if (getLayoutType() != packed_slice_layout(getContext()) ||
+        if (!matches_storage(getOperation(), packed, getLayoutType()) ||
             (getBase().getType() != packed && ((module && module->hasAttr("gloin.checked")) ||
                                                getBase().getType() != getLayoutType())))
             return emitOpError("requires a matching packed slice descriptor");

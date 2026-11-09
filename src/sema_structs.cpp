@@ -356,8 +356,11 @@ void Sema::validate_struct_cycles() {
                     return std::nullopt;
                 if (type.is_array()) {
                     if (type.array_order != PackedBitOrder::None) {
-                        const auto &element = core_type_info(type.array_element->scalar);
-                        return ((element.bits * type.array_length + 7) / 8) * 8;
+                        auto element = field_bits(*type.array_element, false);
+                        if (!element ||
+                            (*element && type.array_length > (UINT64_MAX / 8) / *element))
+                            return std::nullopt;
+                        return ((*element * type.array_length + 7) / 8) * 8;
                     }
                     auto element = field_bits(*type.array_element, true);
                     if (!element || (*element && type.array_length > (UINT64_MAX / 8) / *element))

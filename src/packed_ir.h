@@ -6,7 +6,8 @@
 #include <optional>
 
 std::optional<uint64_t> packed_integer_width(mlir::Type type);
-mlir::Type packed_array_layout(gloin::GloinPackedArrayType type);
+std::optional<uint64_t> packed_element_width(mlir::Type type, mlir::Operation *owner);
+mlir::Type packed_array_layout(gloin::GloinPackedArrayType type, mlir::Operation *owner);
 mlir::Type packed_slot_layout(mlir::MLIRContext *context);
 mlir::Type packed_slice_layout(mlir::MLIRContext *context);
 

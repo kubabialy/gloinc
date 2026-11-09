@@ -104,8 +104,9 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
     }
     if (const auto *index = dynamic_cast<const IndexExpression *>(expression)) {
         const auto &container = recording->types.at(index->left.get());
-        if (take_address && (container.array_order != PackedBitOrder::None ||
-                             container.slice_order != PackedBitOrder::None)) {
+        if (take_address && !std::dynamic_pointer_cast<StructType>(type) &&
+            (container.array_order != PackedBitOrder::None ||
+             container.slice_order != PackedBitOrder::None)) {
             log_error("Cannot take an ordinary reference to a packed scalar element");
             return {};
         }

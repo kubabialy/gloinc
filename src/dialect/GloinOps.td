@@ -49,7 +49,7 @@ def PackedAddressOp : Gloin_Op<"packed_address", [Pure]> {
 }
 
 def PackedArrayLiteralOp : Gloin_Op<"packed_array_literal", [Pure]> {
-    let summary = "Encode integer elements into exact packed array bytes";
+    let summary = "Encode elements into exact packed array bytes";
     let arguments = (ins Variadic<AnyType>:$elements, TypeAttr:$source_type,
                          TypeAttr:$layout_type);
     let results = (outs AnyType:$value);
@@ -66,6 +66,14 @@ def PackedArrayRepeatOp : Gloin_Op<"packed_array_repeat", [Pure]> {
 def PackedArraySelectOp : Gloin_Op<"packed_array_select"> {
     let arguments = (ins AnyType:$base, I64:$index, TypeAttr:$source_type, TypeAttr:$slot_type);
     let results = (outs AnyType:$slot);
+    let hasVerifier = 1;
+}
+
+// Only byte-aligned packed records have ordinary element references.
+// Effectful: retain the non-null reference check even for empty records.
+def PackedSlotAddressOp : Gloin_Op<"packed_slot_address"> {
+    let arguments = (ins AnyType:$slot, TypeAttr:$slot_type);
+    let results = (outs AnyType:$address);
     let hasVerifier = 1;
 }
 

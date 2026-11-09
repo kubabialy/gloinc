@@ -72,8 +72,8 @@ target's signed addressable range (currently 64-bit). Invalid requests return
 `storage_bytes<S>(count: u64) -> result<u64>` computes the zero-offset storage
 extent for an ordinary or packed slice type. Ordinary elements use native slot
 sizes; packed integers use their bit widths, rounding only the final extent to
-bytes. Sizes above `INT64_MAX` bytes return `OVERFLOW`, without an intermediate
-arithmetic trap. This query does not allocate or borrow. Empty ordinary element
+bytes; packed records retain their full byte extent, including spare bits. Sizes above `INT64_MAX` bytes return `OVERFLOW`, without an intermediate
+arithmetic trap. This query does not allocate or borrow. Empty ordinary and packed-record element
 types have zero byte extent for every count.
 
 `check_slice_alignment<S>(alignment: u64) -> result<void>` validates a positive
@@ -82,14 +82,15 @@ than `INT64_MAX`. Packed storage has minimum alignment one, independently of
 the slice descriptor's alignment. Invalid requests return `INVALID`.
 
 `view_packed<S>(bytes, bit_offset: u64, count: u64) -> result<S>` borrows initialized
-bytes as a packed integer slice, without reading or writing the backing memory.
+bytes as a packed integer or packed-record slice, without reading or writing the backing memory.
 Writable `S` requires `[u8]`; read-only `S` accepts `[const u8]`. Offset is in
-bits and count in elements. Endian-qualified elements require a byte-aligned
+bits and count in elements. Endian-qualified and packed-record elements require a byte-aligned
 offset, even for an empty view. The complete extent is checked before a view is
 returned. Error precedence is `INVALID` for element alignment, `OVERFLOW` for
 unrepresentable extent, then `OUT_OF_RANGE` for position/capacity. Empty views
 may start at an interior bit or exactly one past the buffer; empty buffers allow
-only zero offset/count. Copying the descriptor retains the same borrowed owner.
+only zero offset/count. Nonempty views of zero-sized packed records require a
+nonempty backing slice, permitting a byte-aligned one-past start. Copying the descriptor retains the same borrowed owner.
 
 `split_packed<S>(view: S, index: u64) -> result<PackedSplit<S>>` returns `left`
 and `right` packed views with the same encoding and access capability. An

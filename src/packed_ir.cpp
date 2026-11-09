@@ -20,8 +20,8 @@ std::optional<uint64_t> packed_integer_width(mlir::Type type) {
     return std::nullopt;
 }
 
-mlir::Type packed_array_layout(gloin::GloinPackedArrayType type) {
-    const auto bits = packed_integer_width(type.getElement());
+mlir::Type packed_array_layout(gloin::GloinPackedArrayType type, mlir::Operation *owner) {
+    const auto bits = packed_element_width(type.getElement(), owner);
     if (!bits || type.getLength() > 1048576)
         return {};
     auto bytes = mlir::LLVM::LLVMArrayType::get(mlir::IntegerType::get(type.getContext(), 8),
@@ -76,7 +76,7 @@ std::optional<Field> field_type(mlir::Operation *op, mlir::Type source, bool arr
     if (depth > 64)
         return std::nullopt;
     if (auto array = mlir::dyn_cast<gloin::GloinPackedArrayType>(source)) {
-        auto layout = packed_array_layout(array);
+        auto layout = packed_array_layout(array, op);
         auto size = layout ? byte_size(layout) : std::nullopt;
         if (!size)
             return std::nullopt;
@@ -432,9 +432,12 @@ struct LowerCheckedView : PackedPattern<gloin::CheckedPackedViewOp> {
                                                           op.getCount(), zero);
         auto tail = rewriter.create<mlir::arith::SelectOp>(loc, empty, zero, rounded_bytes);
         auto remaining_limit = rewriter.create<mlir::arith::SubIOp>(loc, limit, tail);
-        auto maximum = rewriter.create<mlir::arith::DivUIOp>(loc, remaining_limit, width);
-        auto fits = rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ule,
-                                                         whole, maximum);
+        mlir::Value fits = access.constant(rewriter.getI1Type(), 1);
+        if (field.bits) {
+            auto maximum = rewriter.create<mlir::arith::DivUIOp>(loc, remaining_limit, width);
+            fits = rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ule, whole,
+                                                        maximum);
+        }
         // Plain unsigned IR arithmetic may wrap on a failed request; the fits
         // guard prevents publishing its descriptor. No memory is accessed here.
         auto whole_bytes = rewriter.create<mlir::arith::MulIOp>(loc, whole, width);
@@ -452,7 +455,15 @@ struct LowerCheckedView : PackedPattern<gloin::CheckedPackedViewOp> {
         auto position = rewriter.create<mlir::arith::OrIOp>(loc, inside, end_boundary);
         mlir::Value aligned =
             field.byte_aligned ? mlir::Value(bit_zero) : access.constant(rewriter.getI1Type(), 1);
-        auto bounded = rewriter.create<mlir::arith::AndIOp>(loc, position, enough);
+        mlir::Value bounded = rewriter.create<mlir::arith::AndIOp>(loc, position, enough);
+        if (!field.bits) {
+            // Addressable empty records still need a nonempty backing allocation.
+            // Empty byte slices admit only an empty view at their end boundary.
+            auto backed = rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne,
+                                                               capacity, zero);
+            auto permitted = rewriter.create<mlir::arith::OrIOp>(loc, empty, backed);
+            bounded = rewriter.create<mlir::arith::AndIOp>(loc, bounded, permitted);
+        }
         auto representable = rewriter.create<mlir::arith::AndIOp>(loc, fits, aligned);
         auto valid = rewriter.create<mlir::arith::AndIOp>(loc, bounded, representable);
         auto outcome =
@@ -500,7 +511,7 @@ struct LowerSliceFromArray : PackedPattern<gloin::PackedSliceFromArrayOp> {
                                    op.getStartSigned(), op.getEndSigned());
         auto zero = access.constant(rewriter.getI64Type(), 0);
         auto slot = advance_slice(rewriter, op.getLoc(), op.getBase(), zero, op.getStart(),
-                                  *packed_integer_width(type.getElement()));
+                                  *packed_element_width(type.getElement(), op));
         rewriter.replaceOp(op, slice_from_slot(rewriter, op.getLoc(), slot, length));
         return mlir::success();
     }
@@ -520,7 +531,7 @@ struct LowerSliceSubrange : PackedPattern<gloin::PackedSliceSubrangeOp> {
         auto length = packed_range(rewriter, op.getLoc(), op.getStart(), op.getEnd(), capacity,
                                    op.getStartSigned(), op.getEndSigned());
         auto slot = advance_slice(rewriter, op.getLoc(), base, offset, op.getStart(),
-                                  *packed_integer_width(type.getElement()));
+                                  *packed_element_width(type.getElement(), op));
         rewriter.replaceOp(op, slice_from_slot(rewriter, op.getLoc(), slot, length));
         return mlir::success();
     }
@@ -552,7 +563,7 @@ struct LowerSliceSelect : PackedPattern<gloin::PackedSliceSelectOp> {
             op.getLoc(), mlir::arith::CmpIPredicate::ult, op.getIndex(), length);
         rewriter.create<gloin::AssertOp>(op.getLoc(), bounded);
         rewriter.replaceOp(op, advance_slice(rewriter, op.getLoc(), base, offset, op.getIndex(),
-                                             *packed_integer_width(type.getElement())));
+                                             *packed_element_width(type.getElement(), op)));
         return mlir::success();
     }
 };
@@ -609,9 +620,25 @@ struct LowerArraySelect : PackedPattern<gloin::PackedArraySelectOp> {
             op.getLoc(), mlir::arith::CmpIPredicate::ult, op.getIndex(), length);
         rewriter.create<gloin::AssertOp>(op.getLoc(), valid);
         auto width =
-            access.constant(rewriter.getI64Type(), *packed_integer_width(type.getElement()));
+            access.constant(rewriter.getI64Type(), *packed_element_width(type.getElement(), op));
         auto bit = rewriter.create<mlir::arith::MulIOp>(op.getLoc(), op.getIndex(), width);
         rewriter.replaceOp(op, slot_at(rewriter, op.getLoc(), op.getBase(), bit));
+        return mlir::success();
+    }
+};
+
+struct LowerSlotAddress : PackedPattern<gloin::PackedSlotAddressOp> {
+    using PackedPattern::PackedPattern;
+    mlir::LogicalResult matchAndRewrite(gloin::PackedSlotAddressOp op,
+                                        mlir::PatternRewriter &rewriter) const override {
+        auto base = rewriter.create<mlir::LLVM::ExtractValueOp>(op.getLoc(), op.getSlot(),
+                                                                llvm::ArrayRef<int64_t>{0});
+        Access access{rewriter, op.getLoc(), base, little};
+        auto one = access.constant(rewriter.getI64Type(), 1);
+        auto present =
+            rewriter.create<gloin::RawIsAlignedOp>(op.getLoc(), rewriter.getI1Type(), base, one);
+        rewriter.create<gloin::AssertOp>(op.getLoc(), present);
+        rewriter.replaceOp(op, base.getResult());
         return mlir::success();
     }
 };
@@ -653,18 +680,20 @@ struct LowerArrayRepeat : PackedPattern<gloin::PackedArrayRepeatOp> {
         auto one = access.constant(rewriter.getI64Type(), 1);
         auto length = access.constant(rewriter.getI64Type(), type.getLength());
         auto width =
-            access.constant(rewriter.getI64Type(), *packed_integer_width(type.getElement()));
-        auto loop = rewriter.create<mlir::scf::ForOp>(op.getLoc(), zero, length, one);
-        {
-            mlir::OpBuilder::InsertionGuard guard(rewriter);
-            rewriter.setInsertionPointToStart(loop.getBody());
-            auto bit =
-                rewriter.create<mlir::arith::MulIOp>(op.getLoc(), loop.getInductionVar(), width);
-            auto slot = slot_at(rewriter, op.getLoc(), storage, bit);
-            auto slot_type = gloin::GloinPackedSlotType::get(
-                rewriter.getContext(), type.getElement(), type.getMsbFirst(), false);
-            rewriter.create<gloin::PackedElementStoreOp>(op.getLoc(), slot, op.getElement(),
-                                                         mlir::TypeAttr::get(slot_type));
+            access.constant(rewriter.getI64Type(), *packed_element_width(type.getElement(), op));
+        if (*packed_element_width(type.getElement(), op)) {
+            auto loop = rewriter.create<mlir::scf::ForOp>(op.getLoc(), zero, length, one);
+            {
+                mlir::OpBuilder::InsertionGuard guard(rewriter);
+                rewriter.setInsertionPointToStart(loop.getBody());
+                auto bit = rewriter.create<mlir::arith::MulIOp>(op.getLoc(), loop.getInductionVar(),
+                                                                width);
+                auto slot = slot_at(rewriter, op.getLoc(), storage, bit);
+                auto slot_type = gloin::GloinPackedSlotType::get(
+                    rewriter.getContext(), type.getElement(), type.getMsbFirst(), false);
+                rewriter.create<gloin::PackedElementStoreOp>(op.getLoc(), slot, op.getElement(),
+                                                             mlir::TypeAttr::get(slot_type));
+            }
         }
         rewriter.replaceOp(op, access.load(op.getLayoutType(), 0));
         return mlir::success();
@@ -693,10 +722,12 @@ struct LowerInitializePackedSlice : PackedPattern<gloin::InitializeSliceOp> {
         auto tail = rewriter.create<mlir::arith::DivUIOp>(loc, rounded, eight);
         auto budget = rewriter.create<mlir::arith::SubIOp>(
             loc, access.constant(rewriter.getI64Type(), INT64_MAX), tail);
-        auto maximum = rewriter.create<mlir::arith::DivUIOp>(loc, budget, width);
-        rewriter.create<gloin::AssertOp>(
-            loc, rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ule, whole,
-                                                      maximum));
+        if (field.bits) {
+            auto maximum = rewriter.create<mlir::arith::DivUIOp>(loc, budget, width);
+            rewriter.create<gloin::AssertOp>(
+                loc, rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ule,
+                                                          whole, maximum));
+        }
         auto bytes = rewriter.create<mlir::arith::AddIOp>(
             loc, rewriter.create<mlir::arith::MulIOp>(loc, whole, width), tail);
         rewriter.create<gloin::AssertOp>(
@@ -711,24 +742,27 @@ struct LowerInitializePackedSlice : PackedPattern<gloin::InitializeSliceOp> {
         // Establish initialized boundary bytes before any masked element store.
         rewriter.create<mlir::LLVM::MemsetOp>(
             loc, op.getStorage(), access.constant(rewriter.getI8Type(), 0), bytes, false);
-        auto loop = rewriter.create<mlir::scf::WhileOp>(loc, mlir::TypeRange{rewriter.getI64Type()},
-                                                        mlir::ValueRange{zero});
-        {
-            mlir::OpBuilder::InsertionGuard guard(rewriter);
-            auto *before =
-                rewriter.createBlock(&loop.getBefore(), {}, {rewriter.getI64Type()}, {loc});
-            auto more = rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult,
-                                                             before->getArgument(0), op.getCount());
-            rewriter.create<mlir::scf::ConditionOp>(loc, more, before->getArguments());
-            auto *body = rewriter.createBlock(&loop.getAfter(), {}, {rewriter.getI64Type()}, {loc});
-            auto slot = advance_slice(rewriter, loc, op.getStorage(), zero, body->getArgument(0),
-                                      field.bits);
-            auto slot_type = gloin::GloinPackedSlotType::get(op.getContext(), type.getElement(),
-                                                             type.getMsbFirst(), false);
-            rewriter.create<gloin::PackedElementStoreOp>(loc, slot, op.getFill(),
-                                                         mlir::TypeAttr::get(slot_type));
-            auto next = rewriter.create<mlir::arith::AddIOp>(loc, body->getArgument(0), one);
-            rewriter.create<mlir::scf::YieldOp>(loc, next.getResult());
+        if (field.bits) {
+            auto loop = rewriter.create<mlir::scf::WhileOp>(
+                loc, mlir::TypeRange{rewriter.getI64Type()}, mlir::ValueRange{zero});
+            {
+                mlir::OpBuilder::InsertionGuard guard(rewriter);
+                auto *before =
+                    rewriter.createBlock(&loop.getBefore(), {}, {rewriter.getI64Type()}, {loc});
+                auto more = rewriter.create<mlir::arith::CmpIOp>(
+                    loc, mlir::arith::CmpIPredicate::ult, before->getArgument(0), op.getCount());
+                rewriter.create<mlir::scf::ConditionOp>(loc, more, before->getArguments());
+                auto *body =
+                    rewriter.createBlock(&loop.getAfter(), {}, {rewriter.getI64Type()}, {loc});
+                auto slot = advance_slice(rewriter, loc, op.getStorage(), zero,
+                                          body->getArgument(0), field.bits);
+                auto slot_type = gloin::GloinPackedSlotType::get(op.getContext(), type.getElement(),
+                                                                 type.getMsbFirst(), false);
+                rewriter.create<gloin::PackedElementStoreOp>(loc, slot, op.getFill(),
+                                                             mlir::TypeAttr::get(slot_type));
+                auto next = rewriter.create<mlir::arith::AddIOp>(loc, body->getArgument(0), one);
+                rewriter.create<mlir::scf::YieldOp>(loc, next.getResult());
+            }
         }
         rewriter.replaceOp(
             op, slice_from_slot(rewriter, loc,
@@ -780,6 +814,17 @@ struct LowerAddress : PackedPattern<gloin::PackedAddressOp> {
 };
 } // namespace
 
+std::optional<uint64_t> packed_element_width(mlir::Type type, mlir::Operation *owner) {
+    if (auto width = packed_integer_width(type))
+        return width;
+    if (auto record = definition(owner, type)) {
+        auto size = byte_size(record.getLayoutType());
+        if (record->hasAttr("packed_order") && size && *size <= (uint64_t{1} << 28))
+            return *size * 8;
+    }
+    return std::nullopt;
+}
+
 mlir::LogicalResult verify_packed_definition(gloin::StructDefinitionOp op) {
     auto order = op->getAttrOfType<mlir::StringAttr>("packed_order");
     auto offsets = op->getAttrOfType<mlir::DenseI64ArrayAttr>("packed_offsets");
@@ -807,6 +852,8 @@ mlir::LogicalResult verify_packed_definition(gloin::StructDefinitionOp op) {
         if (depth > 64)
             return false;
         if (auto array = mlir::dyn_cast<gloin::GloinArrayType>(source))
+            return acyclic(array.getElement(), depth + 1);
+        if (auto array = mlir::dyn_cast<gloin::GloinPackedArrayType>(source))
             return acyclic(array.getElement(), depth + 1);
         auto nested = definition(op, source);
         if (!nested)
@@ -884,7 +931,7 @@ mlir::LogicalResult gloin::PackedAddressOp::verify() {
 
 mlir::LogicalResult gloin::PackedArrayLiteralOp::verify() {
     auto type = mlir::dyn_cast<gloin::GloinPackedArrayType>(getSourceType());
-    if (!type || packed_array_layout(type) != getLayoutType() ||
+    if (!type || packed_array_layout(type, *this) != getLayoutType() ||
         getElements().size() != type.getLength() ||
         (getValue().getType() != getSourceType() &&
          (is_checked(*this) || getValue().getType() != getLayoutType())))
@@ -899,17 +946,18 @@ mlir::LogicalResult gloin::PackedArrayLiteralOp::verify() {
 }
 
 void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian) {
-    patterns.add<LowerSliceBitOffset, LowerInitializePackedSlice, LowerCheckedView,
-                 LowerSliceFromArray, LowerSliceSubrange, LowerSliceSelect, LowerLiteral,
-                 LowerArrayLiteral, LowerArrayRepeat, LowerArraySelect, LowerElementLoad,
-                 LowerElementStore, LowerExtract, LowerLoad, LowerStore, LowerAddress>(
-        patterns.getContext(), little_endian);
+    patterns
+        .add<LowerSliceBitOffset, LowerInitializePackedSlice, LowerCheckedView, LowerSliceFromArray,
+             LowerSliceSubrange, LowerSliceSelect, LowerLiteral, LowerArrayLiteral,
+             LowerArrayRepeat, LowerArraySelect, LowerSlotAddress, LowerElementLoad,
+             LowerElementStore, LowerExtract, LowerLoad, LowerStore, LowerAddress>(
+            patterns.getContext(), little_endian);
 }
 
 mlir::LogicalResult gloin::PackedArrayRepeatOp::verify() {
     auto type = mlir::dyn_cast<gloin::GloinPackedArrayType>(getSourceType());
     auto field = type ? field_type(*this, type.getElement()) : std::nullopt;
-    if (!type || !field || packed_array_layout(type) != getLayoutType() ||
+    if (!type || !field || packed_array_layout(type, *this) != getLayoutType() ||
         !matches_value(*this, getElement(), *field) ||
         (getValue().getType() != type &&
          (is_checked(*this) || getValue().getType() != getLayoutType())))
@@ -920,12 +968,30 @@ mlir::LogicalResult gloin::PackedArrayRepeatOp::verify() {
 mlir::LogicalResult gloin::PackedArraySelectOp::verify() {
     auto type = mlir::dyn_cast<gloin::GloinPackedArrayType>(getSourceType());
     auto slot = mlir::dyn_cast<gloin::GloinPackedSlotType>(getSlotType());
-    if (!type || !slot || slot.getElement() != type.getElement() ||
-        slot.getMsbFirst() != type.getMsbFirst() ||
+    if (!type || !packed_array_layout(type, *this) || !slot ||
+        slot.getElement() != type.getElement() || slot.getMsbFirst() != type.getMsbFirst() ||
         !matches_address(*this, getBase(), type, !slot.getReadOnly()) ||
         (getSlot().getType() != slot &&
          (is_checked(*this) || getSlot().getType() != packed_slot_layout(getContext()))))
         return emitOpError("requires an array pointer and matching packed element capability");
+    return mlir::success();
+}
+
+mlir::LogicalResult gloin::PackedSlotAddressOp::verify() {
+    auto slot = mlir::dyn_cast<GloinPackedSlotType>(getSlotType());
+    auto field = slot ? field_type(*this, slot.getElement()) : std::nullopt;
+    auto pointer = mlir::dyn_cast<GloinPointerType>(getAddress().getType());
+    bool typed = slot && pointer && !pointer.getNullable() &&
+                 pointer.getPointee() == slot.getElement() &&
+                 (!slot.getReadOnly() || pointer.getReadOnly());
+    bool layout =
+        !is_checked(*this) && mlir::isa<mlir::LLVM::LLVMPointerType>(getAddress().getType());
+    if (!field || !mlir::isa<GloinStructType>(slot.getElement()) || !field->byte_aligned ||
+        (!typed && !layout) ||
+        (getSlot().getType() != slot &&
+         (is_checked(*this) || getSlot().getType() != packed_slot_layout(getContext()))))
+        return emitOpError(
+            "requires a packed record slot and a reference without strengthened access");
     return mlir::success();
 }
 
@@ -951,16 +1017,17 @@ mlir::LogicalResult gloin::PackedElementStoreOp::verify() {
 
 namespace {
 bool matches_slice(mlir::Operation *op, mlir::Value value, gloin::GloinPackedSliceType type) {
-    return type && (value.getType() == type ||
-                    (!is_checked(op) && value.getType() == packed_slice_layout(op->getContext())));
+    return type && packed_element_width(type.getElement(), op) &&
+           (value.getType() == type ||
+            (!is_checked(op) && value.getType() == packed_slice_layout(op->getContext())));
 }
 } // namespace
 
 mlir::LogicalResult gloin::PackedSliceFromArrayOp::verify() {
     auto array = mlir::dyn_cast<gloin::GloinPackedArrayType>(getArrayType());
     auto slice = mlir::dyn_cast<gloin::GloinPackedSliceType>(getSourceType());
-    if (!array || !slice || array.getElement() != slice.getElement() ||
-        array.getMsbFirst() != slice.getMsbFirst() ||
+    if (!array || !packed_array_layout(array, *this) || !slice ||
+        array.getElement() != slice.getElement() || array.getMsbFirst() != slice.getMsbFirst() ||
         !matches_address(*this, getBase(), array, !slice.getReadOnly()) ||
         !matches_slice(*this, getValue(), slice))
         return emitOpError("requires a packed array and matching borrowed slice capability");
@@ -1009,8 +1076,7 @@ mlir::LogicalResult gloin::CheckedPackedViewOp::verify() {
 
 mlir::LogicalResult gloin::PackedSliceBitOffsetOp::verify() {
     auto slice = mlir::dyn_cast<gloin::GloinPackedSliceType>(getSourceType());
-    if (!slice || (getBase().getType() != slice &&
-                   (is_checked(*this) || getBase().getType() != packed_slice_layout(getContext()))))
+    if (!matches_slice(*this, getBase(), slice))
         return emitOpError("requires a matching packed slice descriptor");
     return mlir::success();
 }

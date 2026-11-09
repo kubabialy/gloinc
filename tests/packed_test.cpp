@@ -17,6 +17,166 @@ std::string errors(const Diagnostics &diagnostics) {
 }
 } // namespace
 
+TEST_F(PackedTest, PackedRecordElementsPreserveBytesReferencesAndIndependentOrders) {
+    auto path = source(R"(
+        import "@memory";
+        import "@arena";
+        import "@status";
+        def packed struct(msb_first) Item { def mut tag: be_u16, def mut flag: u3, }
+        def packed struct(lsb_first) Container { def items: packed(lsb_first) [Item; 2], def tail: u3, }
+        def pass(value: packed(lsb_first) [Item; 2]) -> packed(lsb_first) [Item; 2] { return value; }
+        def main() -> i32 {
+            def mut bytes: [u8; 8] = {165, 18, 52, 167, 86, 120, 95, 90};
+            def r: result<packed(lsb_first) [Item]> = memory.view_packed<packed(lsb_first) [Item]>(bytes[1..7], 0, 2);
+            if r.erroneous { return 1; }
+            def view: packed(lsb_first) [Item] = r.value;
+            def readonly: packed(lsb_first) [const Item] = view;
+            def ref: &Item = &view[1];
+            ref.flag = 6;
+            if bytes[6] != 223 || bytes[3] != 167 || readonly[1].flag != 6 { return 2; }
+            def seed: Item = view[0];
+            def mut values: packed(lsb_first) [Item; 2] = {seed; 2};
+            values[1] = view[1];
+            def copied: packed(lsb_first) [Item; 2] = pass(values);
+            def mut out: [u8; 8] = {165; 8};
+            def written: result<&packed(lsb_first) [Item; 2]> = memory.place_at<packed(lsb_first) [Item; 2]>(out[..], 1, copied, 1);
+            if written.erroneous { return 3; }
+            if out[0] != 165 || out[1] != 18 || out[2] != 52 || out[3] != 167 || out[4] != 86 || out[5] != 120 || out[6] != 223 || out[7] != 165 { return 4; }
+            def elem: &Item = &values[0];
+            elem.flag = 1;
+            def sub: packed(lsb_first) [Item] = values[1..];
+            sub[0].flag = 2;
+            if values[0].flag != 1 || values[1].flag != 2 { return 5; }
+            def container: Container = Container { items: copied, tail: 5 };
+            if memory.size_of<Container>() != 7 || container.items[1].flag != 6 { return 6; }
+            def zero: packed(msb_first) [Item; 2] = zeroed;
+            if zero[1].flag != 0 || zero[0].tag != 0 { return 7; }
+            def mut a: arena.GeneralArena = arena.GeneralArena.create(); defer a.free();
+            def allocated: result<packed(msb_first) [Item]> = a.alloc_slice<packed(msb_first) [Item]>(3, seed, 64);
+            if allocated.erroneous { return 8; }
+            def allocated_view: packed(msb_first) [Item] = allocated.value;
+            def bytes_written: result<void> = memory.write_packed<Item>(out[1..4], allocated_view[2]);
+            if bytes_written.erroneous { return 9; }
+            if out[1] != 18 || out[2] != 52 || out[3] != 167 { return 10; }
+            def split: result<memory.PackedSplit<packed(lsb_first) [Item]>> = memory.split_packed<packed(lsb_first) [Item]>(view, 1);
+            if split.erroneous { return 11; }
+            def left: packed(lsb_first) [Item] = split.value.left;
+            left[0].flag = 3;
+            if bytes[3] != 103 || bytes[0] != 165 || bytes[7] != 90 { return 12; }
+            def invalid: result<packed(lsb_first) [Item]> = memory.view_packed<packed(lsb_first) [Item]>(bytes[..], 1, 0);
+            if !invalid.erroneous { return 13; }
+            if invalid.error.code != status.INVALID { return 14; }
+            def short: result<packed(lsb_first) [Item]> = memory.view_packed<packed(lsb_first) [Item]>(bytes[1..6], 0, 2);
+            if !short.erroneous { return 15; }
+            if short.error.code != status.OUT_OF_RANGE { return 16; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({path}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        auto executable = directory + "/record-elements";
+        auto built = invoke_raw({mode, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
+TEST_F(PackedTest, PackedEmptyRecordElementsKeepFullCountsAndBackedReferences) {
+    auto path = source(R"(
+        import "@memory";
+        import "@arena";
+        import "@status";
+        def packed struct(msb_first) Empty {}
+        def fill(calls: &u64) -> Empty { *calls = *calls + 1; return Empty {}; }
+        def main() -> i32 {
+            def mut calls: u64 = 0;
+            def mut a: arena.GeneralArena = arena.GeneralArena.create(); defer a.free();
+            def r: result<packed(msb_first) [Empty]> = a.alloc_slice<packed(msb_first) [Empty]>(18446744073709551615, fill(&calls), 8);
+            if r.erroneous { return 1; }
+            def view: packed(msb_first) [Empty] = r.value;
+            def last: &Empty = &view[18446744073709551614];
+            def tail: packed(msb_first) [Empty] = view[18446744073709551614..];
+            if last != &tail[0] || tail.len != 1 || calls != 1 { return 2; }
+            def parts: result<memory.PackedSplit<packed(msb_first) [Empty]>> = memory.split_packed<packed(msb_first) [Empty]>(view, 18446744073709551614);
+            if parts.erroneous { return 3; }
+            if parts.value.right.len != 1 { return 4; }
+            def fixed: packed(lsb_first) [Empty; 1048576] = {fill(&calls); 1048576};
+            if memory.size_of<packed(lsb_first) [Empty; 1048576]>() != 0 || calls != 2 { return 5; }
+            def mut bytes: [u8; 1] = {165};
+            def raw: result<packed(msb_first) [Empty]> = memory.view_packed<packed(msb_first) [Empty]>(bytes[..], 8, 18446744073709551615);
+            if raw.erroneous { return 6; }
+            def raw_view: packed(msb_first) [Empty] = raw.value;
+            raw_view[18446744073709551614] = Empty {};
+            def p: &Empty = &raw_view[0];
+            if p != &raw_view[18446744073709551614] || bytes[0] != 165 { return 7; }
+            def unbacked: result<packed(msb_first) [Empty]> = memory.view_packed<packed(msb_first) [Empty]>(bytes[0..0], 0, 1);
+            if !unbacked.erroneous { return 8; }
+            if unbacked.error.code != status.OUT_OF_RANGE { return 9; }
+            def empty: result<packed(msb_first) [Empty]> = memory.view_packed<packed(msb_first) [Empty]>(bytes[0..0], 0, 0);
+            if empty.erroneous { return 10; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({path}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        auto executable = directory + "/record-elements";
+        auto built = invoke_raw({mode, "-o", executable, path});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
+TEST_F(PackedTest, PackedRecordElementsRejectInvalidLayoutsAndCapabilities) {
+    const std::string record = "def packed struct(msb_first) P { def mut x: u3, } ";
+    for (const auto *program :
+         {"def f(v: packed(msb_first) [const P]) -> &P { return &v[0]; }",
+          "def f(v: packed(msb_first) [const P]) -> void { v[0].x = 1; }",
+          "def f(v: packed(msb_first) [P]) -> &u3 { return &v[0].x; }",
+          "def made() -> packed(msb_first) [P; 1] { return {P { x: 1 }}; } def f() -> &const P { "
+          "return &made()[0]; }",
+          "def struct Ordinary { def x: u8, } def f(v: packed(msb_first) [Ordinary]) -> void {}",
+          "def packed struct(msb_first) Cycle { def next: packed(msb_first) [Cycle; 1], }"}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(record + program, "record-reject.gloin", context);
+        EXPECT_EQ(compiled.failed_stage, DiagnosticStage::Semantic)
+            << errors(*compiled.diagnostics);
+    }
+    mlir::MLIRContext context;
+    auto compiled = compile_source(record + R"(
+        def f(v: packed(msb_first) [const P]) -> &const P { return &v[0]; }
+        def make() -> packed(msb_first) [P; 2] { return {P { x: 1 }; 2}; }
+    )",
+                                   "record-ir.gloin", context);
+    ASSERT_TRUE(compiled.success()) << errors(*compiled.diagnostics);
+    gloin::PackedSlotAddressOp address;
+    gloin::PackedArrayRepeatOp repeat;
+    compiled.module->walk([&](gloin::PackedSlotAddressOp op) { address = op; });
+    compiled.module->walk([&](gloin::PackedArrayRepeatOp op) { repeat = op; });
+    ASSERT_TRUE(address);
+    ASSERT_TRUE(repeat);
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    auto pointer = mlir::cast<gloin::GloinPointerType>(address.getAddress().getType());
+    address.getAddress().setType(
+        gloin::GloinPointerType::get(&context, pointer.getPointee(), false, false));
+    EXPECT_TRUE(mlir::failed(address.verify()));
+    address.getAddress().setType(pointer);
+    auto layout = repeat.getLayoutType();
+    auto bytes = mlir::LLVM::LLVMArrayType::get(mlir::IntegerType::get(&context, 8), 1);
+    repeat.setLayoutType(mlir::LLVM::LLVMStructType::getLiteral(&context, {bytes}));
+    EXPECT_TRUE(mlir::failed(repeat.verify()));
+    repeat.setLayoutType(layout);
+    gloin::StructDefinitionOp definition;
+    compiled.module->walk([&](gloin::StructDefinitionOp op) { definition = op; });
+    ASSERT_TRUE(definition);
+    auto order = definition->getAttr("packed_order");
+    definition->removeAttr("packed_order");
+    EXPECT_TRUE(mlir::failed(address.verify()));
+    EXPECT_TRUE(mlir::failed(repeat.verify()));
+    definition->setAttr("packed_order", order);
+    EXPECT_TRUE(mlir::succeeded(mlir::verify(*compiled.module)));
+}
+
 TEST_F(PackedTest, PackedArrayIdentityRejectsImplicitRepresentationChanges) {
     for (const auto &types : std::vector<std::pair<std::string, std::string>>{
              {"packed(msb_first) [u3; 3]", "packed(lsb_first) [u3; 3]"},

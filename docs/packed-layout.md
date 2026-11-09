@@ -109,7 +109,10 @@ construction, checked indexing, copies, calls and allocation are supported.
 Scalar elements cannot be borrowed as ordinary pointers or references. Borrowed
 integer views use `packed(msb_first) [u3]` or `[const u3]` with the same qualifier,
 and ranges use the existing `array[start..end]` syntax. `memory.view_packed<S>` borrows bounded initialized byte buffers.
-`arena.GeneralArena.alloc_slice<S>` allocates initialized ordinary or packed integer slices. See
+`arena.GeneralArena.alloc_slice<S>` allocates initialized ordinary or packed slices. Packed-record elements retain
+their full byte extent, including spare bits, independently of the outer array
+order. They admit ordinary element references with alignment one and preserve
+read-only capabilities. `zeroed` accepts packed-record elements. See
 [packed storage](packed-storage.md).
 
 The initial field set excludes ordinary native-layout records, pointers, slices,

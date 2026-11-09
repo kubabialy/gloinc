@@ -10,6 +10,8 @@ bool zeroable_array_element(const std::shared_ptr<Type> &type) {
         return array->length == 0 || zeroable_array_element(array->element);
     if (const auto *pointer = dynamic_cast<const PointerType *>(type.get()))
         return pointer->nullable;
+    if (const auto *record = dynamic_cast<const StructType *>(type.get()))
+        return record->is_packed;
     if (const auto core = resolve_core_type(type->to_string()))
         return *core != CoreType::Void;
     return false;
@@ -171,8 +173,10 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
             }
             auto value = array ? array->element : slice->element;
             auto element = resolve_core_type(value->to_string());
-            if (!element || !core_type_info(*element).is_integer) {
-                log_error("Packed storage currently requires integer elements");
+            auto record = std::dynamic_pointer_cast<StructType>(value);
+            if ((!element || !core_type_info(*element).is_integer) &&
+                (!record || !record->is_packed)) {
+                log_error("Packed storage requires integer or packed record elements");
                 return nullptr;
             }
             if (slice)
@@ -1003,7 +1007,8 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         }
         if (expected_array->length != 0 &&
             !zeroable_array_element(expected_array->element)) {
-            log_error("zeroed requires zeroable elements (not non-null references or structs)");
+            log_error(
+                "zeroed requires zeroable elements (not non-null references or ordinary structs)");
             return nullptr;
         }
         return expected_array;

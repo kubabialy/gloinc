@@ -54,9 +54,7 @@ mlir::Value CodeGen::emit_memory_intrinsic(MemoryIntrinsic kind, const ValueType
     if (slice_query && type.slice_order != PackedBitOrder::None)
         return builder.create<mlir::arith::ConstantIntOp>(
             location(),
-            kind == MemoryIntrinsic::SliceAlignment
-                ? 1
-                : core_type_info(type.slice_element->builtin()).bits,
+            kind == MemoryIntrinsic::SliceAlignment ? 1 : packed_element_bits(*type.slice_element),
             64);
     auto target = native_target_layout();
     if (!target)

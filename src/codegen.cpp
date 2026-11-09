@@ -1490,8 +1490,20 @@ mlir::Value CodeGen::gen_packed_slot(const IndexExpression *expr, bool writing) 
 
 mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_temporary) {
     auto array_type = checked_data->types.at(expr->left.get());
-    if (is_packed_storage(array_type))
-        fail("Packed scalar elements have no ordinary address");
+    if (is_packed_storage(array_type)) {
+        const auto &element =
+            array_type.is_slice() ? *array_type.slice_element : *array_type.array_element;
+        if (!element.structure)
+            fail("Packed scalar elements have no ordinary address");
+        auto slot = gen_packed_slot(expr, false);
+        auto slot_type = mlir::cast<gloin::GloinPackedSlotType>(slot.getType());
+        auto pointer = gloin::GloinPointerType::get(&context, slot_type.getElement(), false,
+                                                    slot_type.getReadOnly());
+        auto address = builder.create<gloin::PackedSlotAddressOp>(location(), pointer, slot,
+                                                                  mlir::TypeAttr::get(slot_type));
+        return builder.create<gloin::ToLayoutOp>(
+            location(), mlir::LLVM::LLVMPointerType::get(&context), address);
+    }
     if (array_type.is_slice()) {
         auto source = source_type(array_type);
         auto base = as_source_value(gen_layout_expression(expr->left.get()), source);
@@ -1807,11 +1819,17 @@ CodeGen::generate_unchecked_for_testing(const std::vector<std::unique_ptr<Statem
     return generate_impl(program);
 }
 
+uint64_t CodeGen::packed_element_bits(const ValueType &type) {
+    if (type.structure)
+        return checked_data->structures.at(*type.structure).byte_size * 8;
+    return core_type_info(type.builtin()).bits;
+}
+
 mlir::Type CodeGen::lower_type(ValueType value_type) {
     if (value_type.is_pointer())
         return mlir::LLVM::LLVMPointerType::get(&context);
     if (value_type.is_array() && value_type.array_order != PackedBitOrder::None) {
-        const auto bits = core_type_info(value_type.array_element->builtin()).bits;
+        const auto bits = packed_element_bits(*value_type.array_element);
         auto bytes = mlir::LLVM::LLVMArrayType::get(builder.getI8Type(),
                                                     (bits * value_type.array_length + 7) / 8);
         return mlir::LLVM::LLVMStructType::getLiteral(&context, {bytes});

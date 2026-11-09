@@ -13,7 +13,9 @@ checked extent and element-storage alignment queries for ordinary and packed
 slices. `view_packed<S>` now constructs bounded integer views over initialized
 byte slices. `alloc_slice<S>` allocates and initializes ordinary or packed integer
 slices with explicit base alignment. `split_packed<S>` checks byte-disjoint
-partitions. Subrange copies and packed-record elements remain pending.
+partitions. Packed-record elements now support the same array/slice operations,
+retaining complete record bytes and ordinary element references. Subrange copies
+remain pending.
 The complete contract below also describes these pending operations.
 
 ## Types and representation
@@ -27,7 +29,8 @@ Native integer elements occupy their declared width in bits, using the existing
 packed-field bit mapping and width-bit two's-complement encoding. Qualified
 integer elements occupy their declared bytes in their own byte order and begin
 on byte boundaries. Packed-record elements retain their whole-byte extent,
-including tail bits. Other element categories require a separate contract.
+including tail bits; their own field/bit order is independent of the array order.
+Other element categories require a separate contract.
 For example, eight `u13` elements occupy 13 bytes; eight `u3` elements occupy
 three. Fixed-array storage has alignment one and rounds its total extent up to
 bytes. Embedded packed arrays begin on byte boundaries and retain that extent.
@@ -57,7 +60,10 @@ Reading an integer yields its declared value type. Writing changes only the
 element's bits and preserves all neighboring bits. Ordinary scalar pointers and
 references cannot represent packed elements: taking their address is rejected,
 including implicit generic borrows. Whole packed arrays and records remain
-addressable. No implicit ordinary/packed slice or bit-order conversion exists.
+addressable. Packed-record elements also admit ordinary references with alignment
+one and the view's write capability; scalar fields within them still cannot be
+borrowed as ordinary scalar references. No implicit ordinary/packed slice or
+bit-order conversion exists.
 
 Views borrow storage. Descriptor copies alias the same owner; they neither
 allocate nor extend its lifetime. A read-only view prohibits writes through that
@@ -124,21 +130,24 @@ Read-only bytes cannot produce a writable view. `storage_bytes<S>` returns
 Its result is bounded by `INT64_MAX` bytes on the supported 64-bit targets.
 Calculation divides the packed count before multiplying, so a full bit count
 larger than `u64` does not spuriously overflow when the byte count fits.
-Zero-sized ordinary elements require zero bytes for every count; this query
-does not itself construct a view or allocate storage. Allocation of zero-sized
-ordinary elements accepts the full `u64` count range and performs no fill loop;
+Zero-sized ordinary and packed-record elements require zero bytes for every
+count; this query does not itself construct a view or allocate storage. Allocation
+of zero-sized elements accepts the full `u64` count range and performs no fill loop;
 the fill argument still evaluates once. Signed indices and range bounds retain
 explicit nonnegative checks even for these large slices. `check_slice_alignment<S>`
 checks the stored elements' minimum alignment (one for packed storage), rather
 than the borrowed descriptor's native alignment.
 
 `view_packed<S>` accepts `[u8]` for writable `S` and `[const u8]` for read-only
-`S` (writable bytes may weaken to read-only). Endian-qualified elements require
-a byte-aligned start, including for empty views. Empty native-integer views may
+`S` (writable bytes may weaken to read-only). Endian-qualified and packed-record
+elements require a byte-aligned start, including for empty views. Empty native-integer views may
 start at an interior bit or exactly one past the byte buffer, but never beyond
 it. Construction reads/writes no backing bytes. Its error precedence is invalid
 element alignment, then unrepresentable extent, then insufficient capacity or
 out-of-range position. An empty byte buffer admits only offset zero/count zero.
+A nonempty view of zero-sized packed records requires a nonempty backing byte
+slice; a byte-aligned one-past start is allowed. This retains non-null backed
+element references without reading or writing bytes.
 
 Alignment arguments are `u64` byte counts, positive powers of two, at least the
 stored type's minimum alignment, and within the target addressable range.
@@ -173,7 +182,10 @@ read and write effects; trapping checks remain effectful.
 Fixed-array indexing uses `gloin.packed_array_select` to check bounds and produce
 an internal `!gloin.packed_slot` with the element's encoding and write capability.
 `gloin.packed_element_load` and `gloin.packed_element_store` consume that location;
-it cannot become an ordinary scalar pointer. Repeated construction uses
+it cannot become an ordinary scalar pointer. `gloin.packed_slot_address` accepts
+only packed-record slots, preserves their access capability, and checks the
+non-null reference contract, including for zero-sized records. Repeated
+construction uses
 `gloin.packed_array_repeat` with one captured fill. Packed slice construction,
 subranges and indexing retain explicit `gloin.packed_slice_from_array`,
 `gloin.packed_slice_subrange` and `gloin.packed_slice_select` operations. Slice

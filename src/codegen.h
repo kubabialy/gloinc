@@ -51,6 +51,7 @@ class CodeGen {
     mlir::ModuleOp generate_impl(const std::vector<std::unique_ptr<Statement>> &program);
     void initialize_unchecked_types();
     mlir::Type lower_type(ValueType type);
+    uint64_t packed_element_bits(const ValueType &type);
     mlir::Type source_type(ValueType type);
     gloin::GloinIntegerType integer_type(CoreType type);
     mlir::Value as_source_value(mlir::Value layout, mlir::Type source);

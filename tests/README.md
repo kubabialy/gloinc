@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1219 tests**:
+The current source definitions and CTest discovery contain **1223 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -20,7 +20,7 @@ The current source definitions and CTest discovery contain **1219 tests**:
 | VariablesTest | 17 |
 | NumericTest | 12 |
 | EndianTest | 7 |
-| PackedTest | 29 |
+| PackedTest | 32 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
 | ControlFlowTest | 12 |
@@ -38,7 +38,7 @@ The current source definitions and CTest discovery contain **1219 tests**:
 | ResultTest | 11 |
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
-| ArenaTest | 27 |
+| ArenaTest | 28 |
 | ArenaRuntimeTest | 14 |
 | AsyncTest | 2 |
 | ArrayStringTest | 4 |
@@ -579,7 +579,11 @@ Slice-allocation regressions check exact native/endian/compact bytes and zeroed
 packed tails, requested base alignment, empty and full-u64 zero-sized views,
 read-only aliases, nested ordinary values, captured fill effects, recoverable
 allocation failure, no allocation on invalid requests, private intrinsics and
-GIR capability rejection. A lowering regression rejects forged nested nominal
+GIR capability rejection. Packed-record element regressions preserve independently
+specified bytes and spare bits through fill, copies, calls, nested arrays,
+references and allocation; they exercise zero-sized full-u64 counts, backed
+one-past references, invalid encoding/capabilities and negative signed bounds
+in JIT/native `-O0`/`-O2`. A lowering regression rejects forged nested nominal
 element extents in slice initialization and source/layout bridges. Negative
 signed indexing/ranges trap before assignment RHS effects even on huge
 zero-sized slices in JIT/native `-O0`/`-O2`.

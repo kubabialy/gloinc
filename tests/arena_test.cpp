@@ -567,6 +567,40 @@ TEST_F(ArenaTest, HugeZeroSizedSlicesRejectNegativeSignedIndicesAndBounds) {
     }
 }
 
+TEST_F(ArenaTest, HugePackedEmptyRecordsRejectNegativeSignedIndicesAndBounds) {
+    for (const auto *expression :
+         {"def item: Empty = view[negative];", "view[negative] = effect();",
+          "def part: packed(msb_first) [Empty] = view[negative..];",
+          "def part: packed(msb_first) [Empty] = view[0..negative];"}) {
+        auto file = program(std::string(R"(
+            def r: result<packed(msb_first) [Empty]> = a.alloc_slice<packed(msb_first) [Empty]>(18446744073709551615, Empty {}, 1);
+            if r.erroneous { return 1; }
+            def view: packed(msb_first) [Empty] = r.value;
+            def negative: i64 = -2;
+        )") + expression + " return 0;",
+                            R"(
+            import "@std";
+            def packed struct(msb_first) Empty {}
+            def effect() -> Empty { std.println("unexpected RHS"); return Empty {}; }
+        )");
+        auto result = invoke({file});
+        EXPECT_LT(result.status, 0) << result.err;
+        EXPECT_TRUE(result.out.empty());
+        for (const auto *mode : {"-O0", "-O2"}) {
+            auto executable = directory + "/negative-empty-slice";
+            auto built = invoke_raw({mode, "-o", executable, file});
+            ASSERT_EQ(built.status, 0) << built.err;
+            const auto output = directory + "/trap.out";
+            const std::optional<llvm::StringRef> redirects[] = {llvm::StringRef(""), output,
+                                                                llvm::StringRef("")};
+            EXPECT_LT(
+                llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects, 10),
+                0);
+            EXPECT_TRUE(read(output).empty());
+        }
+    }
+}
+
 TEST_F(ArenaTest, InvalidSliceRequestsNeverAllocateAndGIRRejectsForgedCapabilities) {
     auto library_text = library();
     const std::string allocation =
