@@ -996,11 +996,12 @@ mlir::LogicalResult gloin::CheckedPackedViewOp::verify() {
     auto error = gloin::GloinErrorType::get(getContext());
     auto matches = [&](mlir::Value value, mlir::Type source) {
         return value.getType() == source ||
-               (!is_checked(*this) && gloin::matchesSourceStorage(source, value.getType()));
+               (!is_checked(*this) && gloin::matchesSourceStorage(*this, source, value.getType()));
     };
-    if (!gloin::matchesSourceStorage(result, getLayoutType()) || !matches(getValue(), result) ||
-        !matches(getBytes(), bytes) || !matches(getInvalidError(), error) ||
-        !matches(getOverflowError(), error) || !matches(getBoundsError(), error))
+    if (!gloin::matchesSourceStorage(*this, result, getLayoutType()) ||
+        !matches(getValue(), result) || !matches(getBytes(), bytes) ||
+        !matches(getInvalidError(), error) || !matches(getOverflowError(), error) ||
+        !matches(getBoundsError(), error))
         return emitOpError(
             "requires matching byte access capability, checked result layout and errors");
     return mlir::success();

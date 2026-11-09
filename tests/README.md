@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1218 tests**:
+The current source definitions and CTest discovery contain **1219 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -26,7 +26,7 @@ The current source definitions and CTest discovery contain **1218 tests**:
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
 | SelectionTest | 7 |
-| LoweringTest | 84 |
+| LoweringTest | 85 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -579,8 +579,10 @@ Slice-allocation regressions check exact native/endian/compact bytes and zeroed
 packed tails, requested base alignment, empty and full-u64 zero-sized views,
 read-only aliases, nested ordinary values, captured fill effects, recoverable
 allocation failure, no allocation on invalid requests, private intrinsics and
-GIR capability rejection. Negative signed indexing/ranges trap before assignment
-RHS effects even on huge zero-sized slices in JIT/native `-O0`/`-O2`.
+GIR capability rejection. A lowering regression rejects forged nested nominal
+element extents in slice initialization and source/layout bridges. Negative
+signed indexing/ranges trap before assignment RHS effects even on huge
+zero-sized slices in JIT/native `-O0`/`-O2`.
 
 Fourteen independent `ArenaRuntimeTest` cases exercise the actual native allocator,
 including alignment through 64 KiB, mixed-size object contents across growth,

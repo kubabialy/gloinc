@@ -233,6 +233,12 @@ operations in checked high-level IR. This cleanup retains `func`, `arith`,
 and `cf` for generic MLIR machinery; the current result operations already
 have typed GloinIR representation and verification.
 
+Storage compatibility checks resolve nominal aggregate layouts in the owning
+module, including aggregates nested inside arrays and results. A nonopaque LLVM
+struct with the wrong extent is not a valid substitute for the declared schema;
+source/layout bridges, allocation initialization and layout signatures retain
+this check.
+
 ## One conversion pipeline
 
 [lowering.cpp](../src/lowering.cpp) owns the only conversion pass list:

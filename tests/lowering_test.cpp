@@ -56,6 +56,49 @@ mlir::OwningOpRef<mlir::ModuleOp> parse(mlir::MLIRContext &context, llvm::String
 }
 } // namespace
 
+TEST(LoweringTest, NominalAggregateStorageRejectsForgedElementExtents) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        import "@arena";
+        def struct Item { def value: u64, }
+        def main() -> i32 {
+            def mut a: arena.GeneralArena = arena.GeneralArena.create(); defer a.free();
+            def seed: [Item; 2] = {Item { value: 7 }; 2};
+            def r: result<[[Item; 2]]> = a.alloc_slice<[[Item; 2]]>(1, seed, 8);
+            if r.erroneous { return 1; }
+            return 0;
+        }
+    )",
+                                   "nominal-storage.gloin", context);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+    gloin::InitializeSliceOp initialized;
+    gloin::ToLayoutOp bridge;
+    compiled.module->walk([&](gloin::InitializeSliceOp op) { initialized = op; });
+    compiled.module->walk([&](gloin::ToLayoutOp op) {
+        auto array = mlir::dyn_cast<gloin::GloinArrayType>(op.getSourceValue().getType());
+        if (array && mlir::isa<gloin::GloinStructType>(array.getElement()))
+            bridge = op;
+    });
+    ASSERT_TRUE(initialized);
+    ASSERT_TRUE(bridge);
+    auto actual = initialized.getElementType();
+    auto array = mlir::cast<mlir::LLVM::LLVMArrayType>(actual);
+    auto empty = mlir::LLVM::LLVMStructType::getLiteral(&context, {});
+    auto forged = mlir::LLVM::LLVMArrayType::get(empty, array.getNumElements());
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    initialized.setElementType(forged);
+    EXPECT_TRUE(mlir::failed(initialized.verify()));
+    initialized.setElementType(actual);
+    EXPECT_TRUE(mlir::succeeded(initialized.verify()));
+    auto bridge_layout = bridge.getValue().getType();
+    bridge.getValue().setType(forged);
+    EXPECT_TRUE(mlir::failed(bridge.verify()));
+    bridge.getValue().setType(bridge_layout);
+    EXPECT_TRUE(mlir::succeeded(bridge.verify()));
+    EXPECT_TRUE(mlir::succeeded(mlir::verify(*compiled.module)));
+}
+
 TEST(LoweringTest, CompilerOffersVerifiedHighLevelAndLLVMOutput) {
     mlir::MLIRContext context;
     auto high = compile_source("def main() -> i32 { return 42; }", "answer.gloin", context);

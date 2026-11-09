@@ -1860,7 +1860,7 @@ bool check_legality(mlir::ModuleOp module, bool final) {
             }
             auto check_entry = [&](mlir::Type source, mlir::Attribute attribute) {
                 auto layout = mlir::dyn_cast<mlir::TypeAttr>(attribute);
-                if (!layout || !gloin::matchesSourceStorage(source, layout.getValue()) ||
+                if (!layout || !gloin::matchesSourceStorage(function, source, layout.getValue()) ||
                     !mlir::LLVM::isCompatibleType(layout.getValue())) {
                     function.emitOpError("source type disagrees with its checked layout signature");
                     valid = false;

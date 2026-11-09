@@ -23,8 +23,8 @@
 #include "src/dialect/GloinOps.h.inc"
 
 namespace gloin {
-// Check that a source value has the stated LLVM-compatible storage layout.
-bool matchesSourceStorage(mlir::Type source, mlir::Type storage);
+// Check exact LLVM-compatible storage, resolving nominal schemas in the owner module.
+bool matchesSourceStorage(mlir::Operation *owner, mlir::Type source, mlir::Type storage);
 // Permit identity or loss of outer pointer/slice capabilities only. Nested
 // pointee/element types retain their exact source identity.
 bool canWeakenSourceValue(mlir::Type actual, mlir::Type requested);
