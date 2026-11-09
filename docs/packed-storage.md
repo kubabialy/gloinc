@@ -213,7 +213,9 @@ Split validation is Gloin code using existing checked subranges and the private
 The initial access lowering
 specializes the eight possible bit positions and uses the bounded packed-field
 accesses in each arm. This is a correctness baseline; code-size and access-cost
-measurements and further GIR optimization remain pending.
+measurements and further GIR optimization remain pending. The
+[packed indexing benchmark](packed-storage-benchmark.md) defines the saved-compiler
+comparison and independent output checks.
 
 Constant indices and static widths/orders allow address folding. Sequential
 loops can advance byte/bit cursors and specialize repeating bit positions.
