@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1226 tests**:
+The current source definitions and CTest discovery contain **1229 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -20,13 +20,13 @@ The current source definitions and CTest discovery contain **1226 tests**:
 | VariablesTest | 17 |
 | NumericTest | 12 |
 | EndianTest | 7 |
-| PackedTest | 35 |
+| PackedTest | 36 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
 | SelectionTest | 7 |
-| LoweringTest | 85 |
+| LoweringTest | 87 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -587,7 +587,11 @@ in JIT/native `-O0`/`-O2`. Packed-copy regressions check forward/backward/self
 overlap, zero-width/full-count copies, no writes on unequal lengths, read-only
 source capability, encoding rejection, record spare bits, and an independent
 bit-at-a-time oracle at both guard-page boundaries for native and qualified
-integers in both orders. A lowering regression rejects forged nested nominal
+integers in both orders. Packed indexing proofs cover exact descriptor snapshots
+and fixed-array extents, retain guards after aliased index/descriptor changes,
+and keep read-only element loads fresh across writes. Guard-page copy oracles
+also exercise bounded dynamic reads across one through eight containing bytes.
+A lowering regression rejects forged nested nominal
 element extents in slice initialization and source/layout bridges. Negative
 signed indexing/ranges trap before assignment RHS effects even on huge
 zero-sized slices in JIT/native `-O0`/`-O2`.

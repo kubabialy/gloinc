@@ -1,4 +1,5 @@
 #include "packed_ir.h"
+#include "gir_range_proofs.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -282,8 +283,9 @@ mlir::Value temporary(mlir::PatternRewriter &rewriter, mlir::Location loc, mlir:
 
 template <typename Op> struct PackedPattern : mlir::OpRewritePattern<Op> {
     bool little;
-    PackedPattern(mlir::MLIRContext *context, bool little)
-        : mlir::OpRewritePattern<Op>(context), little(little) {}
+    const GloinRangeProofs &proofs;
+    PackedPattern(mlir::MLIRContext *context, bool little, const GloinRangeProofs &proofs)
+        : mlir::OpRewritePattern<Op>(context), little(little), proofs(proofs) {}
 };
 
 struct LowerLiteral : PackedPattern<gloin::PackedLiteralOp> {
@@ -353,6 +355,13 @@ mlir::Value slot_at(mlir::PatternRewriter &rewriter, mlir::Location loc, mlir::V
 mlir::Value advance_slice(mlir::PatternRewriter &rewriter, mlir::Location loc, mlir::Value base,
                           mlir::Value offset, mlir::Value index, uint64_t bits) {
     Access access{rewriter, loc, base, true};
+    if (bits % 8 == 0) {
+        // The checked view's byte extent proves this product representable;
+        // whole-byte strides leave the normalized starting bit unchanged.
+        auto stride = access.constant(rewriter.getI64Type(), bits / 8);
+        auto byte = rewriter.create<mlir::arith::MulIOp>(loc, index, stride);
+        return slot_position(rewriter, loc, base, byte, offset);
+    }
     auto eight = access.constant(rewriter.getI64Type(), 8);
     auto width = access.constant(rewriter.getI64Type(), bits);
     auto whole = rewriter.create<mlir::arith::DivUIOp>(loc, index, eight);
@@ -561,12 +570,67 @@ struct LowerSliceSelect : PackedPattern<gloin::PackedSliceSelectOp> {
         nonnegative_bound(rewriter, op.getLoc(), op.getIndex(), op.getIndexSigned());
         auto bounded = rewriter.create<mlir::arith::CmpIOp>(
             op.getLoc(), mlir::arith::CmpIPredicate::ult, op.getIndex(), length);
-        rewriter.create<gloin::AssertOp>(op.getLoc(), bounded);
+        if (!proofs.bounds.contains(op))
+            rewriter.create<gloin::AssertOp>(op.getLoc(), bounded);
         rewriter.replaceOp(op, advance_slice(rewriter, op.getLoc(), base, offset, op.getIndex(),
                                              *packed_element_width(type.getElement(), op)));
         return mlir::success();
     }
 };
+
+// Native fields up to 56 bits fit in a machine-sized window even at bit seven.
+// Read the guaranteed prefix in bounded power-of-two chunks, and read the last
+// byte only when it belongs to this element. No speculative neighboring load.
+mlir::Value read_dynamic_slot(Access &access, const Field &field, mlir::Value offset) {
+    auto &rewriter = access.rewriter;
+    auto loc = access.loc;
+    auto prefix_bytes = (field.bits + 7) / 8;
+    auto window_bits = (prefix_bytes + 1) * 8;
+    auto window = rewriter.getIntegerType(integer_storage_bits(window_bits));
+    mlir::Value value = access.constant(window, 0);
+    for (uint64_t done = 0; done < prefix_bytes;) {
+        auto bytes = std::bit_floor(prefix_bytes - done);
+        auto chunk = access.order(access.load(rewriter.getIntegerType(bytes * 8), done), field.msb);
+        auto part = access.resize(chunk, window);
+        auto shift = field.msb ? window_bits - (done + bytes) * 8 : done * 8;
+        part = rewriter.create<mlir::arith::ShLIOp>(loc, part, access.constant(window, shift));
+        value = rewriter.create<mlir::arith::OrIOp>(loc, value, part);
+        done += bytes;
+    }
+    auto end = rewriter.create<mlir::arith::AddIOp>(loc, offset,
+                                                    access.constant(offset.getType(), field.bits));
+    auto crosses =
+        rewriter.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ugt, end,
+                                             access.constant(offset.getType(), prefix_bytes * 8));
+    auto last =
+        rewriter.create<mlir::scf::IfOp>(loc, mlir::TypeRange{rewriter.getI8Type()}, crosses, true);
+    {
+        mlir::OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointToStart(&last.getThenRegion().front());
+        rewriter.create<mlir::scf::YieldOp>(loc, access.load(rewriter.getI8Type(), prefix_bytes));
+        rewriter.setInsertionPointToStart(&last.getElseRegion().front());
+        rewriter.create<mlir::scf::YieldOp>(loc, access.constant(rewriter.getI8Type(), 0));
+    }
+    auto extra = access.resize(last.getResult(0), window);
+    if (!field.msb)
+        extra = rewriter.create<mlir::arith::ShLIOp>(loc, extra,
+                                                     access.constant(window, prefix_bytes * 8));
+    value = rewriter.create<mlir::arith::OrIOp>(loc, value, extra);
+    mlir::Value shift = offset;
+    if (field.msb)
+        shift = rewriter.create<mlir::arith::SubIOp>(
+            loc, access.constant(offset.getType(), window_bits - field.bits), offset);
+    value = rewriter.create<mlir::arith::ShRUIOp>(loc, value, access.resize(shift, window));
+    value = rewriter.create<mlir::arith::AndIOp>(
+        loc, value, access.constant(window, Access::low_mask(field.bits)));
+    value = access.resize(value, field.layout);
+    if (field.is_signed && field.bits < mlir::cast<mlir::IntegerType>(field.layout).getWidth()) {
+        auto narrow =
+            rewriter.create<mlir::arith::TruncIOp>(loc, rewriter.getIntegerType(field.bits), value);
+        value = rewriter.create<mlir::arith::ExtSIOp>(loc, field.layout, narrow);
+    }
+    return value;
+}
 
 // Specialize the eight possible bit positions. Each arm reuses the verified
 // bounded field accesses: no arm reads or writes outside its containing bytes.
@@ -587,6 +651,8 @@ mlir::Value access_slot(mlir::Operation *op, mlir::PatternRewriter &rewriter, ml
         }
         return access.read(field);
     }
+    if (!stored && field.bits <= 56)
+        return read_dynamic_slot(access, field, offset);
     auto index = rewriter.create<mlir::arith::IndexCastOp>(loc, rewriter.getIndexType(), offset);
     auto select = rewriter.create<mlir::scf::IndexSwitchOp>(
         loc, stored ? mlir::TypeRange{} : mlir::TypeRange{field.layout}, index,
@@ -687,7 +753,8 @@ struct LowerArraySelect : PackedPattern<gloin::PackedArraySelectOp> {
         auto length = access.constant(rewriter.getI64Type(), type.getLength());
         auto valid = rewriter.create<mlir::arith::CmpIOp>(
             op.getLoc(), mlir::arith::CmpIPredicate::ult, op.getIndex(), length);
-        rewriter.create<gloin::AssertOp>(op.getLoc(), valid);
+        if (!proofs.bounds.contains(op))
+            rewriter.create<gloin::AssertOp>(op.getLoc(), valid);
         auto width =
             access.constant(rewriter.getI64Type(), *packed_element_width(type.getElement(), op));
         auto bit = rewriter.create<mlir::arith::MulIOp>(op.getLoc(), op.getIndex(), width);
@@ -1014,12 +1081,13 @@ mlir::LogicalResult gloin::PackedArrayLiteralOp::verify() {
     return mlir::success();
 }
 
-void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian) {
+void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian,
+                              const GloinRangeProofs &proofs) {
     patterns.add<LowerSliceCopy, LowerSliceBitOffset, LowerInitializePackedSlice, LowerCheckedView,
                  LowerSliceFromArray, LowerSliceSubrange, LowerSliceSelect, LowerLiteral,
                  LowerArrayLiteral, LowerArrayRepeat, LowerArraySelect, LowerSlotAddress,
                  LowerElementLoad, LowerElementStore, LowerExtract, LowerLoad, LowerStore,
-                 LowerAddress>(patterns.getContext(), little_endian);
+                 LowerAddress>(patterns.getContext(), little_endian, proofs);
 }
 
 mlir::LogicalResult gloin::PackedArrayRepeatOp::verify() {

@@ -16,7 +16,8 @@ slices with explicit base alignment. `split_packed<S>` checks byte-disjoint
 partitions. Packed-record elements now support the same array/slice operations,
 retaining complete record bytes and ordinary element references.
 `copy_packed<S>` now provides checked overlap-safe subrange copies. Further
-GloinIR optimization and cross-platform validation remain in progress.
+GloinIR bounds proofs and bounded dynamic reads are implemented and measured
+on macOS ARM64; cross-platform validation remains in progress.
 
 ## Types and representation
 
@@ -210,11 +211,20 @@ normalized bit offsets. Each iteration captures the whole source element before
 storing it through the bounded packed access operations.
 Split validation is Gloin code using existing checked subranges and the private
 `gloin.packed_slice_bit_offset` descriptor query.
-The initial access lowering
-specializes the eight possible bit positions and uses the bounded packed-field
-accesses in each arm. This is a correctness baseline; code-size and access-cost
-measurements and further GIR optimization remain pending. The
-[packed indexing benchmark](packed-storage-benchmark.md) defines the saved-compiler
+Native integer reads up to 56 bits use a machine-sized window: the guaranteed
+prefix is read in bounded chunks and one final byte is read only if the element
+crosses into it. Wider reads and masked stores retain specialization over the
+eight possible bit positions. Byte-aligned qualified integers and records use
+their direct bounded accesses. Whole-byte strides use byte multiplication;
+nonbyte strides retain division before multiplication to avoid bit-count overflow.
+
+The existing GloinIR promotion handles packed descriptors only when their stack
+slots have exact loads/stores and no escaping address. Bounds proofs apply to
+that exact SSA descriptor and index, or to a fixed array's static extent. They
+remain internal transient proofs invalidated on rewritten or erased operations;
+textual IR cannot request unchecked accesses. Signed nonnegative guards remain
+independent of unsigned upper-bound proofs. See the
+[packed indexing benchmark](packed-storage-benchmark.md) for the saved-compiler
 comparison and independent output checks.
 
 Constant indices and static widths/orders allow address folding. Sequential

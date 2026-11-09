@@ -233,6 +233,14 @@ operations in checked high-level IR. This cleanup retains `func`, `arith`,
 and `cf` for generic MLIR machinery; the current result operations already
 have typed GloinIR representation and verification.
 
+Packed array and slice selectors consume the same transient bounds proofs as
+ordinary selectors. Packed descriptors participate in exact-load/store SSA
+promotion; address-taking still blocks it. A proven unsigned upper bound does
+not remove a signed nonnegative guard. Native packed integer reads up to 56 bits
+use bounded prefix loads and a conditional final byte, preserving the precise
+footprint at every bit position; wider reads and writes retain static bit-position
+specialization.
+
 Storage compatibility checks resolve nominal aggregate layouts in the owning
 module, including aggregates nested inside arrays and results. A nonopaque LLVM
 struct with the wrong extent is not a valid substitute for the declared schema;

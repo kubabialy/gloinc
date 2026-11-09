@@ -1794,7 +1794,7 @@ struct LowerGloinCorePass
         } listener(proofs);
         mlir::RewritePatternSet patterns(&getContext());
         populate_selection_lowering(patterns);
-        populate_packed_lowering(patterns, data_layout->isLittleEndian());
+        populate_packed_lowering(patterns, data_layout->isLittleEndian(), proofs);
         patterns.add<LowerCheckedIntegerBinary, LowerArrayElementAddress,
                      LowerSliceElementAddress>(&getContext(), proofs);
         patterns.add<LowerInitializeSlice>(&getContext());

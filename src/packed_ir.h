@@ -12,6 +12,8 @@ mlir::Type packed_slot_layout(mlir::MLIRContext *context);
 mlir::Type packed_slice_layout(mlir::MLIRContext *context);
 
 mlir::LogicalResult verify_packed_definition(gloin::StructDefinitionOp definition);
-void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian);
+struct GloinRangeProofs;
+void populate_packed_lowering(mlir::RewritePatternSet &patterns, bool little_endian,
+                              const GloinRangeProofs &proofs);
 
 #endif

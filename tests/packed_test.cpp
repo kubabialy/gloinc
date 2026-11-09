@@ -17,6 +17,31 @@ std::string errors(const Diagnostics &diagnostics) {
 }
 } // namespace
 
+TEST_F(PackedTest, PackedProofsRetainTrapsAfterAliasedIndexDescriptorAndValueMutation) {
+    for (const auto *body :
+         {"def mut index: u64 = 0; if index < view.len { change(&index, view.len); view[index]; }",
+          "def mut borrowed: packed(msb_first) [const u3] = view; if borrowed.len > 0 { "
+          "shrink(&borrowed); borrowed[0]; }",
+          "def readonly: packed(msb_first) [const u3] = view; if readonly[0] < 2 { view[0] = 7; "
+          "readonly[0] * 2; }"}) {
+        auto file = source(std::string(R"(
+            def change(index: &u64, value: u64) -> void { *index = value; }
+            def shrink(view: &packed(msb_first) [const u3]) -> void { *view = (*view)[..0]; }
+            def main() -> i32 {
+                def mut array: packed(msb_first) [u3; 8] = {1; 8};
+                def view: packed(msb_first) [u3] = array[..];
+        )") + body + " return 42; }");
+        auto result = invoke({file});
+        EXPECT_LT(result.status, 0) << result.err;
+        for (const auto *mode : {"-O0", "-O2"}) {
+            auto executable = directory + "/packed-alias";
+            auto built = invoke_raw({mode, "-o", executable, file});
+            ASSERT_EQ(built.status, 0) << built.err;
+            EXPECT_LT(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 0);
+        }
+    }
+}
+
 TEST_F(PackedTest, PackedCopyPreservesOverlapRecordTailsAndFailureAtomicity) {
     auto path = source(R"(
         import "@memory";
@@ -78,7 +103,8 @@ TEST_F(PackedTest, PackedCopyMatchesIndependentBitOracleAtGuardPages) {
         struct Case { Copy copy; unsigned width, msb, aligned; };
     )";
     unsigned id = 0;
-    for (const auto *element : {"u1", "u3", "i13", "u64", "be_u32", "le_u16"}) {
+    for (const auto *element :
+         {"u1", "u3", "i13", "u17", "u33", "u49", "u56", "u64", "be_u32", "le_u16"}) {
         auto info = core_type_info(*resolve_core_type(element));
         for (bool msb : {false, true}) {
             auto name = "copy_" + std::to_string(id++);

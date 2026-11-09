@@ -23,7 +23,8 @@ struct PromoteAllocation : mlir::PromotableAllocationOpInterface::ExternalModel<
         auto type = allocation.getElementType();
         if (!mlir::isa<mlir::LLVM::LLVMPointerType>(allocation.getAddress().getType()) ||
             (!mlir::isa<mlir::IntegerType>(type) &&
-             !mlir::isa<gloin::GloinSliceType>(allocation.getSourceType())))
+             !mlir::isa<gloin::GloinSliceType, gloin::GloinPackedSliceType>(
+                 allocation.getSourceType())))
             return {};
         return {{allocation.getAddress(), type}};
     }
@@ -583,13 +584,20 @@ public:
                 } else if (auto op = mlir::dyn_cast<gloin::ArrayElementAddressOp>(operation)) {
                     auto size = mlir::cast<mlir::LLVM::LLVMArrayType>(op.getArrayType()).getNumElements();
                     if (range(op.getIndex()).high < size) proofs.bounds.insert(op);
-                } else if (auto op = mlir::dyn_cast<gloin::SliceElementAddressOp>(operation)) {
+                } else if (auto op = mlir::dyn_cast<gloin::PackedArraySelectOp>(operation)) {
+                    auto size =
+                        mlir::cast<gloin::GloinPackedArrayType>(op.getSourceType()).getLength();
+                    if (range(op.getIndex()).high < size)
+                        proofs.bounds.insert(op);
+                } else if (mlir::isa<gloin::SliceElementAddressOp, gloin::PackedSliceSelectOp>(
+                               operation)) {
+                    auto base = operation.getOperand(0), index = operation.getOperand(1);
                     // Match an existing length of this exact SSA descriptor.
                     // Loads from an aliased descriptor remain distinct values.
                     for (auto [length, first] : lengths) {
                         auto read = length.getDefiningOp<gloin::SliceLengthOp>();
-                        if (read.getBase() == op.getBase() && less(op.getIndex(), first)) {
-                            proofs.bounds.insert(op);
+                        if (read.getBase() == base && less(index, first)) {
+                            proofs.bounds.insert(&operation);
                             break;
                         }
                     }

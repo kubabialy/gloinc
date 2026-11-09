@@ -231,6 +231,81 @@ TEST(LoweringTest, GIRProvesIntegerConstantsAndIdentitiesBeforeOverflowLowering)
     execute_lowered(*effects.module, 42);
 }
 
+TEST(LoweringTest, GIRPackedBoundsUseExactDescriptorsAndStaticArrayExtents) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        def indexed(source: packed(msb_first) [const u3], index: u64) -> u3 {
+            if index >= source.len { return 0; }
+            return source[index];
+        }
+        def fixed(index: u64) -> u3 {
+            def values: packed(lsb_first) [u3; 4] = {1, 2, 3, 4};
+            return values[index % 4];
+        }
+        def loop(source: packed(msb_first) [const u13]) -> u13 {
+            def mut index: u64 = 0;
+            def mut last: u13 = 0;
+            while index < source.len {
+                last = source[index];
+                index = index + 1;
+            }
+            return last;
+        }
+    )",
+                                   "packed-proof.gloin", context, CompilationMode::Module,
+                                   CompilationOutput::LLVM);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+    expect_exportable(*compiled.module);
+    for (const auto *name : {"indexed", "fixed", "loop"}) {
+        auto function = compiled.module->lookupSymbol<mlir::LLVM::LLVMFuncOp>(name);
+        ASSERT_TRUE(function);
+        unsigned traps = 0;
+        function.walk([&](mlir::LLVM::Trap) { ++traps; });
+        EXPECT_EQ(traps, 0u) << name << "\n" << print(*compiled.module);
+    }
+}
+
+TEST(LoweringTest, GIRPackedBoundsKeepGuardsAcrossAliasesJoinsAndSignedIndices) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        def change(index: &u64, value: u64) -> void { *index = value; }
+        def alias(source: packed(msb_first) [const u3], initial: u64) -> u3 {
+            def mut index: u64 = initial;
+            if index >= source.len { return 0; }
+            change(&index, source.len);
+            return source[index];
+        }
+        def join(source: packed(msb_first) [const u3], initial: u64, replace: bool) -> u3 {
+            def mut index: u64 = initial;
+            if index >= source.len { return 0; }
+            if replace { index = source.len; }
+            return source[index];
+        }
+        def descriptor(initial: packed(msb_first) [const u3]) -> u3 {
+            def mut source: packed(msb_first) [const u3] = initial;
+            if source.len < 4 { return 0; }
+            source = source[..1];
+            return source[3];
+        }
+        def signed(source: packed(msb_first) [const u3], index: i64) -> u3 { return source[index]; }
+        def sibling(source: packed(msb_first) [const u3], index: u64, check: bool) -> u3 {
+            if check { if index >= source.len { return 0; } }
+            return source[index];
+        }
+    )",
+                                   "packed-proof-invalid.gloin", context, CompilationMode::Module,
+                                   CompilationOutput::LLVM);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+    expect_exportable(*compiled.module);
+    for (const auto *name : {"alias", "join", "descriptor", "signed", "sibling"}) {
+        auto function = compiled.module->lookupSymbol<mlir::LLVM::LLVMFuncOp>(name);
+        ASSERT_TRUE(function);
+        unsigned traps = 0;
+        function.walk([&](mlir::LLVM::Trap) { ++traps; });
+        EXPECT_GT(traps, 0u) << name;
+    }
+}
+
 TEST(LoweringTest, GIRRangeProofsUseUnsignedGuardsAndExactSliceSnapshots) {
     mlir::MLIRContext context;
     auto compiled = compile_source(R"(
