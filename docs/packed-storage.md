@@ -1,8 +1,8 @@
 # Packed storage and explicit allocation (0.3.0)
 
-**Status: accepted design; implementation in progress.** This extends the
-[existing packed-record contract](packed-layout.md). Syntax and APIs in this
-document are requirements, not evidence that the compiler supports them yet.
+**Status: implemented in development; unreleased.** This extends the
+[existing packed-record contract](packed-layout.md). See the
+[0.3.0 draft](release-0.3.0-draft.md) for validation and release status.
 Implemented: `alloc_aligned<T>`, `place_at<T>`, the shared `check_alignment<T>`
 validator, and fixed packed integer arrays with literal, repeated and zeroed
 construction, exact byte layouts, checked scalar indexing, embedding, and
@@ -17,7 +17,8 @@ partitions. Packed-record elements now support the same array/slice operations,
 retaining complete record bytes and ordinary element references.
 `copy_packed<S>` now provides checked overlap-safe subrange copies. Further
 GloinIR bounds proofs and bounded dynamic reads are implemented and measured
-on macOS ARM64; cross-platform validation remains in progress.
+on macOS ARM64. See the [development validation report](release-0.3.0-draft.md#packed-storage-development-validation-2026-11-10)
+for macOS, Linux, sanitizer and relocated-package results and limitations.
 
 ## Types and representation
 
@@ -117,7 +118,7 @@ grant synchronization or make concurrent overlapping access valid.
 ## Allocation and placement APIs
 
 New APIs return checked results. Existing allocation APIs keep their signatures.
-The proposed calls are:
+The calls are:
 
 ```gloin
 a.alloc_aligned<T>(value, alignment)

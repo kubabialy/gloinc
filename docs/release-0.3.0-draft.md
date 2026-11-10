@@ -8,11 +8,10 @@ incremental HTTP/1.1 request-body decoding, packed IPv4/UDP/TCP packet codecs,
 independent IPv4/IPv6 endpoints with shared TCP in Gloin, and HTTP/HTTPS server
 sessions.
 This is a minor release because it adds source-language behavior.
-The allocation and compact-array/view extension is still in progress. Its
-[accepted storage contract](packed-storage.md) covers explicit alignment,
-bounded placement, packed slices, byte-level concurrency boundaries and GIR
-optimization requirements. The existing endian/packed implementation does not
-complete that release milestone.
+The allocation and compact-array/view extension is implemented. Its
+[storage contract](packed-storage.md) covers explicit alignment, bounded
+placement, packed slices, byte-level concurrency boundaries and GIR optimization.
+Final release validation remains separate from this development milestone.
 The published baseline remains [0.2.1](release-notes-0.2.1.md); the compiler version,
 release assets, and numbered guides will be updated when the release is cut.
 
@@ -28,14 +27,14 @@ release assets, and numbered guides will be updated when the release is cut.
 | Packed access performance | Bounded word loads/stores with alignment one, field masks, and explicit target byte order. Construction keeps direct byte encoding. See the [measurement report](packed-performance.md). |
 | Exact-width integer values | Implemented: `u1`–`u64` and `i1`–`i64`, with arithmetic checked at their declared widths and separate native storage slots. |
 | Checked integer constructors | Implemented: `T(value)` always returns `result<T>`, including widening and endian-only changes; callers handle errors through `.erroneous` or `match`. |
-| Explicit allocation and compact storage | Checked aligned arena allocation, bounded placement, and fixed packed integer-array values implemented. Checked scalar indexing, repeated initialization, borrowed integer slices/subranges, bounded byte-backed views, initialized slice allocation, checked byte-boundary splits and storage-size queries are supported; packed-record elements preserve full byte representations and checked element references. Checked overlap-safe packed subrange copies, exact-SSA GIR bounds proofs and bounded dynamic reads are implemented. [Packed-indexing measurements](packed-storage-benchmark.md) record the macOS ARM64 comparison; platform validation remains in progress. See [packed storage](packed-storage.md) for the accepted contract. |
+| Explicit allocation and compact storage | Checked aligned arena allocation, bounded placement, and fixed packed integer-array values implemented. Checked scalar indexing, repeated initialization, borrowed integer slices/subranges, bounded byte-backed views, initialized slice allocation, checked byte-boundary splits and storage-size queries are supported; packed-record elements preserve full byte representations and checked element references. Checked overlap-safe packed subrange copies, exact-SSA GIR bounds proofs and bounded dynamic reads are implemented. [Packed-indexing measurements](packed-storage-benchmark.md) record the macOS ARM64 comparison; the [development validation report](#packed-storage-development-validation-2026-11-10) records platform and package results. See [packed storage](packed-storage.md) for the accepted contract. |
 | Packed networking | `@packet` IPv4/UDP/TCP headers, bounded decoding, and checksum sealing; reusable packed-only memory reads/writes. See [packet APIs](packets.md). |
 | HTTP request decoding | Implemented in `@http`: streaming and buffered fixed-length/chunked bodies, header-boundary inspection, output backpressure, exact consumed offsets, and caller-owned buffers. See the [request decoder](http-requests.md). |
 | Gloin TCP/IP | IPv4 reassembly, UDP/ICMP dispatch, TCP connections and generation-checked tables, flow/congestion control, retransmission, path-MTU reduction and separate TIME_WAIT storage. Raw Linux TUN/macOS utun adapters keep protocol state in Gloin. |
 | IPv6 host | Packed 128-bit addresses, bounded extensions/reassembly, UDP/ICMPv6 and shared TCP/HTTP/TLS over static-address TUN/utun. See [IPv6](ipv6.md). |
 | HTTP/HTTPS servers | Bounded incremental sessions, keep-alive/pipelining, fixed/chunked responses, deadlines, cancellation and fair per-connection progress; OpenSSL TLS over Gloin TCP through bounded BIO pairs. See the [server guide](tcpip-server.md). |
 | Hashmap allocation | Slots and occupancy bytes share one arena-owned block; growth releases the obsolete table, and failed creation retains no unpublished table. API and shared-map aliases are preserved. See [allocation costs and measurements](hashmaps.md#allocation-regression-measurement-2026-11-03). |
-| Validation | macOS ARM64 core, focused regressions, and independent endian and packed torture labs pass. Final release/platform/package validation remains pending. |
+| Validation | macOS ARM64 core and relocated-package checks pass. Linux and ASan/UBSan core results, timeouts and isolated retries are recorded [below](#packed-storage-development-validation-2026-11-10). Final release validation remains pending. |
 
 The [endianness contract](endianness.md) defines byte-order behavior. The
 [development guide](site/development/index.html#endianness) introduces the syntax.
@@ -336,6 +335,49 @@ to pass.
 The reproducible benchmark and saved evidence live in
 `../gloin_examples/packed_bench`. These are development results on Apple M2;
 other-platform and final release validation remain pending.
+
+## Packed storage development validation, 2026-11-10
+
+The [packed storage contract](packed-storage.md) is implemented through checked
+allocation/placement, fixed arrays, borrowed views, byte-boundary splits,
+overlap-safe copies and GIR indexing optimizations. The compiler implementation
+is at `8641486`; `b632092` corrects test fixtures for LLVM debug assertions and
+instrumented compilation time without changing compiler behavior.
+
+Validation used macOS 15.1.1 ARM64 with LLVM/MLIR 21.1.6 and Ubuntu 24.04.4
+ARM64 with LLVM/MLIR 21.1.8. There are 1,229 registered tests, including 1,182
+required core cases.
+
+| Check | Result |
+| --- | --- |
+| macOS Release `check-core` | 1,182/1,182 passed in 293.31 seconds. |
+| Linux focused packed/lowering/arena suites | 151/151 passed in 103.93 seconds. |
+| Linux Release `check-core` | 1,180 passed; two arithmetic trap matrices timed out at 120 seconds under parallel load. Both passed isolated retries under the original limit, in 44.08 and 63.70 seconds. |
+| macOS ASan/UBSan `check-core` | 1,181 passed; the TCP table/HTTP framing integration case timed out at 150 seconds. Its isolated retry passed in 110.87 seconds under the original limit. |
+| Installed then relocated macOS compiler | 15/15 representative CLI regressions passed in 12.99 seconds, with the original installation directory absent. |
+| Documentation and formatting | Nine HTML pages and their local links checked; touched Gloin files and Git whitespace checks passed. |
+
+Tests exercise JIT, native `-O0` and native `-O2`, independent expected bytes,
+all starting bit offsets, guard-page boundaries, overlapping copies, empty and
+zero-width records, full-width count boundaries, alias mutation, trap ordering
+and rejection of forged GIR layouts/capabilities. The initial focused sanitizer
+run exposed a signed `APInt` test-fixture assertion and a construction-oracle
+timeout. Corrected fixtures passed both targeted retries and the full sanitizer
+run; no encodings or assertions were removed.
+
+ASan/UBSan reported no findings in the full run. Instrumentation covers project
+C++ and native runtime code, not prebuilt LLVM/MLIR or generated Gloin code.
+The existing shared-allocator exception disables ASan in `GloinDialect.cpp`;
+UBSan remains enabled there. Leak detection was disabled. Original failed runs
+and passing retries remain separate in the local evidence directory
+`build/packed-storage-2026-11-08/`.
+
+The [packed indexing benchmark](packed-storage-benchmark.md) records 432 checked
+batches on Apple M2, with 1.12×–3.15× before/after ratios for the tested read
+kernels and 31% smaller combined kernel object text. These are not application
+or cross-platform speedup claims. This development validation does not replace
+the final release gates below, hosted x86_64 execution, or execution on a
+big-endian host.
 
 ## Remaining release validation
 
