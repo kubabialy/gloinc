@@ -189,6 +189,12 @@ The 1,296-pair integer-constructor matrix compiles one large program in three
 modes. Its child deadlines are six times the ordinary CLI limit, and its CTest
 limit is 120 seconds on macOS or 480 seconds on Linux/sanitizer builds.
 
+The 52-layout packed-array construction oracle uses four times the usual child
+and aggregate budgets: an isolated instrumented JIT compilation took 20.8 seconds.
+It retains every encoding, byte assertion, and execution mode. The packed constant
+conversion matrix constructs signed `APInt` inputs for negative values, so LLVM
+debug assertions validate the fixture as well as the conversion helper.
+
 Compiler CTest cases have a 30-second timeout on ordinary macOS builds and
 120 seconds on Linux or sanitizer builds. Linux trap cases take longer under
 VM/CI load; instrumented Debug cases can perform many compiler invocations

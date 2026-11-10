@@ -354,6 +354,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     set(GLOIN_ARITHMETIC_MATRIX_TEST "CliTest.NativeCheckedIntegerBoundariesAtEveryWidthAndOptimizationLevel")
     set(GLOIN_OPERATOR_MATRIX_TEST "OperatorsTest.IntegerSimplificationPreservesOperandTraps")
     set(GLOIN_CONVERSION_MATRIX_TEST "NumericLibraryTest.IntegerConstructorsCheckEveryWidthAndEndianBoundaryInEveryExecutionMode")
+    set(GLOIN_PACKED_CONSTRUCTION_TEST "PackedTest.PackedArrayConstructionMatchesIndependentBitOracle")
     set(GLOIN_SIGNAL_MATRIX_PROPERTIES)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # Hundreds of expected signals compete for the host crash reporter.
@@ -361,7 +362,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         # per-process deadline and aggregate timeout. Other tests stay parallel.
         set(GLOIN_SIGNAL_MATRIX_PROPERTIES RUN_SERIAL TRUE)
     endif()
-    gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}:${GLOIN_ARITHMETIC_MATRIX_TEST}:${GLOIN_OPERATOR_MATRIX_TEST}:${GLOIN_CONVERSION_MATRIX_TEST}:CliTest.GIR*"
+    gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}:${GLOIN_ARITHMETIC_MATRIX_TEST}:${GLOIN_OPERATOR_MATRIX_TEST}:${GLOIN_CONVERSION_MATRIX_TEST}:${GLOIN_PACKED_CONSTRUCTION_TEST}:CliTest.GIR*"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
     gtest_discover_tests(gloinc_test TEST_FILTER "CliTest.GIR*"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT} ${GLOIN_SIGNAL_MATRIX_PROPERTIES})
@@ -375,6 +376,11 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     math(EXPR GLOIN_CONVERSION_MATRIX_TIMEOUT "${GLOIN_COMPILER_TEST_TIMEOUT} * 4")
     gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_CONVERSION_MATRIX_TEST}"
         PROPERTIES TIMEOUT ${GLOIN_CONVERSION_MATRIX_TIMEOUT})
+    # The 52-layout packed oracle compiles in three modes. An isolated ASan JIT
+    # run takes about 21 seconds; retain all encodings under parallel gate load.
+    math(EXPR GLOIN_PACKED_CONSTRUCTION_TIMEOUT "${GLOIN_COMPILER_TEST_TIMEOUT} * 4")
+    gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_PACKED_CONSTRUCTION_TEST}"
+        PROPERTIES TIMEOUT ${GLOIN_PACKED_CONSTRUCTION_TIMEOUT})
     # This matrix launches 1752 native programs, including intentional signals.
     # With Linux signal handling this took 219 seconds on the validation VM;
     # a busy macOS host also exceeded the ordinary 30-second test timeout. Keep

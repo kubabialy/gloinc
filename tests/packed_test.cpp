@@ -475,6 +475,9 @@ TEST_F(PackedTest, PackedArrayLiteralVerifierRejectsForgedExtentAndEncoding) {
 }
 
 TEST_F(PackedTest, PackedArrayConstructionMatchesIndependentBitOracle) {
+    // Compile 52 complete encodings in each mode. Instrumentation and the
+    // parallel core gate need more headroom than a single-source smoke test.
+    timeout_seconds *= 4;
     std::ostringstream program;
     program << "import \"@memory\"; def main() -> i32 { "
                "def raw: *u8 = memory.alloc(32, 8); if raw == null { return 1; } "
@@ -1187,7 +1190,8 @@ TEST_F(PackedTest, ConstantConversionHelperChecksEveryWidthSignAndByteOrderBound
                 if (number < source_min || number > source_max)
                     continue;
                 auto value = convert_integer_constant(
-                    {source, llvm::APInt(from.bits, static_cast<uint64_t>(number))}, target);
+                    {source, llvm::APInt(from.bits, static_cast<uint64_t>(number), from.is_signed)},
+                    target);
                 bool fits = number >= target_min && number <= target_max;
                 ASSERT_EQ(value.has_value(), fits) << from.name << " -> " << to.name;
                 if (value) {
