@@ -4,9 +4,12 @@ The 0.3.0 development [packet header example](packet_headers.gloin) builds and
 validates an unaligned IPv4/UDP datagram using packed structs and endian fields.
 It needs no network access. See the [packet guide](../docs/packets.md).
 
-These sources match 0.2.1 and its built-in result APIs. With a
-published 0.1.0 compiler, use the examples bundled in that release or its tag.
+These sources follow the current development compiler and standard library.
+With a published compiler, use the examples bundled in that release or its tag.
 `hashmap.gloin` requires the 0.2.1 compiler and standard library.
+
+`http_stream.gloin` uses the 0.3.0 development `strings.byte` API for bounded
+binary reads, replacing its local byte-access helper.
 
 `core_counter.gloin` is a runnable core example, tested through the actual CLI.
 After building, run `./build/gloinc --jit examples/core_counter.gloin`: it exits 42
