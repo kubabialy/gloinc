@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1229 tests**:
+The current source definitions and CTest discovery contain **1231 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -47,7 +47,7 @@ The current source definitions and CTest discovery contain **1229 tests**:
 | CliTest | 35 |
 | StandardModuleTest | 17 |
 | StandardLibraryTest | 26 |
-| StringLibraryTest | 20 |
+| StringLibraryTest | 22 |
 | TextLibraryTest | 19 |
 | NumericLibraryTest | 19 |
 | NumericRuntimeTest | 16 |
@@ -515,7 +515,7 @@ through GloinIR, JIT and native `-O0`/`-O2`.
 
 ## Byte strings (SPEC-030a)
 
-Twenty `StringLibraryTest` cases cover the byte-string functions, including
+Twenty-two `StringLibraryTest` cases cover the byte-string functions, including
 canonical built-in results and their checked aliases, shared status
 compatibility, unsigned ordering, NUL/arbitrary bytes, UTF-8 byte slicing,
 extreme/empty bounds, first/absent/empty search, exact ASCII trimming, and a
@@ -531,6 +531,11 @@ installed/relocated package validation.
 Development regressions also reject unchecked, discarded and inactive results,
 verify exact messages/codes and alias behavior, and preserve codes through
 forwarding and match in GloinIR, JIT and native `-O0`/`-O2`.
+
+Direct `strings.byte` access preserves NUL, high bytes and UTF-8 byte positions,
+evaluates arguments once in order, and traps on empty/end/maximum-index reads
+even when discarded. JIT and native `-O0`/`-O2` verify the trap precedes later
+side effects and distinguish signal termination from child timeouts.
 
 Two additional `StandardRuntimeTest` cases verify all 256 byte values, exact-sized
 copy destinations and guard bytes, no implicit terminator, and null-pointer

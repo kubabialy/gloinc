@@ -46,6 +46,15 @@ one continuation byte. These APIs do not validate Unicode or change locale.
 copying or validating UTF-8. Keep the slice live and unchanged while the view
 is used; this is useful for parsing a buffer filled by `net.Socket.read`.
 
+Development 0.3.0 adds `byte(text, index: u64) -> u8` for direct access.
+It traps before reading when `index >= byte_length(text)`, including for empty
+strings and the maximum `u64` index. Like slice indexing, a discarded access
+still checks bounds. Arguments evaluate once in ordinary left-to-right call
+order. It allocates nothing and preserves every byte, including NUL and invalid
+UTF-8. Use `byte_at` when an invalid index should return a recoverable error.
+Parser lookahead that intentionally substitutes a sentinel must keep that
+fallback explicit; zero is also a valid byte, not an end-of-input marker.
+
 | Return type | Success/normal outcome | Failure |
 | --- | --- | --- |
 | `result<u8>` | Requested byte, including zero | `OUT_OF_RANGE`; no readable byte payload |
@@ -79,6 +88,7 @@ payload storage. Costs do not include compilation or subsequent output.
 | `is_empty(text) -> bool` | `is_empty("")` → true; `is_empty("\0")` → false | O(1), none |
 | `equal(a, b) -> bool` | `equal("ab", "ab")` → true; compares all counted bytes | O(min(n,m)); O(1) if lengths differ; none |
 | `compare(a, b) -> i32` | `compare("a", "ab")` → -1; exactly -1/0/1, unsigned lexicographic ordering | O(min(n,m)), none |
+| `byte(text, index: u64) -> u8` (0.3.0 development) | `byte("abc", 1)` → 98; invalid index traps before access | O(1), none |
 | `byte_at(text, index: u64) -> result<u8>` | `byte_at("abc", 1)` → 98; index must be less than size | O(1), none |
 | `byte_at_checked(text, index: u64) -> result<u8>` | `byte_at_checked("abc", 1)` → 98; invalid index yields a static error | O(1), none |
 | `slice_bytes(text, start: u64, length: u64) -> result<string>` | `slice_bytes("abc", 1, 2)` → borrowed `"bc"` | O(1), none |

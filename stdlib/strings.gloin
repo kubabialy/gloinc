@@ -30,6 +30,13 @@ def pub is_empty(text: string) -> bool {
     return byte_length(text) == 0;
 }
 
+// Example: byte("abc", 1) returns 98. O(1), no allocation.
+// Traps before access when index >= byte_length(text), like slice indexing.
+// Counts bytes, not Unicode characters; use byte_at for recoverable bounds errors.
+def pub byte(text: string, index: u64) -> u8 {
+    return __strings_byte(text, index);
+}
+
 // Example: byte_at("abc", 1) succeeds with 98. O(1), no allocation.
 // index >= byte_length(text) fails with OUT_OF_RANGE; no byte payload is accessible.
 def pub byte_at(text: string, index: u64) -> result<u8> {
