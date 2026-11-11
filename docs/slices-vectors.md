@@ -131,12 +131,13 @@ objects are not deeply copied. There is no automatic destructor for elements.
 
 ## Growable arena vectors
 
-The 0.3.0 development library adds recoverable construction and growth. Prefer
+The 0.3.0 development library adds recoverable construction, growth and cloning. Prefer
 these methods when allocation failure should be handled by the caller:
 
 | Method | Result | Work, excluding allocation |
 | --- | --- | --- |
 | `Vector<T>.try_empty(memory, capacity)` | `result<Vector<T>>` | O(1); reserves uninitialized slots without requiring a fill value |
+| `try_clone(memory)` | `result<Vector<T>>` | O(length); one allocation request in the chosen arena, capacity equals length |
 | `try_reserve(requested)` | `result<void>` | No allocation within capacity; O(length) copying on growth |
 | `try_push(value)` | `result<void>` | Amortized O(1), with O(length) copying on growth |
 | `try_insert(index, value)` | `result<void>` | O(length − index), plus growth copying if needed |
@@ -184,6 +185,20 @@ representation bytes. The existing arena ownership, view invalidation on growth
 and independent counters in copied handles still apply. Invalid lifetimes and
 programming errors are not converted into allocation errors. These additions
 do not change the older methods or the inline fixed-capacity vector API below.
+
+`values.try_clone(&destination)` explicitly creates an independent backing buffer
+and length/capacity counters in the chosen arena. It copies only the live elements,
+preserving aggregate representation bytes, and sets capacity equal to length.
+It accepts a read-only vector and leaves the source unchanged on success or
+failure. Even an empty clone requests storage and can return `NO_MEMORY`.
+
+Element copies are shallow: pointers, strings, slices and nested arena vectors
+still refer to their original storage. Cloning does not extend those referents'
+lifetimes or make them safe for concurrent mutation. A clone in a different arena
+keeps its own buffer after the source arena is reset, but its referenced objects
+must remain live independently. Cloning into the same arena is also supported;
+both buffers then share that arena's lifetime. Ordinary assignment continues to
+alias the existing buffer.
 
 `import "@vector";` also provides `vector.Vector<T>`. Prefer
 `Vector<T>.empty(&memory, capacity)` with an explicit arena and signed `i64`

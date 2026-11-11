@@ -205,3 +205,70 @@ TEST_F(VectorLibraryTest, FallibleResultsAndPrivateReservationRemainChecked) {
         expect_error(invoke({"--check", program(std::string(body) + "return 42;")}), 1, "error:");
     }
 }
+
+TEST_F(VectorLibraryTest, ClonesOwnTheirBufferAndCountersButCopyElementsShallowly) {
+    modes(program(R"(
+        def mut destination: arena.GeneralArena = arena.GeneralArena.create();
+        defer destination.free();
+        def mut values: vector.Vector<i32> = vector.Vector<i32>.empty(&owner, 8);
+        if !values.push(11) || !values.push(22) { return 1; }
+        def frozen: vector.Vector<i32> = values;
+        def copied: result<vector.Vector<i32>> = frozen.try_clone(&destination);
+        if copied.erroneous { return 2; }
+        def mut cloned: vector.Vector<i32> = copied.value;
+        if cloned.len() != 2 || cloned.cap() != 2 || cloned.get(0) == values.get(0) { return 3; }
+        *values.get_mut(0) = 99;
+        *cloned.get_mut(1) = 33;
+        if *cloned.get(0) != 11 || *values.get(1) != 22 { return 4; }
+        cloned.clear();
+        if values.len() != 2 || !cloned.push(44) { return 5; }
+        def same: result<vector.Vector<i32>> = values.try_clone(&owner);
+        if same.erroneous { return 6; }
+        def same_owner: vector.Vector<i32> = same.value;
+        if same_owner.get(0) == values.get(0) || *same_owner.get(0) != 99 { return 7; }
+        owner.reset();
+        if cloned.len() != 1 || *cloned.get(0) != 44 { return 8; }
+        def mut referent: i32 = 7;
+        def mut pointers: vector.Vector<*i32> = vector.Vector<*i32>.empty(&owner, 3);
+        if !pointers.push(&referent) { return 9; }
+        def pointer_copy: result<vector.Vector<*i32>> = pointers.try_clone(&destination);
+        if pointer_copy.erroneous { return 10; }
+        def pointer_clone: vector.Vector<*i32> = pointer_copy.value;
+        if pointer_clone.get(0) == pointers.get(0) || *pointer_clone.get(0) != &referent { return 11; }
+        owner.reset();
+        referent = 42;
+        if **pointer_clone.get(0) != 42 { return 12; }
+        return 42;
+    )"));
+}
+
+TEST_F(VectorLibraryTest, CloneFailureAndEmptyClonePreserveSourceAndAllowRetry) {
+    fail_allocation(2);
+    for (const bool empty : {false, true}) {
+        modes(program(R"(
+            def mut destination: arena.GeneralArena = arena.GeneralArena.create();
+            defer destination.free();
+            def marker: &i32 = destination.alloc(123);
+            def mut values: vector.Vector<i32> = vector.Vector<i32>.empty(&owner, 8);
+        )" + std::string(empty ? "" : "if !values.push(42) { return 1; }") +
+                      R"(
+            def length: i64 = values.len();
+            def pointer: *const i32 = values.get(0);
+            def failed: result<vector.Vector<i32>> = values.try_clone(&destination);
+            if !failed.erroneous { return 2; }
+            if failed.error.code != status.NO_MEMORY || failed.error.os_error != 0 { return 3; }
+            if values.len() != length || values.cap() != 8 || values.get(0) != pointer || *marker != 123 { return 4; }
+            def retry: result<vector.Vector<i32>> = values.try_clone(&destination);
+            if retry.erroneous { return 5; }
+            def mut cloned: vector.Vector<i32> = retry.value;
+            if cloned.len() != length || cloned.cap() != length { return 6; }
+            owner.reset();
+            if length == 0 {
+                if code(cloned.try_push(42)) != status.OK { return 7; }
+            }
+            if *cloned.get(0) != 42 { return 8; }
+            return 42;
+        )"),
+              true);
+    }
+}

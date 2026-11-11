@@ -33,6 +33,22 @@ def pub struct Vector<T> {
         return Vector<T> { data: reserved.value, length: 0, capacity: capacity, memory: memory };
     }
 
+    // One allocation in the chosen arena, then O(length) shallow element copies.
+    // The independent buffer contains only the live prefix; capacity equals length.
+    def pub try_clone(self: &const Vector<T>, memory: &arena.GeneralArena) -> result<Vector<T>> {
+        def source: [const T]       = self.as_const_slice();
+        def made: result<Vector<T>> = Vector<T>.try_empty(memory, self.length);
+
+        if made.erroneous { return made.error; }
+
+        def mut cloned: Vector<T> = made.value;
+        def copied: result<void>  = cloned.try_append_from(source);
+
+        if copied.erroneous { return copied.error; }
+
+        return cloned;
+    }
+
     // No allocation within capacity. Failure leaves storage, counters and views unchanged.
     def pub try_reserve(self: &Vector<T>, requested: i64) -> result<void> {
         if requested < 0 { return error("negative vector capacity", status.INVALID, 0); }

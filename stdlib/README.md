@@ -79,7 +79,9 @@ typed placement for user-written allocators. See [raw memory](../docs/raw-memory
 has `Vector<T>.empty(&memory, capacity)` so a dummy `T` value is unnecessary.
 Development 0.3.0 adds result-returning `try_empty`, `try_reserve`, `try_push`,
 `try_insert` and `try_append_from`, with recoverable allocation errors and
-unchanged vector state on failure. Copies retain their existing aliasing rules.
+unchanged vector state on failure. `try_clone(&destination)` copies live elements
+into an independent buffer in the chosen arena; element copies remain shallow.
+Ordinary assignment retains its existing aliasing rules.
 `import "@slices";` provides generic fill, reverse, and nonoverlapping copy on
 borrowed slices. See [slices and vectors](../docs/slices-vectors.md).
 
