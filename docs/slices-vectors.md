@@ -131,6 +131,60 @@ objects are not deeply copied. There is no automatic destructor for elements.
 
 ## Growable arena vectors
 
+The 0.3.0 development library adds recoverable construction and growth. Prefer
+these methods when allocation failure should be handled by the caller:
+
+| Method | Result | Work, excluding allocation |
+| --- | --- | --- |
+| `Vector<T>.try_empty(memory, capacity)` | `result<Vector<T>>` | O(1); reserves uninitialized slots without requiring a fill value |
+| `try_reserve(requested)` | `result<void>` | No allocation within capacity; O(length) copying on growth |
+| `try_push(value)` | `result<void>` | Amortized O(1), with O(length) copying on growth |
+| `try_insert(index, value)` | `result<void>` | O(length − index), plus growth copying if needed |
+| `try_append_from(source)` | `result<void>` | O(source length), plus growth copying if needed; at most one allocation request |
+
+```gloin
+import "@arena";
+import "@vector";
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def made: result<vector.Vector<i32>> = vector.Vector<i32>.try_empty(&owner, 0);
+    if made.erroneous { return 1; }
+    def mut values: vector.Vector<i32> = made.value;
+    def pushed: result<void> = values.try_push(42);
+    if pushed.erroneous { return 2; }
+    return *values.get(0);
+}
+```
+
+Capacity and insertion indices remain `i64`. Negative capacities return `INVALID`;
+unrepresentable lengths or byte extents return `OVERFLOW`; insertion outside
+the inclusive range zero through length returns `OUT_OF_RANGE`; allocation
+failure returns `NO_MEMORY`.
+All use OS error zero. Insertion checks the index before growth limits. Requests
+are validated before allocation. A zero initial capacity still requests backed
+storage and can return `NO_MEMORY`; it initializes no elements. Zero-sized element
+types accept capacities through `INT64_MAX` without a capacity-sized fill loop.
+
+Every failed new operation leaves the vector's pointer, length, capacity and
+elements unchanged, so its existing views and aliases retain their prior state.
+Argument evaluation happens before the call; its side effects are not rolled
+back. Push/insert capture the value before growth or shifting. Empty append and
+reserve within capacity allocate nothing. Growth for push/insert/append normally
+doubles capacity, capped at `INT64_MAX / sizeof(T)` (or `INT64_MAX` for zero-sized
+elements); a larger append can request its required capacity directly.
+
+`try_append_from` checks the complete length and reserves once before writing.
+It preserves source values for self-appends and overlapping views, including
+aliases with different logical lengths. It uses an allocation-free linear
+pointer-equality scan to select the copy direction; it does not allocate a
+temporary snapshot. Element copies remain shallow and preserve aggregate
+representation bytes. The existing arena ownership, view invalidation on growth
+and independent counters in copied handles still apply. Invalid lifetimes and
+programming errors are not converted into allocation errors. These additions
+do not change the older methods or the inline fixed-capacity vector API below.
+
 `import "@vector";` also provides `vector.Vector<T>`. Prefer
 `Vector<T>.empty(&memory, capacity)` with an explicit arena and signed `i64`
 capacity. It works for struct and enum elements that have no zero value.

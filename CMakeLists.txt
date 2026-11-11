@@ -302,6 +302,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/math_library_test.cpp
         tests/time_random_library_test.cpp
         tests/hashmap_library_test.cpp
+        tests/vector_library_test.cpp
         tests/integrated_examples_test.cpp
         tests/module_test.cpp
         tests/ordinary_struct_test.cpp
@@ -499,7 +500,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         PROPERTIES TIMEOUT 90)
 
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|EndianTest|PackedTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|EndianTest|PackedTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|VectorLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure

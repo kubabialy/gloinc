@@ -77,6 +77,9 @@ typed placement for user-written allocators. See [raw memory](../docs/raw-memory
 
 `import "@vector";` provides inline and arena vectors. The growable form now
 has `Vector<T>.empty(&memory, capacity)` so a dummy `T` value is unnecessary.
+Development 0.3.0 adds result-returning `try_empty`, `try_reserve`, `try_push`,
+`try_insert` and `try_append_from`, with recoverable allocation errors and
+unchanged vector state on failure. Copies retain their existing aliasing rules.
 `import "@slices";` provides generic fill, reverse, and nonoverlapping copy on
 borrowed slices. See [slices and vectors](../docs/slices-vectors.md).
 

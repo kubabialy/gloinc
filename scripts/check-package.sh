@@ -46,7 +46,7 @@ cmake -E env "GLOIN_TEST_CLI=$work_dir/install prefix/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$work_dir/install prefix/share/gloinc/core-fixtures" \
   "GLOIN_TEST_ARENA_RUNTIME=$work_dir/install prefix/lib/libgloin_runtime.$runtime_suffix" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|SelectionTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|VectorLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|SelectionTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/installed.xml"
 "$work_dir/install prefix/bin/gloinc" -O2 -o "$work_dir/installed-tls-test" "$source_root/tests/tls/main.gloin"
 "$work_dir/installed-tls-test" "$work_dir/install prefix/bin/gloinc" "$source_root" "$work_dir" "$openssl_command"
@@ -86,7 +86,7 @@ cmake -E env "GLOIN_TEST_CLI=$package_root/bin/gloinc" \
   "GLOIN_TEST_FIXTURES=$package_root/share/gloinc/core-fixtures" \
   "GLOIN_TEST_ARENA_RUNTIME=$package_root/lib/libgloin_runtime.$runtime_suffix" \
   ctest --test-dir "$build_dir" -j 4 --no-tests=error \
-  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|SelectionTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
+  -R '^(CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|VectorLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|SelectionTest|PointerTest|MethodTest|DeferTest|ArenaTest|CoreAcceptanceTest)\.' --output-on-failure \
   --output-junit "$report_dir/extracted.xml"
 "$package_root/bin/gloinc" -O2 -o "$work_dir/relocated-tls-test" "$source_root/tests/tls/main.gloin"
 "$work_dir/relocated-tls-test" "$package_root/bin/gloinc" "$source_root" "$work_dir" "$openssl_command"

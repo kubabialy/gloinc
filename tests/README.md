@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1231 tests**:
+The current source definitions and CTest discovery contain **1235 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -69,6 +69,7 @@ The current source definitions and CTest discovery contain **1231 tests**:
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 18 |
 | HashmapLibraryTest | 15 |
+| VectorLibraryTest | 4 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -338,6 +339,17 @@ and sanitizer gates. The larger [Gloin stress driver](integrated/README.md)
 checks all three programs at one million records/samples with a 2 MiB soft stack
 limit, including rejection of one-over-limit inputs. It is required by `check-core`
 and installed/relocated package checks. See [the guide](../docs/integrated-examples.md).
+
+## Recoverable arena vectors (0.3.0 development)
+
+Four `VectorLibraryTest` cases cover result-returning construction, reservation,
+push, insertion and append. JIT and native `-O0`/`-O2` check captured arguments,
+live elements, overlapping appends in both directions, packed spare bytes,
+zero-sized elements and signed/byte-extent limits. Per-arena allocation injection
+checks failure before publication, unchanged counters/pointers/aliases, retries,
+and that invalid/no-op requests do not allocate. Result handling, mutability and
+private reservations remain checked. The suite participates in core and package
+validation; older vector regressions remain in `CoreAcceptanceTest`.
 
 ## Hash maps (0.2.1 API, 0.3.0 allocation)
 
