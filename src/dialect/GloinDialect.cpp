@@ -704,6 +704,17 @@ mlir::LogicalResult PointerCompareOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult CopyBackwardOp::verify() {
+    auto pointer = mlir::dyn_cast<gloin::GloinPointerType>(getSourceType());
+    bool typed =
+        getDestination().getType() == getSourceType() && getSource().getType() == getSourceType();
+    bool layout = mlir::isa<mlir::LLVM::LLVMPointerType>(getDestination().getType()) &&
+                  getDestination().getType() == getSource().getType();
+    if (!pointer || !pointer.getReadOnly() || (!typed && !layout))
+        return emitOpError("requires matching read-only source pointer types");
+    return mlir::success();
+}
+
 mlir::LogicalResult ArrayElementAddressOp::verify() {
   auto array = mlir::dyn_cast<mlir::LLVM::LLVMArrayType>(getArrayType());
   auto source = mlir::dyn_cast<gloin::GloinArrayType>(getSourceType());

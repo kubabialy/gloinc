@@ -484,6 +484,15 @@ def PointerCompareOp : Gloin_Op<"pointer_compare", [Pure]> {
     let hasVerifier = 1;
 }
 
+// Internal copy-direction query, not general source-language pointer ordering.
+// True when destination's byte address is above source's. No memory access.
+// Either direction is safe for distinct allocations or equal addresses.
+def CopyBackwardOp : Gloin_Op<"copy_backward", [Pure]> {
+    let arguments = (ins AnyType:$destination, AnyType:$source, TypeAttr:$source_type);
+    let results = (outs I1:$result);
+    let hasVerifier = 1;
+}
+
 def ArrayElementAddressOp : Gloin_Op<"array_element_address"> {
     let summary = "Address a fixed-array element, trapping on an out-of-bounds index";
     let arguments = (ins AnyType:$base, I64:$index, TypeAttr:$array_type,

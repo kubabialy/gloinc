@@ -334,6 +334,40 @@ TEST_F(CoreAcceptanceTest, CollectionOperationsPreserveLivePrefixAndSelfAppend) 
     expect_success(invoke({"--check", file}), "");
     expect_run(invoke({file}), 42);
 }
+TEST_F(CoreAcceptanceTest, SliceCopyMatchesSnapshotForEverySmallRangePair) {
+    const auto file = fixture("run/slice_copy.gloin");
+    expect_run(invoke({file}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/slice-copy";
+        const auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+TEST_F(CoreAcceptanceTest, SliceCopyPreservesPackedBytesAndShallowReferents) {
+    const auto file = fixture("run/slice_copy_values.gloin");
+    expect_run(invoke({file}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/slice-copy-values";
+        const auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+TEST_F(CoreAcceptanceTest, SliceCopyCannotStrengthenAccessOrConvertEndianTypes) {
+    for (const auto *body :
+         {"def destination: [i32; 1] = {0}; def source: [i32; 1] = {1}; "
+          "slices.copy<i32>(destination[..], source[..]);",
+          "def mut destination: [u16; 1] = zeroed; def source: [be_u16; 1] = zeroed; "
+          "slices.copy<u16>(destination[..], source[..]);",
+          "__slices_copy_backward<i32>(null, null);",
+          "slices.__slices_copy_backward<i32>(null, null);"}) {
+        SCOPED_TRACE(body);
+        const auto file = source("import \"@slices\"; def main() -> i32 { " + std::string(body) +
+                                 " return 42; }");
+        expect_error(invoke({"--check", file}), 1, "error:");
+    }
+}
 TEST_F(CoreAcceptanceTest, TypedReservedArenaStorageIsInternalToVector) {
     auto file = source(R"(
         import "@arena";

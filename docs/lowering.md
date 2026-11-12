@@ -62,6 +62,7 @@ compiler emits these checked Gloin operations:
 | `gloin.pointer_offset` | Checked pointer offset measured in pointee elements | Null guard, then LLVM GEP |
 | `gloin.require_nonnull` | Nullable pointer access must trap on null | Pointer comparison and trap guard |
 | `gloin.pointer_compare` | Checked pointer equality or inequality | LLVM pointer comparison |
+| `gloin.copy_backward` | Internal copy-direction query on matching read-only typed pointers; no memory access | Unsigned LLVM pointer comparison of destination and source byte addresses |
 | `gloin.array_element_address` | Checked fixed-array element address | Bounds guard, then LLVM GEP |
 | `gloin.slice_from_array` | Borrow an exclusive-end array range with source mutability | Range guards, then pointer/length descriptor |
 | `gloin.slice_subrange` | Borrow an exclusive-end range of an existing slice | Range guards, then adjusted pointer/length descriptor |

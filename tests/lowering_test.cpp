@@ -1125,6 +1125,50 @@ TEST(LoweringTest, CheckedPointerOffsetUsesGloinIRUntilLowering) {
     execute_lowered(*lowered, 42);
 }
 
+TEST(LoweringTest, SliceCopyDirectionRetainsTypesAndRejectsForgedOperands) {
+    for (const bool forged : {false, true}) {
+        mlir::MLIRContext context;
+        auto high =
+            compile_source(R"(
+            import "@slices";
+            def main() -> i32 {
+                def wrong: *const i64 = null;
+                if wrong != null { return 1; }
+                def mut values: [i32; 2] = {42, 1};
+                if !slices.copy<i32>(values[1..], values[..1]) { return 2; }
+                return values[1];
+            }
+        )",
+                           "slice-copy-direction.gloin", context, CompilationMode::Executable);
+        ASSERT_TRUE(high.success()) << render(*high.diagnostics);
+        gloin::CopyBackwardOp direction;
+        mlir::Value wrong;
+        high.module->walk([&](gloin::CopyBackwardOp candidate) { direction = candidate; });
+        high.module->walk([&](gloin::NullOp candidate) {
+            auto pointer = mlir::cast<gloin::GloinPointerType>(candidate.getSourceType());
+            if (pointer.getPointee().isInteger(64))
+                wrong = candidate.getValue();
+        });
+        ASSERT_TRUE(direction);
+        ASSERT_TRUE(wrong);
+        EXPECT_EQ(direction.getDestination().getType(), direction.getSourceType());
+        EXPECT_EQ(direction.getSource().getType(), direction.getSourceType());
+        if (forged)
+            direction->setOperand(1, wrong);
+        Diagnostics diagnostics;
+        auto lowered = lower_to_llvm(std::move(high.module), diagnostics);
+        if (forged) {
+            EXPECT_FALSE(lowered);
+            EXPECT_NE(render(diagnostics).find("requires matching read-only source pointer types"),
+                      std::string::npos)
+                << render(diagnostics);
+        } else {
+            ASSERT_TRUE(lowered) << render(diagnostics);
+            execute_lowered(*lowered, 42);
+        }
+    }
+}
+
 TEST(LoweringTest, PointerComparisonRejectsAnotherPointeeType) {
     mlir::MLIRContext context;
     auto high = compile_source(R"(

@@ -16,6 +16,7 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 
 | Contract | Source fixtures |
 | --- | --- |
+| Overlap-safe ordinary slice copies, short destinations, shallow referents and packed representation bytes in JIT/native modes | [all small range pairs](run/slice_copy.gloin), [element values](run/slice_copy_values.gloin) |
 | Explicit packed bit order, exact bytes, narrow values, spare-bit copies, generic methods, and internal calls in JIT/native modes | [packed layouts](run/packed.gloin) |
 | Endian-qualified integer values and padding-preserving aggregate calls | [endianness](run/endian.gloin) |
 | Base64 decoding: exact/short buffers, malformed alphabet/padding, binary values, JIT and native `-O0`/`-O2` | [program](run/base64_decode/main.gloin), [scalar codec](run/base64_decode/codec.gloin) |

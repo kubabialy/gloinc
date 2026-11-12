@@ -36,6 +36,23 @@ std::shared_ptr<Type> Sema::check_memory_intrinsic(const CallExpression *call,
         log_error("Invalid raw memory intrinsic type argument");
         return nullptr;
     }
+    if (name == "__slices_copy_backward") {
+        if (call->arguments.size() != 2) {
+            log_error("Copy direction requires two matching typed pointers");
+            return nullptr;
+        }
+        auto pointer = std::make_shared<PointerType>(type, true, true);
+        for (const auto &argument : call->arguments) {
+            auto actual = check_typed_expression(argument.get(), pointer);
+            if (!actual || !actual->equals(*pointer)) {
+                log_error("Copy direction requires two matching typed pointers");
+                return nullptr;
+            }
+        }
+        recording->memory_intrinsics.emplace(
+            call, std::make_pair(MemoryIntrinsic::CopyBackward, *value_type(type)));
+        return get_builtin_type("bool");
+    }
     if (name == "__memory_copy_packed") {
         auto slice = std::dynamic_pointer_cast<SliceType>(type);
         if (!slice || slice->read_only || slice->bit_order == PackedBitOrder::None ||

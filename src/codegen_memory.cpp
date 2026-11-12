@@ -17,6 +17,14 @@ mlir::Value CodeGen::emit_memory_primitive(MemoryPrimitive kind, mlir::ValueRang
 
 mlir::Value CodeGen::emit_memory_intrinsic(MemoryIntrinsic kind, const ValueType &type,
                                            mlir::ValueRange arguments) {
+    if (kind == MemoryIntrinsic::CopyBackward) {
+        auto pointer = type;
+        pointer.pointers.insert(pointer.pointers.begin(), {true, true});
+        auto source = source_type(pointer);
+        return builder.create<gloin::CopyBackwardOp>(
+            location(), builder.getI1Type(), as_source_value(arguments[0], source),
+            as_source_value(arguments[1], source), mlir::TypeAttr::get(source));
+    }
     if (kind == MemoryIntrinsic::PackedCopy) {
         auto source = type;
         source.slice_read_only = true;

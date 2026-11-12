@@ -657,6 +657,9 @@ std::shared_ptr<Type> Sema::check_generic_function_call(const CallExpression *ca
     const auto base = qualifier + name;
     const auto argument_names = split_type_arguments(
         std::string_view(callee->value).substr(open + 1, callee->value.size() - open - 2));
+    if (!imported_module && current_module && current_module->standard_name == "slices" &&
+        name == "__slices_copy_backward")
+        return check_memory_intrinsic(call, name, argument_names);
     if (!imported_module && current_module && current_module->standard_name == "hashmap" &&
         name == "__memory_reserve")
         return check_memory_intrinsic(call, name, argument_names);

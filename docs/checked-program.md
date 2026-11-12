@@ -351,6 +351,14 @@ store, or reference creation. GEPs and loads use the checked pointee type.
 Version 0.0.3 also checks `*T + i64` offsets as described in
 [pointer offsets](pointer-offsets.md).
 
+The 0.3.0 `@slices` copy loop uses the canonical-module-only
+`__slices_copy_backward<T>` query. Sema checks matching read-only typed pointer
+arguments; `CheckedProgram` records a memory intrinsic, and `gloin.copy_backward`
+retains those types through verification. It compares byte addresses without
+accessing memory, so placements with different element boundaries select a safe
+copy direction. This does not introduce source-language pointer ordering or
+change ownership, bounds checks or synchronization requirements.
+
 Address-taking records declaration IDs so even immutable locals and value
 parameters receive stable entry-block stack slots when necessary. Struct fields
 retain their checked indices through pointer access. Pointer edges break layout

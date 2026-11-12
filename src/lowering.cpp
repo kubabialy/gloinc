@@ -1397,6 +1397,16 @@ struct LowerPointerCompare : mlir::OpRewritePattern<gloin::PointerCompareOp> {
     }
 };
 
+struct LowerCopyBackward : mlir::OpRewritePattern<gloin::CopyBackwardOp> {
+    using OpRewritePattern::OpRewritePattern;
+    mlir::LogicalResult matchAndRewrite(gloin::CopyBackwardOp op,
+                                        mlir::PatternRewriter &rewriter) const override {
+        rewriter.replaceOpWithNewOp<mlir::LLVM::ICmpOp>(op, mlir::LLVM::ICmpPredicate::ugt,
+                                                        op.getDestination(), op.getSource());
+        return mlir::success();
+    }
+};
+
 struct LowerArrayElementAddress : mlir::OpRewritePattern<gloin::ArrayElementAddressOp> {
     const GloinRangeProofs &proofs;
     LowerArrayElementAddress(mlir::MLIRContext *context, const GloinRangeProofs &proofs)
@@ -1812,9 +1822,9 @@ struct LowerGloinCorePass
                  LowerCheckedFloatCompare, LowerZeroedArray, LowerStringLiteral, LowerNull,
                  LowerArenaTypedPointer, LowerRawReserve, LowerRawPackedPointer, LowerRawPadding,
                  LowerRawIsAligned, LowerPointerOffset, LowerRequireNonNull, LowerPointerCompare,
-                 LowerSliceFromArray, LowerSliceFromPointer, LowerSliceSubrange, LowerSliceLength,
-                 LowerStackAlloc, LowerFieldAddress, LowerEnumConstant, LowerEnumCompare>(
-                &getContext());
+                 LowerCopyBackward, LowerSliceFromArray, LowerSliceFromPointer, LowerSliceSubrange,
+                 LowerSliceLength, LowerStackAlloc, LowerFieldAddress, LowerEnumConstant,
+                 LowerEnumCompare>(&getContext());
         mlir::GreedyRewriteConfig config;
         config.setListener(&listener);
         if (mlir::failed(mlir::applyPatternsGreedily(getOperation(), std::move(patterns), config)))
@@ -1980,6 +1990,12 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                 compare && (compare.getLhs().getType() != compare.getSourceType() ||
                             compare.getRhs().getType() != compare.getSourceType())) {
                 op->emitError("checked pointer comparison requires matching source operands");
+                valid = false;
+            }
+            if (auto direction = mlir::dyn_cast<gloin::CopyBackwardOp>(op);
+                direction && (direction.getDestination().getType() != direction.getSourceType() ||
+                              direction.getSource().getType() != direction.getSourceType())) {
+                op->emitError("checked copy direction requires matching source operands");
                 valid = false;
             }
             if (auto allocation = mlir::dyn_cast<gloin::StackAllocOp>(op);
@@ -2174,9 +2190,9 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                     gloin::PointerOffsetOp, gloin::ArrayElementAddressOp, gloin::SliceFromArrayOp,
                     gloin::SliceFromPointerOp, gloin::SliceSubrangeOp, gloin::SliceElementAddressOp,
                     gloin::SliceLengthOp, gloin::ArenaFillOp, gloin::RequireNonNullOp,
-                    gloin::PointerCompareOp, gloin::StackAllocOp, gloin::LoadOp, gloin::StoreOp,
-                    gloin::CopyOp, gloin::FieldAddressOp, gloin::ExtractFieldOp,
-                    gloin::EnumConstantOp, gloin::EnumCompareOp>(op) ||
+                    gloin::PointerCompareOp, gloin::CopyBackwardOp, gloin::StackAllocOp,
+                    gloin::LoadOp, gloin::StoreOp, gloin::CopyOp, gloin::FieldAddressOp,
+                    gloin::ExtractFieldOp, gloin::EnumConstantOp, gloin::EnumCompareOp>(op) ||
                 (op->getName().isRegistered() &&
                  (dialect == "func" || dialect == "arith" || dialect == "cf" || dialect == "scf" ||
                   dialect == "memref"));
@@ -2218,14 +2234,15 @@ bool check_legality(mlir::ModuleOp module, bool final) {
             if (!final && name == "source_type" &&
                 mlir::isa<
                     gloin::NullOp, gloin::PointerOffsetOp, gloin::RequireNonNullOp,
-                    gloin::PointerCompareOp, gloin::ArenaTypedPointerOp, gloin::RawReserveOp,
-                    gloin::RawPackedPointerOp, gloin::RawPlaceOp, gloin::EnumConstantOp,
-                    gloin::EnumCompareOp, gloin::ArrayLiteralOp, gloin::RepeatArrayOp,
-                    gloin::ArrayFillOp, gloin::ZeroedArrayOp, gloin::StringLiteralOp,
-                    gloin::ArrayElementAddressOp, gloin::StructLiteralOp, gloin::SliceFromArrayOp,
-                    gloin::SliceFromPointerOp, gloin::SliceSubrangeOp, gloin::SliceElementAddressOp,
-                    gloin::SliceLengthOp, gloin::ArenaFillOp, gloin::FieldAddressOp,
-                    gloin::ExtractFieldOp, gloin::StackAllocOp, gloin::LoadOp, gloin::StoreOp>(op))
+                    gloin::PointerCompareOp, gloin::CopyBackwardOp, gloin::ArenaTypedPointerOp,
+                    gloin::RawReserveOp, gloin::RawPackedPointerOp, gloin::RawPlaceOp,
+                    gloin::EnumConstantOp, gloin::EnumCompareOp, gloin::ArrayLiteralOp,
+                    gloin::RepeatArrayOp, gloin::ArrayFillOp, gloin::ZeroedArrayOp,
+                    gloin::StringLiteralOp, gloin::ArrayElementAddressOp, gloin::StructLiteralOp,
+                    gloin::SliceFromArrayOp, gloin::SliceFromPointerOp, gloin::SliceSubrangeOp,
+                    gloin::SliceElementAddressOp, gloin::SliceLengthOp, gloin::ArenaFillOp,
+                    gloin::FieldAddressOp, gloin::ExtractFieldOp, gloin::StackAllocOp,
+                    gloin::LoadOp, gloin::StoreOp>(op))
                 continue;
             // LLVM's memref/index conversions retain index-typed integer
             // payloads in llvm.mlir.constant with a concrete integer result.

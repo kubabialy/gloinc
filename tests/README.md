@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1237 tests**:
+The current source definitions and CTest discovery contain **1241 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -26,7 +26,7 @@ The current source definitions and CTest discovery contain **1237 tests**:
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
 | SelectionTest | 7 |
-| LoweringTest | 87 |
+| LoweringTest | 88 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -79,7 +79,7 @@ The current source definitions and CTest discovery contain **1237 tests**:
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 182 |
+| CoreAcceptanceTest | 185 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -339,6 +339,18 @@ and sanitizer gates. The larger [Gloin stress driver](integrated/README.md)
 checks all three programs at one million records/samples with a 2 MiB soft stack
 limit, including rejection of one-over-limit inputs. It is required by `check-core`
 and installed/relocated package checks. See [the guide](../docs/integrated-examples.md).
+
+## Overlap-safe slice copying (0.3.0 development)
+
+Three `CoreAcceptanceTest.SliceCopy*` cases cover all 1,296 pairs of ranges in a
+seven-element array against an independent immutable snapshot, including both
+overlap directions, identical/empty ranges and short destinations. Separate
+buffers and destination tails, overlapping placements with different element
+boundaries, packed bytes with spare bits and endian fields, shallow pointer copies
+and zero-sized elements run in JIT and native `-O0`/`-O2`.
+Read-only destinations, mismatched endian element types and direct calls to the
+private direction primitive remain rejected. A `LoweringTest` case executes the
+typed copy-direction operation through exported LLVM and rejects forged operands.
 
 ## Recoverable arena vectors (0.3.0 development)
 

@@ -83,6 +83,27 @@ linear in the number of affected elements. Copy returns `false` without writing
 if the destination is shorter than the source; the caller must ensure the two
 ranges do not overlap. Values are copied shallowly, as in Gloin assignment.
 
+Development 0.3.0 adds `slices.copy<T>(destination: [T], source: [const T]) -> bool`
+for ordinary borrowed slices that may overlap. It copies exactly `source.len`
+elements into the destination prefix, with the values the source held before
+the copy, and leaves the destination tail unchanged. An undersized destination
+returns `false` before any write; otherwise it returns `true`, including for an
+empty source. Identical views, adjacent ranges and overlap in either direction
+are supported. For example, `slices.copy<i32>(values[1..], values[..3])` shifts
+the first three elements right in a four-element array.
+
+This is an allocation-free O(source length) operation. A checked internal GloinIR
+query chooses the copy direction from byte addresses in constant time, including
+when typed placements overlap between element boundaries. It does not allocate a
+temporary buffer or expose general pointer ordering. Element types must match,
+including byte order.
+Typed aggregate copies preserve their representation bytes, including padding;
+pointer, string and slice elements retain their shallow-copy semantics. This API
+does not accept packed slice descriptors; use their storage-specific copy API.
+The copy is not atomic and provides no synchronization. Overlap handling assumes
+live storage with no concurrent mutation of the source or access conflicting with
+destination writes; it does not create a snapshot against other threads.
+
 ## Inline fixed-capacity vectors
 
 `vector.Vector<T; N>` has an inline `[T; N]` buffer and an `i64` logical length.

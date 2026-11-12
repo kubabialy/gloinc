@@ -83,7 +83,9 @@ unchanged vector state on failure. `try_clone(&destination)` copies live element
 into an independent buffer in the chosen arena; element copies remain shallow.
 Ordinary assignment retains its existing aliasing rules.
 `import "@slices";` provides generic fill, reverse, and nonoverlapping copy on
-borrowed slices. See [slices and vectors](../docs/slices-vectors.md).
+borrowed slices. Development 0.3.0 adds `slices.copy<T>` for allocation-free
+overlap-safe copies; a short destination returns false without writing.
+See [slices and vectors](../docs/slices-vectors.md).
 
 Version 0.2.1 adds `import "@hashmap";` and
 `hashmap.HashMap<K, V>` for integer, boolean, and string keys. It supports
