@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1247 tests**:
+The current source definitions and CTest discovery contain **1249 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -48,7 +48,7 @@ The current source definitions and CTest discovery contain **1247 tests**:
 | StandardModuleTest | 17 |
 | StandardLibraryTest | 26 |
 | StringLibraryTest | 22 |
-| TextLibraryTest | 21 |
+| TextLibraryTest | 23 |
 | NumericLibraryTest | 19 |
 | NumericRuntimeTest | 16 |
 | IoLibraryTest | 18 |
@@ -523,11 +523,14 @@ and arena reset passes with a 2 MiB stack.
 
 ## Text traversal and construction (SPEC-030b)
 
-Twenty-one `TextLibraryTest` cases cover split/line boundary semantics, independent
+Twenty-three `TextLibraryTest` cases cover split/line boundary semantics, independent
 cursor positions and borrowed views, invalid delimiters, bounded concat/repeat/
 replacement/case conversion, overflow and empty-output paths, independent result
 lifetimes, all 256 byte values, shared builder state, atomic failed appends,
 zero capacity, read-only queries, snapshots, and source reset/free.
+Byte-slice appends exercise mutable/read-only sources, all byte values, source
+mutation after copying, empty/full builders, capacity failure and retry, shared
+aliases, independent snapshots, no allocation, and checked API restrictions.
 
 Per-handle allocation injection exercises combined builder allocation failure
 and snapshot failure through the actual arena bridge. JIT and native `-O0`/`-O2`

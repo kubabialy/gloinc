@@ -135,6 +135,7 @@ reset/free; manual lifetimes still apply, with no automatic dangling detection.
 | --- | --- | --- |
 | `StringBuilder.create(owner: &arena.GeneralArena, capacity: u64) -> result<StringBuilder>` | `create(&storage, 128)` creates an empty fixed-capacity builder | O(1+capacity) initialization; development 0.3.0 uses one aligned arena allocation for state and payload |
 | `append(self: &StringBuilder, text: string) -> result<void>` | `builder.append("abc")` copies complete text; success or `TOO_LONG` failure | O(1+text size), no allocation |
+| `append_bytes(self: &StringBuilder, bytes: [const u8]) -> result<void>` | Development 0.3.0: `builder.append_bytes(buffer[0..count])` copies a complete byte slice; success or `TOO_LONG` failure | O(1+slice length), no allocation |
 | `append_byte(self: &StringBuilder, byte: u8) -> result<void>` | `builder.append_byte(10)` appends LF; 0 appends NUL | O(1), no allocation; success or `TOO_LONG` failure |
 | `clear(self: &StringBuilder) -> void` | `builder.clear()` resets shared length to zero | O(1), no allocation; keeps storage, does not securely erase old bytes |
 | `byte_length(self: &const StringBuilder) -> u64` | `builder.byte_length()` reports used bytes | O(1), no allocation |
@@ -163,6 +164,13 @@ returns TOO_LONG without changing bytes or length. Empty append succeeds even
 when full. Input bytes need only remain live for the append call. Chaining
 several successful appends is not a transaction: failure in a later call does
 not undo earlier calls.
+
+`append_bytes` accepts mutable or read-only ordinary `u8` slices, copying exact
+bytes without UTF-8 validation or NUL termination. It borrows the source only
+during the call; later source mutation or release does not change the builder.
+Keep the source live and unchanged during the call. A read-only slice does not
+freeze other aliases or provide synchronization. Like `append`, it prechecks
+capacity, accepts empty input even when full, and requires handling its result.
 
 Builder copies **alias the complete mutable state**, including length. If
 `alias = builder`, appending or clearing through either affects both. All aliases

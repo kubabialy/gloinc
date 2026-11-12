@@ -484,6 +484,84 @@ TEST_F(TextLibraryTest, BuilderRejectsUnrepresentableCombinedExtentsBeforeAlloca
           true);
 }
 
+TEST_F(TextLibraryTest, BuilderAppendsByteSlicesWithoutAllocationOrRetainingSource) {
+    fail_allocation(2);
+    modes(program(R"(
+        def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,257);
+        if made.erroneous { return 1; }
+        def mut builder: strings.StringBuilder = made.value;
+        def mut alias: strings.StringBuilder = builder;
+        def mut bytes: [u8; 256] = {0; 256};
+        for def mut index: u64 = 0; index < 256; index = index + 1 {
+            def value: result<u8> = u8(index);
+            if value.erroneous { return 2; }
+            bytes[index] = value.value;
+        }
+        if void_code(builder.append("!")) != status.OK
+            || void_code(alias.append_bytes(bytes[0..128])) != status.OK { return 3; }
+        def readonly: [const u8] = bytes[128..256];
+        if void_code(builder.append_bytes(readonly)) != status.OK
+            || alias.byte_length() != 257 || builder.capacity() != 257 { return 4; }
+        if void_code(alias.append_bytes(bytes[256..256])) != status.OK { return 5; }
+        def full: result<void> = builder.append_bytes(bytes[0..1]);
+        if !full.erroneous { return 6; }
+        if full.error.code != status.TOO_LONG || full.error.os_error != 0
+            || !strings.equal(full.error.message,"string builder capacity exceeded") { return 7; }
+        for def mut index: u64 = 0; index < 256; index = index + 1 { bytes[index] = 42; }
+        // The next allocation must still be request two: appends allocate nothing.
+        def failed: result<string> = builder.to_string(&memory);
+        if !failed.erroneous { return 8; }
+        if failed.error.code != status.NO_MEMORY { return 9; }
+        def saved: result<string> = builder.to_string(&memory);
+        if saved.erroneous { return 10; }
+        def snapshot: string = saved.value;
+        if strings.byte_length(snapshot) != 257 || strings.byte(snapshot,0) != 33 { return 11; }
+        for def mut index: u64 = 0; index < 256; index = index + 1 {
+            def value: result<u8> = u8(index);
+            if value.erroneous { return 12; }
+            if strings.byte(snapshot,index + 1) != value.value { return 13; }
+        }
+        alias.clear();
+        if void_code(builder.append_bytes(bytes[0..256])) != status.OK { return 14; }
+        if void_code(alias.append_bytes(bytes[0..2])) != status.TOO_LONG
+            || builder.byte_length() != 256 { return 15; }
+        bytes[0] = 90;
+        if void_code(alias.append_bytes(bytes[0..1])) != status.OK { return 16; }
+        def retried: result<string> = builder.to_string(&memory);
+        if retried.erroneous { return 17; }
+        def result_text: string = retried.value;
+        for def mut index: u64 = 0; index < 256; index = index + 1 {
+            if strings.byte(result_text,index) != 42 { return 18; }
+        }
+        if strings.byte(result_text,256) != 90 || strings.byte(snapshot,1) != 0 { return 19; }
+        def zero: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,0);
+        if zero.erroneous { return 20; }
+        def mut empty: strings.StringBuilder = zero.value;
+        if void_code(empty.append_bytes(bytes[0..0])) != status.OK
+            || void_code(empty.append_bytes(readonly)) != status.TOO_LONG { return 21; }
+        return 0;
+    )"),
+          true);
+}
+
+TEST_F(TextLibraryTest, BuilderByteAppendRequiresMutableReceiverByteSliceAndHandledResult) {
+    for (const std::string body :
+         {"def b: strings.StringBuilder = made.value; "
+          "def r: result<void> = b.append_bytes(bytes[0..1]); if r.erroneous { return 2; }",
+          "def mut b: strings.StringBuilder = made.value; b.append_bytes(bytes[0..1]);",
+          "def mut b: strings.StringBuilder = made.value; "
+          "def r: result<void> = b.append_bytes(\"x\"); if r.erroneous { return 2; }",
+          "def mut b: strings.StringBuilder = made.value; def words: [u16; 1] = {1}; "
+          "def r: result<void> = b.append_bytes(words[0..1]); if r.erroneous { return 2; }"}) {
+        const auto file = program(
+            "def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8); "
+            "if made.erroneous { return 1; } def bytes: [u8; 1] = {65}; " +
+            body + " return 0;");
+        for (const std::string mode : {"--check", "--emit-ir", "--emit-llvm", "--run"})
+            expect_error(invoke({mode, file}), 1, "error:");
+    }
+}
+
 TEST_F(TextLibraryTest, TransformAllocationFailuresPreserveDiagnosticCodes) {
     for (const std::string call :
          {"strings.concat(&memory,\"a\",\"b\",2)", "strings.repeat(&memory,\"x\",3,3)",

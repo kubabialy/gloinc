@@ -551,6 +551,16 @@ def pub struct StringBuilder {
         return;
     }
 
+    // Example: builder.append_bytes(buffer[0..count]) copies bytes, including NUL.
+    // O(1+bytes.len), no allocation; TOO_LONG leaves bytes and length unchanged.
+    // Empty input succeeds even when full. Source is borrowed only for this call.
+    def pub append_bytes(self: &StringBuilder, bytes: [const u8]) -> result<void> {
+        def appended: result<void> = self.append(view_bytes(bytes));
+        if appended.erroneous { return appended.error; }
+
+        return;
+    }
+
     // Example: builder.append_byte(10) appends LF; 0 appends NUL.
     // O(1), no allocation. Full builder -> TOO_LONG with no change.
     def pub append_byte(self: &StringBuilder, byte: u8) -> result<void> {
