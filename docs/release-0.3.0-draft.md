@@ -44,6 +44,25 @@ release assets, and numbered guides will be updated when the release is cut.
 The [endianness contract](endianness.md) defines byte-order behavior. The
 [development guide](site/development/index.html#endianness) introduces the syntax.
 
+## Queued candidate work
+
+The following items are planned for `0.3.0-candidate` after the current
+standard-library work. They are not implemented or merged by this queue entry.
+Each item gets its own branch and small, verified commits before integration
+into `0.3.0-candidate`; the branch names below are planned names.
+
+| Item | Planned branch | Scope |
+| --- | --- | --- |
+| `continue` keyword | `feature/continue` | Define loop targeting, iteration and condition evaluation, and scoped `defer` behavior; implement through checked GloinIR with regressions and documentation. |
+| `break` keyword | `feature/break` | Define legal targets, nesting, and scoped `defer` behavior; implement through checked GloinIR with regressions and documentation. |
+| Enum payloads | `feature/enum-payloads` | Agree syntax and semantics for construction, matching, exhaustiveness, representation, copying and payload lifetimes before implementation. |
+| Merge 0.2.2 | `integration/0.2.2-into-0.3.0` | Merge the `release/0.2.2` line into the candidate, resolve conflicts and validate the combined behavior. |
+| Merge current development | `integration/packed-structs-into-0.3.0` | Merge `packed-structs`, including the standard-library increments, into the candidate and validate the combined behavior. |
+
+Integration branches start from `0.3.0-candidate`. Feature branches use the
+candidate baseline; reconcile both development lines before relying on their
+combined APIs. Final release validation still follows all candidate integration.
+
 ## Packed memory layouts
 
 Packed structs describe memory through named fields with explicit bitfield
