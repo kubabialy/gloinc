@@ -4,6 +4,7 @@
 // and docs/text-construction.md for complete examples, ownership, and costs.
 import "@arena";
 import "@status";
+import "@memory";
 
 // Borrow an existing byte slice as counted text without copying or validating
 // UTF-8. The source must stay live and unchanged while the string is used.
@@ -506,34 +507,35 @@ def pub struct StringBuilder {
 
     // Example: create(&memory, 128) succeeds with an empty fixed-capacity builder.
     // Check made.erroneous before binding a mutable builder from made.value.
-    // O(1+capacity) zeroing plus arena allocation: one state object, then capacity
-    // bytes (none if zero). Failure -> NO_MEMORY; a failed buffer allocation leaves
-    // state storage retained until reset/free. Zero capacity still needs a live arena.
-    def pub static create(memory: &arena.GeneralArena, capacity: u64) -> result<StringBuilder> {
-        def state: *BuilderState = memory.try_alloc(BuilderState {
-            bytes: null,
-            limit: capacity,
-            used: 0
-        });
-        if state == null {
+    // O(1+capacity) zeroing; one aligned arena allocation for state and payload.
+    // Oversized requests and allocation failure -> NO_MEMORY, with no partial state.
+    // Zero capacity still allocates state and needs a live arena.
+    def pub static create(owner: &arena.GeneralArena, capacity: u64) -> result<StringBuilder> {
+        def header: result<u64> = u64(memory.size_of<BuilderState>());
+        if header.erroneous { return header.error; }
+
+        def header_size: u64 = header.value;
+        if capacity > 9223372036854775807 - header_size {
             return error("cannot allocate string builder", status.NO_MEMORY, 0);
         }
 
-        if capacity > 0 {
-            def bytes: *u8 = memory.try_alloc_bytes(capacity);
-            if bytes == null {
-                return error("cannot allocate string builder", status.NO_MEMORY, 0);
-            }
+        def aligned: result<u64> = u64(memory.align_of<BuilderState>());
+        if aligned.erroneous { return aligned.error; }
 
-            // Replace initialized state; bytes and limit then stay stable for all aliases.
-            *state = BuilderState {
-                bytes: bytes,
-                limit: capacity,
-                used: 0
-            };
-        }
+        def storage: result<[u8]> = owner.alloc_slice<[u8]>(header_size + capacity, 0, aligned.value);
+        if storage.erroneous { return error("cannot allocate string builder", status.NO_MEMORY, 0); }
 
-        return StringBuilder { state: state };
+        def block: [u8]    = storage.value;
+        def mut bytes: *u8 = null;
+
+        if capacity > 0 { bytes = &block[header_size]; }
+
+        // The allocation's extent and alignment guarantee placement. Retain the
+        // non-null guard before publishing the shared state pointer.
+        def state: *BuilderState = memory.place<BuilderState>(&block[0], memory.size_of<BuilderState>(),
+            BuilderState { bytes: bytes, limit: capacity, used: 0 });
+
+        return StringBuilder { state: &*state };
     }
 
     // Example: builder.append("abc") succeeds, or fails with TOO_LONG if it will not fit.

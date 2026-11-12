@@ -306,6 +306,10 @@ TEST_F(StringLibraryTest, BorrowedViewsAndSearchRequireNoArenaAndCopiesFailExpli
         def pub alloc_bytes(self: &GeneralArena, size: u64) -> *u8 { return null; }
         def pub try_alloc_bytes(self: &GeneralArena, size: u64) -> *u8 { return null; }
         def pub try_alloc(self: &GeneralArena, size: u64, alignment: u64) -> *u8 { return null; }
+        def pub alloc_slice<S>(self: &GeneralArena, count: u64,
+            fill: __memory_slice_element<S>, alignment: u64) -> result<S> {
+            return error("test allocation disabled");
+        }
     })",
            "arena.gloin");
     auto file = program(R"(

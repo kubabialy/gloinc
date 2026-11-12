@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1245 tests**:
+The current source definitions and CTest discovery contain **1247 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -48,7 +48,7 @@ The current source definitions and CTest discovery contain **1245 tests**:
 | StandardModuleTest | 17 |
 | StandardLibraryTest | 26 |
 | StringLibraryTest | 22 |
-| TextLibraryTest | 19 |
+| TextLibraryTest | 21 |
 | NumericLibraryTest | 19 |
 | NumericRuntimeTest | 16 |
 | IoLibraryTest | 18 |
@@ -523,16 +523,19 @@ and arena reset passes with a 2 MiB stack.
 
 ## Text traversal and construction (SPEC-030b)
 
-Nineteen `TextLibraryTest` cases cover split/line boundary semantics, independent
+Twenty-one `TextLibraryTest` cases cover split/line boundary semantics, independent
 cursor positions and borrowed views, invalid delimiters, bounded concat/repeat/
 replacement/case conversion, overflow and empty-output paths, independent result
 lifetimes, all 256 byte values, shared builder state, atomic failed appends,
 zero capacity, read-only queries, snapshots, and source reset/free.
 
-Per-handle allocation injection exercises state allocation failure, buffer
-allocation failure, and snapshot failure through the actual typed-arena bridge.
-10,000 append/clear iterations followed by an injected third-allocation failure
-verify that mutation and cursor traversal allocate nothing. Private primitive
+Per-handle allocation injection exercises combined builder allocation failure
+and snapshot failure through the actual arena bridge. JIT and native `-O0`/`-O2`
+check one allocation for zero/nonzero capacities, alignment after prior byte
+storage, all byte values, shared aliases, retained snapshots, retry, and size
+validation before allocation. 10,000 append/clear iterations followed by an
+injected second-allocation failure verify that mutation and cursor traversal
+allocate nothing. Private primitive
 range/null/type guards, public mutability/privacy, and external LLVM execution
 are checked. The packaged report and both guide programs run verbatim against
 normal, installed, and relocated compilers. The suite is part of `check-core`

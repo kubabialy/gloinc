@@ -172,6 +172,10 @@ storage; append/clear allocate nothing, and `to_string` copies explicitly into a
 caller-supplied arena. Three additional module-private primitives handle checked
 buffer views/stores/writes using the existing native copy ABI.
 
+Development 0.3.0 stores StringBuilder state and payload in one aligned arena
+allocation, including state-only zero-capacity builders. Allocation failure
+leaves no separately allocated builder state; aliases and fixed capacity are unchanged.
+
 SPEC-030c adds 29 concrete numeric APIs in `std.gloin`: six parsers, eight
 formatters, and fifteen named numeric conversions. The 0.3.0 development compiler
 also provides `T(value)` for direct integer conversion, always returning
