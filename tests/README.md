@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1242 tests**:
+The current source definitions and CTest discovery contain **1245 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -69,7 +69,7 @@ The current source definitions and CTest discovery contain **1242 tests**:
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 18 |
 | HashmapLibraryTest | 15 |
-| VectorLibraryTest | 7 |
+| VectorLibraryTest | 10 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -354,7 +354,7 @@ typed copy-direction operation through exported LLVM and rejects forged operands
 
 ## Recoverable arena vectors (0.3.0 development)
 
-Seven `VectorLibraryTest` cases cover result-returning construction, reservation,
+Ten `VectorLibraryTest` cases cover result-returning construction, reservation,
 push, insertion, append and cloning. JIT and native `-O0`/`-O2` check captured arguments,
 live elements, overlapping appends in both directions (including typed placements
 with different element boundaries), packed spare bytes,
@@ -365,6 +365,11 @@ private reservations remain checked. Clone checks cover independent buffers and
 counters, shallow pointer elements, same/different arenas, source arena reset,
 empty clones, allocation failure and retry. The suite participates in core and package
 validation; older vector regressions remain in `CoreAcceptanceTest`.
+The same placement-overlap regression exercises fallible arena append and both
+older boolean append methods. Additional checks preserve geometric capacities,
+fixed-capacity rejection without writes, empty appends, full-width length limits,
+packed spare bytes, one allocation per arena append, and the older allocation
+failure trap in JIT and native `-O0`/`-O2`.
 
 ## Hash maps (0.2.1 API, 0.3.0 allocation)
 

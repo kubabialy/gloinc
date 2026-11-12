@@ -131,7 +131,10 @@ def main() -> i32 {
 does not allocate. `get` and `get_mut` return nullable pointers; `clear()` sets
 length to zero without overwriting slots. Indexes are checked by the methods.
 `append_from([const T])` checks capacity before copying, so failure leaves the
-vector unchanged. `insert(index, value)` shifts elements right and returns
+vector unchanged. Development 0.3.0 also preserves the original source values
+for overlapping views, including placements with different element boundaries,
+using `slices.copy`. Empty append succeeds even at capacity; it allocates nothing.
+`insert(index, value)` shifts elements right and returns
 false for an invalid index or full vector; `remove(index)` shifts left and
 returns false for an invalid index. `truncate(length)` returns false for a
 negative or growing length. `pop()` returns a nullable pointer to the removed
@@ -205,8 +208,8 @@ byte-address direction query without allocating a temporary snapshot.
 Element copies remain shallow and preserve aggregate
 representation bytes. The existing arena ownership, view invalidation on growth
 and independent counters in copied handles still apply. Invalid lifetimes and
-programming errors are not converted into allocation errors. These additions
-do not change the older methods or the inline fixed-capacity vector API below.
+programming errors are not converted into allocation errors. The older boolean
+methods and inline fixed-capacity vector API remain available below.
 
 `values.try_clone(&destination)` explicitly creates an independent backing buffer
 and length/capacity counters in the chosen arena. It copies only the live elements,
@@ -283,7 +286,17 @@ and create a new one. The compiler does not track borrow invalidation.
 `append_from([const T])` copies a source slice and permits a view of the same
 vector, including when growth moves its storage; the arena retains the old
 block until reset/free. It returns false before writing if the final length
-would exceed the signed limit. `insert` and `remove` shift elements in O(length)
+would exceed the signed limit. Development 0.3.0 prechecks that length in constant
+time, reserves the complete destination before copying, and uses `slices.copy`
+to preserve original source values for all supported overlaps. This includes
+aliases with different lengths and placements with different element boundaries.
+Growth makes at most one allocation request and produces the same final capacity
+as repeated `push` calls, without allocating intermediate buffers. Empty append
+and append within capacity allocate nothing. Storage byte-extent overflow and
+allocation failure still trap; use `try_append_from` for recoverable errors.
+Copies remain shallow and provide no synchronization, as described for slices.
+
+`insert` and `remove` shift elements in O(length)
 time and return false for invalid indexes; insert can grow and invalidate old
 views. `truncate` changes only the live length and rejects a negative or
 growing length. `pop()` returns a nullable pointer to the removed slot; copy

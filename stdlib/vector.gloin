@@ -235,26 +235,31 @@ def pub struct Vector<T> {
         return true;
     }
 
-    // Source may be a view of this vector: arena growth retains the old block.
-    // A capacity overflow returns false before any elements are appended.
+    // Precheck the full length, grow once, then copy original source values.
+    // Length overflow returns false; storage extent/allocation failures still trap.
     def pub append_from(self: &Vector<T>, source: [const T]) -> bool {
-        def mut remaining: i64 = 9223372036854775807 - self.length;
-        def mut index: u64     = 0;
+        def converted: result<i64> = i64(source.len);
+        if converted.erroneous { return false; }
 
-        while index < source.len {
-            if remaining == 0 { return false; }
+        def count: i64 = converted.value;
+        if count > 9223372036854775807 - self.length { return false; }
+        if count == 0 { return true; }
 
-            remaining = remaining - 1;
-            index     = index + 1;
+        def needed: i64   = self.length + count;
+        def mut next: i64 = self.capacity;
+
+        // Match push's final capacity without allocating intermediate buffers.
+        while next < needed {
+            if next == 0 { next = 1; }
+            else if next > 4611686018427387903 { next = needed; }
+            else { next = next * 2; }
         }
 
-        index = 0;
+        if !self.reserve(next) { return false; }
 
-        while index < source.len {
-            if !self.push(source[index]) { return false; }
-
-            index = index + 1;
-        }
+        // Equal extents guarantee success; growth retains the source's old block.
+        slices.copy<T>(self.data[self.length..needed], source);
+        self.length = needed;
 
         return true;
     }
@@ -386,26 +391,20 @@ const N: usize> {
         return true;
     }
 
-    // Check all required capacity first so a full fixed vector stays unchanged.
+    // Check capacity before writing; overlapping views retain original source values.
     def pub append_from(self: &Vector<T;
         N>, source: [const T]) -> bool {
-        def mut remaining: i64 = N - self.length;
-        def mut index: u64     = 0;
+        def converted: result<i64> = i64(source.len);
+        if converted.erroneous { return false; }
 
-        while index < source.len {
-            if remaining == 0 { return false; }
+        def count: i64 = converted.value;
+        if count > N - self.length { return false; }
+        if count == 0 { return true; }
 
-            remaining = remaining - 1;
-            index     = index + 1;
-        }
+        def needed: i64 = self.length + count;
 
-        index = 0;
-
-        while index < source.len {
-            if !self.push(source[index]) { return false; }
-
-            index = index + 1;
-        }
+        slices.copy<T>(self.data[self.length..needed], source);
+        self.length = needed;
 
         return true;
     }

@@ -274,7 +274,19 @@ TEST_F(VectorLibraryTest, CloneFailureAndEmptyClonePreserveSourceAndAllowRetry) 
 }
 
 TEST_F(VectorLibraryTest, AppendPreservesSourcesPlacedBetweenElementBoundaries) {
-    modes(source(R"(
+    for (const std::string kind : {"fallible", "arena", "fixed"}) {
+        SCOPED_TRACE(kind);
+        const std::string construction =
+            kind == "fixed"
+                ? "def mut values: vector.Vector<Bytes; 6> = vector.Vector<Bytes; 6>.create(Bytes "
+                  "{ bytes: {11, 22, 33} });"
+                : "def mut values: vector.Vector<Bytes> = vector.Vector<Bytes>.empty(&owner, 6);";
+        const std::string append =
+            kind == "fallible"
+                ? "def appended: result<void> = values.try_append_from((*placed)[..]); if "
+                  "appended.erroneous { return 4; }"
+                : "if !values.append_from((*placed)[..]) { return 4; }";
+        modes(source(R"(
         import "@arena"; import "@vector"; import "@memory";
         def struct Bytes { def mut bytes: [u8; 3], }
         def main() -> i32 {
@@ -282,11 +294,12 @@ TEST_F(VectorLibraryTest, AppendPreservesSourcesPlacedBetweenElementBoundaries) 
             defer owner.free();
             def offsets: [i64; 4] = {1, 2, 7, 8};
             for def mut case_index: u64 = 0; case_index < 4; case_index = case_index + 1 {
-                def mut values: vector.Vector<Bytes> = vector.Vector<Bytes>.empty(&owner, 6);
+        )" + construction +
+                     R"(
                 for def mut index: i64 = 0; index < 6; index = index + 1 {
                     if !values.push(Bytes { bytes: {11, 22, 33} }) { return 1; }
                 }
-                def alias: vector.Vector<Bytes> = values;
+                def alias: [const Bytes] = values.as_const_slice();
                 def base: *u8 = &values.get_mut(0).bytes[0];
                 def offset: i64 = offsets[case_index];
                 def seed: [Bytes; 3] = {
@@ -297,22 +310,107 @@ TEST_F(VectorLibraryTest, AppendPreservesSourcesPlacedBetweenElementBoundaries) 
                 def snapshot: [Bytes; 3] = *placed;
                 def mut expected: [Bytes; 6] = {Bytes { bytes: {0, 0, 0} }; 6};
                 for def mut index: i64 = 0; index < 6; index = index + 1 {
-                    expected[index] = *alias.get(index);
+                    expected[index] = alias[index];
                 }
                 for def mut index: u64 = 0; index < 3; index = index + 1 {
                     expected[2 + index] = snapshot[index];
                 }
                 if !values.truncate(2) { return 3; }
-                def appended: result<void> = values.try_append_from((*placed)[..]);
-                if appended.erroneous { return 4; }
-                if values.len() != 5 || values.cap() != 6 || values.get(0) != alias.get(0) { return 5; }
+        )" + append + R"(
+                if values.len() != 5 || values.cap() != 6 || values.get(0) != &alias[0] { return 5; }
                 for def mut index: i64 = 0; index < 6; index = index + 1 {
                     for def mut byte_index: u64 = 0; byte_index < 3; byte_index = byte_index + 1 {
-                        if alias.get(index).bytes[byte_index] != expected[index].bytes[byte_index] { return 6; }
+                        if alias[index].bytes[byte_index] != expected[index].bytes[byte_index] { return 6; }
                     }
                 }
             }
             return 42;
         }
+        )"));
+    }
+}
+
+TEST_F(VectorLibraryTest, LegacyAppendPreservesCapacityRulesAndRejectsOversizedInput) {
+    modes(program(R"(
+        def source_values: [i32; 7] = {1, 2, 3, 4, 5, 6, 7};
+        def capacities: [i64; 4] = {0, 1, 3, 8};
+        def grown: [i64; 4] = {8, 8, 12, 8};
+        for def mut index: u64 = 0; index < 4; index = index + 1 {
+            def mut values: vector.Vector<i32> = vector.Vector<i32>.empty(&owner, capacities[index]);
+            if !values.append_from(source_values[..]) || values.len() != 7 || values.cap() != grown[index] { return 1; }
+            if !values.append_from(values.as_const_slice()) || values.len() != 14 || values.cap() != grown[index] * 2 { return 2; }
+            for def mut element: u64 = 0; element < 14; element = element + 1 {
+                if values.as_const_slice()[element] != source_values[element % 7] { return 3; }
+            }
+        }
+        def mut fixed: vector.Vector<i32; 4> = vector.Vector<i32; 4>.create(99);
+        if !fixed.append_from(source_values[..4]) { return 4; }
+        def alias: [const i32] = fixed.as_const_slice();
+        if !fixed.truncate(1) || !fixed.append_from(alias[..3]) { return 5; }
+        if alias[0] != 1 || alias[1] != 1 || alias[2] != 2 || alias[3] != 3 { return 6; }
+        if fixed.append_from(source_values[..1]) || !fixed.append_from(source_values[..0])
+            || fixed.len() != 4 || alias[3] != 3 { return 7; }
+        def mut empty: vector.Vector<i32; 0> = vector.Vector<i32; 0>.create(0);
+        if !empty.append_from(source_values[..0]) || empty.append_from(source_values[..1]) { return 8; }
+        def huge: result<[Empty]> = owner.alloc_slice<[Empty]>(18446744073709551615, Empty {}, 1);
+        if huge.erroneous { return 9; }
+        def view: [const Empty] = huge.value;
+        def mut tiny: vector.Vector<Empty> = vector.Vector<Empty>.empty(&owner, 1);
+        if !tiny.push(Empty {}) || tiny.append_from(view)
+            || tiny.append_from(view[..9223372036854775807]) || tiny.len() != 1 || tiny.cap() != 1 { return 10; }
+        def mut bounded: vector.Vector<Empty; 1> = vector.Vector<Empty; 1>.create(Empty {});
+        if bounded.append_from(view) || bounded.len() != 0 { return 11; }
+        def raw: [u8; 1] = {255};
+        def read: result<Record> = memory.read_packed<Record>(raw[..]);
+        if read.erroneous { return 12; }
+        def records: [Record; 2] = {read.value; 2};
+        def mut heap_records: vector.Vector<Record> = vector.Vector<Record>.empty(&owner, 0);
+        def mut inline_records: vector.Vector<Record; 2> = vector.Vector<Record; 2>.create(records[0]);
+        if !heap_records.append_from(records[..]) || !inline_records.append_from(records[..]) { return 13; }
+        def mut output: [u8; 2] = zeroed;
+        if code(memory.write_packed<Record>(output[..1], *heap_records.get(1))) != status.OK
+            || code(memory.write_packed<Record>(output[1..], *inline_records.get(1))) != status.OK
+            || output[0] != 255 || output[1] != 255 { return 14; }
+        return 42;
     )"));
+}
+
+TEST_F(VectorLibraryTest, LegacyAppendReservesOnceAndEmptyAppendDoesNotAllocate) {
+    fail_allocation(3);
+    modes(program(R"(
+        def mut values: vector.Vector<i32> = vector.Vector<i32>.empty(&owner, 0);
+        def items: [i32; 8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        if !values.append_from(items[..0]) || values.cap() != 0 { return 1; }
+        if !values.append_from(items[..]) || values.cap() != 8 || values.len() != 8 { return 2; }
+        if !values.append_from(items[..0]) { return 3; }
+        if code(values.try_reserve(9)) != status.NO_MEMORY || values.cap() != 8 || values.len() != 8 { return 4; }
+        for def mut index: u64 = 0; index < 8; index = index + 1 {
+            if values.as_const_slice()[index] != items[index] { return 5; }
+        }
+        return 42;
+    )"),
+          true);
+}
+
+TEST_F(VectorLibraryTest, LegacyAppendAllocationFailureStillTraps) {
+    fail_allocation(2);
+    const auto file = program(R"(
+        def mut values: vector.Vector<i32> = vector.Vector<i32>.empty(&owner, 0);
+        def items: [i32; 1] = {42};
+        if !values.append_from(items[..]) { return 1; }
+        return 42;
+    )");
+    const auto jit = invoke({"--stdlib-dir", directory, file});
+    EXPECT_FALSE(jit.launch_failed);
+    EXPECT_LT(jit.status, 0) << jit.err;
+    for (const auto *mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/legacy-append-trap";
+        const auto built = invoke_raw({"--stdlib-dir", directory, mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        bool failed = false;
+        EXPECT_LT(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10, 0,
+                                            nullptr, &failed),
+                  0);
+        EXPECT_FALSE(failed);
+    }
 }
