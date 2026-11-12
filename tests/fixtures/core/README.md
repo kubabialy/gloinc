@@ -30,6 +30,7 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 | Constants, visibility, immutable/mutable locals, shadowing, definite initialization | [scope_initialization](run/scope_initialization.gloin) |
 | Mutation, nested if/else/while/for/unless and early returns | [control_flow](run/control_flow.gloin), [nested_early_returns](run/nested_early_returns.gloin) |
 | Omitted for components, initializer effects/scope, skipped body/update | [for_components](run/for_components.gloin) |
+| Continue skips the body remainder and retains the for update | [continue](run/continue.gloin), [invalid target](reject/continue_outside_loop.gloin); `ContinueTest` covers nested loops, switches, results, defers and JIT/native execution. |
 | Precedence and parentheses | [precedence](run/precedence.gloin) |
 | UTF-8 comments, CRLF, multiline expressions | [utf8_comments](run/utf8_comments.gloin) |
 | i32 result mapped to host exit status modulo 256, with no implicit output | [negative](run/negative_result.gloin), [zero](run/zero_result.gloin), [minimum](run/minimum_result.gloin), [maximum](run/maximum_result.gloin) |

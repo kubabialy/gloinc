@@ -274,6 +274,15 @@ short-circuiting retain their final continuation throughout the header. Returnin
 paths skip the update and further condition checks. SPEC-027 registers defers
 only on reached paths and drains them on function return, not iteration exit.
 
+Development 0.3.0 adds [`continue;`](continue.md). Semantic analysis records its
+nearest enclosing loop identity in `SemanticData::continue_targets`, checks
+iteration-local result obligations, and terminates that source path. Continue
+snapshots join normal body fallthrough before checking a for update. Only names
+live before the body participate in that join; result proofs must agree on all
+incoming edges. A while continue branches to its condition; a for continue
+branches to its update block. Blocks with no incoming update path are removed.
+Unchecked AST codegen rejects continue without checked target metadata.
+
 ## Ownership
 
 The checked program owns its AST and semantic tables. AST addresses remain stable

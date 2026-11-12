@@ -75,7 +75,9 @@ void CodeGen::gen_while(const WhileStatement *statement) {
     builder.create<mlir::cf::CondBranchOp>(location(), condition, body_block, mlir::ValueRange{},
                                            exit_block, mlir::ValueRange{});
     builder.setInsertionPointToStart(body_block);
+    continue_targets.emplace(statement, condition_block);
     gen_statement(statement->body.get());
+    continue_targets.erase(statement);
     // A returning body has no backedge. A live nested continuation repeats the
     // entire condition, including its calls, guards, and short-circuit branches.
     branch_if_open(condition_block);
@@ -93,9 +95,11 @@ void CodeGen::gen_for(const ForStatement *statement) {
     auto *region = builder.getBlock()->getParent();
     auto *condition_block = new mlir::Block();
     auto *body_block = new mlir::Block();
+    auto *update_block = new mlir::Block();
     auto *exit_block = new mlir::Block();
     region->push_back(condition_block);
     region->push_back(body_block);
+    region->push_back(update_block);
     region->push_back(exit_block);
     branch_if_open(condition_block);
     builder.setInsertionPointToStart(condition_block);
@@ -104,7 +108,16 @@ void CodeGen::gen_for(const ForStatement *statement) {
     builder.create<mlir::cf::CondBranchOp>(location(), condition, body_block, mlir::ValueRange{},
                                            exit_block, mlir::ValueRange{});
     builder.setInsertionPointToStart(body_block);
+    continue_targets.emplace(statement, update_block);
     gen_statement(statement->body.get());
+    continue_targets.erase(statement);
+    // Preserve the existing loop shape when no continue targets the update.
+    if (update_block->hasNoPredecessors())
+        update_block->erase();
+    else {
+        branch_if_open(update_block);
+        builder.setInsertionPointToStart(update_block);
+    }
     if (has_open_block()) {
         if (statement->increment)
             gen_layout_expression(statement->increment.get(), true);

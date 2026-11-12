@@ -83,6 +83,7 @@ class CodeGen {
     std::shared_ptr<GenScope> current_scope;
     std::map<SymbolId, SymbolInfo> checked_values;
     std::map<SymbolId, mlir::func::FuncOp> checked_functions;
+    std::map<const Statement *, mlir::Block *> continue_targets;
     void declare_binding(const Identifier *name, mlir::Value value, bool address, mlir::Type type,
                          const std::string &source_type);
     SymbolInfo lookup_binding(const Identifier *name);

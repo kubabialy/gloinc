@@ -289,6 +289,19 @@ class Sema {
     enum class ResultProof { Unknown, Success, Error };
     std::unordered_map<SymbolId, ResultProof> result_proof;
     std::unordered_map<SymbolId, bool> result_handled;
+    struct ContinueFlow {
+        InitializationState initialization;
+        std::unordered_map<SymbolId, ResultProof> proof;
+        std::unordered_map<SymbolId, bool> handled;
+    };
+    struct LoopContext {
+        const Statement *statement;
+        std::shared_ptr<Scope> enclosing_scope;
+        std::vector<ContinueFlow> continues;
+    };
+    std::vector<LoopContext> loops;
+    void check_continue(const ContinueStatement *statement);
+    void merge_loop_continues(const InitializationState &before);
     void check_live_results_handled();
     std::optional<std::pair<SymbolId, ResultProof>> result_condition(const Expression *condition);
     void merge_result_flow(const std::unordered_map<SymbolId, ResultProof> &left,

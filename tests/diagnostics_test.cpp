@@ -100,7 +100,7 @@ TEST(DiagnosticsTest, NonBooleanConditionsFailSemanticChecking) {
 TEST(DiagnosticsTest, UnsupportedStatementsCannotDisappear) {
     mlir::MLIRContext context;
     for (const auto &text : {"def main() -> i32 { import \"@std\"; return 0; }",
-                             "def main() -> i32 { continue; return 0; }",
+                             "def main() -> i32 { continue label; return 0; }",
                              "def main() -> i32 { for ;; { break; } return 0; }"}) {
         auto result = compile_source(text, "unsupported.gloin", context);
         EXPECT_FALSE(result.success()) << text;
