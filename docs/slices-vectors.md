@@ -199,9 +199,10 @@ elements); a larger append can request its required capacity directly.
 
 `try_append_from` checks the complete length and reserves once before writing.
 It preserves source values for self-appends and overlapping views, including
-aliases with different logical lengths. It uses an allocation-free linear
-pointer-equality scan to select the copy direction; it does not allocate a
-temporary snapshot. Element copies remain shallow and preserve aggregate
+aliases with different logical lengths and typed placements whose element
+boundaries differ. It delegates copying to `slices.copy`, using the checked
+byte-address direction query without allocating a temporary snapshot.
+Element copies remain shallow and preserve aggregate
 representation bytes. The existing arena ownership, view invalidation on growth
 and independent counters in copied handles still apply. Invalid lifetimes and
 programming errors are not converted into allocation errors. These additions

@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1241 tests**:
+The current source definitions and CTest discovery contain **1242 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -69,7 +69,7 @@ The current source definitions and CTest discovery contain **1241 tests**:
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 18 |
 | HashmapLibraryTest | 15 |
-| VectorLibraryTest | 6 |
+| VectorLibraryTest | 7 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -354,9 +354,10 @@ typed copy-direction operation through exported LLVM and rejects forged operands
 
 ## Recoverable arena vectors (0.3.0 development)
 
-Six `VectorLibraryTest` cases cover result-returning construction, reservation,
+Seven `VectorLibraryTest` cases cover result-returning construction, reservation,
 push, insertion, append and cloning. JIT and native `-O0`/`-O2` check captured arguments,
-live elements, overlapping appends in both directions, packed spare bytes,
+live elements, overlapping appends in both directions (including typed placements
+with different element boundaries), packed spare bytes,
 zero-sized elements and signed/byte-extent limits. Per-arena allocation injection
 checks failure before publication, unchanged counters/pointers/aliases, retries,
 and that invalid/no-op requests do not allocate. Result handling, mutability and

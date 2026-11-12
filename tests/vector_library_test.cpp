@@ -43,7 +43,7 @@ class VectorLibraryTest : public gloin_test::CliFixture {
         }
     }
     void fail_allocation(unsigned number) {
-        for (const auto *name : {"vector", "arena", "memory", "status"})
+        for (const auto *name : {"vector", "arena", "memory", "status", "slices"})
             source(read((library() / (std::string(name) + ".gloin")).string()),
                    std::string(name) + ".gloin");
         auto arena = read((library() / "arena.gloin").string());
@@ -271,4 +271,48 @@ TEST_F(VectorLibraryTest, CloneFailureAndEmptyClonePreserveSourceAndAllowRetry) 
         )"),
               true);
     }
+}
+
+TEST_F(VectorLibraryTest, AppendPreservesSourcesPlacedBetweenElementBoundaries) {
+    modes(source(R"(
+        import "@arena"; import "@vector"; import "@memory";
+        def struct Bytes { def mut bytes: [u8; 3], }
+        def main() -> i32 {
+            def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+            defer owner.free();
+            def offsets: [i64; 4] = {1, 2, 7, 8};
+            for def mut case_index: u64 = 0; case_index < 4; case_index = case_index + 1 {
+                def mut values: vector.Vector<Bytes> = vector.Vector<Bytes>.empty(&owner, 6);
+                for def mut index: i64 = 0; index < 6; index = index + 1 {
+                    if !values.push(Bytes { bytes: {11, 22, 33} }) { return 1; }
+                }
+                def alias: vector.Vector<Bytes> = values;
+                def base: *u8 = &values.get_mut(0).bytes[0];
+                def offset: i64 = offsets[case_index];
+                def seed: [Bytes; 3] = {
+                    Bytes { bytes: {4, 5, 6} }, Bytes { bytes: {7, 8, 9} }, Bytes { bytes: {10, 11, 12} }
+                };
+                def placed: *[Bytes; 3] = memory.place<[Bytes; 3]>(base + offset, 18 - offset, seed);
+                if placed == null { return 2; }
+                def snapshot: [Bytes; 3] = *placed;
+                def mut expected: [Bytes; 6] = {Bytes { bytes: {0, 0, 0} }; 6};
+                for def mut index: i64 = 0; index < 6; index = index + 1 {
+                    expected[index] = *alias.get(index);
+                }
+                for def mut index: u64 = 0; index < 3; index = index + 1 {
+                    expected[2 + index] = snapshot[index];
+                }
+                if !values.truncate(2) { return 3; }
+                def appended: result<void> = values.try_append_from((*placed)[..]);
+                if appended.erroneous { return 4; }
+                if values.len() != 5 || values.cap() != 6 || values.get(0) != alias.get(0) { return 5; }
+                for def mut index: i64 = 0; index < 6; index = index + 1 {
+                    for def mut byte_index: u64 = 0; byte_index < 3; byte_index = byte_index + 1 {
+                        if alias.get(index).bytes[byte_index] != expected[index].bytes[byte_index] { return 6; }
+                    }
+                }
+            }
+            return 42;
+        }
+    )"));
 }

@@ -1,6 +1,7 @@
 import "@arena";
 import "@memory";
 import "@status";
+import "@slices";
 
 // Validate before the internal reservation bridge can trap on size overflow.
 def try_storage<T>(owner: &arena.GeneralArena, capacity: i64) -> result<*T> {
@@ -139,25 +140,9 @@ def pub struct Vector<T> {
         def grown: result<void> = self.try_grow(self.length + count);
         if grown.erroneous { return grown.error; }
 
-        // Pointer equality detects a destination starting inside source without
-        // pointer ordering/casts. The scan is linear, reads no element values,
-        // and needs no temporary allocation. Growth retains the old source block.
-        def destination: *const T = self.data + self.length;
-        def mut backward: bool    = false;
-
-        for def mut index: i64 = 0; index < count; index = index + 1 {
-            if &source[index] == destination { backward = true; }
-        }
-
-        def mut remaining: i64 = count;
-
-        while remaining > 0 {
-            def mut index: i64 = count - remaining;
-            if backward { index = remaining - 1; }
-
-            *(self.data + (self.length + index)) = source[index];
-            remaining = remaining - 1;
-        }
+        // Equal extents guarantee success. Growth retains the old source block;
+        // copy also handles typed placements with different element boundaries.
+        slices.copy<T>(self.data[self.length..self.length + count], source);
 
         self.length = self.length + count;
 
