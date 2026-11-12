@@ -6,6 +6,23 @@
 #include <set>
 
 namespace {
+bool is_runtime_trap(const gloin_test::ProcessResult &result) {
+    return !result.launch_failed && result.status == -2 &&
+           result.message.find("timed out") == std::string::npos &&
+           (result.message.find("Trace/BPT trap") != std::string::npos ||
+            result.message.find("Trace/breakpoint trap") != std::string::npos ||
+            result.message.find("Illegal instruction") != std::string::npos);
+}
+
+gloin_test::ProcessResult run_process(llvm::StringRef executable,
+                                      llvm::ArrayRef<llvm::StringRef> arguments,
+                                      unsigned timeout = 10) {
+    gloin_test::ProcessResult result{};
+    result.status = llvm::sys::ExecuteAndWait(executable, arguments, std::nullopt, {}, timeout, 0,
+                                              &result.message, &result.launch_failed);
+    return result;
+}
+
 class ContinueTest : public gloin_test::CliFixture {
   protected:
     void executes(const std::string &text, int expected = 0) {
@@ -165,13 +182,35 @@ TEST_F(ContinueTest, UpdateTrapsRemainObservableAfterContinue) {
             return 0;
         }
     )");
-    EXPECT_EQ(invoke({file}).status, -2);
+    const auto jit = invoke({file});
+    EXPECT_TRUE(is_runtime_trap(jit)) << jit.message << jit.err;
     for (const auto *mode : {"-O0", "-O2"}) {
         const auto executable = directory + "/trap";
         const auto built = invoke_raw({mode, "-o", executable, file});
         ASSERT_EQ(built.status, 0) << built.err;
-        EXPECT_LT(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 0);
+        const auto native = run_process(executable, {executable});
+        EXPECT_TRUE(is_runtime_trap(native)) << mode << ": " << native.message;
     }
+}
+
+TEST_F(ContinueTest, TrapChecksRejectTimeoutsLaunchFailuresAndOrdinaryExits) {
+    const std::string fixture = gloin_test::process_fixture;
+    const auto timed_out = run_process(fixture, {fixture, "hang", "unused"}, 1);
+    ASSERT_FALSE(timed_out.launch_failed) << timed_out.message;
+    ASSERT_EQ(timed_out.status, -2);
+    ASSERT_NE(timed_out.message.find("timed out"), std::string::npos) << timed_out.message;
+    EXPECT_FALSE(is_runtime_trap(timed_out));
+
+    const std::string missing = directory + "/missing-executable";
+    const auto not_started = run_process(missing, {missing});
+    ASSERT_TRUE(not_started.launch_failed) << not_started.message;
+    ASSERT_EQ(not_started.status, -1);
+    EXPECT_FALSE(is_runtime_trap(not_started));
+
+    const auto exited = run_process(fixture, {fixture, "fail", "unused"});
+    ASSERT_FALSE(exited.launch_failed) << exited.message;
+    ASSERT_EQ(exited.status, 7);
+    EXPECT_FALSE(is_runtime_trap(exited));
 }
 
 TEST_F(ContinueTest, GeneratedControlFlowIsVerifiedAndUncheckedTargetsAreRejected) {
