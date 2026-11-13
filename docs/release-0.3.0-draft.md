@@ -14,6 +14,7 @@ release assets, and numbered guides will be updated when the release is cut.
 | Explicit value conversion | Implemented: `le_u32(value)`, `be_u32(value)`, and native equivalents preserve the number and require the same width and signedness. |
 | Aggregate representation | Implemented: copies preserve all bytes, including padding; Gloin by-value arguments and returns retain that representation. |
 | GloinIR and LLVM lowering | Implemented: typed numeric SSA values, explicit conversion/copy operations, target-dependent scalar encoding, and explicit padding in internal LLVM aggregate layouts. |
+| Continue | `continue;` targets the nearest enclosing loop; for updates still execute, result and initialization checks include continue edges, and defers remain function-scoped. See the [continue contract](continue.md). |
 | Validation | macOS ARM64 core, focused regressions, and the independent endian torture lab pass. Final release/platform/package validation remains pending. |
 
 The [endianness contract](endianness.md) defines the complete behavior. The

@@ -84,6 +84,31 @@ void Sema::check_conditional(const Expression *condition, const BlockStatement *
                       other_proof, other_handled, other_reaches);
 }
 
+void Sema::check_continue(const ContinueStatement *statement) {
+    if (!recording || !current_function || loops.empty()) {
+        log_error("continue is only allowed inside a loop body");
+        return;
+    }
+    auto &loop = loops.back();
+    // Only iteration-local results leave scope. Outer and for-header results
+    // remain live and may be handled by the update or after the loop.
+    for (auto scope = current_scope; scope != loop.enclosing_scope; scope = scope->parent)
+        for (const auto &[name, symbol] : scope->symbols)
+            if (dynamic_cast<ResultType *>(symbol.type.get()) && !result_handled[symbol.id])
+                log_error("Result '" + name + "' must be checked with .erroneous or match");
+    recording->continue_targets[statement] = loop.statement;
+    loop.continues.push_back({initialization, result_proof, result_handled});
+    falls_through = false;
+}
+
+void Sema::merge_loop_continues(const InitializationState &before) {
+    for (const auto &edge : loops.back().continues) {
+        const bool reaches = falls_through;
+        merge_initialization(before, initialization, reaches, edge.initialization, true);
+        merge_result_flow(result_proof, result_handled, reaches, edge.proof, edge.handled, true);
+    }
+}
+
 void Sema::check_for(const ForStatement *statement) {
     enter_scope();
     if (statement->init) {
@@ -113,12 +138,18 @@ void Sema::check_for(const ForStatement *statement) {
         result_proof[refinement->first] = refinement->second;
     }
     ++loop_depth;
+    loops.push_back({statement, current_scope, {}});
     check_statement(statement->body.get());
+    merge_loop_continues(before);
+    loops.pop_back();
     bool body_reaches = falls_through;
     // Validate the update even if every body path returns, without borrowing
     // initialization that exists only on returning paths or body-local names.
-    if (!body_reaches)
+    if (!body_reaches) {
         initialization = before;
+        result_proof = before_proof;
+        result_handled = before_handled;
+    }
     if (statement->increment) {
         auto type = check_expression(statement->increment.get(), std::nullopt, true);
         if (recording && dynamic_cast<ResultType *>(type.get()))

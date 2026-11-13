@@ -344,6 +344,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     initialization.clear();
     result_proof.clear();
     result_handled.clear();
+    loops.clear();
     falls_through = true;
     loop_depth = 0;
     current_return_type.reset();
@@ -638,7 +639,7 @@ void Sema::check_statement(const Statement *stmt) {
         return;
     }
     if (recording && !falls_through) {
-        log_error("Unreachable statement after an unconditional return");
+        log_error("Unreachable statement after an unconditional control transfer");
         return;
     }
     if (const auto *decl = dynamic_cast<const VariableDeclaration *>(stmt)) {
@@ -716,6 +717,7 @@ void Sema::check_statement(const Statement *stmt) {
         // Each body starts with independent control-flow and initialization state.
         falls_through = true;
         loop_depth = 0;
+        loops.clear();
         current_return_type = func_type->return_type;
         current_function = func_def;
         enter_scope();
@@ -761,6 +763,8 @@ void Sema::check_statement(const Statement *stmt) {
                 recording->defers[current_function].push_back(defer);
         }
 
+    } else if (const auto *continued = dynamic_cast<const ContinueStatement *>(stmt)) {
+        check_continue(continued);
     } else if (const auto *ret = dynamic_cast<const ReturnStatement *>(stmt)) {
         if (recording && !current_return_type) {
             log_error("Return is only allowed inside a function");
@@ -818,7 +822,10 @@ void Sema::check_statement(const Statement *stmt) {
             result_proof[refinement->first] = refinement->second;
         }
         ++loop_depth;
+        loops.push_back({while_stmt, current_scope, {}});
         check_statement(while_stmt->body.get());
+        merge_loop_continues(before);
+        loops.pop_back();
         --loop_depth;
         bool body_reaches = falls_through;
         // The body may execute zero times. Repeated immutable stores to an outer

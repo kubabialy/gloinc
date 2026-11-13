@@ -252,6 +252,10 @@ struct BlockStatement : public Statement {
     }
 };
 
+struct ContinueStatement : public Statement {
+    std::string to_string() const override { return "continue;"; }
+};
+
 struct ReturnStatement : public Statement {
     std::unique_ptr<Expression> return_value;
     

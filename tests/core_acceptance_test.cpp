@@ -754,6 +754,8 @@ TEST_F(CoreAcceptanceTest, RunNestedEarlyReturns) { runs("run/nested_early_retur
 
 TEST_F(CoreAcceptanceTest, RunForComponents) { runs("run/for_components.gloin", "42"); }
 
+TEST_F(CoreAcceptanceTest, RunContinue) { runs("run/continue.gloin", "8"); }
+
 TEST_F(CoreAcceptanceTest, RunPrecedence) { runs("run/precedence.gloin", "42"); }
 
 TEST_F(CoreAcceptanceTest, RunUtf8Comments) { runs("run/utf8_comments.gloin", "42"); }
@@ -966,8 +968,8 @@ TEST_F(CoreAcceptanceTest, RejectDeferredBreak) {
     rejects("reject/deferred_break.gloin", "expression");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredContinue) {
-    rejects("reject/deferred_continue.gloin", "expression");
+TEST_F(CoreAcceptanceTest, RejectContinueOutsideLoop) {
+    rejects("reject/continue_outside_loop.gloin", "continue is only allowed inside a loop body");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredBitwise) {
