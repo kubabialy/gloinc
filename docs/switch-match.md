@@ -38,7 +38,9 @@ embedded NUL bytes, without allocating a copy of the subject.
 after the switch. An empty switch evaluates its subject and continues. Each
 arm is a separate block with ordinary local scope and function-exit `defer`
 semantics. `return` exits the enclosing function. There is no fallthrough or
-need for `break`; `break` and `continue` remain unsupported.
+need for `break`. Published 0.2.x does not support `break` or `continue`. In
+development 0.3.0, [break](break.md) and [continue](continue.md) inside a switch
+target the nearest surrounding loop; a switch alone is not a valid target.
 
 Duplicate case values are errors, even when their spellings differ (`1` and
 `0x1`, for example). A default after complete boolean or enum coverage is

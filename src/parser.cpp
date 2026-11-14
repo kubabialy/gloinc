@@ -434,6 +434,12 @@ std::unique_ptr<Statement> GloinParser::parse_statement_impl() {
         return parse_def_statement();
     case GLOIN_TOKEN_RETURN:
         return parse_return_statement();
+    case GLOIN_TOKEN_BREAK: {
+        auto statement = located_node<BreakStatement>();
+        advance_token();
+        expect(GLOIN_TOKEN_SEMICOLON, "Expected ';' after break");
+        return statement;
+    }
     case GLOIN_TOKEN_CONTINUE: {
         auto statement = located_node<ContinueStatement>();
         advance_token();

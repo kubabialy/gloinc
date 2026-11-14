@@ -272,6 +272,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
         tests/control_flow_test.cpp
         tests/for_unless_test.cpp
         tests/continue_test.cpp
+        tests/break_test.cpp
         tests/lowering_test.cpp
         tests/float_reduction_test.cpp
         tests/variables_test.cpp
@@ -643,7 +644,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     endif()
 
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|EndianTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|ContinueTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress|GloinFloatProofSmoke|GloinFloatChainSmoke|GloinFloatBatchSmoke|GloinFloatScheduleSmoke|GloinFloatArraySmoke)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|EndianTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|ContinueTest|BreakTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress|GloinFloatProofSmoke|GloinFloatChainSmoke|GloinFloatBatchSmoke|GloinFloatScheduleSmoke|GloinFloatArraySmoke)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure

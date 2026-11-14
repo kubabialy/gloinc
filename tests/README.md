@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1175 tests**:
+The current source definitions and CTest discovery contain **1184 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -25,6 +25,7 @@ The current source definitions and CTest discovery contain **1175 tests**:
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
 | ContinueTest | 8 |
+| BreakTest | 8 |
 | SelectionTest | 7 |
 | LoweringTest | 82 |
 | SemaTest | 9 |
@@ -83,7 +84,7 @@ The current source definitions and CTest discovery contain **1175 tests**:
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 180 |
+| CoreAcceptanceTest | 181 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 

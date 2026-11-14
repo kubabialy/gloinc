@@ -45,4 +45,4 @@ The checked program records a resolved loop target for every continue.
 GloinIR uses verified `cf.br` edges within the function: a while condition
 header or a for update block. These explicit edges participate in the existing
 control-flow analyses and lowering; no runtime control-transfer helper is used.
-`break` and enum payloads remain separate work.
+For loop exit, see the [break contract](break.md). Enum payloads remain separate work.

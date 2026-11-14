@@ -142,6 +142,7 @@ struct SemanticData {
     std::unordered_set<const CallExpression *> arena_typed_reservations;
     std::unordered_map<const FunctionDefinition *, std::vector<const DeferStatement *>> defers;
     std::unordered_map<const ContinueStatement *, const Statement *> continue_targets;
+    std::unordered_map<const BreakStatement *, const Statement *> break_targets;
     // Instance calls pass the receiver once, before explicit arguments.
     // true takes the address of struct storage; false passes a pointer value.
     std::unordered_map<const CallExpression *, bool> method_receivers;
