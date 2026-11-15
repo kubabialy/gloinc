@@ -880,6 +880,17 @@ Existing stage-isolated backend tests now use the explicit
 preserved. All 31 E2E cases use executable-mode checked generation. The seventh executes an
 `int` alias and nested shadowing, confirming the outer binding still returns 42.
 
+## Installed and relocated package coverage
+
+`scripts/check-package.sh` uses the same CTest selection for the installed
+prefix and extracted archive. Alongside the library and core acceptance suites,
+it includes all `PackedTest`, `EndianTest`, `ContinueTest`, and `BreakTest`
+cases. Their CLI checks use `GLOIN_TEST_CLI` to exercise the packaged compiler,
+including JIT and native O0/O2 execution, bounds/overflow traps and loop transfers.
+The suites also contain in-process semantic and IR checks; those still use the
+build's test executable and do not constitute installed-compiler coverage.
+Existing per-test timeouts and serialization rules remain in effect.
+
 ## External execution
 
 CMake discovers `mlir-opt` and `mlir-runner` in the selected LLVM installation's
