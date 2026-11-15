@@ -83,6 +83,27 @@ linear in the number of affected elements. Copy returns `false` without writing
 if the destination is shorter than the source; the caller must ensure the two
 ranges do not overlap. Values are copied shallowly, as in Gloin assignment.
 
+Development 0.3.0 adds `slices.copy<T>(destination: [T], source: [const T]) -> bool`
+for ordinary borrowed slices that may overlap. It copies exactly `source.len`
+elements into the destination prefix, with the values the source held before
+the copy, and leaves the destination tail unchanged. An undersized destination
+returns `false` before any write; otherwise it returns `true`, including for an
+empty source. Identical views, adjacent ranges and overlap in either direction
+are supported. For example, `slices.copy<i32>(values[1..], values[..3])` shifts
+the first three elements right in a four-element array.
+
+This is an allocation-free O(source length) operation. A checked internal GloinIR
+query chooses the copy direction from byte addresses in constant time, including
+when typed placements overlap between element boundaries. It does not allocate a
+temporary buffer or expose general pointer ordering. Element types must match,
+including byte order.
+Typed aggregate copies preserve their representation bytes, including padding;
+pointer, string and slice elements retain their shallow-copy semantics. This API
+does not accept packed slice descriptors; use their storage-specific copy API.
+The copy is not atomic and provides no synchronization. Overlap handling assumes
+live storage with no concurrent mutation of the source or access conflicting with
+destination writes; it does not create a snapshot against other threads.
+
 ## Inline fixed-capacity vectors
 
 `vector.Vector<T; N>` has an inline `[T; N]` buffer and an `i64` logical length.
@@ -110,7 +131,10 @@ def main() -> i32 {
 does not allocate. `get` and `get_mut` return nullable pointers; `clear()` sets
 length to zero without overwriting slots. Indexes are checked by the methods.
 `append_from([const T])` checks capacity before copying, so failure leaves the
-vector unchanged. `insert(index, value)` shifts elements right and returns
+vector unchanged. Development 0.3.0 also preserves the original source values
+for overlapping views, including placements with different element boundaries,
+using `slices.copy`. Empty append succeeds even at capacity; it allocates nothing.
+`insert(index, value)` shifts elements right and returns
 false for an invalid index or full vector; `remove(index)` shifts left and
 returns false for an invalid index. `truncate(length)` returns false for a
 negative or growing length. `pop()` returns a nullable pointer to the removed
@@ -130,6 +154,76 @@ and stored elements follow Gloin's normal value-copy semantics; referenced
 objects are not deeply copied. There is no automatic destructor for elements.
 
 ## Growable arena vectors
+
+The 0.3.0 development library adds recoverable construction, growth and cloning. Prefer
+these methods when allocation failure should be handled by the caller:
+
+| Method | Result | Work, excluding allocation |
+| --- | --- | --- |
+| `Vector<T>.try_empty(memory, capacity)` | `result<Vector<T>>` | O(1); reserves uninitialized slots without requiring a fill value |
+| `try_clone(memory)` | `result<Vector<T>>` | O(length); one allocation request in the chosen arena, capacity equals length |
+| `try_reserve(requested)` | `result<void>` | No allocation within capacity; O(length) copying on growth |
+| `try_push(value)` | `result<void>` | Amortized O(1), with O(length) copying on growth |
+| `try_insert(index, value)` | `result<void>` | O(length − index), plus growth copying if needed |
+| `try_append_from(source)` | `result<void>` | O(source length), plus growth copying if needed; at most one allocation request |
+
+```gloin
+import "@arena";
+import "@vector";
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+    def made: result<vector.Vector<i32>> = vector.Vector<i32>.try_empty(&owner, 0);
+    if made.erroneous { return 1; }
+    def mut values: vector.Vector<i32> = made.value;
+    def pushed: result<void> = values.try_push(42);
+    if pushed.erroneous { return 2; }
+    return *values.get(0);
+}
+```
+
+Capacity and insertion indices remain `i64`. Negative capacities return `INVALID`;
+unrepresentable lengths or byte extents return `OVERFLOW`; insertion outside
+the inclusive range zero through length returns `OUT_OF_RANGE`; allocation
+failure returns `NO_MEMORY`.
+All use OS error zero. Insertion checks the index before growth limits. Requests
+are validated before allocation. A zero initial capacity still requests backed
+storage and can return `NO_MEMORY`; it initializes no elements. Zero-sized element
+types accept capacities through `INT64_MAX` without a capacity-sized fill loop.
+
+Every failed new operation leaves the vector's pointer, length, capacity and
+elements unchanged, so its existing views and aliases retain their prior state.
+Argument evaluation happens before the call; its side effects are not rolled
+back. Push/insert capture the value before growth or shifting. Empty append and
+reserve within capacity allocate nothing. Growth for push/insert/append normally
+doubles capacity, capped at `INT64_MAX / sizeof(T)` (or `INT64_MAX` for zero-sized
+elements); a larger append can request its required capacity directly.
+
+`try_append_from` checks the complete length and reserves once before writing.
+It preserves source values for self-appends and overlapping views, including
+aliases with different logical lengths and typed placements whose element
+boundaries differ. It delegates copying to `slices.copy`, using the checked
+byte-address direction query without allocating a temporary snapshot.
+Element copies remain shallow and preserve aggregate
+representation bytes. The existing arena ownership, view invalidation on growth
+and independent counters in copied handles still apply. Invalid lifetimes and
+programming errors are not converted into allocation errors. The older boolean
+methods and inline fixed-capacity vector API remain available below.
+
+`values.try_clone(&destination)` explicitly creates an independent backing buffer
+and length/capacity counters in the chosen arena. It copies only the live elements,
+preserving aggregate representation bytes, and sets capacity equal to length.
+It accepts a read-only vector and leaves the source unchanged on success or
+failure. Even an empty clone requests storage and can return `NO_MEMORY`.
+
+Element copies are shallow: pointers, strings, slices and nested arena vectors
+still refer to their original storage. Cloning does not extend those referents'
+lifetimes or make them safe for concurrent mutation. A clone in a different arena
+keeps its own buffer after the source arena is reset, but its referenced objects
+must remain live independently. Cloning into the same arena is also supported;
+both buffers then share that arena's lifetime. Ordinary assignment continues to
+alias the existing buffer.
 
 `import "@vector";` also provides `vector.Vector<T>`. Prefer
 `Vector<T>.empty(&memory, capacity)` with an explicit arena and signed `i64`
@@ -192,7 +286,17 @@ and create a new one. The compiler does not track borrow invalidation.
 `append_from([const T])` copies a source slice and permits a view of the same
 vector, including when growth moves its storage; the arena retains the old
 block until reset/free. It returns false before writing if the final length
-would exceed the signed limit. `insert` and `remove` shift elements in O(length)
+would exceed the signed limit. Development 0.3.0 prechecks that length in constant
+time, reserves the complete destination before copying, and uses `slices.copy`
+to preserve original source values for all supported overlaps. This includes
+aliases with different lengths and placements with different element boundaries.
+Growth makes at most one allocation request and produces the same final capacity
+as repeated `push` calls, without allocating intermediate buffers. Empty append
+and append within capacity allocate nothing. Storage byte-extent overflow and
+allocation failure still trap; use `try_append_from` for recoverable errors.
+Copies remain shallow and provide no synchronization, as described for slices.
+
+`insert` and `remove` shift elements in O(length)
 time and return false for invalid indexes; insert can grow and invalidate old
 views. `truncate` changes only the live length and rejects a negative or
 growing length. `pop()` returns a nullable pointer to the removed slot; copy

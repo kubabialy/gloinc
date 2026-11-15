@@ -1,10 +1,18 @@
 # Nonblocking TCP, TLS, and HTTP/1.1 (0.1.0)
 
+For the 0.3.0 independent TCP/IP implementation and HTTP/HTTPS server over raw
+packets, see [TCP/IP servers](tcpip-server.md). This page describes the portable
+OS-socket API, which remains available alongside it.
+
 `@net` provides nonblocking IPv4 TCP sockets on Apple Silicon macOS and Ubuntu
 24.04 Linux. `@http` parses and formats bounded HTTP/1.1 message heads. The
 [local round-trip example](../examples/network_http.gloin) compiles with
 `gloinc -o network_http examples/network_http.gloin` and runs without a network
 service. It uses built-in `result<T>` for errors throughout both modules.
+
+The [packed packet layer](packets.md) provides `@packet` IPv4/UDP/TCP wire
+headers, bounded validation, and checksum sealing. OS TCP sockets still exchange
+application bytes; packet construction does not replace the socket ABI.
 
 ## Socket ownership and addresses
 
@@ -224,9 +232,14 @@ unchanged. Parsing bounds its head scan and requires CRLF and valid field syntax
 
 Request parsing requires a Host field and an origin-form target. It supports
 Content-Length bodies; absent Content-Length means an empty request body.
-Chunked **request** parsing remains unsupported. `frame_request(bytes,
+These older helpers deliberately reject chunked requests. `frame_request(bytes,
 max_header_bytes, max_body_bytes)` returns an allocation-free borrowed body and
 consumed offset once the entire fixed-length request is available.
+
+The 0.3.0 development `http.RequestDecoder` and `http.RequestReader` add bounded
+incremental fixed-length and chunked request bodies, header-boundary inspection,
+output backpressure, and exact consumed offsets. See the [request decoding
+guide](http-requests.md) for API, limits, ownership, and a runnable example.
 
 Response parsing now recognizes a single chunked transfer coding and bodyless
 status codes. Use `http.ResponseReader` to incrementally decode a bounded response

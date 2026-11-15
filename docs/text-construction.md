@@ -133,17 +133,29 @@ reset/free; manual lifetimes still apply, with no automatic dangling detection.
 
 | Function/method | Usage and behavior | Time and allocation |
 | --- | --- | --- |
-| `StringBuilder.create(memory: &arena.GeneralArena, capacity: u64) -> result<StringBuilder>` | `create(&storage, 128)` creates an empty fixed-capacity builder | O(1+capacity) initialization plus arena allocation; one state object, then capacity bytes if nonzero |
+| `StringBuilder.create(owner: &arena.GeneralArena, capacity: u64) -> result<StringBuilder>` | `create(&storage, 128)` creates an empty fixed-capacity builder | O(1+capacity) initialization; development 0.3.0 uses one aligned arena allocation for state and payload |
 | `append(self: &StringBuilder, text: string) -> result<void>` | `builder.append("abc")` copies complete text; success or `TOO_LONG` failure | O(1+text size), no allocation |
+| `append_bytes(self: &StringBuilder, bytes: [const u8]) -> result<void>` | Development 0.3.0: `builder.append_bytes(buffer[0..count])` copies a complete byte slice; success or `TOO_LONG` failure | O(1+slice length), no allocation |
 | `append_byte(self: &StringBuilder, byte: u8) -> result<void>` | `builder.append_byte(10)` appends LF; 0 appends NUL | O(1), no allocation; success or `TOO_LONG` failure |
 | `clear(self: &StringBuilder) -> void` | `builder.clear()` resets shared length to zero | O(1), no allocation; keeps storage, does not securely erase old bytes |
 | `byte_length(self: &const StringBuilder) -> u64` | `builder.byte_length()` reports used bytes | O(1), no allocation |
 | `capacity(self: &const StringBuilder) -> u64` | `builder.capacity()` reports fixed capacity | O(1), no allocation |
 | `to_string(self: &const StringBuilder, memory: &arena.GeneralArena) -> result<string>` | `builder.to_string(&retained)` makes an independent snapshot | O(1+length) initialization/copy plus arena allocation; exactly length bytes, none for empty |
 
-Creation allocates the state first; if the subsequent buffer allocation fails,
-that state storage stays in the arena until reset/free. Zero capacity still
-allocates state and requires a live arena. It accepts empty append, rejects
+Development 0.3.0 places state at the beginning of one aligned arena allocation,
+followed immediately by `capacity` payload bytes. Layout size and alignment come
+from the native `BuilderState` type. A combined extent exceeding `INT64_MAX`
+returns `NO_MEMORY` before requesting storage, with the same diagnostic as an
+allocation failure. Creation makes one allocation request, including at zero
+capacity; allocation failure leaves no separately allocated state behind.
+The region is zero-initialized before the state is placed and published. Shared
+aliases, fixed capacity, and independent snapshots retain their existing rules.
+
+Published 0.2.x allocates state and a nonempty payload separately; a failed
+payload allocation retains the state until arena reset/free.
+
+Zero capacity still allocates state and requires a live arena. It accepts empty
+append, rejects
 nonempty append, and produces empty snapshots without allocation. There is no
 automatic growth, hidden allocator, or individual builder free.
 
@@ -152,6 +164,13 @@ returns TOO_LONG without changing bytes or length. Empty append succeeds even
 when full. Input bytes need only remain live for the append call. Chaining
 several successful appends is not a transaction: failure in a later call does
 not undo earlier calls.
+
+`append_bytes` accepts mutable or read-only ordinary `u8` slices, copying exact
+bytes without UTF-8 validation or NUL termination. It borrows the source only
+during the call; later source mutation or release does not change the builder.
+Keep the source live and unchanged during the call. A read-only slice does not
+freeze other aliases or provide synchronization. Like `append`, it prechecks
+capacity, accepts empty input even when full, and requires handling its result.
 
 Builder copies **alias the complete mutable state**, including length. If
 `alias = builder`, appending or clearing through either affects both. All aliases
@@ -188,7 +207,7 @@ marker. The old invalid split-cursor failure payload is gone. `LineCursor.create
 | Empty replacement needle | `replacement needle must not be empty` | `INVALID` |
 | Transformation limit/size overflow | `string exceeds byte limit` | `TOO_LONG` |
 | Copy/transformation/snapshot allocation | `cannot allocate string` | `NO_MEMORY` |
-| Builder state or buffer allocation | `cannot allocate string builder` | `NO_MEMORY` |
+| Builder allocation or unrepresentable combined extent | `cannot allocate string builder` | `NO_MEMORY` |
 | Append capacity exceeded | `string builder capacity exceeded` | `TOO_LONG` |
 
 Every error has OS code zero. Match or check results before accessing their
@@ -213,8 +232,11 @@ it is not a general HTML encoder.
 `TextLibraryTest` verifies cursor/replace behavior against independent C++
 oracles; all byte values for case conversion; limits, overflow, and allocation
 failures; aliasing, snapshot ownership, atomic failed appends, and 10,000 reuse
-iterations with an allocation counter. Tests inject both construction failures
-and snapshot failure through the real typed-arena bridge. They check public
+iterations with an allocation counter. Tests inject construction and snapshot
+failure through the real arena bridge. The 0.3.0 checks cover one allocation,
+zero/odd capacities, all byte values, alignment after prior byte storage, rejected
+extents before allocation, retry, aliases and retained snapshots in JIT and native
+`-O0`/`-O2`. They check public
 types/privacy/mutability, primitive guards, external LLVM execution, and both
 guide programs verbatim. The suite runs in Release, sanitizer, installed, and
 relocated package validation.

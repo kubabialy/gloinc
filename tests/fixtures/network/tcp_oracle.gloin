@@ -1,0 +1,47 @@
+import "@tcp";
+import "@packet";
+
+def receive(connection: &tcp.Connection, bytes: [const u8], now: u64) -> bool {
+    def fed: result<void> = connection.input(bytes, now);
+    if fed.erroneous { return false; }
+
+    return true;
+}
+
+def emitted(connection: &tcp.Connection, now: u64, expected_sequence: be_u32,
+    expected_ack: be_u32, flags: u8, window: be_u16, payload: [const u8], expected_size: u64) -> bool {
+    def mut storage: [u8; 1502] = zeroed;
+
+    for def mut i: u64 = 0; i < 1502; i = i + 1 { storage[i] = 0xa5; }
+
+    def sent: result<u64> = connection.emit(storage[1..1501], now);
+    if sent.erroneous { return false; }
+
+    def count: u64 = sent.value;
+    if count != expected_size { return false; }
+
+    for def mut i: u64 = 0; i < 1502; i = i + 1 {
+        if (i == 0 || i > count) && storage[i] != 0xa5 { return false; }
+    }
+
+    if count == 0 { return true; }
+
+    def decoded: result<packet.TcpPacket> = packet.parse_tcp_ipv4(storage[1..1 + count]);
+    if decoded.erroneous { return false; }
+
+    def frame: packet.TcpPacket = decoded.value;
+    if frame.header.sequence != expected_sequence || frame.header.acknowledgment != expected_ack
+        || frame.header.window != window || frame.header.source_port != 0xabcd || frame.header.destination_port != 0x1234
+        || frame.ip.header.source != 0xc6336402 || frame.ip.header.destination != 0xc0000201
+        || (frame.header.syn != 0) != (flags / 2 % 2 != 0)
+        || (frame.header.ack != 0) != (flags / 16 % 2 != 0)
+        || (frame.header.rst != 0) != (flags / 4 % 2 != 0)
+        || (frame.header.fin != 0) != (flags % 2 != 0)
+        || frame.payload.len != payload.len { return false; }
+
+    for def mut i: u64 = 0; i < payload.len; i = i + 1 {
+        if frame.payload[i] != payload[i] { return false; }
+    }
+
+    return true;
+}

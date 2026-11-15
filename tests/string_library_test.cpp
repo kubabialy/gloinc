@@ -27,8 +27,40 @@ class StringLibraryTest : public gloin_test::CliFixture {
         return std::filesystem::exists(path) ? path : root / "../share/gloinc/stdlib";
     }
     void copy_modules() {
-        for (const auto *file : {"std.gloin", "strings.gloin", "arena.gloin", "status.gloin"})
+        for (const auto *file :
+             {"memory.gloin", "std.gloin", "strings.gloin", "arena.gloin", "status.gloin"})
             source(read((library() / file).string()), file);
+    }
+    void expect_byte_modes(const std::string &file, int status, const std::string &output) {
+        const auto check = [&](const gloin_test::ProcessResult &result) {
+            EXPECT_FALSE(result.launch_failed) << result.message;
+            EXPECT_EQ(result.status, status) << result.err << result.message;
+            EXPECT_EQ(result.out, output);
+            if (status < 0) {
+                EXPECT_TRUE(result.message.find("Trace/BPT trap") != std::string::npos ||
+                            result.message.find("Trace/breakpoint trap") != std::string::npos ||
+                            result.message.find("Illegal instruction") != std::string::npos)
+                    << result.message;
+            } else {
+                EXPECT_TRUE(result.err.empty()) << result.err;
+            }
+        };
+        check(invoke({file}));
+        for (const auto *mode : {"-O0", "-O2"}) {
+            const auto executable = directory + "/string-byte";
+            auto built = invoke_raw({mode, "-o", executable, file});
+            ASSERT_EQ(built.status, 0) << built.err;
+            const auto out = directory + "/native.out";
+            const auto err = directory + "/native.err";
+            const std::optional<llvm::StringRef> redirects[] = {llvm::StringRef(""), out, err};
+            gloin_test::ProcessResult result{};
+            result.status =
+                llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, redirects, 10, 0,
+                                          &result.message, &result.launch_failed);
+            result.out = read(out);
+            result.err = read(err);
+            check(result);
+        }
     }
 };
 std::string literal(const std::string &bytes) {
@@ -60,6 +92,43 @@ std::string literal(const std::string &bytes) {
     return result + "\"";
 }
 } // namespace
+
+TEST_F(StringLibraryTest, DirectByteAccessPreservesBytesAndEvaluatesArgumentsOnceInOrder) {
+    const auto file = program(R"(
+        def bytes: [u8; 5] = {0, 255, 128, 195, 169};
+        def text: string = strings.view_bytes(bytes[..]);
+        for def mut index: u64 = 0; index < 5; index = index + 1 {
+            if strings.byte(text, index) != bytes[index] { return 1; }
+        }
+        if strings.byte("é", 0) != 195 || strings.byte("é", 1) != 169 { return 2; }
+        if strings.byte(get_text(), get_index()) != 98 { return 3; }
+        def missing: result<u8> = strings.byte_at("abc", 3);
+        if !missing.erroneous { return 4; }
+        if missing.error.code != status.OUT_OF_RANGE { return 5; }
+        return 42;
+    )",
+                              R"(
+        def get_text() -> string { std.print("t"); return "abc"; }
+        def get_index() -> u64 { std.print("i"); return 1; }
+    )");
+    expect_byte_modes(file, 42, "ti");
+}
+
+TEST_F(StringLibraryTest, DirectByteBoundsTrapEvenWhenDiscardedBeforeLaterEffects) {
+    for (const auto &[text, index] : std::vector<std::pair<std::string, std::string>>{
+             {"", "0"}, {"abc", "3"}, {"abc", "18446744073709551615"}}) {
+        SCOPED_TRACE(text + " at " + index);
+        const auto file =
+            program(R"(
+            strings.byte(get_text(), get_index());
+            std.print("after");
+            return 42;
+        )",
+                    "def get_text() -> string { std.print(\"t\"); return \"" + text +
+                        "\"; } def get_index() -> u64 { std.print(\"i\"); return " + index + "; }");
+        expect_byte_modes(file, -2, "ti");
+    }
+}
 
 TEST_F(StringLibraryTest, SharedStatusesRetainCompatibilityAndDistinctBoundsFailure) {
     expect_run(invoke({program(R"(
@@ -237,6 +306,10 @@ TEST_F(StringLibraryTest, BorrowedViewsAndSearchRequireNoArenaAndCopiesFailExpli
         def pub alloc_bytes(self: &GeneralArena, size: u64) -> *u8 { return null; }
         def pub try_alloc_bytes(self: &GeneralArena, size: u64) -> *u8 { return null; }
         def pub try_alloc(self: &GeneralArena, size: u64, alignment: u64) -> *u8 { return null; }
+        def pub alloc_slice<S>(self: &GeneralArena, count: u64,
+            fill: __memory_slice_element<S>, alignment: u64) -> result<S> {
+            return error("test allocation disabled");
+        }
     })",
            "arena.gloin");
     auto file = program(R"(

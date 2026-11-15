@@ -71,8 +71,8 @@ class ContextLibraryTest : public gloin_test::CliFixture {
                                                         : root / "../share/gloinc/stdlib";
     }
     void copy_modules() {
-        for (auto name : {"arena.gloin", "std.gloin", "strings.gloin", "status.gloin", "io.gloin",
-                          "fs.gloin", "process.gloin", "time.gloin"})
+        for (auto name : {"memory.gloin", "arena.gloin", "std.gloin", "strings.gloin",
+                          "status.gloin", "io.gloin", "fs.gloin", "process.gloin", "time.gloin"})
             source(read((library() / name).string()), name);
     }
     static void replace(std::string &s, const std::string &from, const std::string &to) {

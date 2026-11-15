@@ -9,8 +9,10 @@ overview.
 
 Signed and unsigned integers of 8, 16, 32, and 64 bits have three distinct type
 identities: native (`u32`), big endian (`be_u32`), and little endian (`le_u32`).
-The prefix spelling is canonical. Suffix spellings, custom widths, 128-bit
-integers, and endian-qualified floating types remain unsupported.
+The prefix spelling is canonical. Native integers additionally support every
+width from 1 through 64 bits; see [packed layouts and narrow integers](packed-layout.md).
+Suffix spellings, other endian-qualified widths, integers above 64 bits, and
+endian-qualified floating types remain unsupported.
 
 Type identity never depends on the target. `le_u32` is distinct from `u32` on a
 little-endian machine. The 8-bit forms are also distinct even though their
@@ -20,23 +22,34 @@ size, alignment, range, and signedness.
 ```gloin
 def big: be_u32 = 0x01020304;
 def next: be_u32 = big + 1;
-def little: le_u32 = le_u32(next);
-def native: u32 = u32(little);
+def converted: result<le_u32> = le_u32(next);
+if converted.erroneous { return converted.error; }
+def little: le_u32 = converted.value;
+def native: result<u32> = u32(little);
+if native.erroneous { return native.error; }
 ```
 
-All three results have numeric value `0x01020305`. In increasing address order,
+The successful values have numeric value `0x01020305`. In increasing address order,
 `next` occupies bytes `01 02 03 05`, and `little` occupies `05 03 02 01`.
 The native representation follows the selected target.
 
 `T(value)` is an explicit integer value conversion. It requires exactly one
-argument with the same width and signedness as `T`; it changes only the byte-order
-type. Identity conversions are allowed. It never reverses the numeric bits or
-reinterprets a pointer. Width/sign changes and floating conversions still use
-the existing named numeric APIs. Generic type parameters may name the target.
+integer argument and always returns `result<T>`, including identity, widening,
+and same-width endian conversions. Success preserves the numeric value; a value
+outside the destination range returns `OVERFLOW` (code 3), OS error 0, and
+`numeric conversion is out of range`. This applies equally to literal and runtime
+inputs. Check `.erroneous` or use `match` before extracting the payload. Unhandled
+results are compile-time errors. No conversion wraps, saturates, reinterprets a
+pointer, or swaps numeric bits. Generic type parameters may name the target.
+Floating conversions keep the existing named numeric APIs.
 
-Literals take their contextual type, including in constructors, and retain the
-existing range checks. Constant initializers can use these conversions.
-Arguments are evaluated once, and runtime evaluation order is unchanged.
+Typed literals retain contextual range checking: `def x: u8 = 256` is invalid,
+whereas `u8(256)` produces an error result. Constructor inputs are checked
+independently of the destination. Unanchored integer literal expressions use
+`i64`, or `u64` when a positive literal needs that range; typed operands supply
+their existing arithmetic context. Literals outside the supported 64-bit ranges
+remain invalid. Constants use typed literals, not result-valued constructors.
+Arguments are evaluated once in the existing left-to-right evaluation order.
 
 Arithmetic operands must have identical types. Arithmetic retains that type;
 comparisons produce `bool`. Existing checked overflow, division, remainder, and
@@ -55,7 +68,7 @@ These operations have different contracts:
 | Scalar load or scalar field extraction | Decode the stored representation to a numeric value. |
 | Aggregate construction | Encode direct scalar fields/elements; preserve already constructed aggregate fields/elements. |
 | Same-type aggregate copy | Preserve the entire existing object representation, including internal and trailing padding. Overlapping materialized copies have `memmove` semantics. |
-| Explicit scalar conversion | Preserve the number and change the byte-order type. |
+| Explicit scalar conversion | Preserve the number when it fits the destination's width/sign; change the byte-order type as requested. |
 | Conversion between aggregate schemas | Construct the destination and explicitly convert the fields that change type. No automatic aggregate cast or pointer reinterpretation is introduced. |
 | Raw byte copy | Preserve bytes exactly, without consulting an endian schema. |
 
@@ -77,14 +90,18 @@ raw modifications accordingly.
 Qualified scalar values use `!gloin.int<32, Big, Unsigned>` (or the corresponding
 width/order/signedness). Integer constants, arithmetic, comparisons, function
 signatures, and typed pointers preserve this identity. Native scalar integers
-continue to use MLIR's signless integer types with semantic signedness retained
-by the frontend and checked operations.
+of 8/16/32/64 bits continue to use MLIR's signless integer types with semantic
+signedness retained by the frontend and checked operations. Native narrow types
+use `!gloin.int<N, Native, Signed/Unsigned>` and separate logical width from storage.
 
-`gloin.endian_convert` records both complete integer descriptors, including
-`Native` for a native endpoint. Its verifier requires equal widths and
-signedness. Checked compilation also requires source-typed operands and results.
-The operation disappears when source types are lowered: both endpoints already
-represent the same number.
+`gloin.integer_convert` records the source and destination integer descriptors,
+a `result<T>` type, its layout, and the overflow diagnostic. Its verifier checks
+these together; checked compilation requires source-typed inputs and results.
+Lowering compares the mathematical value against both destination bounds, then
+constructs a success or error result. Success payloads use the destination's
+representation, including byte order and narrow-integer spare bits. Conversion
+is pure; evaluating the input retains its effects. Guaranteed-success checks can
+be removed by optimization while the source API remains `result<T>`.
 
 Scalar representation changes become LLVM byte swaps only when the declared
 order differs from the module's target data layout. One-byte values need no
@@ -98,7 +115,7 @@ their complete representation as well.
 
 Before LLVM export, `aggregate_representation.cpp` makes padding explicit as byte
 array fields in internal aggregate layouts. It remaps field/GEP indices and
-Gloin argument/return types, and verifies that object size, alignment, and source
+Gloin argument/return layouts, and verifies that object size, alignment, and source
 field offsets are unchanged. This prevents LLVM aggregate SSA values from
 discarding padding. LLVM intrinsic tuples retain their prescribed signatures.
 The layout helper keeps LLVM's struct-layout cache within the lifetime of the
@@ -109,7 +126,10 @@ temporary LLVM context used for measurement.
 Gloin-to-Gloin scalar arguments/results are numeric machine integers after
 lowering. Their byte-order qualification remains enforced before lowering.
 Gloin aggregate arguments/results carry the complete representation, including
-padding. This is an internal Gloin calling convention, not a C ABI promise.
+padding and narrow integer spare bits. Internal aggregate calls use private
+storage for captured arguments and a caller-owned result slot. This avoids
+native scalar expansion losing bytes in by-value array arguments. It is an
+internal Gloin calling convention, not a C ABI promise.
 
 The existing runtime boundary continues to use its declared native scalar,
 pointer, and padding-free descriptor signatures. Padding-bearing by-value

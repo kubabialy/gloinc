@@ -1,8 +1,15 @@
 # Language examples
 
-These sources match 0.2.1 and its built-in result APIs. With a
-published 0.1.0 compiler, use the examples bundled in that release or its tag.
+The 0.3.0 development [packet header example](packet_headers.gloin) builds and
+validates an unaligned IPv4/UDP datagram using packed structs and endian fields.
+It needs no network access. See the [packet guide](../docs/packets.md).
+
+These sources follow the current development compiler and standard library.
+With a published compiler, use the examples bundled in that release or its tag.
 `hashmap.gloin` requires the 0.2.1 compiler and standard library.
+
+`http_stream.gloin` uses the 0.3.0 development `strings.byte` API for bounded
+binary reads, replacing its local byte-access helper.
 
 `core_counter.gloin` is a runnable core example, tested through the actual CLI.
 After building, run `./build/gloinc --jit examples/core_counter.gloin`: it exits 42
@@ -175,3 +182,11 @@ validating the input. Both export functions for module composition;
 `simulation_lab.simulate` can consume the loaded seed/sample count.
 
 See [formats, bounds, costs, failures, and resource verification](../docs/integrated-examples.md).
+
+`ip_http_server.gloin` serves concurrent HTTP/HTTPS over Gloin's independent
+IPv4/IPv6 TCP stack using a configured Linux TUN or macOS utun device.
+Use `DEVICE [--ipv6] [CERT.pem KEY.pem]`; IPv6 serves `[fd00::2]:8080`. It supports
+bounded binary echo, keep-alive/pipelining, large responses, deadlines and
+connection reuse without per-request allocation. Device setup is external;
+see [TCP/IP servers](../docs/tcpip-server.md) and the isolated Linux acceptance
+harness in `tests/tcpip/interop.py`.

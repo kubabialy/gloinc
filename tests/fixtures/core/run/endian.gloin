@@ -17,8 +17,11 @@ def identity<T>(value: T) -> T {
     return value;
 }
 
-def order<T>(value: be_u32) -> T {
-    return T(value);
+def order<T>(value: be_u32) -> result<T> {
+    def converted: result<T> = T(value);
+    if converted.erroneous { return converted.error; }
+
+    return converted.value;
 }
 
 def packet_result(value: Packet) -> result<Packet> {
@@ -35,10 +38,13 @@ def result_value(value: be_u32) -> result<be_u32> {
     return value;
 }
 
-def selected(value: be_u32) -> le_u32 {
+def selected(value: be_u32) -> result<le_u32> {
+    def converted: result<le_u32> = le_u32(value);
+    if converted.erroneous { return converted.error; }
+
     return match value {
-        case 0x11223344 => le_u32(value);
-        default => le_u32(0);
+        case 0x11223344 => converted.value;
+        default => 0;
     };
 }
 
@@ -68,17 +74,32 @@ def main() -> i32 {
 
     if *big != 0x11223344 { return 5; }
 
-    def little: *le_u32 = memory.place<le_u32>(bytes + 8, 504, le_u32(*big));
+    def converted_1: result<le_u32> = le_u32(*big);
+    if converted_1.erroneous { return 90; }
+
+    def little: *le_u32 = memory.place<le_u32>(bytes + 8, 504, converted_1.value);
     if little == null { return 6; }
     if *(bytes + 8) != 0x44 || *(bytes + 9) != 0x33 || *(bytes + 10) != 0x22 || *(bytes + 11) != 0x11 { return 7; }
-    if u32(*little) != u32(*big) { return 8; }
+
+    def converted_2: result<u32> = u32(*big);
+    if converted_2.erroneous { return 90; }
+
+    def converted_3: result<u32> = u32(*little);
+    if converted_3.erroneous { return 90; }
+    if converted_3.value != converted_2.value { return 8; }
 
     def signed: *be_i16 = memory.place<be_i16>(bytes + 16, 496, -259);
     if signed == null { return 9; }
-    if *(bytes + 16) != 0xFE || *(bytes + 17) != 0xFD || le_i16(*signed) != -259 { return 10; }
 
-    def const minimum: le_i64 = le_i64(be_i64(-9223372036854775808));
-    if i64(minimum) != -9223372036854775808 { return 11; }
+    def converted_4: result<le_i16> = le_i16(*signed);
+    if converted_4.erroneous { return 90; }
+    if *(bytes + 16) != 0xFE || *(bytes + 17) != 0xFD || converted_4.value != -259 { return 10; }
+
+    def const minimum: le_i64    = -9223372036854775808;
+    def converted_5: result<i64> = i64(minimum);
+
+    if converted_5.erroneous { return 90; }
+    if converted_5.value != -9223372036854775808 { return 11; }
 
     def array: *[be_u16; 3] = memory.place<[be_u16; 3]>(bytes + 24, 488, {0x0102, 0x0304, 0x0506});
     if array == null { return 12; }
@@ -149,8 +170,17 @@ def main() -> i32 {
 
     def wide: *be_u64 = memory.place<be_u64>(bytes + 192, 320, 0x0102030405060708);
     if wide == null { return 29; }
-    if *(bytes + 192) != 1 || *(bytes + 199) != 8 || le_u64(*wide) != 0x0102030405060708 { return 30; }
-    if order<le_u32>(*big) != *little || 0x11223344 != order<be_u32>(*big) { return 31; }
+
+    def converted_6: result<le_u64> = le_u64(*wide);
+    if converted_6.erroneous { return 90; }
+    if *(bytes + 192) != 1 || *(bytes + 199) != 8 || converted_6.value != 0x0102030405060708 { return 30; }
+
+    def converted_7: result<be_u32> = order<be_u32>(*big);
+    if converted_7.erroneous { return 90; }
+
+    def converted_8: result<le_u32> = order<le_u32>(*big);
+    if converted_8.erroneous { return 90; }
+    if converted_8.value != *little || 0x11223344 != converted_7.value { return 31; }
 
     // A raw copy preserves bytes, even when the destination has another schema.
     for def mut i: i64 = 0; i < 4; i = i + 1 {
@@ -162,7 +192,10 @@ def main() -> i32 {
     def mut owner: arena.GeneralArena = arena.GeneralArena.create();
     defer owner.free();
 
-    def element: &be_u32 = owner.alloc(be_u32(0x01020304));
+    def converted_9: result<be_u32> = be_u32(0x01020304);
+    if converted_9.erroneous { return 90; }
+
+    def element: &be_u32 = owner.alloc(converted_9.value);
     *element = *element + 1;
 
     if *element != 0x01020305 { return 33; }
@@ -171,7 +204,11 @@ def main() -> i32 {
     if made.erroneous { return 34; }
 
     def mut map: hashmap.HashMap<be_u32, le_u64> = made.value;
-    def inserted: result<bool>                   = map.insert(*element, le_u64(*wide));
+    def converted_10: result<le_u64>             = le_u64(*wide);
+
+    if converted_10.erroneous { return 90; }
+
+    def inserted: result<bool> = map.insert(*element, converted_10.value);
 
     if inserted.erroneous { return 35; }
     if !inserted.value { return 36; }
@@ -205,9 +242,18 @@ def main() -> i32 {
         if *(bytes + 324 + i) != snapshot[i] { return 40; }
     }
 
-    def optional: *be_u32 = owner.try_alloc(be_u32(0x01020304));
+    def converted_11: result<be_u32> = be_u32(0x01020304);
+    if converted_11.erroneous { return 90; }
+
+    def optional: *be_u32 = owner.try_alloc(converted_11.value);
     if optional == null || *optional != 0x01020304 { return 41; }
-    if selected(*big) != le_u32(*big) { return 43; }
+
+    def selection: result<le_u32> = selected(*big);
+    if selection.erroneous { return 43; }
+
+    def converted_12: result<le_u32> = le_u32(*big);
+    if converted_12.erroneous { return 90; }
+    if selection.value != converted_12.value { return 43; }
 
     switch *big {
         case 0x11223344 {}
@@ -215,8 +261,11 @@ def main() -> i32 {
         default { return 44; }
     }
 
-    def mut evaluations: i32 = 0;
-    if le_u32(counted(&evaluations)) != 0x01020304 || evaluations != 1 { return 45; }
+    def mut evaluations: i32         = 0;
+    def converted_13: result<le_u32> = le_u32(counted(&evaluations));
+
+    if converted_13.erroneous { return 90; }
+    if converted_13.value != 0x01020304 || evaluations != 1 { return 45; }
 
     return 42;
 }

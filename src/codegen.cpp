@@ -1,5 +1,6 @@
 #include "codegen.h"
 #include "mlir/IR/Diagnostics.h"
+#include "packed_ir.h"
 #include "standard_runtime.h"
 #include "target_layout.h"
 #include <iostream>
@@ -8,6 +9,10 @@
 // using namespace gloin;
 
 namespace {
+bool is_packed_storage(const ValueType &type) {
+    return (type.is_array() && type.array_order != PackedBitOrder::None) ||
+           (type.is_slice() && type.slice_order != PackedBitOrder::None);
+}
 std::string nominal_ir_name(const SemanticData &data, size_t id) {
     return data.structures.at(id).name + "#" + std::to_string(id);
 }
@@ -169,10 +174,24 @@ mlir::ModuleOp CodeGen::generate_impl(const std::vector<std::unique_ptr<Statemen
                 llvm::SmallVector<mlir::Attribute> fields;
                 for (const auto &field : structure.fields)
                     fields.push_back(mlir::TypeAttr::get(source_type(field.type)));
-                builder.create<gloin::StructDefinitionOp>(
+                auto definition = builder.create<gloin::StructDefinitionOp>(
                     location(), builder.getStringAttr(nominal_ir_name(*checked_data, id)),
                     mlir::TypeAttr::get(lower_type(ValueType::record(id))),
                     builder.getArrayAttr(fields));
+                if (structure.bit_order != PackedBitOrder::None) {
+                    definition->setAttr(
+                        "packed_order",
+                        builder.getStringAttr(structure.bit_order == PackedBitOrder::MsbFirst
+                                                  ? "msb_first"
+                                                  : "lsb_first"));
+                    definition->setAttr("packed_offsets",
+                                        builder.getDenseI64ArrayAttr(structure.bit_offsets));
+                    llvm::SmallVector<bool> mutable_fields;
+                    for (const auto &field : structure.fields)
+                        mutable_fields.push_back(field.is_mutable);
+                    definition->setAttr("packed_mutable",
+                                        builder.getDenseBoolArrayAttr(mutable_fields));
+                }
             }
             auto declare_unit = [&](const auto &statements) {
                 for (const auto &statement : statements) {
@@ -648,10 +667,16 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                 fail("Unsupported array initializer spelling");
             auto type = checked_type(array_lit);
             auto source = source_type(checked_data->types.at(array_lit));
-            auto element_source = mlir::cast<gloin::GloinArrayType>(source).getElement();
+            auto element_source = source_type(*checked_data->types.at(array_lit).array_element);
             if (array_lit->repeated) {
                 auto fill = as_source_value(gen_layout_expression(array_lit->elements[0].get()),
                                             element_source);
+                if (checked_data->types.at(array_lit).array_order != PackedBitOrder::None) {
+                    auto value = builder.create<gloin::PackedArrayRepeatOp>(
+                        location(), source, fill, mlir::TypeAttr::get(source),
+                        mlir::TypeAttr::get(type));
+                    return builder.create<gloin::ToLayoutOp>(location(), type, value);
+                }
                 auto value = builder.create<gloin::RepeatArrayOp>(
                     location(), source, fill, mlir::TypeAttr::get(source),
                     mlir::TypeAttr::get(type));
@@ -661,6 +686,12 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             for (const auto &element : array_lit->elements)
                 elements.push_back(as_source_value(gen_layout_expression(element.get()),
                                                    element_source));
+            if (checked_data->types.at(array_lit).array_order != PackedBitOrder::None) {
+                auto value = builder.create<gloin::PackedArrayLiteralOp>(
+                    location(), source, elements, mlir::TypeAttr::get(source),
+                    mlir::TypeAttr::get(type));
+                return builder.create<gloin::ToLayoutOp>(location(), type, value);
+            }
             auto value = builder.create<gloin::ArrayLiteralOp>(
                 location(), source, elements, mlir::TypeAttr::get(source),
                 mlir::TypeAttr::get(type));
@@ -791,6 +822,17 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                     mlir::TypeAttr::get(lower_type(base->second)));
             }
             if (checked_data->indirect_members.contains(member_access)) {
+                auto base_type = checked_data->types.at(member_access->left.get()).pointee();
+                if (checked_data->structures.at(*base_type.structure).bit_order !=
+                    PackedBitOrder::None) {
+                    auto base = gen_pointer_address(member_access->left.get());
+                    return builder.create<gloin::PackedLoadOp>(
+                        location(), source_type(checked_data->types.at(member_access)),
+                        source_address(base, source_type(base_type), false),
+                        builder.getI64IntegerAttr(checked_data->field_indices.at(member_access)),
+                        mlir::TypeAttr::get(source_type(base_type)),
+                        mlir::TypeAttr::get(checked_type(member_access)));
+                }
                 auto address = gen_address(member_access);
                 return load_value(checked_type(member_access), address,
                                   checked_data->types.at(member_access));
@@ -799,6 +841,14 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             auto record_source = source_type(
                 checked_data->types.at(member_access->left.get()));
             auto field_source = source_type(checked_data->types.at(member_access));
+            if (checked_data->structures
+                    .at(*checked_data->types.at(member_access->left.get()).structure)
+                    .bit_order != PackedBitOrder::None)
+                return builder.create<gloin::PackedExtractOp>(
+                    location(), field_source, as_source_value(value, record_source),
+                    builder.getI64IntegerAttr(checked_data->field_indices.at(member_access)),
+                    mlir::TypeAttr::get(record_source),
+                    mlir::TypeAttr::get(checked_type(member_access)));
             auto field = builder.create<gloin::ExtractFieldOp>(
                 location(), field_source, as_source_value(value, record_source),
                 builder.getI64IntegerAttr(checked_data->field_indices.at(member_access)),
@@ -841,6 +891,13 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
     } else if (auto *index = dynamic_cast<const IndexExpression *>(expr)) {
         if (!checked_data)
             fail("Indexing requires checked semantic analysis");
+        if (is_packed_storage(checked_data->types.at(index->left.get()))) {
+            auto slot = gen_packed_slot(index, false);
+            auto value = builder.create<gloin::PackedElementLoadOp>(
+                location(), source_type(checked_data->types.at(index)), slot,
+                mlir::TypeAttr::get(slot.getType()), mlir::TypeAttr::get(checked_type(index)));
+            return builder.create<gloin::ToLayoutOp>(location(), checked_type(index), value);
+        }
         auto address = gen_array_address(index, true);
         return load_value(checked_type(index), address,
                           checked_data->types.at(index));
@@ -886,6 +943,36 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return builder.create<mlir::arith::CmpIOp>(location(), mlir::arith::CmpIPredicate::sgt,
                                                        left, right);
     } else if (auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
+        if (checked_data)
+            if (auto *index = dynamic_cast<const IndexExpression *>(assign->left.get());
+                index && is_packed_storage(checked_data->types.at(index->left.get()))) {
+                auto slot = gen_packed_slot(index, true);
+                auto right = as_source_value(gen_layout_expression(assign->right.get()),
+                                             source_type(checked_data->types.at(index)));
+                builder.create<gloin::PackedElementStoreOp>(location(), slot, right,
+                                                            mlir::TypeAttr::get(slot.getType()));
+                return right;
+            }
+        if (checked_data)
+            if (auto *member = dynamic_cast<const MemberAccessExpression *>(assign->left.get())) {
+                auto type = checked_data->types.at(member->left.get());
+                bool indirect = checked_data->indirect_members.contains(member);
+                if (indirect)
+                    type = type.pointee();
+                if (type.structure && checked_data->structures.at(*type.structure).bit_order !=
+                                          PackedBitOrder::None) {
+                    auto base = indirect ? gen_pointer_address(member->left.get())
+                                         : gen_address(member->left.get());
+                    auto right =
+                        as_source_value(gen_layout_expression(assign->right.get()),
+                                        source_type(checked_data->types.at(assign->right.get())));
+                    builder.create<gloin::PackedStoreOp>(
+                        location(), source_address(base, source_type(type), true), right,
+                        builder.getI64IntegerAttr(checked_data->field_indices.at(member)),
+                        mlir::TypeAttr::get(source_type(type)));
+                    return right;
+                }
+            }
         auto lhsAddr = gen_address(assign->left.get());
         auto right = gen_layout_expression(assign->right.get());
         if (lhsAddr) {
@@ -918,6 +1005,10 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
                     gen_layout_expression(struct_lit->fields[i].second.get()), field_source));
                 field_indices.push_back(static_cast<int64_t>(index));
             }
+            if (structure.bit_order != PackedBitOrder::None)
+                return builder.create<gloin::PackedLiteralOp>(
+                    location(), source, fields, builder.getDenseI64ArrayAttr(field_indices),
+                    mlir::TypeAttr::get(source), mlir::TypeAttr::get(type));
             auto value = builder.create<gloin::StructLiteralOp>(
                 location(), source, fields,
                 mlir::DenseI64ArrayAttr::get(&context, field_indices),
@@ -948,14 +1039,25 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
-        if (checked_data && checked_data->endian_conversions.contains(call)) {
+        if (checked_data && checked_data->integer_conversions.contains(call)) {
             auto input = gen_expression(call->arguments.front().get());
             auto source = checked_data->types.at(call->arguments.front().get()).builtin();
-            auto target = checked_data->types.at(call).builtin();
-            return builder.create<gloin::EndianConvertOp>(
-                location(), source_type(target), input,
+            const auto &result = checked_data->types.at(call);
+            auto target = result.result_value->builtin();
+            auto error_type = ValueType::error();
+            auto message = as_source_value(
+                emit_constant(ConstantValue{CoreType::String,
+                                            std::string("numeric conversion is out of range")}),
+                source_type(CoreType::String));
+            auto error = builder.create<gloin::ErrorLiteralOp>(
+                location(), source_type(error_type), message,
+                emit_constant(ConstantValue{CoreType::I32, llvm::APInt(32, 3)}),
+                emit_constant(ConstantValue{CoreType::I32, llvm::APInt(32, 0)}),
+                mlir::TypeAttr::get(lower_type(error_type)));
+            return builder.create<gloin::IntegerConvertOp>(
+                location(), source_type(result), input, error,
                 mlir::TypeAttr::get(integer_type(source)),
-                mlir::TypeAttr::get(integer_type(target)));
+                mlir::TypeAttr::get(integer_type(target)), mlir::TypeAttr::get(lower_type(result)));
         }
         if (checked_data && checked_data->error_constructors.contains(call)) {
             auto message = gen_expression(call->arguments.front().get());
@@ -1289,6 +1391,18 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
             auto field_source = source_type(checked_data->types.at(member_access));
             auto field_pointer = gloin::GloinPointerType::get(
                 &context, field_source, false, read_only);
+            if (checked_data->structures.at(*type.structure).bit_order != PackedBitOrder::None) {
+                const auto &field = checked_data->structures.at(*type.structure)
+                                        .fields.at(checked_data->field_indices.at(member_access));
+                field_pointer = gloin::GloinPointerType::get(&context, field_source, false,
+                                                             read_only || !field.is_mutable);
+                auto address = builder.create<gloin::PackedAddressOp>(
+                    location(), field_pointer, typed_base,
+                    builder.getI64IntegerAttr(checked_data->field_indices.at(member_access)),
+                    mlir::TypeAttr::get(source_type(type)));
+                return builder.create<gloin::ToLayoutOp>(
+                    location(), mlir::LLVM::LLVMPointerType::get(&context), address);
+            }
             auto field_address = builder.create<gloin::FieldAddressOp>(
                 location(), field_pointer, typed_base,
                 mlir::TypeAttr::get(lower_type(type)),
@@ -1358,8 +1472,54 @@ mlir::Value CodeGen::gen_address(const Expression *expr) {
     return nullptr;
 }
 
+mlir::Value CodeGen::gen_packed_slot(const IndexExpression *expr, bool writing) {
+    const auto type = checked_data->types.at(expr->left.get());
+    if (type.is_slice()) {
+        auto source = source_type(type);
+        auto base = as_source_value(gen_layout_expression(expr->left.get()), source);
+        auto index = gen_integer_index(expr->index.get());
+        auto slot = gloin::GloinPackedSlotType::get(&context, source_type(*type.slice_element),
+                                                    type.slice_order == PackedBitOrder::MsbFirst,
+                                                    type.slice_read_only);
+        return builder.create<gloin::PackedSliceSelectOp>(
+            location(), slot, base, index, mlir::TypeAttr::get(source), mlir::TypeAttr::get(slot),
+            builder.getBoolAttr(
+                core_type_info(checked_data->types.at(expr->index.get()).builtin()).is_signed));
+    }
+    auto base = gen_address(expr->left.get());
+    if (!base) {
+        if (writing)
+            fail("Packed assignment requires addressable storage");
+        auto value = gen_layout_expression(expr->left.get());
+        base = create_entry_alloca(lower_type(type), type);
+        store_value(value, base, type);
+    }
+    auto index = gen_integer_index(expr->index.get());
+    auto pointer = source_address(base, source_type(type), writing);
+    auto slot = gloin::GloinPackedSlotType::get(
+        &context, source_type(*type.array_element), type.array_order == PackedBitOrder::MsbFirst,
+        mlir::cast<gloin::GloinPointerType>(pointer.getType()).getReadOnly());
+    return builder.create<gloin::PackedArraySelectOp>(location(), slot, pointer, index,
+                                                      mlir::TypeAttr::get(source_type(type)),
+                                                      mlir::TypeAttr::get(slot));
+}
+
 mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_temporary) {
     auto array_type = checked_data->types.at(expr->left.get());
+    if (is_packed_storage(array_type)) {
+        const auto &element =
+            array_type.is_slice() ? *array_type.slice_element : *array_type.array_element;
+        if (!element.structure)
+            fail("Packed scalar elements have no ordinary address");
+        auto slot = gen_packed_slot(expr, false);
+        auto slot_type = mlir::cast<gloin::GloinPackedSlotType>(slot.getType());
+        auto pointer = gloin::GloinPointerType::get(&context, slot_type.getElement(), false,
+                                                    slot_type.getReadOnly());
+        auto address = builder.create<gloin::PackedSlotAddressOp>(location(), pointer, slot,
+                                                                  mlir::TypeAttr::get(slot_type));
+        return builder.create<gloin::ToLayoutOp>(
+            location(), mlir::LLVM::LLVMPointerType::get(&context), address);
+    }
     if (array_type.is_slice()) {
         auto source = source_type(array_type);
         auto base = as_source_value(gen_layout_expression(expr->left.get()), source);
@@ -1370,7 +1530,9 @@ mlir::Value CodeGen::gen_array_address(const IndexExpression *expr, bool allow_t
         auto address = builder.create<gloin::SliceElementAddressOp>(
             location(), pointer, base, index, mlir::TypeAttr::get(source),
             mlir::TypeAttr::get(lower_type(array_type)),
-            mlir::TypeAttr::get(lower_type(*array_type.slice_element)));
+            mlir::TypeAttr::get(lower_type(*array_type.slice_element)),
+            builder.getBoolAttr(
+                core_type_info(checked_data->types.at(expr->index.get()).builtin()).is_signed));
         return builder.create<gloin::ToLayoutOp>(
             location(), mlir::LLVM::LLVMPointerType::get(&context), address);
     }
@@ -1447,16 +1609,31 @@ mlir::Value CodeGen::gen_slice(const SliceExpression *expression) {
             mlir::TypeAttr::get(result_layout));
     }
     mlir::Value value;
-    if (base_type.is_array()) {
+    auto signed_bound = [&](const Expression *bound) {
+        return builder.getBoolAttr(
+            bound && core_type_info(checked_data->types.at(bound).builtin()).is_signed);
+    };
+    if (result_type.slice_order != PackedBitOrder::None) {
+        if (base_type.is_array())
+            value = builder.create<gloin::PackedSliceFromArrayOp>(
+                location(), result_source, base, start, end,
+                mlir::TypeAttr::get(source_type(base_type)), mlir::TypeAttr::get(result_source),
+                signed_bound(expression->start.get()), signed_bound(expression->end.get()));
+        else
+            value = builder.create<gloin::PackedSliceSubrangeOp>(
+                location(), result_source, base, start, end, mlir::TypeAttr::get(result_source),
+                signed_bound(expression->start.get()), signed_bound(expression->end.get()));
+    } else if (base_type.is_array()) {
         value = builder.create<gloin::SliceFromArrayOp>(
             location(), result_source, base, start, end,
             mlir::TypeAttr::get(lower_type(base_type)),
             mlir::TypeAttr::get(result_source), mlir::TypeAttr::get(result_layout));
     } else if (base_type.is_slice()) {
         value = builder.create<gloin::SliceSubrangeOp>(
-            location(), result_source, base, start, end,
-            mlir::TypeAttr::get(result_source), mlir::TypeAttr::get(result_layout),
-            mlir::TypeAttr::get(lower_type(*result_type.slice_element)));
+            location(), result_source, base, start, end, mlir::TypeAttr::get(result_source),
+            mlir::TypeAttr::get(result_layout),
+            mlir::TypeAttr::get(lower_type(*result_type.slice_element)),
+            signed_bound(expression->start.get()), signed_bound(expression->end.get()));
     } else {
         value = builder.create<gloin::SliceFromPointerOp>(
             location(), result_source, base, start, end,
@@ -1658,12 +1835,26 @@ CodeGen::generate_unchecked_for_testing(const std::vector<std::unique_ptr<Statem
     return generate_impl(program);
 }
 
+uint64_t CodeGen::packed_element_bits(const ValueType &type) {
+    if (type.structure)
+        return checked_data->structures.at(*type.structure).byte_size * 8;
+    return core_type_info(type.builtin()).bits;
+}
+
 mlir::Type CodeGen::lower_type(ValueType value_type) {
     if (value_type.is_pointer())
         return mlir::LLVM::LLVMPointerType::get(&context);
+    if (value_type.is_array() && value_type.array_order != PackedBitOrder::None) {
+        const auto bits = packed_element_bits(*value_type.array_element);
+        auto bytes = mlir::LLVM::LLVMArrayType::get(builder.getI8Type(),
+                                                    (bits * value_type.array_length + 7) / 8);
+        return mlir::LLVM::LLVMStructType::getLiteral(&context, {bytes});
+    }
     if (value_type.is_array())
         return mlir::LLVM::LLVMArrayType::get(lower_type(*value_type.array_element),
                                               value_type.array_length);
+    if (value_type.is_slice() && value_type.slice_order != PackedBitOrder::None)
+        return packed_slice_layout(&context);
     if (value_type.is_slice())
         return mlir::LLVM::LLVMStructType::getLiteral(
             &context, {mlir::LLVM::LLVMPointerType::get(&context), builder.getI64Type()}, false);
@@ -1682,6 +1873,12 @@ mlir::Type CodeGen::lower_type(ValueType value_type) {
         if (auto found = checked_struct_types.find(id); found != checked_struct_types.end())
             return found->second;
         const auto &structure = checked_data->structures.at(id);
+        if (structure.bit_order != PackedBitOrder::None) {
+            auto bytes = mlir::LLVM::LLVMArrayType::get(builder.getI8Type(), structure.byte_size);
+            auto type = mlir::LLVM::LLVMStructType::getLiteral(&context, {bytes}, false);
+            checked_struct_types[id] = type;
+            return type;
+        }
         llvm::SmallVector<mlir::Type> fields;
         for (const auto &field : structure.fields)
             fields.push_back(lower_type(field.type));
@@ -1701,7 +1898,7 @@ mlir::Type CodeGen::lower_type(ValueType value_type) {
         return builder.getF64Type();
     if (type == CoreType::String)
         return string_type();
-    return builder.getIntegerType(info.bits);
+    return builder.getIntegerType(info.is_integer ? integer_storage_bits(info.bits) : info.bits);
 }
 
 gloin::GloinIntegerType CodeGen::integer_type(CoreType type) {
@@ -1720,9 +1917,17 @@ mlir::Type CodeGen::source_type(ValueType value_type) {
         return gloin::GloinPointerType::get(
             &context, source_type(value_type.pointee()), layer.nullable, layer.read_only);
     }
+    if (value_type.is_array() && value_type.array_order != PackedBitOrder::None)
+        return gloin::GloinPackedArrayType::get(&context, source_type(*value_type.array_element),
+                                                value_type.array_length,
+                                                value_type.array_order == PackedBitOrder::MsbFirst);
     if (value_type.is_array())
         return gloin::GloinArrayType::get(
             &context, source_type(*value_type.array_element), value_type.array_length);
+    if (value_type.is_slice() && value_type.slice_order != PackedBitOrder::None)
+        return gloin::GloinPackedSliceType::get(&context, source_type(*value_type.slice_element),
+                                                value_type.slice_order == PackedBitOrder::MsbFirst,
+                                                value_type.slice_read_only);
     if (value_type.is_slice())
         return gloin::GloinSliceType::get(
             &context, source_type(*value_type.slice_element), value_type.slice_read_only);
@@ -1740,7 +1945,9 @@ mlir::Type CodeGen::source_type(ValueType value_type) {
     }
     if (value_type.builtin() == CoreType::String)
         return gloin::GloinStringType::get(&context);
-    if (core_type_info(value_type.builtin()).byte_order != ByteOrder::Native)
+    const auto &info = core_type_info(value_type.builtin());
+    if (info.byte_order != ByteOrder::Native ||
+        (info.is_integer && info.bits != integer_storage_bits(info.bits)))
         return integer_type(value_type.builtin());
     return lower_type(value_type);
 }
@@ -1923,11 +2130,12 @@ mlir::Value CodeGen::emit_constant(const ConstantValue &constant) {
     }
     auto type = lower_type(constant.type);
     if (auto integer = std::get_if<llvm::APInt>(&constant.value))
-        return checked_data
-                   ? mlir::Value(builder.create<gloin::ConstantOp>(
-                         location(), source_type(constant.type), builder.getIntegerAttr(type, *integer)))
-                   : mlir::Value(builder.create<mlir::arith::ConstantOp>(
-                         location(), type, builder.getIntegerAttr(type, *integer)));
+        return checked_data ? mlir::Value(builder.create<gloin::ConstantOp>(
+                                  location(), source_type(constant.type),
+                                  builder.getIntegerAttr(
+                                      builder.getIntegerType(integer->getBitWidth()), *integer)))
+                            : mlir::Value(builder.create<mlir::arith::ConstantOp>(
+                                  location(), type, builder.getIntegerAttr(type, *integer)));
     if (auto boolean = std::get_if<bool>(&constant.value))
         return checked_data
                    ? mlir::Value(builder.create<gloin::ConstantOp>(

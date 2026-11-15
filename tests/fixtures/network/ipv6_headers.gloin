@@ -1,0 +1,93 @@
+import "@packet6";
+import "@memory";
+
+def main() -> i32 {
+    def source: packet6.Address      = packet6.Address { high: 0x20010db812345678, low: 0x0123456789abcdef };
+    def destination: packet6.Address = packet6.Address { high: 0xfd00000000000000, low: 2 };
+    def expected: [u8; 40]           = {106,177,35,69,18,52,17,64,32,1,13,184,18,52,86,120,1,35,69,103,137,171,205,239,253,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2};
+    def head: packet6.Header = packet6.Header { version: 6, dscp: 42, ecn: 3, flow_label: 0x12345,
+        payload_length: 0x1234, next_header: 17, hop_limit: 64, source: source, destination: destination };
+
+    if memory.size_of<packet6.Address>() != 16 || memory.size_of<packet6.Header>() != 40
+        || memory.size_of<packet6.FragmentHeader>() != 8 || memory.align_of<packet6.Header>() != 1 { return 1; }
+
+    // Independent bytes also check bitfields not covered by an IPv6 checksum.
+    for def mut offset: u64 = 1; offset <= 16; offset = offset + 1 {
+        def mut storage: [u8; 57] = zeroed;
+
+        for def mut i: u64 = 0; i < 57; i = i + 1 { storage[i] = 0xa5; }
+
+        def written: result<void> = memory.write_packed<packet6.Header>(storage[offset..offset + 40], head);
+        if written.erroneous { return 2; }
+
+        for def mut i: u64 = 0; i < 57; i = i + 1 {
+            if i < offset || i >= offset + 40 {
+                if storage[i] != 0xa5 { return 3; }
+            } else if storage[i] != expected[i - offset] { return 4; }
+        }
+
+        def read: result<packet6.Header> = memory.read_packed<packet6.Header>(storage[offset..offset + 40]);
+        if read.erroneous { return 5; }
+
+        def decoded: packet6.Header = read.value;
+        if decoded.version != 6 || decoded.dscp != 42 || decoded.ecn != 3 || decoded.flow_label != 0x12345
+            || decoded.payload_length != 0x1234 || decoded.next_header != 17 || decoded.hop_limit != 64
+            || !decoded.source.equal(source) || !decoded.destination.equal(destination) { return 6; }
+    }
+
+    def mut fragment: [u8; 10] = zeroed;
+    fragment[0] = 0xa5; fragment[9] = 0x5a;
+
+    def encoded: result<void> = memory.write_packed<packet6.FragmentHeader>(fragment[1..9], packet6.FragmentHeader {
+        next_header: 17, reserved: 0, offset: 0x1234, reserved_bits: 0, more: 1, identification: 0x89abcdef });
+    if encoded.erroneous { return 7; }
+
+    def fragment_expected: [u8; 8] = {17,0,0x91,0xa1,0x89,0xab,0xcd,0xef};
+
+    for def mut i: u64 = 0; i < 8; i = i + 1 { if fragment[i + 1] != fragment_expected[i] { return 8; } }
+    if fragment[0] != 0xa5 || fragment[9] != 0x5a { return 9; }
+
+    // Python struct + one's-complement addition supplies these known answers.
+    def mut payload: [u8; 13] = {0x12,0x34,0xab,0xcd,0,13,0,0,255,0,128,127,1};
+    def sum: result<be_u16>   = packet6.transport_checksum(source, destination, 17, payload[..], 6);
+
+    if sum.erroneous { return 10; }
+    if sum.value != 36804 { return 11; }
+
+    def odd: result<be_u16> = packet6.transport_checksum(source, destination, 17, payload[..], 1);
+    if odd.erroneous { return 12; }
+    if odd.value != 15097 { return 13; }
+
+    payload[6] = 143; payload[7] = 196;
+
+    def verified: result<be_u16> = packet6.transport_checksum(source, destination, 17, payload[..], 13);
+    if verified.erroneous { return 14; }
+    if verified.value != 0 { return 15; }
+
+    for def mut omit: u64 = 12; omit <= 14; omit = omit + 2 {
+        def invalid: result<be_u16> = packet6.transport_checksum(source, destination, 17, payload[..], omit);
+        if !invalid.erroneous { return 16; }
+    }
+
+    def mut output: [u8; 58] = zeroed;
+
+    for def mut i: u64 = 0; i < 58; i = i + 1 { output[i] = 0xa5; }
+
+    def created: result<void> = packet6.header(output[1..57], source, destination, 17, 56);
+    if created.erroneous { return 17; }
+    if output[1] != 0x60 || output[2] != 0 || output[3] != 0 || output[4] != 0
+        || output[5] != 0 || output[6] != 16 || output[7] != 17 || output[8] != 64 { return 18; }
+
+    for def mut i: u64 = 8; i < 40; i = i + 1 { if output[i + 1] != expected[i] { return 19; } }
+
+    for def mut i: u64 = 41; i < 58; i = i + 1 { if output[i] != 0xa5 { return 20; } }
+
+    def small: result<void> = packet6.header(output[1..40], source, destination, 17, 40);
+    if !small.erroneous { return 21; }
+
+    def huge: result<void> = packet6.header(output[1..57], source, destination, 17, 65576);
+    if !huge.erroneous { return 22; }
+    if output[0] != 0xa5 || output[57] != 0xa5 { return 23; }
+
+    return 0;
+}

@@ -61,12 +61,14 @@ std::shared_ptr<Type> Sema::check_arena_primitive(const CallExpression *call, Ar
     std::vector<std::shared_ptr<Type>> parameters;
     if (kind != ArenaPrimitive::Create)
         parameters.push_back(pointer);
-    if (kind == ArenaPrimitive::Allocate) {
+    if (kind == ArenaPrimitive::Allocate || kind == ArenaPrimitive::OwnedAllocate) {
         parameters.push_back(get_builtin_type("u64"));
         parameters.push_back(get_builtin_type("u64"));
     }
     if (kind == ArenaPrimitive::Zero)
         parameters.push_back(get_builtin_type("u64"));
+    if (kind == ArenaPrimitive::OwnedRelease)
+        parameters.push_back(pointer);
     if (call->arguments.size() != parameters.size()) {
         log_error("Incorrect number of arena primitive arguments");
         return nullptr;
@@ -81,7 +83,8 @@ std::shared_ptr<Type> Sema::check_arena_primitive(const CallExpression *call, Ar
         }
     }
     recording->arena_runtime_calls.emplace(call, kind);
-    return kind == ArenaPrimitive::Create || kind == ArenaPrimitive::Allocate
+    return kind == ArenaPrimitive::Create || kind == ArenaPrimitive::Allocate ||
+                   kind == ArenaPrimitive::OwnedAllocate
                ? std::shared_ptr<Type>(pointer)
                : get_builtin_type("void");
 }

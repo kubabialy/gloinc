@@ -1,0 +1,107 @@
+import "@packet";
+import "@memory";
+
+// Independent wire vectors are supplied by the C++ harness, not these codecs.
+def accepted(bytes: [const u8], protocol: u8) -> bool {
+    if protocol == 17 {
+        def read: result<packet.UdpPacket> = packet.parse_udp_ipv4(bytes);
+        if read.erroneous { return false; }
+
+        return true;
+    }
+
+    if protocol == 6 {
+        def read: result<packet.TcpPacket> = packet.parse_tcp_ipv4(bytes);
+        if read.erroneous { return false; }
+
+        return true;
+    }
+
+    def read: result<packet.Ipv4Packet> = packet.parse_ipv4(bytes);
+    if read.erroneous { return false; }
+
+    return true;
+}
+
+def seal(bytes: [u8], protocol: u8) -> bool {
+    if protocol == 17 {
+        def read: result<void> = packet.seal_udp_ipv4(bytes);
+        if read.erroneous { return false; }
+
+        return true;
+    }
+
+    if protocol == 6 {
+        def read: result<void> = packet.seal_tcp_ipv4(bytes);
+        if read.erroneous { return false; }
+
+        return true;
+    }
+
+    def read: result<void> = packet.seal_ipv4(bytes);
+    if read.erroneous { return false; }
+
+    return true;
+}
+
+def check(bytes: [const u8], protocol: u8, valid: bool, sealable: bool, canonical: bool) -> i32 {
+    if accepted(bytes, protocol) != valid { return 1; }
+
+    // Every alignment modulo 16, with arbitrary preexisting output and suffix.
+    for def mut offset: u64 = 1; offset <= 16; offset = offset + 1 {
+        def mut buffer: [u8; 512] = zeroed;
+
+        for def mut i: u64 = 0; i < 512; i = i + 1 { buffer[i] = 0xA5; }
+
+        for def mut i: u64 = 0; i < bytes.len; i = i + 1 { buffer[offset + i] = bytes[i]; }
+        if accepted(buffer[offset..offset + bytes.len], protocol) != valid { return 2; }
+        if seal(buffer[offset..offset + bytes.len], protocol) != sealable { return 3; }
+
+        for def mut i: u64 = 0; i < 512; i = i + 1 {
+            if i < offset || i >= offset + bytes.len {
+                if buffer[i] != 0xA5 { return 4; }
+            } else if !sealable || canonical {
+                if buffer[i] != bytes[i - offset] { return 5; }
+            }
+        }
+
+        if sealable && !accepted(buffer[offset..offset + bytes.len], protocol) { return 6; }
+    }
+
+    return 0;
+}
+
+def truncated(bytes: [const u8], protocol: u8) -> i32 {
+    for def mut size: u64 = 0; size < bytes.len; size = size + 1 {
+        if accepted(bytes[..size], protocol) { return 7; }
+    }
+
+    return 0;
+}
+
+def corrupted(bytes: [const u8], protocol: u8) -> i32 {
+    def mut copy: [u8; 512] = zeroed;
+
+    for def mut i: u64 = 0; i < bytes.len; i = i + 1 { copy[i] = bytes[i]; }
+
+    for def mut i: u64 = 0; i < bytes.len; i = i + 1 {
+        for def mut mask: u16 = 1; mask < 256; mask = mask * 2 {
+            def widened: result<u16> = u16(bytes[i]);
+            if widened.erroneous { return 8; }
+
+            def mut value: u16 = widened.value;
+            if value / mask % 2 == 0 { value = value + mask; } else { value = value - mask; }
+
+            def narrowed: result<u8> = u8(value);
+            if narrowed.erroneous { return 8; }
+
+            copy[i] = narrowed.value;
+
+            if accepted(copy[..bytes.len], protocol) { return 9; }
+
+            copy[i] = bytes[i];
+        }
+    }
+
+    return 0;
+}

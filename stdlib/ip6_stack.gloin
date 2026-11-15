@@ -1,0 +1,234 @@
+// Static-address unicast IPv6 host endpoint over caller-supplied raw packets.
+import "@tcp";
+import "@packet";
+import "@packet6";
+import "@ipv6";
+import "@memory";
+import "@status";
+
+def packed struct(msb_first) TcpQuote { def source: be_u16, def destination: be_u16, def sequence: be_u32, }
+
+def pub struct Event {
+    def pub protocol: u8, def pub connection: tcp.Handle, def pub created: bool,
+    def pub reply_bytes: u64, def pub source: packet6.Address,
+    def pub source_port: be_u16, def pub destination_port: be_u16,
+    def pub payload: [const u8],
+}
+
+def empty(bytes: [const u8], count: u64) -> Event {
+    return Event { protocol: 0, connection: tcp.Handle { index: 0, generation: 0 }, created: false,
+        reply_bytes: count, source: packet6.Address.unspecified(), source_port: 0, destination_port: 0, payload: bytes[..0] };
+}
+
+def pub struct Endpoint {
+    def host: packet6.Address, def udp_ports: [const be_u16], def fragments: [ipv6.Reassembly],
+    def pub mut connections: tcp.Table,
+    def mut last_now: u64, def mut error_window: u64, def mut errors_sent: u64,
+
+    def pub static create(host: packet6.Address, tcp_ports: [const be_u16], udp_ports: [const be_u16],
+        slots: [tcp.Slot], fragments: [ipv6.Reassembly]) -> result<Endpoint> {
+        if !host.unicast() || fragments.len > 256 || udp_ports.len > 4096 { return error("invalid IPv6 endpoint", status.INVALID, 0); }
+
+        for def mut i: u64 = 0; i < udp_ports.len; i = i + 1 {
+            if udp_ports[i] == 0 { return error("zero UDP port", status.INVALID, 0); }
+
+            for def mut j: u64 = 0; j < i; j = j + 1 {
+                if udp_ports[i] == udp_ports[j] { return error("duplicate UDP port", status.INVALID, 0); }
+            }
+        }
+
+        for def mut i: u64 = 0; i < fragments.len; i = i + 1 {
+            if fragments[i].occupied() { return error("IPv6 fragment slot in use", status.INVALID, 0); }
+        }
+
+        def table: result<tcp.Table> = tcp.Table.create6(host, tcp_ports, slots);
+        if table.erroneous { return table.error; }
+
+        return Endpoint { host: host, udp_ports: udp_ports, fragments: fragments, connections: table.value,
+            last_now: 0, error_window: 0, errors_sent: 0 };
+    }
+
+    def tick(self: &Endpoint, now_ms: u64) -> result<void> {
+        if now_ms < self.last_now { return error("IPv6 endpoint clock moved backwards", status.INVALID, 0); }
+
+        self.last_now = now_ms;
+
+        for def mut i: u64 = 0; i < self.fragments.len; i = i + 1 {
+            def expired: result<bool> = self.fragments[i].expire(now_ms);
+            if expired.erroneous { return expired.error; }
+        }
+
+        if now_ms - self.error_window >= 1000 { self.error_window = now_ms; self.errors_sent = 0; }
+
+        return;
+    }
+
+    def pub reassemble(self: &Endpoint, bytes: [const u8], now_ms: u64) -> result<ipv6.Datagram> {
+        def timed: result<void> = self.tick(now_ms); if timed.erroneous { return timed.error; }
+
+        def parsed: result<packet6.Packet> = packet6.parse(bytes); if parsed.erroneous { return parsed.error; }
+
+        def ip: packet6.Packet = parsed.value;
+        if !ip.header.destination.equal(self.host) || !ip.header.source.unicast() || ip.header.hop_limit == 0 {
+            return ipv6.Datagram { complete: false, bytes: bytes[..0] };
+        }
+        // Preserve semantic option errors for input() to generate a bounded reply.
+        if !ip.fragmented || ip.discard { return ipv6.Datagram { complete: true, bytes: ip.bytes }; }
+
+        def mut index: u64  = self.fragments.len;
+        def mut vacant: u64 = self.fragments.len;
+
+        for def mut i: u64 = 0; i < self.fragments.len; i = i + 1 {
+            if self.fragments[i].matches(ip) { index = i; }
+            if !self.fragments[i].occupied() && vacant == self.fragments.len { vacant = i; }
+        }
+
+        if index == self.fragments.len { index = vacant; }
+        if index == self.fragments.len { return error("IPv6 fragment pool full", status.WOULD_BLOCK, 0); }
+
+        def assembled: result<ipv6.Datagram> = self.fragments[index].input(bytes, now_ms);
+        if assembled.erroneous { return assembled.error; }
+
+        return assembled.value;
+    }
+
+    def reply(self: &Endpoint, ip: packet6.Packet, output: [u8], kind: u8, code: u8, rest: be_u32) -> result<Event> {
+        if self.errors_sent == 10 { return empty(ip.bytes, 0); }
+
+        def sent: result<u64> = ipv6.error_reply(ip, output, kind, code, rest);
+        if sent.erroneous { return sent.error; }
+
+        if sent.value != 0 { self.errors_sent = self.errors_sent + 1; }
+
+        return empty(ip.bytes, sent.value);
+    }
+
+    def pub input(self: &Endpoint, bytes: [const u8], isn: u32, now_ms: u64, output: [u8]) -> result<Event> {
+        def assembled: result<ipv6.Datagram> = self.reassemble(bytes, now_ms);
+        if assembled.erroneous { return assembled.error; }
+        if !assembled.value.complete { return empty(bytes, 0); }
+
+        def datagram: [const u8]           = assembled.value.bytes;
+        def parsed: result<packet6.Packet> = packet6.parse(datagram);
+
+        if parsed.erroneous { return parsed.error; }
+
+        def ip: packet6.Packet = parsed.value;
+
+        if ip.discard {
+            if ip.problem_code < 0 { return empty(bytes, 0); }
+
+            def code: result<u8> = u8(ip.problem_code); if code.erroneous { return code.error; }
+
+            def pointer: result<be_u32> = be_u32(ip.problem_pointer); if pointer.erroneous { return pointer.error; }
+
+            def sent: result<Event> = self.reply(ip, output, 4, code.value, pointer.value);
+            if sent.erroneous { return sent.error; } return sent.value;
+        }
+
+        if ip.protocol == packet.TCP {
+            def fed: result<tcp.Input> = self.connections.input(datagram, isn, now_ms, output);
+            if fed.erroneous { return fed.error; }
+
+            def event: tcp.Input = fed.value;
+            def mut protocol: u8 = 0; if event.connection.generation != 0 { protocol = packet.TCP; }
+
+            return Event { protocol: protocol, connection: event.connection, created: event.created, reply_bytes: event.reply_bytes,
+                source: ip.header.source, source_port: 0, destination_port: 0, payload: bytes[..0] };
+        }
+
+        if ip.protocol == packet.UDP {
+            def parsed_udp: result<packet6.UdpPacket> = packet6.udp(datagram);
+            if parsed_udp.erroneous { return parsed_udp.error; }
+
+            def udp: packet6.UdpPacket = parsed_udp.value;
+
+            for def mut i: u64 = 0; i < self.udp_ports.len; i = i + 1 {
+                if self.udp_ports[i] == udp.header.destination_port {
+                    return Event { protocol: packet.UDP, connection: tcp.Handle { index: 0, generation: 0 }, created: false,
+                        reply_bytes: 0, source: ip.header.source, source_port: udp.header.source_port,
+                        destination_port: udp.header.destination_port, payload: udp.payload };
+                }
+            }
+
+            def sent: result<Event> = self.reply(ip, output, 1, 4, 0);
+            if sent.erroneous { return sent.error; } return sent.value;
+        }
+
+        if ip.protocol == packet6.ICMP {
+            def sum: result<be_u16> = packet6.transport_checksum(ip.header.source, ip.header.destination, packet6.ICMP, ip.payload, ip.payload.len);
+            if sum.erroneous { return sum.error; }
+            if sum.value != 0 { return error("invalid ICMPv6 checksum", status.INVALID, 0); }
+
+            def read: result<ipv6.IcmpHeader> = memory.read_packed<ipv6.IcmpHeader>(ip.payload);
+            if read.erroneous { return read.error; }
+
+            def control: ipv6.IcmpHeader = read.value;
+
+            if control.kind == 2 && control.code == 0 {
+                def quoted: result<packet6.Header> = memory.read_packed<packet6.Header>(ip.payload[8..]);
+                if quoted.erroneous { return quoted.error; }
+
+                def original: packet6.Header = quoted.value;
+                // We emit base IPv6 headers only. A quote must match that format,
+                // the local source, four-tuple and an outstanding TCP sequence.
+                if original.version != 6 || original.next_header != packet.TCP || !original.source.equal(self.host)
+                    || control.rest < 1280 { return empty(bytes, 0); }
+
+                def length: result<u64> = u64(original.payload_length); if length.erroneous { return length.error; }
+
+                def mtu: result<u64> = u64(control.rest); if mtu.erroneous { return mtu.error; }
+                if length.value < 20 || mtu.value >= 40 + length.value { return empty(bytes, 0); }
+
+                def quoted_tcp: result<TcpQuote> = memory.read_packed<TcpQuote>(ip.payload[48..]);
+                if quoted_tcp.erroneous { return quoted_tcp.error; }
+
+                def quote: TcpQuote = quoted_tcp.value;
+                def adjusted: result<bool> = self.connections.packet_too_big6(quote.source,
+                    tcp.Address6 { host: original.destination, port: quote.destination }, quote.sequence, control.rest);
+
+                if adjusted.erroneous { return adjusted.error; }
+
+                return empty(bytes, 0);
+            }
+
+            def sent: result<u64> = ipv6.echo_reply(ip, output);
+            if sent.erroneous { return sent.error; }
+
+            return empty(bytes, sent.value);
+        }
+
+        if ip.protocol == 59 { return empty(bytes, 0); }
+
+        def pointer: result<be_u32> = be_u32(ip.previous_next);
+        if pointer.erroneous { return pointer.error; }
+
+        def sent: result<Event> = self.reply(ip, output, 4, 1, pointer.value);
+        if sent.erroneous { return sent.error; } return sent.value;
+    }
+
+    def pub emit(self: &Endpoint, output: [u8], now_ms: u64) -> result<u64> {
+        def timed: result<void> = self.tick(now_ms); if timed.erroneous { return timed.error; }
+
+        def sent: result<u64> = self.connections.emit(output, now_ms);
+        if sent.erroneous { return sent.error; } return sent.value;
+    }
+
+    def pub next_timeout_ms(self: &const Endpoint, now_ms: u64) -> result<u64> {
+        if now_ms < self.last_now { return error("IPv6 clock moved backwards", status.INVALID, 0); }
+
+        def tcp_wait: result<u64> = self.connections.next_timeout_ms(now_ms);
+        if tcp_wait.erroneous { return tcp_wait.error; }
+
+        def mut wait: u64 = tcp_wait.value;
+
+        for def mut i: u64 = 0; i < self.fragments.len; i = i + 1 {
+            def timed: result<u64> = self.fragments[i].next_timeout_ms(now_ms);
+            if timed.erroneous { return timed.error; }
+
+            if timed.value < wait { wait = timed.value; }
+        }
+
+        return wait;
+    }
+}

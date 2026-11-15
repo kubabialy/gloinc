@@ -3,6 +3,49 @@
 #include <charconv>
 #include <limits>
 
+CoreType native_integer_type(unsigned bits, bool is_signed) {
+    for (const auto &type : core_types)
+        if (type.is_integer && type.byte_order == ByteOrder::Native && type.bits == bits &&
+            type.is_signed == is_signed)
+            return type.id;
+    return static_cast<CoreType>(static_cast<unsigned>(is_signed ? CoreType::NativeSignedBase
+                                                                 : CoreType::NativeUnsignedBase) +
+                                 bits - 1);
+}
+
+const CoreTypeInfo &core_type_info(CoreType type) {
+    auto index = static_cast<size_t>(type);
+    if (index < core_types.size())
+        return core_types[index];
+    struct NarrowTypes {
+        std::array<std::string, 128> names;
+        std::array<CoreTypeInfo, 128> types;
+        NarrowTypes() {
+            for (unsigned i = 0; i < 128; ++i) {
+                auto bits = i % 64 + 1;
+                names[i] = std::string(i < 64 ? "i" : "u") + std::to_string(bits);
+                types[i] = {static_cast<CoreType>(64 + i), names[i], bits, true, i < 64};
+            }
+        }
+    };
+    static const NarrowTypes narrow;
+    return narrow.types.at(index - 64);
+}
+
+std::optional<ConstantValue> convert_integer_constant(const ConstantValue &value, CoreType target) {
+    const auto &source = core_type_info(value.type);
+    const auto &destination = core_type_info(target);
+    auto integer = std::get<llvm::APInt>(value.value);
+    auto wide = source.is_signed ? integer.sext(65) : integer.zext(65);
+    auto minimum = destination.is_signed ? llvm::APInt::getSignedMinValue(destination.bits).sext(65)
+                                         : llvm::APInt(65, 0);
+    auto maximum = destination.is_signed ? llvm::APInt::getSignedMaxValue(destination.bits).zext(65)
+                                         : llvm::APInt::getMaxValue(destination.bits).zext(65);
+    if (wide.slt(minimum) || wide.sgt(maximum))
+        return std::nullopt;
+    return ConstantValue{target, wide.trunc(destination.bits)};
+}
+
 const llvm::fltSemantics &float_semantics(CoreType type) {
     return type == CoreType::F32 ? llvm::APFloat::IEEEsingle() : llvm::APFloat::IEEEdouble();
 }

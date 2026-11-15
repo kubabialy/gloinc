@@ -1,0 +1,37 @@
+import "@net";
+import "@packet6";
+
+def main() -> i32 {
+    def created: result<net.TcpIsnGenerator> = net.TcpIsnGenerator.create();
+    if created.erroneous { return 1; }
+
+    def mut generator: net.TcpIsnGenerator = created.value;
+    def local: packet6.Address             = packet6.Address { high: 0x20010db812345678, low: 1 };
+    def remote: packet6.Address            = packet6.Address { high: 0xfd00abcd00000000, low: 65535 };
+    def first: result<u32>                 = generator.next6(local, 1234, remote, 443, 1000);
+
+    if first.erroneous { return 2; }
+
+    def initial: u32      = first.value;
+    def wide: result<u64> = u64(initial); if wide.erroneous { return 3; }
+
+    def expected: u64     = (wide.value + 1) % 4294967296;
+    def same: result<u32> = generator.next6(local, 1234, remote, 443, 1003);
+
+    if same.erroneous { return 4; }
+    if same.value != initial { return 5; }
+
+    def advanced: result<u32> = generator.next6(local, 1234, remote, 443, 1004);
+    if advanced.erroneous { return 6; }
+
+    def number: result<u64> = u64(advanced.value); if number.erroneous { return 7; }
+    if number.value != expected { return 8; }
+
+    def backwards: result<u32> = generator.next6(local, 1234, remote, 443, 1003);
+    if !backwards.erroneous { return 9; }
+
+    def unspecified: result<u32> = generator.next6(packet6.Address.unspecified(), 1234, remote, 443, 1004);
+    if !unspecified.erroneous { return 10; }
+
+    return 0;
+}

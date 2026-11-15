@@ -1,8 +1,9 @@
-# Hash maps (0.2.1)
+# Hash maps
 
 `import "@hashmap";` provides `hashmap.HashMap<K, V>`, a growable map
 backed by a caller-owned `arena.GeneralArena`. This API is available in the
-0.2.1 compiler and standard library. It uses ordinary generic structs and
+0.2.1 compiler and standard library; 0.3.0 development improves backing-storage
+reclamation as described below. It uses ordinary generic structs and
 methods; there is no map literal or indexing syntax.
 
 Keys may be `bool`, `string`, or any supported signed/unsigned integer width,
@@ -75,26 +76,30 @@ borrow checker guarantee. Concurrent access needs external synchronization.
 Arena reset/free invalidates the map, all aliases, cursors, and borrowed entries.
 The arena object itself must also outlive the map: its address is retained for
 future allocations. Removing or clearing entries does not release pointed-to
-resources or run destructors. Growth retains old buffers until the arena is
-reset/freed. Removal repairs probe chains in the existing buffers; repeated
-removal and insertion within capacity do not allocate. Failed allocations can
-also leave unused arena-owned storage; free the arena once through its
-designated owner.
+resources or run destructors. In 0.3.0, growth releases the old table after
+publishing its replacement. Arena reset/free releases remaining table blocks;
+reset retains ordinary bump allocations for reuse, but not map tables. Removal
+repairs probe chains in the existing buffers; repeated removal and insertion
+within capacity do not allocate. Free the arena once through its designated
+owner. The 0.2.1 implementation retained old and partially allocated table
+storage in the arena instead.
 
 ## Failures
 
 | Status | Cause |
 | --- | --- |
 | `status.INVALID` | Negative requested capacity. |
-| `status.OVERFLOW` | Capacity rounding or `bucket_count * sizeof(Slot<K, V>)` cannot fit the supported signed size range. |
-| `status.NO_MEMORY` | State, slot, or occupancy-buffer allocation failed. |
+| `status.OVERFLOW` | Capacity rounding or `bucket_count * (sizeof(Slot<K, V>) + 1)` cannot fit the supported signed size range. |
+| `status.NO_MEMORY` | Shared state or table-block allocation failed. |
 
 Errors have static messages and zero `.os_error`. A failed `reserve` or
 `insert` preserves existing entries, length, capacity, and probe state; it
 never publishes a partially rebuilt table. A failed constructor has no map
-payload. Removing an absent key and looking up an absent key are ordinary
-outcomes, not errors. The arena's own creation and lifetime requirements still
-apply.
+payload. Failed creation/growth retains no attempted table storage. Constructor
+validation and table allocation precede state allocation; failure to allocate
+the state releases the unpublished table. Removing an absent key and looking up
+an absent key are ordinary outcomes, not errors. The arena's own creation and
+lifetime requirements still apply.
 
 `cap()` describes the live-entry threshold. Inserting a new key allocates only
 when length already equals that threshold. Replacement, removal, and `clear`
@@ -105,6 +110,13 @@ never allocate. `reserve` with a capacity at or below `cap()` is a no-op.
 The table uses power-of-two bucket counts, linear probing, and separate
 occupancy bytes. Only occupied slots hold initialized keys and values; empty
 slots are never read as entries. Live occupancy stays at or below 75%.
+In 0.3.0, slots and occupancy bytes occupy one aligned, independently releasable
+arena-owned block. Growth holds both old and new tables during rehash, then
+releases the old block without disturbing other arena objects or maps. Each
+table uses one native allocation, including an ownership header and alignment
+slack. Small maps therefore have a native allocation cost that bump-only tables
+could previously amortize; this change bounds retained storage, not a claim of
+faster insertion. Clear retains the current table's capacity.
 Removal uses backward-shift deletion: it scans to the next empty bucket and
 moves entries whose probe paths cross the gap. An entry already in its home
 bucket is skipped without ending the scan. This preserves lookup chains across
@@ -128,5 +140,52 @@ The compiler checks key types and exposes hash/equality/mask primitives only to
 canonical `@hashmap`. Small native routines hash integer bits or string bytes
 and compare counted strings; allocation policy, probing, growth, removal, and
 iteration live in [hashmap.gloin](../stdlib/hashmap.gloin) and follow GloinIR.
-The fallible typed arena reservation bridge remains private to the collection
-modules and does not expose uninitialized storage to application code.
+The typed storage bridge checks layout and capacity in GloinIR without
+initializing unused slots. It and the arena-owned block methods remain private
+to the canonical collection module; application code cannot release individual
+arena objects or obtain uninitialized typed storage through them.
+
+### Allocation regression measurement (2026-11-03)
+
+`HashmapLibraryTest.GrowingMapsReleaseOldTablesWithoutDisturbingTheirSharedArena`
+grows an `i64`/`i64` map from zero to 200,000 entries, interleaves growth of a
+second map in the same arena, and checks every value and an unrelated arena
+object. A native allocator hook tracks the exact requested sizes of live backing
+allocations, including arena state, block headers and alignment slack. Cleanup
+must release every tracked allocation.
+
+On macOS ARM64, using the same Release compiler and native arena runtime for
+both library versions:
+
+| Implementation | Peak live backing bytes |
+| --- | ---: |
+| Previous hashmap source (`97a1692`) | 30,867,922 |
+| Reclaiming hashmap source (`d4268df`) | 19,739,344 |
+
+That is a 36.05% reduction for this growth pattern. The regression permits at
+most 20 MiB: enough for the current and replacement tables during growth, the
+second map, and ordinary arena storage, but not all obsolete generations. It
+fails with the previous source and passes with the replacement. This measures
+requested backing bytes, not allocator RSS or insertion speed.
+
+`RepeatedConstructorFailuresReleaseTheUnpublishedTable` rejects ordinary arena
+block allocation during 32 consecutive constructors. The new implementation
+peaks at 503 backing bytes, including the temporary table and arena state;
+each failed constructor releases its unpublished table before the next attempt.
+Both tests record `peak_backing_bytes` in GoogleTest XML:
+
+```sh
+build/gloinc_test \
+  --gtest_filter='HashmapLibraryTest.GrowingMaps*:HashmapLibraryTest.RepeatedConstructor*' \
+  --gtest_output=xml:build/hashmap-memory.xml
+```
+
+Validation for this change on 2026-11-03:
+
+| Check | Result |
+| --- | --- |
+| macOS ARM64 `check-core` | 1,146/1,146 passed. |
+| Focused hashmap, arena and raw-storage lowering tests | 53/53 passed on macOS ARM64 and Linux ARM64; source cases exercise JIT, native `-O0` and `-O2`. |
+| Native arena ASan/UBSan | 14/14 passed on macOS ARM64. |
+| Installed, then relocated macOS package | 36/36 arena/hashmap tests passed. |
+| Tracked Gloin source formatting | All 294 files passed. |
