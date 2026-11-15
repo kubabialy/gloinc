@@ -4,7 +4,7 @@
 <main><nav aria-label="Contents"><a href="#start">First program</a><a href="#cli">Compile and run</a><a href="#syntax">Source and declarations</a><a href="#types">Types and expressions</a><a href="#packed">Packed layouts</a><a href="#arrays">Fixed arrays</a><a href="#slices">Slices and vectors</a><a href="#hashmaps">Hash maps</a><a href="#generics">Generics and enums</a><a href="#flow">Functions and control flow</a><a href="#selection">Switch and match</a><a href="#data">Structs and methods</a><a href="#references">Pointers and references</a><a href="#memory">Raw memory</a><a href="#results">Results and errors</a><a href="#modules">Modules</a><a href="#library">Input and standard library</a><a href="#strings">Strings and text construction</a><a href="#io">Streams and progress</a><a href="#filesystem-mutations">Files and directories</a><a href="#symlinks">Symbolic links</a><a href="#workspaces">Filesystem workspaces</a><a href="#processes">Child processes</a><a href="#json">JSON</a><a href="#network">Networking</a><a href="#limits">Limits</a><a href="#reference">Further reference</a></nav><article>
 <section id="start"><h2>Get started</h2>
 <p>The <a href="../../release-0.3.0-draft.md">0.3.0 draft</a> adds first-class endian integer types and records their compatibility rules and development validation. It also implements <a href="../../packed-layout.md">packed memory layouts, exact-width integers, and checked integer constructors</a>. These features are unreleased.</p>
-<p>This moving guide starts from the 0.2.1 language and standard library. Use the numbered 0.2.1 guide for the release. Work through the programs in order: write a source file, check it, run it, then build a native executable. The later sections explain values, arrays, slices, vectors, generics, enums, control flow, structs, pointers, raw memory, results, imports, input, and networking. Links at the end give full API contracts.</p>
+<p>This moving guide starts from the 0.2.2 language and standard library. Use the <a href="../0.2.2/index.html">numbered 0.2.2 guide</a> for the published release. Work through the programs in order: write a source file, check it, run it, then build a native executable. The later sections explain values, arrays, slices, vectors, generics, enums, control flow, structs, pointers, raw memory, results, imports, input, and networking. Links at the end give full API contracts.</p>
 <p>On Apple Silicon macOS, install Xcode Command Line Tools, CMake 3.28+, Ninja, OpenSSL 3, and LLVM/MLIR 21.1.6. From a source checkout:</p>
 <pre><code>brew install cmake ninja openssl@3
 bash scripts/install-llvm.sh
@@ -138,7 +138,53 @@ def main() -&gt; i32 {
     if first == null { return 3; }
     return *first + 22;
 }</code></pre>
-<p>For a growable vector, create an arena and call <code>vector.Vector&lt;i32&gt;.empty(&amp;memory, 2)</code>. Growth allocates a new buffer in that arena. Both vector forms now support <code>as_slice()</code> and <code>as_const_slice()</code> over live elements, plus <code>append_from</code>, <code>insert</code>, <code>remove</code>, <code>truncate</code>, and <code>pop</code>. The growable form also supports <code>reserve</code>. A view captures the current length; it never exposes spare capacity. Treat pointers and views as invalid after growth or a moving reserve; arena reset/free invalidates all arena vector storage. Copying a growable vector copies its descriptor, so copies can disagree about length and capacity. Copying a fixed vector copies its entire inline buffer. <code>@slices</code> adds generic <code>fill</code>, <code>reverse</code>, and nonoverlapping copy helpers. See the <a href="../../slices-vectors.md">ownership and API guide</a> and packaged examples.</p></section>
+<p>For a growable vector, create an arena and call <code>vector.Vector&lt;i32&gt;.empty(&amp;memory, 2)</code>. Growth allocates a new buffer in that arena. Both vector forms now support <code>as_slice()</code> and <code>as_const_slice()</code> over live elements, plus <code>append_from</code>, <code>insert</code>, <code>remove</code>, <code>truncate</code>, and <code>pop</code>. The growable form also supports <code>reserve</code>. A view captures the current length; it never exposes spare capacity. Treat pointers and views as invalid after growth or a moving reserve; arena reset/free invalidates all arena vector storage. Copying a growable vector copies its descriptor, so copies can disagree about length and capacity. Copying a fixed vector copies its entire inline buffer. <code>@slices</code> adds generic <code>fill</code>, <code>reverse</code>, overlap-safe <code>copy</code>, and <code>copy_nonoverlapping</code>. See the <a href="../../slices-vectors.md">ownership and API guide</a> and packaged examples.</p>
+<h3>Recoverable growth and explicit copies (0.3.0 development)</h3>
+<p>The growable arena vector adds the following methods. Bind each result and check <code>.erroneous</code> or use <code>match</code> before reading its payload.</p>
+<table><thead><tr><th>Method</th><th>Result and cost</th></tr></thead><tbody>
+<tr><td><code>Vector&lt;T&gt;.try_empty(&amp;memory, capacity)</code></td><td><code>result&lt;Vector&lt;T&gt;&gt;</code>; reserves storage without filling spare slots.</td></tr>
+<tr><td><code>try_reserve(capacity)</code></td><td><code>result&lt;void&gt;</code>; no allocation within capacity; growth copies live elements.</td></tr>
+<tr><td><code>try_push(value)</code>, <code>try_insert(index, value)</code></td><td><code>result&lt;void&gt;</code>; push is amortized O(1); insertion also shifts the trailing elements.</td></tr>
+<tr><td><code>try_append_from(source)</code></td><td><code>result&lt;void&gt;</code>; copies original source values even for overlapping views or self-appends; at most one allocation request.</td></tr>
+<tr><td><code>try_clone(&amp;destination)</code></td><td><code>result&lt;Vector&lt;T&gt;&gt;</code>; one allocation and O(length) shallow copies into an independent buffer; capacity equals length.</td></tr>
+</tbody></table>
+<p>Capacities and insertion indices are <code>i64</code>. Negative capacities return <code>INVALID</code>, unrepresentable lengths or byte extents return <code>OVERFLOW</code>, invalid insertion indices return <code>OUT_OF_RANGE</code>, and allocation failure returns <code>NO_MEMORY</code>. Each failure leaves the vector's storage, length, capacity and elements unchanged; argument side effects are not rolled back. Empty appends and reserves within capacity allocate nothing. Even a zero-capacity construction or empty clone requests storage and can fail.</p>
+<p>Ordinary vector assignment aliases the buffer and copies its counters. <code>try_clone</code> creates independent storage in the chosen arena, but pointers, strings, slices and nested arena vectors in its elements still refer to their original storage. Their lifetimes are not extended. Successful growth invalidates existing views and element pointers; read-only views and clones do not provide synchronization. The older methods retain their failure contracts; both vector forms' <code>append_from</code> now support overlap.</p>
+<p>This complete program appends a vector to itself, clones it, and verifies that changing the original does not change the cloned integers. It exits zero without output:</p>
+<pre><code>import "@arena";
+import "@vector";
+
+def main() -&gt; i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def made: result&lt;vector.Vector&lt;i32&gt;&gt; = vector.Vector&lt;i32&gt;.try_empty(&amp;owner, 1);
+    if made.erroneous { return 1; }
+
+    def mut values: vector.Vector&lt;i32&gt; = made.value;
+    def pushed: result&lt;void&gt;           = values.try_push(20);
+
+    if pushed.erroneous { return 2; }
+
+    // Appending its own live elements is supported, including when growth is needed.
+    def appended: result&lt;void&gt; = values.try_append_from(values.as_const_slice());
+    if appended.erroneous { return 3; }
+
+    def copied: result&lt;vector.Vector&lt;i32&gt;&gt; = values.try_clone(&amp;owner);
+    if copied.erroneous { return 4; }
+
+    def clone: vector.Vector&lt;i32&gt; = copied.value;
+    def live: [i32]               = values.as_slice();
+    live[0] = 99;
+
+    def saved: [const i32] = clone.as_const_slice();
+    if saved.len != 2 { return 5; }
+    if saved[0] != 20 || saved[1] != 20 { return 6; }
+
+    return 0;
+}
+</code></pre>
+<p>For ordinary borrowed slices, <code>slices.copy&lt;T&gt;(destination, source)</code> copies the original source values even when the views overlap, without allocating. A short destination returns false before writing; an unused destination tail is unchanged. Aggregate representation bytes are preserved, and elements are copied shallowly. <code>copy_nonoverlapping</code> still requires disjoint storage. Packed views use <code>memory.copy_packed</code>; see the <a href="../../packed-storage.md">packed storage contract</a>.</p></section>
 <section id="hashmaps"><h2>Hash maps (0.2.1)</h2>
 <p>Import <code>@hashmap</code> for <code>hashmap.HashMap&lt;K, V&gt;</code>. Keys may be integers, booleans, or counted-byte strings. Values use ordinary shallow copies. Construct with <code>HashMap&lt;K, V&gt;.create(&amp;memory, capacity)</code> and handle its result. <code>insert(key, value)</code> returns a result whose boolean distinguishes a new key from replacement; <code>get</code> and <code>get_mut</code> return borrowed nullable pointers. <code>remove</code>, <code>clear</code>, <code>reserve</code>, and <code>entries</code> provide deletion, capacity management, and iteration.</p>
 <p>Copies share all map state. Arena reset/free invalidates every alias and borrowed entry; mutation invalidates cursors and value borrows. Keep string key bytes alive and unchanged. See the <a href="../../hashmaps.md">API, failure, ownership, and cost contract</a> and <a href="../../../examples/hashmap.gloin">word-count example</a>.</p></section>
@@ -358,7 +404,7 @@ def main() -&gt; i32 {
 <tr><td><code>@vector</code></td><td>Inline and arena-backed vectors. <a href="../../slices-vectors.md">Guide</a></td></tr>
 <tr><td><code>@arena</code></td><td>Typed allocation and explicit memory lifecycle. <a href="../../arenas.md">Guide</a></td></tr>
 <tr><td><code>@memory</code></td><td>Raw native blocks, target layout queries, and checked typed placement. <a href="../../raw-memory.md">Guide</a></td></tr>
-<tr><td><code>@slices</code></td><td>Generic fill, reverse, and nonoverlapping copy on borrowed slices. <a href="../../slices-vectors.md">Guide</a></td></tr>
+<tr><td><code>@slices</code></td><td>Generic fill, reverse, overlap-safe copy and nonoverlapping copy on borrowed slices. <a href="../../slices-vectors.md">Guide</a></td></tr>
 <tr><td><code>@strings</code>, <code>@status</code></td><td>Counted bytes, borrowed cursors, bounded transformations and builders. Fallible calls use built-in results; cursor end is an ordinary outcome. <a href="#strings">Overview</a> and <a href="../../strings.md">API guide</a></td></tr>
 <tr><td><code>@std</code> numeric APIs</td><td>Built-in results for parsing, formatting and fallible conversions; plain numbers for infallible conversions. <a href="../../numbers.md">Guide and migration</a></td></tr>
 <tr><td><code>@io</code></td><td>Streams, files, bounded reads, direct byte slice I/O, counted writes, OS errors. <a href="../../io.md">Guide</a></td></tr>
@@ -430,6 +476,7 @@ def main() -&gt; i32 {
 <p>A string is an immutable view of counted bytes. NUL and invalid UTF-8 are ordinary data. Lengths, indexes, slices and search offsets count bytes; slicing can split a UTF-8 character. Import <code>@strings</code> for these operations:</p>
 <table><thead><tr><th>Operation</th><th>Result and storage</th></tr></thead><tbody>
 <tr><td><code>byte_length</code>, <code>is_empty</code>, <code>equal</code>, <code>compare</code>, prefix/suffix tests</td><td>Scalar queries; no allocation. Ordering compares unsigned bytes.</td></tr>
+<tr><td><code>byte(text, index)</code> (0.3.0 development)</td><td><code>u8</code>; O(1), no allocation; an out-of-range index traps.</td></tr>
 <tr><td><code>byte_at(text, index)</code></td><td><code>result&lt;u8&gt;</code>; out-of-range access is an error.</td></tr>
 <tr><td><code>slice_bytes(text, start, length)</code></td><td><code>result&lt;string&gt;</code>; borrows the original bytes. Empty slices at the end are valid.</td></tr>
 <tr><td><code>trim_ascii</code>, <code>trim_start_ascii</code>, <code>trim_end_ascii</code></td><td>Borrowed strings; remove ASCII whitespace without allocating.</td></tr>
@@ -437,9 +484,43 @@ def main() -&gt; i32 {
 <tr><td><code>copy(&amp;memory, text)</code></td><td><code>result&lt;string&gt;</code>; an independent copy in the caller's arena.</td></tr>
 <tr><td><code>concat</code>, <code>repeat</code>, <code>replace_all</code>, <code>lower_ascii</code>, <code>upper_ascii</code></td><td><code>result&lt;string&gt;</code>; each takes an arena and a final <code>max_bytes</code> limit. Nonempty output is independently allocated even when unchanged.</td></tr>
 </tbody></table>
+<p><code>strings.byte(text, index)</code> takes a <code>u64</code> byte index and checks bounds even when its return value is discarded. Arguments evaluate once in left-to-right order. NUL and invalid UTF-8 bytes are preserved; zero is valid data, not an end-of-input marker. Use <code>byte_at</code> for recoverable bounds errors, or explicitly check the length before parser lookahead.</p>
 <p>Check <code>.erroneous</code> or match each fallible call before accessing its active payload. Failures have static messages, <code>@status</code> categories in <code>.error.code</code>, and zero <code>.error.os_error</code>. Categories are <code>OUT_OF_RANGE</code> for bounds, <code>INVALID</code> for empty split delimiters/replacement needles, <code>TOO_LONG</code> for output limits or builder capacity, and <code>NO_MEMORY</code> for allocation. A failed result provides no readable zero byte, empty string or dummy handle. <code>byte_at_checked</code> and <code>slice_bytes_checked</code> remain aliases with the same behavior.</p>
 <p><code>SplitCursor.create(text, delimiter)</code> returns <code>result&lt;SplitCursor&gt;</code>. Once created, <code>next()</code> cannot fail: it returns <code>TextItem { end: bool, value: string }</code>. Adjacent or trailing delimiters produce empty items with <code>end = false</code>; exhaustion repeatedly returns <code>end = true</code> and empty text. <code>LineCursor.create(text)</code> is infallible and its <code>next()</code> returns the same item type. It removes LF and one preceding CR; empty input has no lines, and a terminal LF adds no extra line. Both cursors borrow bytes, allocate nothing and copy their positions independently. The compiler does not require checking <code>end</code>, since the empty text at exhaustion is valid.</p>
-<p><code>StringBuilder.create(&amp;memory, capacity)</code> returns <code>result&lt;StringBuilder&gt;</code>. Capacity is fixed. <code>append(text)</code> and <code>append_byte(byte)</code> return <code>result&lt;void&gt;</code>, allocate nothing and leave both bytes and length unchanged on insufficient capacity. An empty append succeeds even when full. Each append is atomic; a later failure does not roll back earlier appends. Copies of a builder alias its storage and length. <code>clear()</code> resets that shared length without freeing or securely erasing bytes. <code>to_string(&amp;memory)</code> returns an independent snapshot as <code>result&lt;string&gt;</code>.</p>
+<p><code>StringBuilder.create(&amp;memory, capacity)</code> returns <code>result&lt;StringBuilder&gt;</code>. Capacity is fixed. <code>append(text)</code>, <code>append_byte(byte)</code>, and development <code>append_bytes(bytes: [const u8])</code> return <code>result&lt;void&gt;</code>, allocate nothing and leave both bytes and length unchanged on insufficient capacity. An empty append succeeds even when full. Each append checks capacity before writing; a later failure does not roll back earlier appends. Builder aliases are not safe for concurrent mutation. Copies of a builder alias its storage and length. <code>clear()</code> resets that shared length without freeing or securely erasing bytes. <code>to_string(&amp;memory)</code> returns an independent snapshot as <code>result&lt;string&gt;</code>.</p>
+<p>Development builders place state and payload in one aligned arena allocation, including at zero capacity. <code>append_bytes</code> accepts mutable or read-only ordinary byte slices, copies the exact bytes without UTF-8 validation or NUL termination, and borrows the source only for the call. Keep that source live and unchanged during the call; later mutation does not affect the builder. A read-only slice does not freeze other aliases.</p>
+<p>This complete program appends three bytes including NUL, changes the source, then reads the independent snapshot. It prints <code>bytes preserved</code>:</p>
+<pre><code>import "@arena";
+import "@strings";
+import "@std";
+
+def main() -&gt; i32 {
+    def mut memory: arena.GeneralArena = arena.GeneralArena.create();
+    defer memory.free();
+
+    def made: result&lt;strings.StringBuilder&gt; = strings.StringBuilder.create(&amp;memory, 3);
+    if made.erroneous { return 1; }
+
+    def mut builder: strings.StringBuilder = made.value;
+    def mut bytes: [u8; 3]                 = {65, 0, 66};
+    def appended: result&lt;void&gt;             = builder.append_bytes(bytes[..]);
+
+    if appended.erroneous { return 2; }
+
+    bytes[0] = 90;
+
+    def saved: result&lt;string&gt; = builder.to_string(&amp;memory);
+    if saved.erroneous { return 3; }
+
+    def text: string = saved.value;
+    if strings.byte_length(text) != 3 { return 4; }
+    if strings.byte(text, 0) != 65 || strings.byte(text, 1) != 0 { return 5; }
+
+    std.println("bytes preserved");
+
+    return 0;
+}
+</code></pre>
 <p>This complete program skips empty comma-separated fields, uppercases the others, and prints <code>ONE | TWO | THREE</code>. The report is limited to 64 bytes; larger input can produce a checked error. Save it as <code>report.gloin</code> and run <code>gloinc --jit report.gloin</code>:</p>
 <pre><code>import &quot;@arena&quot;;
 import &quot;@strings&quot;;
