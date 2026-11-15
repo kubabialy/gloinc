@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1184 tests**:
+The current source definitions and CTest discovery contain **1290 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -19,15 +19,16 @@ The current source definitions and CTest discovery contain **1184 tests**:
 | ScopeTest | 11 |
 | VariablesTest | 17 |
 | NumericTest | 12 |
-| EndianTest | 6 |
+| EndianTest | 7 |
+| PackedTest | 36 |
 | FunctionsTest | 12 |
 | OperatorsTest | 17 |
 | ControlFlowTest | 12 |
 | ForUnlessTest | 15 |
 | ContinueTest | 8 |
-| BreakTest | 8 |
+| BreakTest | 9 |
 | SelectionTest | 7 |
-| LoweringTest | 82 |
+| LoweringTest | 88 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -39,8 +40,8 @@ The current source definitions and CTest discovery contain **1184 tests**:
 | ResultTest | 11 |
 | BasicCodeGenTest | 6 |
 | SpecTest | 8 |
-| ArenaTest | 21 |
-| ArenaRuntimeTest | 11 |
+| ArenaTest | 28 |
+| ArenaRuntimeTest | 14 |
 | AsyncTest | 2 |
 | ArrayStringTest | 4 |
 | UnlessTest | 1 |
@@ -48,15 +49,15 @@ The current source definitions and CTest discovery contain **1184 tests**:
 | CliTest | 35 |
 | StandardModuleTest | 17 |
 | StandardLibraryTest | 26 |
-| StringLibraryTest | 20 |
-| TextLibraryTest | 19 |
-| NumericLibraryTest | 16 |
+| StringLibraryTest | 22 |
+| TextLibraryTest | 23 |
+| NumericLibraryTest | 19 |
 | NumericRuntimeTest | 16 |
 | IoLibraryTest | 18 |
 | IoRuntimeTest | 14 |
-| NetworkLibraryTest | 10 |
-| NetRuntimeTest | 3 |
-| TlsRuntimeTest | 7 |
+| NetworkLibraryTest | 29 |
+| NetRuntimeTest | 7 |
+| TlsRuntimeTest | 8 |
 | TlsClientSmoke | 1 |
 | HttpClientSmoke | 1 |
 | HttpStreamSmoke | 1 |
@@ -74,7 +75,8 @@ The current source definitions and CTest discovery contain **1184 tests**:
 | MathLibraryTest | 14 |
 | MathRuntimeTest | 12 |
 | TimeRandomLibraryTest | 18 |
-| HashmapLibraryTest | 12 |
+| HashmapLibraryTest | 15 |
+| VectorLibraryTest | 10 |
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
@@ -84,7 +86,7 @@ The current source definitions and CTest discovery contain **1184 tests**:
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 181 |
+| CoreAcceptanceTest | 187 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -199,6 +201,16 @@ ctest --test-dir build -R '^GloinFormatterSmoke\.' --output-on-failure
 Its aggregate limit remains 90 seconds. The repository style gate is
 `build/gloinfmt --check .`.
 
+The 1,296-pair integer-constructor matrix compiles one large program in three
+modes. Its child deadlines are six times the ordinary CLI limit, and its CTest
+limit is 120 seconds on macOS or 480 seconds on Linux/sanitizer builds.
+
+The 52-layout packed-array construction oracle uses four times the usual child
+and aggregate budgets: an isolated instrumented JIT compilation took 20.8 seconds.
+It retains every encoding, byte assertion, and execution mode. The packed constant
+conversion matrix constructs signed `APInt` inputs for negative values, so LLVM
+debug assertions validate the fixture as well as the conversion helper.
+
 Compiler CTest cases have a 30-second timeout on ordinary macOS builds and
 120 seconds on Linux or sanitizer builds. Linux trap cases take longer under
 VM/CI load; instrumented Debug cases can perform many compiler invocations
@@ -258,20 +270,32 @@ alias invalidation. Raw memory
 and custom arena acceptance cases check allocation, alignment, typed placement,
 release, and rejected unsafe arguments. Direct byte-slice I/O and vector live
 views/collection methods run through compiler, runtime, and packaged examples.
-Eight `NetworkLibraryTest` cases exercise local HTTP over JIT and native
+Twenty-nine `NetworkLibraryTest` cases exercise local HTTP over JIT and native
 executables, exact request-head limits and injection rejection, every response
 split point, one-byte chunk decoding, malformed/truncated framing, metadata/body
 limits, built-in results, address construction, and socket alias close state.
 Streaming decoder cases vary every split with 1–3-byte reusable output buffers,
 stop at final-head/output boundaries, preserve following bytes, and enforce
-cumulative body limits.
+cumulative body limits. Independent TCP packet oracles and 24 seeded loss,
+reordering and duplication simulations run for both IPv4 and IPv6, covering
+sequence wrap, simultaneous open,
+flow/congestion control and close timers. Additional JIT/O0/O2 fixtures cover
+fragment ambiguity, UDP/ICMP dispatch, validated path-MTU quotes and
+resegmentation, generation handles, TIME_WAIT retirement, HTTP server framing,
+and verified HTTPS over lossy Gloin TCP for both families. IPv6 cases add
+independent header/checksum vectors, all alignments modulo 16, bounded extension
+chains, atomic fragments, overlap poisoning, maximum UDP size, endpoint fragment
+dispatch, ICMP suppression/rate limits and checked full-address ISN calls. Native tests check raw packet framing,
+secret-dependent ISNs, bounded TLS BIOs, hostname rejection and truncated EOF.
+[The raw-packet acceptance harness](tcpip/README.md) adds independent Linux
+kernel TCP and Python TLS peers, plus repeatable complete-server measurements.
 `HttpClientSmoke.LocalPeers` checks HTTP and verified HTTPS against local peers
 in JIT/native modes, including multi-buffer binary POSTs/responses, certificate
 rejection, deadlines despite progress, and connection cleanup. It also runs the
 packaged example with an ephemeral port. The zeroed-array acceptance case now
-checks a 64 KiB byte buffer in JIT and default native output. Three `NetRuntimeTest` cases check nonblocking and
+checks a 64 KiB byte buffer in JIT and default native output. Seven `NetRuntimeTest` cases check nonblocking and
 close-on-exec flags, readiness, partial-I/O statuses, TLS client validation, and invalid arguments.
-Seven `TlsRuntimeTest` cases add independent direct-OpenSSL interoperability,
+Eight `TlsRuntimeTest` cases add independent direct-OpenSSL interoperability,
 TLS 1.2/1.3 and old-protocol rejection, reusable configuration lifetime,
 encrypted/mismatched key rejection, binary backpressure, graceful shutdown,
 truncation and SIGPIPE policy. Two compiler cases check the new source-typed
@@ -284,7 +308,14 @@ consumption, alias cancellation, short/excess input, and truncation after body
 delivery. It also runs 32 simultaneous exchanges over HTTP and HTTPS in JIT and
 native modes; 31 bodies exceed reusable buffers and one peer remains stalled
 until cancelled. Package gates run the installed streaming example too.
-The [network guide](../docs/networking.md) and [client guide](../docs/http-client.md) state the supported HTTP subset.
+The [network guide](../docs/networking.md) and [client guide](../docs/http-client.md)
+state the supported HTTP subset.
+
+Four request-decoder cases execute in JIT,
+`-O0`, and `-O2`: every wire split, binary bodies, head boundaries, zero/tiny
+output windows, pipelined suffixes, exact size budgets, malformed/truncated
+framing, and permanent failure after a delivered prefix. The loopback example
+receives a chunked binary POST in three-byte socket reads in all three modes.
 
 `JsonSmoke.CodecAndState` checks `@json` in JIT, native `-O0`, and native `-O2`
 modes. The deterministic corpus contains 142 accepted documents, 53 rejection
@@ -324,9 +355,40 @@ checks all three programs at one million records/samples with a 2 MiB soft stack
 limit, including rejection of one-over-limit inputs. It is required by `check-core`
 and installed/relocated package checks. See [the guide](../docs/integrated-examples.md).
 
-## Hash maps (0.2.1)
+## Overlap-safe slice copying (0.3.0 development)
 
-Twelve `HashmapLibraryTest` cases cover growth, colliding probe chains and wraparound,
+Three `CoreAcceptanceTest.SliceCopy*` cases cover all 1,296 pairs of ranges in a
+seven-element array against an independent immutable snapshot, including both
+overlap directions, identical/empty ranges and short destinations. Separate
+buffers and destination tails, overlapping placements with different element
+boundaries, packed bytes with spare bits and endian fields, shallow pointer copies
+and zero-sized elements run in JIT and native `-O0`/`-O2`.
+Read-only destinations, mismatched endian element types and direct calls to the
+private direction primitive remain rejected. A `LoweringTest` case executes the
+typed copy-direction operation through exported LLVM and rejects forged operands.
+
+## Recoverable arena vectors (0.3.0 development)
+
+Ten `VectorLibraryTest` cases cover result-returning construction, reservation,
+push, insertion, append and cloning. JIT and native `-O0`/`-O2` check captured arguments,
+live elements, overlapping appends in both directions (including typed placements
+with different element boundaries), packed spare bytes,
+zero-sized elements and signed/byte-extent limits. Per-arena allocation injection
+checks failure before publication, unchanged counters/pointers/aliases, retries,
+and that invalid/no-op requests do not allocate. Result handling, mutability and
+private reservations remain checked. Clone checks cover independent buffers and
+counters, shallow pointer elements, same/different arenas, source arena reset,
+empty clones, allocation failure and retry. The suite participates in core and package
+validation; older vector regressions remain in `CoreAcceptanceTest`.
+The same placement-overlap regression exercises fallible arena append and both
+older boolean append methods. Additional checks preserve geometric capacities,
+fixed-capacity rejection without writes, empty appends, full-width length limits,
+packed spare bytes, one allocation per arena append, and the older allocation
+failure trap in JIT and native `-O0`/`-O2`.
+
+## Hash maps (0.2.1 API, 0.3.0 allocation)
+
+Fifteen `HashmapLibraryTest` cases cover growth, colliding probe chains and wraparound,
 backward-shift deletion, shared aliases, mutable lookup, clear, and iteration.
 Every integer width, boolean keys, counted-byte string keys, aggregate values,
 and stored null pointers run through JIT and native `-O0`/`-O2` execution.
@@ -335,7 +397,13 @@ checks constructor/growth rollback and retry. Repeated replacement and churn
 through distinct keys within capacity must never allocate. Deletion tests skip
 entries at their home buckets while repairing wrapped chains; a 12,000-operation
 mixed workload checks every lookup against an independent array model. Bucket
-masking is checked against remainder across power-of-two capacities.
+masking is checked against remainder across power-of-two capacities. The private
+owned-storage bridge checks typed capacity, alignment, overflow, untouched empty
+slots, cleanup and GloinIR ABI calls in JIT/O0/O2.
+Native allocator accounting checks that growth releases obsolete tables while
+another map and ordinary allocations share the arena. Repeated state-allocation
+failures must release unpublished tables before arena cleanup. These checks
+bound requested backing bytes, not process RSS or elapsed time.
 Rejection cases cover unsupported keys, private storage/primitives, receiver
 mutability, and discarded results. The suite also checks canonical module identity,
 replaceable library source, malformed native signatures, and the packaged example.
@@ -449,11 +517,14 @@ also run against installed and relocated packages.
 
 ## Numeric text and conversion (SPEC-030c)
 
-Sixteen `NumericLibraryTest` cases execute the public numeric APIs, recoverable failures,
+Nineteen `NumericLibraryTest` cases execute the public numeric APIs, recoverable failures,
 exact/rounded/truncated conversion choices, signed zero, arena allocation failure,
+and fallible integer constructors across 1,296 native/endian type pairs in JIT,
+`-O0`, and `-O2`, including all widths 1–64, dynamic boundary inputs, error
+diagnostics, literal failures, generic targets, and single evaluation,
 invalid-precision preflight, source type/privacy checks, reserved runtime-name
 collisions, malformed native ABIs, and external LLVM execution. The statistics
-example and both complete [guide](../docs/numbers.md) programs run verbatim against
+example and all three complete [guide](../docs/numbers.md) programs run verbatim against
 normal, installed, and relocated compilers.
 
 Sixteen LLVM-independent `NumericRuntimeTest` cases check integer limits, counted
@@ -467,16 +538,22 @@ and arena reset passes with a 2 MiB stack.
 
 ## Text traversal and construction (SPEC-030b)
 
-Nineteen `TextLibraryTest` cases cover split/line boundary semantics, independent
+Twenty-three `TextLibraryTest` cases cover split/line boundary semantics, independent
 cursor positions and borrowed views, invalid delimiters, bounded concat/repeat/
 replacement/case conversion, overflow and empty-output paths, independent result
 lifetimes, all 256 byte values, shared builder state, atomic failed appends,
 zero capacity, read-only queries, snapshots, and source reset/free.
+Byte-slice appends exercise mutable/read-only sources, all byte values, source
+mutation after copying, empty/full builders, capacity failure and retry, shared
+aliases, independent snapshots, no allocation, and checked API restrictions.
 
-Per-handle allocation injection exercises state allocation failure, buffer
-allocation failure, and snapshot failure through the actual typed-arena bridge.
-10,000 append/clear iterations followed by an injected third-allocation failure
-verify that mutation and cursor traversal allocate nothing. Private primitive
+Per-handle allocation injection exercises combined builder allocation failure
+and snapshot failure through the actual arena bridge. JIT and native `-O0`/`-O2`
+check one allocation for zero/nonzero capacities, alignment after prior byte
+storage, all byte values, shared aliases, retained snapshots, retry, and size
+validation before allocation. 10,000 append/clear iterations followed by an
+injected second-allocation failure verify that mutation and cursor traversal
+allocate nothing. Private primitive
 range/null/type guards, public mutability/privacy, and external LLVM execution
 are checked. The packaged report and both guide programs run verbatim against
 normal, installed, and relocated compilers. The suite is part of `check-core`
@@ -491,7 +568,7 @@ through GloinIR, JIT and native `-O0`/`-O2`.
 
 ## Byte strings (SPEC-030a)
 
-Twenty `StringLibraryTest` cases cover the byte-string functions, including
+Twenty-two `StringLibraryTest` cases cover the byte-string functions, including
 canonical built-in results and their checked aliases, shared status
 compatibility, unsigned ordering, NUL/arbitrary bytes, UTF-8 byte slicing,
 extreme/empty bounds, first/absent/empty search, exact ASCII trimming, and a
@@ -507,6 +584,11 @@ installed/relocated package validation.
 Development regressions also reject unchecked, discarded and inactive results,
 verify exact messages/codes and alias behavior, and preserve codes through
 forwarding and match in GloinIR, JIT and native `-O0`/`-O2`.
+
+Direct `strings.byte` access preserves NUL, high bytes and UTF-8 byte positions,
+evaluates arguments once in order, and traps on empty/end/maximum-index reads
+even when discarded. JIT and native `-O0`/`-O2` verify the trap precedes later
+side effects and distinguish signal termination from child timeouts.
 
 Two additional `StandardRuntimeTest` cases verify all 256 byte values, exact-sized
 copy destinations and guard bytes, no implicit terminator, and null-pointer
@@ -547,7 +629,7 @@ The suite participates in required, sanitizer, and installed/relocated package c
 
 ## Arena allocation (SPEC-028)
 
-Twenty-one `ArenaTest` cases exercise the source API, all scalar types, nested
+Twenty-seven `ArenaTest` cases exercise the source API, all scalar types, nested
 struct/string/pointer values, native layout, shallow copies, initialized references,
 fallible allocation, mutable receivers, stable linked objects, reset/handle
 aliasing, cleared-handle traps, evaluation order, deferred allocation, module
@@ -557,11 +639,34 @@ The previous unchecked `Arena::new` test has been replaced by these executable
 source tests. Core fixtures cover success, invalid type-valued arguments, the
 required import, and use of a cleared handle.
 
-Eleven independent `ArenaRuntimeTest` cases exercise the actual native allocator,
+Slice-allocation regressions check exact native/endian/compact bytes and zeroed
+packed tails, requested base alignment, empty and full-u64 zero-sized views,
+read-only aliases, nested ordinary values, captured fill effects, recoverable
+allocation failure, no allocation on invalid requests, private intrinsics and
+GIR capability rejection. Packed-record element regressions preserve independently
+specified bytes and spare bits through fill, copies, calls, nested arrays,
+references and allocation; they exercise zero-sized full-u64 counts, backed
+one-past references, invalid encoding/capabilities and negative signed bounds
+in JIT/native `-O0`/`-O2`. Packed-copy regressions check forward/backward/self
+overlap, zero-width/full-count copies, no writes on unequal lengths, read-only
+source capability, encoding rejection, record spare bits, and an independent
+bit-at-a-time oracle at both guard-page boundaries for native and qualified
+integers in both orders. Packed indexing proofs cover exact descriptor snapshots
+and fixed-array extents, retain guards after aliased index/descriptor changes,
+and keep read-only element loads fresh across writes. Guard-page copy oracles
+also exercise bounded dynamic reads across one through eight containing bytes.
+A lowering regression rejects forged nested nominal
+element extents in slice initialization and source/layout bridges. Negative
+signed indexing/ranges trap before assignment RHS effects even on huge
+zero-sized slices in JIT/native `-O0`/`-O2`.
+
+Fourteen independent `ArenaRuntimeTest` cases exercise the actual native allocator,
 including alignment through 64 KiB, mixed-size object contents across growth,
 zero-sized allocations, large blocks, reset retention/reuse, independent arenas,
 overflow, deterministic allocation failure, unchanged state on failure, and
-balanced releases. This target builds without the compiler/backend and runs under
+balanced releases. Individually releasable collection blocks also check arbitrary
+release order, repeated allocation failure, and reset/free cleanup while preserving
+unrelated bump storage. This target builds without the compiler/backend and runs under
 ASan/UBSan. On macOS, the external LLVM test preloads the test executable's ASan
 library before loading an instrumented arena runtime into `mlir-runner`.
 
@@ -621,16 +726,81 @@ parameters/returns, field writes, strings and empty records, literal evaluation
 order, signedness and floating fields, exact initialization, and loop-local
 storage. Negative cases cover unknown/duplicate/missing/private fields,
 recursive layouts, wrong nominal types, uninitialized reads/writes, immutable
-roots and nested fields, temporary receivers, invalid method receivers, and deferred packed
-forms. Context reuse checks prevent backend type names leaking between programs.
+roots and nested fields, temporary receivers, invalid method receivers, and legacy
+packed forms without explicit bit order. Context reuse checks prevent backend
+type names leaking between programs.
 Layout tests assert padding, field offsets, and ABI alignment using both the
 native layout and explicit 32/64-bit pointer layouts. An external LLVM runner
 independently executes an aggregate call and field mutation.
 
 The required gate and package checks include this suite and the maintained
 `run/ordinary_struct.gloin` source fixture. Prior ordinary-struct rejection
-fixtures now cover packed structs; invalid member access on a function remains
-an error. These updates preserve deferred-feature rejection coverage.
+fixtures now reject packed declarations without explicit bit order; invalid
+member access on a function remains an error.
+
+## Packed memory layouts and exact-width integers (0.3.0)
+
+Twenty-nine `PackedTest` cases cover all native integer widths from 1 through 64,
+constant conversion bounds across every native/endian width and sign pair,
+recoverable runtime narrowing failures and arithmetic traps, generic arithmetic,
+arrays, and results.
+IR checks retain nominal packed schemas, reject forged offsets and ordinary
+scalar-field addresses, enforce the foreign ABI policy, and verify bytewise
+copies under synthetic little- and big-endian target layouts. Nine-byte field
+checks require bounded eight-byte/one-byte accesses with alignment one and the
+appropriate target-dependent byte swaps.
+
+A regression lowers 64 functions mixing proven unsigned arithmetic with signed
+`i13` division. It checks signed LLVM operations and JIT/native results so newly
+allocated operations cannot inherit proofs belonging to erased operations.
+
+Native guard-page tests compare 480 combinations of field width, starting bit,
+signedness, and record order against an independent per-bit C oracle. Each
+combination runs 70 inputs at both edges of a writable page, at `-O0` and `-O2`.
+These checks catch out-of-object memory accesses and changes to neighboring bits.
+
+Fixed packed integer arrays have independent per-bit construction checks for
+13 representative widths, both signs and both orders, in JIT/native `-O0`/`-O2`.
+IR verifiers reject forged byte extents and element encodings; semantic checks
+reject implicit ordinary/packed/order conversions. `run/packed_array_values.gloin`
+checks exact sizes, embedded endian arrays, zeroed tail bits, and preservation of
+nonzero tail bits through copies, generic calls, results and aligned allocation.
+Dynamic indexed updates use 52 signed/width/order combinations, nine indices
+and 70 inputs per index at both guard-page edges in native `-O0`/`-O2`, comparing
+all bytes against an independent oracle. JIT/native checks cover destination,
+index and RHS ordering, captured repeated fills (including empty arrays),
+temporary reads, endian elements, and bounds traps before RHS side effects.
+Semantic/IR checks reject scalar borrows and strengthened write capabilities.
+Packed-slice cases cover nested subranges at every bit position, aliases and
+read-only weakening, empty ranges, descriptor copies/calls, signed/endian
+elements, ordinary slices containing packed arrays, and range/index traps in
+JIT/native `-O0`/`-O2`. IR rejects strengthened subrange capabilities; source
+checks reject encoding changes and temporary-array borrows.
+Storage-size tests distinguish native/bit strides, partial-byte tails, empty
+elements, full-u64 counts whose bit product would overflow, and the exact
+largest fitting `u13` count. They check `OVERFLOW`/`INVALID`, element-storage
+alignment, invalid type arguments, and private layout-intrinsic boundaries.
+Byte-backed view tests cover checked capabilities, nested/aliased writes,
+nine-byte integer footprints, exact and insufficient capacities, empty and
+one-past positions, maximum offsets/counts, error precedence, and no-write
+failures in JIT/native `-O0`/`-O2`. GIR rejects forged writable views from
+read-only bytes.
+Split tests cover all eight starting bits and every boundary of `u3`, `u8`,
+and `u13` views in both orders, endian elements, empty endpoints, maximum
+out-of-range positions, unchanged backing bytes, returned aliases, read-only
+capabilities, private queries and GIR type rejection in JIT/native `-O0`/`-O2`.
+
+The required core gate also runs `run/packed.gloin` in JIT and native modes. It
+exhausts all 65,536 `u13`/`u3` combinations in each bit order and checks six-byte
+stride, unaligned placement, nested and generic records, field updates, and
+representation preservation through copies, calls, result payloads, argument
+capture, and deferred mutations. The independent lab in
+`../gloin_examples/packed_lab` extends these checks with runtime binary input,
+schema conversion, and overlapping copies against a Python oracle.
+
+See the [packed layout contract](../docs/packed-layout.md) for supported field
+types and reference restrictions, and the [0.3.0 draft](../docs/release-0.3.0-draft.md)
+for measured results and remaining platform validation.
 
 ## Standard modules and output (SPEC-023)
 
@@ -791,6 +961,13 @@ canonical formatters, all integer aliases and legacy `to_string` as recoverable
 results. The exact-widening case verifies a scalar i64 API and unchanged GIR
 sign-extension lowering. Existing parser/formatting/rounding/native-ABI tests
 retain their boundaries, lifetimes and independent oracles.
+
+The [packed packet layer](../docs/packets.md) adds four networking cases covering
+independent IPv4/UDP/TCP wire vectors, checksums across every split, a maximum-size
+IPv4/UDP datagram, and the packaged example in JIT, native `-O0`, and native `-O2`.
+They also test generic packed byte access, unaligned buffers, spare-bit copies,
+short writes, constness, and invalid type arguments. Two packed compiler cases
+verify raw-view IR and exact/short copies at native guard-page boundaries.
 
 ## Floating check chains
 

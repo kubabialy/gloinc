@@ -1,3 +1,5 @@
+import "@status";
+
 // Individually owned raw blocks. Only release a pointer returned by alloc,
 // exactly once, and only after all views and placed values have stopped using it.
 def pub alloc(bytes: i64, alignment: i64) -> *u8 {
@@ -29,4 +31,175 @@ def pub padding<T>(storage: *u8) -> i64 {
 // The caller guarantees that available describes live writable storage.
 def pub place<T>(storage: *u8, available: i64, value: T) -> *T {
     return __memory_place<T>(storage, available, value);
+}
+
+// Validate an explicit byte alignment without allocating or touching storage.
+def pub check_alignment<T>(alignment: u64) -> result<void> {
+    def minimum: result<u64> = u64(align_of<T>());
+    if minimum.erroneous { return minimum.error; }
+
+    def checked: result<void> = check_byte_alignment(alignment, minimum.value);
+    if checked.erroneous { return checked.error; }
+
+    return;
+}
+
+// A slice's element storage alignment can differ from its descriptor alignment.
+def pub check_slice_alignment<S>(alignment: u64) -> result<void> {
+    def checked: result<void> = check_byte_alignment(alignment, __memory_slice_alignment<S>());
+    if checked.erroneous { return checked.error; }
+
+    return;
+}
+
+def check_byte_alignment(alignment: u64, minimum: u64) -> result<void> {
+    if alignment < minimum || alignment > 9223372036854775807 {
+        return error("invalid storage alignment", status.INVALID, 0);
+    }
+
+    def mut remaining: u64 = alignment;
+
+    while remaining > 1 {
+        if remaining % 2 != 0 {
+            return error("invalid storage alignment", status.INVALID, 0);
+        }
+
+        remaining = remaining / 2;
+    }
+
+    return;
+}
+
+// S is an ordinary or packed slice type. This only computes its zero-offset
+// storage extent; it neither allocates nor creates a borrowed view.
+def pub storage_bytes<S>(count: u64) -> result<u64> {
+    def unit: u64 = __memory_slice_unit<S>();
+    if unit == 0 { return 0; }
+
+    def limit: u64 = 9223372036854775807;
+
+    if __memory_slice_packed<S>() {
+        def whole: u64 = count / 8;
+        def tail: u64  = ((count % 8) * unit + 7) / 8;
+
+        if whole > (limit - tail) / unit {
+            return error("slice storage extent overflow", status.OVERFLOW, 0);
+        }
+
+        return whole * unit + tail;
+    }
+
+    if count > limit / unit {
+        return error("slice storage extent overflow", status.OVERFLOW, 0);
+    }
+
+    return count * unit;
+}
+
+// Construct in bounded byte storage. Even zero-sized objects need a nonempty
+// backing slice to obtain a live non-null address (one-past placement is allowed).
+def pub place_at<T>(bytes: [u8], byte_offset: u64, value: T, alignment: u64) -> result<&T> {
+    def checked: result<void> = check_alignment<T>(alignment);
+    if checked.erroneous { return checked.error; }
+
+    def size: result<u64> = u64(size_of<T>());
+    if size.erroneous { return size.error; }
+    if bytes.len == 0 || byte_offset > bytes.len {
+        return error("placement is outside storage", status.OUT_OF_RANGE, 0);
+    }
+    if size.value > bytes.len - byte_offset {
+        return error("placement is outside storage", status.OUT_OF_RANGE, 0);
+    }
+
+    def offset: result<i64> = i64(byte_offset);
+    if offset.erroneous { return offset.error; }
+
+    def base: *u8    = &bytes[0];
+    def storage: *u8 = base + offset.value;
+
+    if !__memory_is_aligned<T>(storage, alignment) {
+        return error("misaligned placement address", status.INVALID, 0);
+    }
+
+    def placed: *T = place<T>(storage, size_of<T>(), value);
+    if placed == null {
+        return error("invalid placement address", status.INVALID, 0);
+    }
+
+    return &*placed;
+}
+
+// S determines both the packed encoding and the required byte-slice capability.
+// This borrows initialized bytes without reading or modifying their contents.
+def pub view_packed<S>(bytes: __memory_slice_bytes<S>, bit_offset: u64, count: u64) -> result<S> {
+    def view: result<S> = __memory_view_packed<S>(bytes, bit_offset, count,
+        error("packed view requires a byte-aligned start", status.INVALID, 0),
+        error("packed view extent overflow", status.OVERFLOW, 0),
+        error("packed view is outside storage", status.OUT_OF_RANGE, 0));
+    if view.erroneous { return view.error; }
+
+    return view.value;
+}
+
+def pub struct PackedSplit<S> {
+    def pub left: S,
+    def pub right: S,
+}
+
+// Success proves disjoint byte footprints for this pair, not exclusive access.
+def pub split_packed<S>(view: S, index: u64) -> result<PackedSplit<S>> {
+    def start_bit: u64 = __memory_packed_bit_offset<S>(view);
+
+    if index > view.len {
+        return error("packed split is outside the view", status.OUT_OF_RANGE, 0);
+    }
+
+    def width_modulo_byte: u64 = __memory_slice_unit<S>() % 8;
+    if index != 0 && index != view.len && (start_bit + (index % 8) * width_modulo_byte) % 8 != 0 {
+        return error("packed split would share a boundary byte", status.INVALID, 0);
+    }
+
+    return PackedSplit<S> { left: view[..index], right: view[index..] };
+}
+
+// Copy matching packed encodings with snapshot semantics for overlapping views.
+// Only destination element bits change; source capability may be read-only.
+def pub copy_packed<S>(destination: S, source: __memory_const_slice<S>) -> result<void> {
+    if destination.len != source.len {
+        return error("packed copy requires equal element counts", status.OUT_OF_RANGE, 0);
+    }
+
+    __memory_copy_packed<S>(destination, source);
+
+    return;
+}
+
+// Copy a packed representation from the prefix of bytes. No pointer escapes.
+// Packed layouts have alignment one and admit every bit pattern. Protocol
+// validation is the caller's job; native structs/pointers are rejected.
+def pub read_packed<T>(bytes: [const u8]) -> result<T> {
+    def size: result<u64> = u64(size_of<T>());
+    if size.erroneous { return size.error; }
+    if bytes.len < size.value || size.value == 0 {
+        return error("packed input is too short", status.OUT_OF_RANGE, 0);
+    }
+
+    def pointer: *const T = __memory_packed_pointer<T>(&bytes[0]);
+
+    return *pointer;
+}
+
+// Writes only the packed prefix, preserving its complete stored representation.
+// Failure leaves bytes unchanged. Value capture makes overlap safe.
+def pub write_packed<T>(bytes: [u8], value: T) -> result<void> {
+    def size: result<u64> = u64(size_of<T>());
+    if size.erroneous { return size.error; }
+    if bytes.len < size.value || size.value == 0 {
+        return error("packed output is too short", status.OUT_OF_RANGE, 0);
+    }
+
+    def pointer: *T = __memory_packed_mut_pointer<T>(&bytes[0]);
+    *pointer = value;
+
+    return;
 }

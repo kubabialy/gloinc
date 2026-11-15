@@ -268,3 +268,37 @@ TEST_F(BreakTest, GeneratedExitEdgesAreVerifiedAndUncheckedTargetsAreRejected) {
     CodeGen backend(context);
     EXPECT_FALSE(backend.generate_unchecked_for_testing(parsed.program));
 }
+
+TEST_F(BreakTest, PackedViewsAndFloatArithmeticRetainLoopTransfers) {
+    executes(R"(
+        import "@memory";
+        def main() -> i32 {
+            def mut bytes: [u8; 3] = {255; 3};
+            def viewed: result<packed(msb_first) [u3]> =
+                memory.view_packed<packed(msb_first) [u3]>(bytes[..], 0, 8);
+            if viewed.erroneous { return 1; }
+            def view: packed(msb_first) [u3] = viewed.value;
+            def values: [f32; 8] = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0};
+            def mut total: f32 = 0.0;
+            for def mut i: u64 = 0; i < view.len; i = i + 1 {
+                if i == 1 { continue; }
+                if i == 4 { break; }
+                def converted: result<u3> = u3(i);
+                if converted.erroneous { return 2; }
+                view[i] = converted.value;
+                total = total + values[i] * 2.0;
+            }
+            // 000 111 010 011 111 111 111 111, independently grouped into bytes.
+            if bytes[0] != 29 || bytes[1] != 63 || bytes[2] != 255 || total != 16.0 { return 3; }
+            while view[0] < 7 {
+                view[0] = view[0] + 1;
+                if view[0] == 2 { continue; }
+                total = total + 0.5;
+                if view[0] == 3 { break; }
+            }
+            if bytes[0] != 125 || bytes[1] != 63 || bytes[2] != 255 || total != 17.0 { return 4; }
+            for def mut limit: u3 = 7; true; limit = limit + 1 { break; }
+            return 0;
+        }
+    )");
+}

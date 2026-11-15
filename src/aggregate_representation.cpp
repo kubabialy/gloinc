@@ -6,6 +6,115 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include <functional>
 
+namespace {
+// Internal aggregate calls use private memory slots. LLVM's scalar expansion
+// of byte-array parameters is not a portable representation-preserving ABI
+// (in particular, AArch64 -O0 can lose bytes in stack-passed array elements).
+// Operands are already captured SSA values when this runs, so a later source
+// argument or deferred action cannot change the bytes stored into these slots.
+mlir::LogicalResult lower_aggregate_calls(mlir::ModuleOp module) {
+    auto aggregate = [](mlir::Type type) {
+        return mlir::isa<mlir::LLVM::LLVMStructType, mlir::LLVM::LLVMArrayType>(type);
+    };
+    auto pointer = mlir::LLVM::LLVMPointerType::get(module.getContext());
+    auto void_type = mlir::LLVM::LLVMVoidType::get(module.getContext());
+    llvm::DenseMap<mlir::Operation *, mlir::LLVM::LLVMFunctionType> signatures;
+    for (auto function : module.getOps<mlir::LLVM::LLVMFuncOp>()) {
+        if (function.isExternal())
+            continue;
+        auto type = function.getFunctionType();
+        if (aggregate(type.getReturnType()) || llvm::any_of(type.getParams(), aggregate))
+            signatures[function] = type;
+    }
+    for (auto [operation, original] : signatures) {
+        auto function = mlir::cast<mlir::LLVM::LLVMFuncOp>(operation);
+        auto &entry = function.getBody().front();
+        mlir::OpBuilder builder(&entry, entry.begin());
+        llvm::SmallVector<mlir::Type> parameters;
+        for (auto [argument, type] : llvm::zip(entry.getArguments(), original.getParams())) {
+            parameters.push_back(aggregate(type) ? mlir::Type(pointer) : type);
+            if (aggregate(type)) {
+                argument.setType(pointer);
+                auto value =
+                    builder.create<mlir::LLVM::LoadOp>(function.getLoc(), type, argument, 1);
+                argument.replaceAllUsesExcept(value, value);
+            }
+        }
+        auto result = original.getReturnType();
+        if (aggregate(result)) {
+            auto output = entry.addArgument(pointer, function.getLoc());
+            parameters.push_back(pointer);
+            llvm::SmallVector<mlir::LLVM::ReturnOp> returns;
+            function.walk([&](mlir::LLVM::ReturnOp op) { returns.push_back(op); });
+            for (auto returning : returns) {
+                builder.setInsertionPoint(returning);
+                builder.create<mlir::LLVM::StoreOp>(returning.getLoc(), returning.getOperand(0),
+                                                    output, 1);
+                returning->setOperands(mlir::ValueRange{});
+            }
+            result = void_type;
+        }
+        // Gloin source parameters currently carry no foreign ABI attributes.
+        function.removeArgAttrsAttr();
+        function.removeResAttrsAttr();
+        function.setFunctionType(mlir::LLVM::LLVMFunctionType::get(result, parameters));
+    }
+    auto temporary = [&](mlir::OpBuilder &builder, mlir::Operation *at, mlir::Type type) {
+        mlir::OpBuilder::InsertionGuard guard(builder);
+        auto function = at->getParentOfType<mlir::LLVM::LLVMFuncOp>();
+        builder.setInsertionPointToStart(&function.getBody().front());
+        auto one = builder.create<mlir::LLVM::ConstantOp>(at->getLoc(), builder.getI64Type(),
+                                                          builder.getI64IntegerAttr(1));
+        return builder.create<mlir::LLVM::AllocaOp>(at->getLoc(), pointer, type, one, 1)
+            .getResult();
+    };
+    llvm::SmallVector<mlir::LLVM::CallOp> calls;
+    module.walk([&](mlir::LLVM::CallOp op) { calls.push_back(op); });
+    for (auto call : calls) {
+        if (!call.getCallee())
+            continue;
+        auto function = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(*call.getCallee());
+        auto found = signatures.find(function);
+        if (found == signatures.end())
+            continue;
+        mlir::OpBuilder builder(call);
+        llvm::SmallVector<mlir::Value> arguments;
+        for (auto value : call.getArgOperands()) {
+            if (aggregate(value.getType())) {
+                auto slot = temporary(builder, call, value.getType());
+                builder.create<mlir::LLVM::StoreOp>(call.getLoc(), value, slot, 1);
+                arguments.push_back(slot);
+            } else {
+                arguments.push_back(value);
+            }
+        }
+        auto result = found->second.getReturnType();
+        mlir::Value output;
+        if (aggregate(result)) {
+            output = temporary(builder, call, result);
+            arguments.push_back(output);
+        }
+        auto replacement = builder.create<mlir::LLVM::CallOp>(call.getLoc(), function, arguments);
+        if (output) {
+            auto value = builder.create<mlir::LLVM::LoadOp>(call.getLoc(), result, output, 1);
+            call.getResult().replaceAllUsesWith(value);
+        } else {
+            call->replaceAllUsesWith(replacement);
+        }
+        call.erase();
+    }
+    bool escaped = false;
+    module.walk([&](mlir::LLVM::AddressOfOp address) {
+        if (auto function = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(address.getGlobalName());
+            function && signatures.contains(function)) {
+            address.emitError("aggregate function pointers require an explicit ABI adapter");
+            escaped = true;
+        }
+    });
+    return mlir::failure(escaped);
+}
+} // namespace
+
 mlir::LogicalResult preserve_aggregate_bytes(mlir::ModuleOp module) {
     auto attribute = module->getAttrOfType<mlir::StringAttr>("llvm.data_layout");
     std::string layout_text;
@@ -181,5 +290,7 @@ mlir::LogicalResult preserve_aggregate_bytes(mlir::ModuleOp module) {
         if (!intrinsic_tuples.contains(op))
             replacer.replaceElementsIn(op, true, false, true);
     });
-    return mlir::failure(failed);
+    if (failed)
+        return mlir::failure();
+    return lower_aggregate_calls(module);
 }

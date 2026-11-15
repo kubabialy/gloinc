@@ -1,0 +1,161 @@
+// Bounded adapter between @tcp byte streams and socket-independent OpenSSL TLS.
+import "@tcp";
+import "@net";
+import "@status";
+
+def pub struct Stream {
+    def handle: tcp.Handle,
+    def mut tls: net.TlsBuffer,
+    def incoming: [u8],
+    def outgoing: [u8],
+    def mut input_start: u64,
+    def mut input_end: u64,
+    def mut output_start: u64,
+    def mut output_end: u64,
+    def mut transport_end: bool,
+    def mut fed_end: bool,
+    def mut shutdown_complete: bool,
+
+    // Transfers session ownership to this adapter; caller must not drive/close
+    // its old copy. Buffers must be distinct and remain alive until close().
+    def pub static create(handle: tcp.Handle, tls: net.TlsBuffer,
+        incoming: [u8], outgoing: [u8]) -> result<Stream> {
+        if handle.generation == 0 || !tls.is_open() || incoming.len == 0 || outgoing.len == 0 {
+            return error("invalid TCP/TLS stream", status.INVALID, 0);
+        }
+
+        return Stream { handle: handle, tls: tls, incoming: incoming, outgoing: outgoing,
+            input_start: 0, input_end: 0, output_start: 0, output_end: 0,
+            transport_end: false, fed_end: false, shutdown_complete: false };
+    }
+
+    // At most one read and write per direction: bounded work for a fair loop.
+    // Progress is useful even when SSL wants input: handshake/alerts may have
+    // already queued encrypted output. Partial bytes are retained in both directions.
+    def pub pump(self: &Stream, table: &tcp.Table) -> result<bool> {
+        def mut progress: bool = false;
+
+        if self.output_start == self.output_end {
+            def drained: result<u64> = self.tls.encrypted_output(self.outgoing);
+            if drained.erroneous { return drained.error; }
+
+            self.output_start = 0;
+            self.output_end   = drained.value;
+            if self.output_end != 0 { progress = true; }
+        }
+
+        if self.output_start < self.output_end {
+            def written: result<u64> = table.write(self.handle, self.outgoing[self.output_start..self.output_end]);
+            if written.erroneous { return written.error; }
+
+            def count: u64 = written.value;
+            self.output_start = self.output_start + count;
+            if count != 0 { progress = true; }
+        }
+
+        if self.input_start == self.input_end && !self.transport_end {
+            def received: result<tcp.Read> = table.read(self.handle, self.incoming);
+            if received.erroneous { return received.error; }
+
+            def read: tcp.Read = received.value;
+            self.input_start   = 0;
+            self.input_end     = read.count;
+            self.transport_end = read.end;
+            if read.count != 0 || read.end { progress = true; }
+        }
+
+        if self.input_start < self.input_end || (self.transport_end && !self.fed_end) {
+            def fed: result<u64> = self.tls.encrypted_input(self.incoming[self.input_start..self.input_end], self.transport_end);
+            if fed.erroneous { return fed.error; }
+
+            def count: u64 = fed.value;
+            self.input_start = self.input_start + count;
+            if count != 0 { progress = true; }
+            if self.transport_end && self.input_start == self.input_end { self.fed_end = true; }
+        }
+
+        return progress;
+    }
+
+    def pub handshake(self: &Stream, table: &tcp.Table) -> result<i32> {
+        def before: result<bool> = self.pump(table);
+        if before.erroneous { return before.error; }
+
+        def step: result<i32> = self.tls.handshake();
+        if step.erroneous { return step.error; }
+
+        def wait: i32           = step.value;
+        def after: result<bool> = self.pump(table);
+
+        if after.erroneous { return after.error; }
+
+        return wait;
+    }
+
+    def pub read(self: &Stream, table: &tcp.Table, bytes: [u8]) -> result<net.TlsReadOutcome> {
+        def before: result<bool> = self.pump(table);
+        if before.erroneous { return before.error; }
+
+        def step: result<net.TlsReadOutcome> = self.tls.read(bytes);
+        if step.erroneous { return step.error; }
+
+        def outcome: net.TlsReadOutcome = step.value;
+        def after: result<bool>         = self.pump(table);
+
+        if after.erroneous { return after.error; }
+
+        return outcome;
+    }
+
+    def pub write(self: &Stream, table: &tcp.Table, bytes: [const u8]) -> result<net.TlsWriteOutcome> {
+        def before: result<bool> = self.pump(table);
+        if before.erroneous { return before.error; }
+
+        def step: result<net.TlsWriteOutcome> = self.tls.write(bytes);
+        if step.erroneous { return step.error; }
+
+        def outcome: net.TlsWriteOutcome = step.value;
+        def after: result<bool>          = self.pump(table);
+
+        if after.erroneous { return after.error; }
+
+        return outcome;
+    }
+
+    // Zero only after both alerts exchanged and encrypted output was accepted by
+    // TCP. The caller can then shutdown_write on TCP, preserving queued bytes.
+    def pub shutdown(self: &Stream, table: &tcp.Table) -> result<i32> {
+        def before: result<bool> = self.pump(table);
+        if before.erroneous { return before.error; }
+
+        if !self.shutdown_complete {
+            def step: result<i32> = self.tls.shutdown();
+            if step.erroneous { return step.error; }
+
+            self.shutdown_complete = step.value == 0;
+        }
+
+        def after: result<bool> = self.pump(table);
+        if after.erroneous { return after.error; }
+        if !self.shutdown_complete { return net.READABLE; }
+        if self.output_start != self.output_end { return net.WRITABLE; }
+
+        // pump may have emptied one buffer while more ciphertext remains in TLS.
+        def drained: result<u64> = self.tls.encrypted_output(self.outgoing);
+        if drained.erroneous { return drained.error; }
+
+        self.output_start = 0;
+        self.output_end   = drained.value;
+
+        if self.output_end != 0 { return net.WRITABLE; }
+
+        return 0;
+    }
+
+    def pub close(self: &Stream) -> result<void> {
+        def closed: result<void> = self.tls.close();
+        if closed.erroneous { return closed.error; }
+
+        return;
+    }
+}

@@ -1,0 +1,107 @@
+import "@arena";
+import "@memory";
+import "@status";
+
+def packed struct(msb_first) Header {
+    def length: u13,
+    def flags: u3,
+    def sequence: be_u32,
+}
+
+def next(count: &u32) -> u8 {
+    *count = *count + 1;
+
+    return 0xA5;
+}
+
+def main() -> i32 {
+    def mut a: arena.GeneralArena = arena.GeneralArena.create();
+    defer a.free();
+
+    def allocated: result<&[u8; 128]> = a.alloc_aligned<[u8; 128]>({0xCC; 128}, 64);
+    if allocated.erroneous { return 1; }
+
+    def block: &[u8; 128] = allocated.value;
+    def bytes: [u8]       = (*block)[..];
+    def placed: result<&Header> = memory.place_at<Header>(bytes, 1,
+        Header { length: 0x1234, flags: 5, sequence: 0x01020304 }, 1);
+
+    if placed.erroneous { return 2; }
+
+    def header: &Header = placed.value;
+    if header.length != 0x1234 || header.sequence != 0x01020304 { return 3; }
+
+    def expected: [u8; 6] = {0x91, 0xA5, 1, 2, 3, 4};
+    def mut i: u64        = 0;
+
+    while i < 6 {
+        if bytes[i + 1] != expected[i] { return 4; }
+
+        i = i + 1;
+    }
+
+    if bytes[0] != 0xCC || bytes[7] != 0xCC { return 5; }
+
+    def aligned: result<&u8> = memory.place_at<u8>(bytes, 64, 0x55, 64);
+    if aligned.erroneous { return 6; }
+    if *aligned.value != 0x55 { return 7; }
+
+    def mut calls: u32    = 0;
+    def skew: result<&u8> = memory.place_at<u8>(bytes, 63, next(&calls), 64);
+
+    if skew.erroneous {
+        if skew.error.code != status.INVALID || skew.error.os_error != 0 { return 8; }
+    } else { return 9; }
+
+    if bytes[63] != 0xCC || calls != 1 { return 10; }
+
+    def short: result<&Header> = memory.place_at<Header>(bytes, 123, *header, 1);
+
+    if short.erroneous {
+        if short.error.code != status.OUT_OF_RANGE { return 11; }
+    } else { return 12; }
+
+    def huge: result<&u8> = memory.place_at<u8>(bytes, 18446744073709551615, 1, 1);
+
+    if huge.erroneous {
+        if huge.error.code != status.OUT_OF_RANGE { return 13; }
+    } else { return 14; }
+
+    def empty: result<&u8> = memory.place_at<u8>(bytes[0..0], 0, 1, 1);
+
+    if empty.erroneous {
+        if empty.error.code != status.OUT_OF_RANGE { return 15; }
+    } else { return 16; }
+
+    def invalid: [u64; 5] = {0, 1, 3, 6, 9223372036854775808};
+    i = 0;
+
+    while i < 5 {
+        def bad: result<&u32> = a.alloc_aligned<u32>(42, invalid[i]);
+
+        if bad.erroneous {
+            if bad.error.code != status.INVALID { return 17; }
+        } else { return 18; }
+
+        i = i + 1;
+    }
+
+    i = 123;
+
+    while i < 128 {
+        if bytes[i] != 0xCC { return 19; }
+
+        i = i + 1;
+    }
+
+    def weak: result<&u32> = memory.place_at<u32>(bytes, 8, 42, 1);
+
+    if weak.erroneous {
+        if weak.error.code != status.INVALID || bytes[8] != 0xCC { return 20; }
+    } else { return 21; }
+
+    def zero: result<&[u8; 0]> = memory.place_at<[u8; 0]>(bytes, 128, {}, 1);
+    if zero.erroneous { return 22; }
+
+    return 42;
+}

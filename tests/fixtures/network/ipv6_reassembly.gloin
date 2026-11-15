@@ -1,0 +1,202 @@
+import "@packet";
+import "@packet6";
+import "@ipv6";
+import "@memory";
+
+def packed struct(msb_first) Length { def value: be_u16, }
+
+def fragment(bytes: [const u8], output: [u8], prefix: u64, previous: u64,
+    offset: u64, count: u64, more: bool, id: be_u32) -> result<u64> {
+    for def mut i: u64 = 0; i < prefix; i = i + 1 { output[i] = bytes[i]; }
+
+    def total: u64             = prefix + 8 + count;
+    def payload: u64           = total - 40;
+    def length: result<be_u16> = be_u16(payload); if length.erroneous { return length.error; }
+
+    def size: result<void> = memory.write_packed<Length>(output[4..], Length { value: length.value });
+    if size.erroneous { return size.error; }
+
+    def next: u8 = bytes[previous];
+    output[previous] = 44;
+
+    def units: u64            = offset / 8;
+    def position: result<u13> = u13(units); if position.erroneous { return position.error; }
+
+    def mut flag: u1 = 0; if more { flag = 1; }
+
+    def header: result<void> = memory.write_packed<packet6.FragmentHeader>(output[prefix..], packet6.FragmentHeader {
+        next_header: next, reserved: 0, offset: position.value, reserved_bits: 0, more: flag, identification: id });
+    if header.erroneous { return header.error; }
+
+    for def mut i: u64 = 0; i < count; i = i + 1 { output[prefix + 8 + i] = bytes[prefix + offset + i]; }
+
+    return total;
+}
+
+def main() -> i32 {
+    def local: packet6.Address        = packet6.Address { high: 0x20010db800000000, low: 2 };
+    def remote: packet6.Address       = packet6.Address { high: 0x20010db800000000, low: 1 };
+    def mut storage: [u8; 2048]       = zeroed;
+    def mut present: [u8; 1024]       = zeroed;
+    def made: result<ipv6.Reassembly> = ipv6.Reassembly.create(storage[..], present[..], 60000);
+
+    if made.erroneous { return 1; }
+
+    def mut assembly: ipv6.Reassembly = made.value;
+    def mut original: [u8; 1500]      = zeroed;
+    def mut bytes: [u8; 1500]         = zeroed;
+    def mut payload: [u8; 33]         = zeroed;
+
+    for def mut i: u64 = 0; i < 33; i = i + 1 {
+        def value: result<u8> = u8(i * 7); if value.erroneous { return 2; }
+
+        payload[i] = value.value;
+    }
+
+    def udp: result<u64> = ipv6.udp(original[..], remote, local, 1234, 53, payload[..]);
+    if udp.erroneous { return 3; }
+
+    // Insert Destination Options before the Fragment header location. The
+    // reassembler must repair that header's Next Header byte, not base byte 6.
+    for def mut i: u64 = 81; i > 40; i = i - 1 { original[i + 7] = original[i - 1]; }
+
+    def head: result<void> = packet6.header(original[..], remote, local, 60, 89);
+    if head.erroneous { return 4; }
+
+    original[40] = 17;
+    for def mut i: u64 = 41; i < 48; i = i + 1 { original[i] = 0; }
+
+    def valid: result<packet6.UdpPacket> = packet6.udp(original[..89]);
+    if valid.erroneous { return 5; }
+
+    def last: result<u64> = fragment(original[..89], bytes[..], 48, 40, 16, 25, false, 9);
+    if last.erroneous { return 6; }
+
+    def queued: result<ipv6.Datagram> = assembly.input(bytes[..last.value], 1);
+    if queued.erroneous { return 7; }
+    if queued.value.complete || !assembly.occupied() { return 8; }
+
+    def atomic: result<u64> = fragment(original[..89], bytes[..], 48, 40, 0, 41, false, 9);
+    if atomic.erroneous { return 9; }
+
+    def separate: result<ipv6.Datagram> = assembly.input(bytes[..atomic.value], 2);
+    if separate.erroneous { return 10; }
+    if !separate.value.complete || !assembly.occupied() { return 11; }
+
+    def atomic_udp: result<packet6.UdpPacket> = packet6.udp(separate.value.bytes);
+    if atomic_udp.erroneous { return 12; }
+
+    def first: result<u64> = fragment(original[..89], bytes[..], 48, 40, 0, 16, true, 9);
+    if first.erroneous { return 13; }
+
+    def complete: result<ipv6.Datagram> = assembly.input(bytes[..first.value], 3);
+    if complete.erroneous { return 14; }
+
+    def completed_bytes: [const u8] = complete.value.bytes;
+    if !complete.value.complete || completed_bytes.len != 89 || assembly.occupied() { return 15; }
+
+    for def mut i: u64 = 0; i < 89; i = i + 1 { if completed_bytes[i] != original[i] { return 16; } }
+
+    def assembled_udp: result<packet6.UdpPacket> = packet6.udp(completed_bytes);
+    if assembled_udp.erroneous { return 17; }
+
+    // Even identical overlaps discard and retain a tombstone. Later fragments
+    // cannot resurrect the datagram before its original deadline.
+    def again: result<ipv6.Datagram> = assembly.input(bytes[..72], 10);
+    if again.erroneous { return 18; }
+
+    def overlap: result<ipv6.Datagram> = assembly.input(bytes[..72], 11);
+    if !overlap.erroneous { return 19; }
+
+    def tail: result<u64> = fragment(original[..89], bytes[..], 48, 40, 16, 25, false, 9);
+    if tail.erroneous { return 20; }
+
+    def poisoned: result<ipv6.Datagram> = assembly.input(bytes[..tail.value], 12);
+    if !poisoned.erroneous { return 21; }
+    if !assembly.occupied() { return 21; }
+
+    def expiry: result<bool> = assembly.expire(60010);
+    if expiry.erroneous { return 22; }
+    if !expiry.value || assembly.occupied() { return 23; }
+
+    // An incomplete TCP header in the first fragment poisons the tuple;
+    // fragments cannot repair that header later or extend the original deadline.
+    def tcp_head: result<void> = packet6.header(original[..], remote, local, 6, 80);
+    if tcp_head.erroneous { return 70; }
+
+    for def mut i: u64 = 40; i < 80; i = i + 1 { original[i] = 0; }
+
+    original[52] = 0x50;
+
+    def short_first: result<u64> = fragment(original[..80], bytes[..], 40, 6, 0, 16, true, 10);
+    if short_first.erroneous { return 71; }
+
+    def incomplete_header: result<ipv6.Datagram> = assembly.input(bytes[..64], 64000);
+    if !incomplete_header.erroneous { return 72; }
+
+    def later: result<u64> = fragment(original[..80], bytes[..], 40, 6, 16, 24, false, 10);
+    if later.erroneous { return 73; }
+
+    def cannot_repair: result<ipv6.Datagram> = assembly.input(bytes[..72], 65000);
+    if !cannot_repair.erroneous { return 74; }
+
+    def deadline: result<u64> = assembly.next_timeout_ms(65000);
+    if deadline.erroneous { return 75; }
+    if deadline.value != 59000 { return 76; }
+
+    def expired_again: result<bool> = assembly.expire(124000);
+    if expired_again.erroneous { return 77; }
+    if !expired_again.value { return 78; }
+
+    // Two disjoint final fragments still conflict if they claim different ends.
+    def final_one: result<u64> = fragment(original[..80], bytes[..], 40, 6, 32, 8, false, 11);
+    if final_one.erroneous { return 79; }
+
+    def ending: result<ipv6.Datagram> = assembly.input(bytes[..56], 125000);
+    if ending.erroneous { return 80; }
+    if ending.value.complete { return 81; }
+
+    def final_two: result<u64> = fragment(original[..80], bytes[..], 40, 6, 24, 8, false, 11);
+    if final_two.erroneous { return 82; }
+
+    def conflict: result<ipv6.Datagram> = assembly.input(bytes[..56], 125001);
+    if !conflict.erroneous { return 83; }
+
+    return maximum_udp(local, remote);
+}
+
+def maximum_udp(local: packet6.Address, remote: packet6.Address) -> i32 {
+    def mut payload: [u8; 65528] = zeroed;
+    def mut output: [u8; 65577]  = zeroed;
+    output[0] = 0xa5; output[65576] = 0x5a;
+
+    for def mut i: u64 = 0; i < 65528; i = i + 1 {
+        def value: result<u8> = u8(i % 251); if value.erroneous { return 85; }
+
+        payload[i] = value.value;
+    }
+
+    def written: result<u64> = ipv6.udp(output[1..65576], remote, local, 1234, 53, payload[..65527]);
+    if written.erroneous { return 86; }
+    if written.value != 65575 { return 87; }
+
+    def parsed: result<packet6.UdpPacket> = packet6.udp(output[1..65576]);
+    if parsed.erroneous { return 88; }
+
+    def datagram: packet6.UdpPacket = parsed.value;
+    // Independent one's-complement oracle over all 65,535 transport bytes.
+    if datagram.header.checksum != 33498 || datagram.payload.len != 65527 { return 89; }
+
+    for def mut i: u64 = 0; i < 65527; i = i + 1 {
+        if datagram.payload[i] != payload[i] { return 90; }
+    }
+
+    def oversized: result<u64> = ipv6.udp(output[1..65576], remote, local, 1234, 53, payload[..]);
+    if !oversized.erroneous { return 91; }
+
+    def short_output: result<u64> = ipv6.udp(output[1..65575], remote, local, 1234, 53, payload[..65527]);
+    if !short_output.erroneous { return 92; }
+    if output[0] != 0xa5 || output[65576] != 0x5a { return 93; }
+
+    return 0;
+}

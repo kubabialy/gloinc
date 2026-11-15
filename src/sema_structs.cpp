@@ -23,12 +23,14 @@ std::optional<ValueType> Sema::value_type(const std::shared_ptr<Type> &type) con
     }
     if (const auto *array = dynamic_cast<const ArrayType *>(type.get())) {
         auto element = value_type(array->element);
-        return element ? std::optional<ValueType>(ValueType::array(*element, array->length))
+        return element ? std::optional<ValueType>(
+                             ValueType::array(*element, array->length, array->bit_order))
                        : std::nullopt;
     }
     if (const auto *slice = dynamic_cast<const SliceType *>(type.get())) {
         auto element = value_type(slice->element);
-        return element ? std::optional<ValueType>(ValueType::slice(*element, slice->read_only))
+        return element ? std::optional<ValueType>(
+                             ValueType::slice(*element, slice->read_only, slice->bit_order))
                        : std::nullopt;
     }
     if (const auto *structure = dynamic_cast<const StructType *>(type.get())) {
@@ -123,8 +125,9 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
         if (!definition)
             continue;
         DiagnosticScope location(current_span, definition->span);
-        if (!definition->name || definition->is_packed || definition->backing_type) {
-            log_error("Packed structs are not supported in checked programs");
+        if (!definition->name || definition->backing_type ||
+            (definition->is_packed && definition->bit_order == PackedBitOrder::None)) {
+            log_error("Packed structs require explicit msb_first or lsb_first bit order");
             continue;
         }
         const auto &name = definition->name->value;
@@ -188,13 +191,15 @@ void Sema::collect_structs(const std::vector<std::unique_ptr<Statement>> &progra
             }
             continue;
         }
-        auto structure =
-            std::make_shared<StructType>(name, std::vector<StructType::Field>{}, false);
+        auto structure = std::make_shared<StructType>(name, std::vector<StructType::Field>{},
+                                                      definition->is_packed);
         structure->identity = recording->structures.size();
         structure->owner = current_module;
         structure->is_public = definition->is_public;
         recording->structures.push_back(
-            {current_module ? current_module->module_name + "." + name : name, {}});
+            {current_module ? current_module->module_name + "." + name : name,
+             {},
+             definition->bit_order});
         current_scope->define_type(name, structure);
         recording->types[definition] = ValueType::record(*structure->identity);
         declarations.emplace_back(definition, structure);
@@ -264,11 +269,12 @@ Sema::specialize_struct(const StructDefinition *definition,
         name += arguments[i]->to_string();
     }
     name += ">";
-    auto structure = std::make_shared<StructType>(name, std::vector<StructType::Field>{}, false);
+    auto structure =
+        std::make_shared<StructType>(name, std::vector<StructType::Field>{}, definition->is_packed);
     structure->identity = recording->structures.size();
     structure->owner = owner;
     structure->is_public = definition->is_public;
-    recording->structures.push_back({name, {}});
+    recording->structures.push_back({name, {}, definition->bit_order});
     collected_struct_types.push_back(structure);
     generic_specializations.push_back({definition, std::move(keys), structure, arguments, {}});
     const size_t specialization_index = generic_specializations.size() - 1;
@@ -340,6 +346,56 @@ void Sema::validate_struct_cycles() {
         for (const auto &field : recording->structures[id].fields)
             if (!visit_value(field.type))
                 return false;
+        auto &record = recording->structures[id];
+        if (record.bit_order != PackedBitOrder::None) {
+            record.bit_offsets.clear();
+            uint64_t offset = 0;
+            std::function<std::optional<uint64_t>(const ValueType &, bool)> field_bits;
+            field_bits = [&](const ValueType &type, bool array_element) -> std::optional<uint64_t> {
+                if (type.is_pointer() || type.is_slice() || type.is_result() || type.is_error())
+                    return std::nullopt;
+                if (type.is_array()) {
+                    if (type.array_order != PackedBitOrder::None) {
+                        auto element = field_bits(*type.array_element, false);
+                        if (!element ||
+                            (*element && type.array_length > (UINT64_MAX / 8) / *element))
+                            return std::nullopt;
+                        return ((*element * type.array_length + 7) / 8) * 8;
+                    }
+                    auto element = field_bits(*type.array_element, true);
+                    if (!element || (*element && type.array_length > (UINT64_MAX / 8) / *element))
+                        return std::nullopt;
+                    return *element * type.array_length;
+                }
+                if (type.structure) {
+                    const auto &nested = recording->structures[*type.structure];
+                    if (nested.bit_order == PackedBitOrder::None)
+                        return std::nullopt;
+                    return nested.byte_size * 8;
+                }
+                const auto &info = core_type_info(type.scalar);
+                if (!info.is_integer || (array_element && type.scalar != CoreType::U8))
+                    return std::nullopt;
+                return info.bits;
+            };
+            for (const auto &field : record.fields) {
+                auto bits = field_bits(field.type, false);
+                bool byte_field =
+                    field.type.structure || field.type.is_array() ||
+                    (!field.type.is_pointer() && !field.type.is_slice() &&
+                     core_type_info(field.type.scalar).byte_order != ByteOrder::Native);
+                if (!bits || (byte_field && offset % 8) ||
+                    (bits && *bits > (uint64_t{1} << 31) - offset)) {
+                    log_error("Invalid packed field '" + field.name + "' in " + record.name +
+                              ": require integer bits or byte-aligned endian integers, packed "
+                              "records, or byte/packed arrays");
+                    break;
+                }
+                record.bit_offsets.push_back(offset);
+                offset += *bits;
+            }
+            record.byte_size = (offset + 7) / 8;
+        }
         state[id] = 2;
         return true;
     };
@@ -511,7 +567,8 @@ std::shared_ptr<Type> Sema::expression_type_hint(const Expression *expression) {
     } else if (const auto *call = dynamic_cast<const CallExpression *>(expression)) {
         if (const auto *name = dynamic_cast<const Identifier *>(call->function.get())) {
             if (auto type = resolve_core_type(name->value); type && core_type_info(*type).is_integer)
-                return get_builtin_type(std::string(core_type_info(*type).name));
+                return std::make_shared<ResultType>(
+                    get_builtin_type(std::string(core_type_info(*type).name)));
         }
         if (const auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get())) {
             if (const auto *method = method_target(member);

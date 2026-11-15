@@ -61,3 +61,68 @@ general FFI. Alignment padding and typed placement remain distinct
 Lowering checks size and alignment, conditionally stores the initializer, and
 converts the operations to LLVM. The native ABI is declared in
 [memory_runtime.h](../src/memory_runtime.h).
+
+## Checked explicit placement (0.3.0 development)
+
+`check_alignment<T>(alignment: u64) -> result<void>` validates a positive
+power-of-two byte alignment at least `align_of<T>()` and no greater than the
+target's signed addressable range (currently 64-bit). Invalid requests return
+`status.INVALID` with OS error zero, without accessing storage.
+
+`storage_bytes<S>(count: u64) -> result<u64>` computes the zero-offset storage
+extent for an ordinary or packed slice type. Ordinary elements use native slot
+sizes; packed integers use their bit widths, rounding only the final extent to
+bytes; packed records retain their full byte extent, including spare bits. Sizes above `INT64_MAX` bytes return `OVERFLOW`, without an intermediate
+arithmetic trap. This query does not allocate or borrow. Empty ordinary and packed-record element
+types have zero byte extent for every count.
+
+`check_slice_alignment<S>(alignment: u64) -> result<void>` validates a positive
+power of two, at least the stored elements' minimum alignment and no greater
+than `INT64_MAX`. Packed storage has minimum alignment one, independently of
+the slice descriptor's alignment. Invalid requests return `INVALID`.
+
+`view_packed<S>(bytes, bit_offset: u64, count: u64) -> result<S>` borrows initialized
+bytes as a packed integer or packed-record slice, without reading or writing the backing memory.
+Writable `S` requires `[u8]`; read-only `S` accepts `[const u8]`. Offset is in
+bits and count in elements. Endian-qualified and packed-record elements require a byte-aligned
+offset, even for an empty view. The complete extent is checked before a view is
+returned. Error precedence is `INVALID` for element alignment, `OVERFLOW` for
+unrepresentable extent, then `OUT_OF_RANGE` for position/capacity. Empty views
+may start at an interior bit or exactly one past the buffer; empty buffers allow
+only zero offset/count. Nonempty views of zero-sized packed records require a
+nonempty backing slice, permitting a byte-aligned one-past start. Copying the descriptor retains the same borrowed owner.
+
+`split_packed<S>(view: S, index: u64) -> result<PackedSplit<S>>` returns `left`
+and `right` packed views with the same encoding and access capability. An
+out-of-range split returns `OUT_OF_RANGE`; a split whose two nonempty sides
+share a physical boundary byte returns `INVALID`. Splits at either endpoint
+succeed. It changes no backing bytes and proves disjoint footprints only for
+the returned pair, without excluding other aliases or providing synchronization.
+
+`copy_packed<S>(destination: S, source) -> result<void>` copies equal-length
+packed views of the same encoding. `S` must be writable; the source may be
+read-only. A length mismatch returns `OUT_OF_RANGE` with OS error zero and
+writes nothing. Overlap in either direction is supported, destination boundary
+bits are preserved, and packed records retain spare bytes/bits. Empty and
+zero-width copies access no bytes. This provides no synchronization or ownership
+guarantee.
+
+`place_at<T>(bytes: [u8], byte_offset: u64, value: T, alignment: u64) -> result<&T>`
+constructs a value in bounded writable storage. It first validates alignment,
+then the remaining byte capacity, then address-offset representability, then
+the destination address's requested alignment. Insufficient capacity returns
+`OUT_OF_RANGE`; an unrepresentable offset returns `OVERFLOW`; a misaligned
+address returns `INVALID`. All errors use OS error zero and leave storage
+unchanged. Arguments, including the initializer, have already been evaluated.
+
+Even a zero-sized value needs a nonempty backing slice so a live non-null address
+can be obtained. Such a value may be placed at the slice's one-past address if
+that address meets its requested alignment. An empty backing slice returns
+`OUT_OF_RANGE`. The returned reference borrows the byte storage and does not
+extend its lifetime. Placement retains representation-preserving copy semantics.
+The requested alignment affects placement only, not the type's layout or stride.
+
+Validation and error policy are written in Gloin. The verified
+`gloin.raw_is_aligned` operation checks an address without reading memory or
+exposing pointer-to-integer conversions to source code. Typed initialization
+continues through `gloin.raw_place`.

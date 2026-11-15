@@ -34,7 +34,8 @@ compiler emits these checked Gloin operations:
 | `gloin.abi_call` | Explicit checked call to a declared runtime ABI function with exact layout arguments and result | LLVM call after callee and signature verification |
 | `gloin.constant` | Exact checked scalar literal or folded constant value | `arith.constant` |
 | `gloin.exact_int_widen` | Exact widening of a supported integer with explicit source signedness | Sign or zero extension to the verified wider type |
-| `gloin.endian_convert` | Explicit same-width, same-signedness integer value conversion | Identity on numeric SSA values after source-type verification |
+| `gloin.endian_convert` | Internal same-width, same-signedness numeric identity | Identity on numeric SSA values after source-type verification |
+| `gloin.integer_convert` | Every source integer constructor produces `result<T>`, including widening and endian-only conversion | Compare against the destination range, then construct a success payload or `OVERFLOW` error; no conversion trap or heap allocation |
 | `gloin.copy` | Same-type materialized aggregate copy including padding, with overlap support | `llvm.memmove`, without decoding or encoding fields |
 | `gloin.assert` | Trap if a checked runtime precondition fails, including bounds, null, and arithmetic checks | Conditional branch and LLVM trap |
 | `gloin.checked_int_binary` | Signed/unsigned `+`, `-`, `*`, `/`, `%` with overflow and zero-divisor rules | Source-width LLVM overflow intrinsics or guarded division/remainder |
@@ -54,11 +55,14 @@ compiler emits these checked Gloin operations:
 | `gloin.result_value`, `gloin.result_error` | Extract the semantically proven active variant | Runtime tag guard, then payload extraction |
 | `gloin.null` | Contextual nullable pointer null value | LLVM zero pointer |
 | `gloin.arena_typed_pointer` | Give raw arena byte storage a checked element pointer, trapping if a required allocation failed | Null guard when required, then the same LLVM address |
+| `gloin.raw_reserve` | Validate nullable raw storage, alignment, nonnegative byte/count bounds and typed capacity without initialization | Null on failure; checked capacity uses division to avoid size-product overflow |
+| `gloin.raw_is_aligned` | Test non-null byte storage against an explicit positive power-of-two alignment in the signed address range | Pure pointer-bit test; no memory access, division, or source-visible pointer cast |
 | `gloin.raw_place` | Check raw storage, available bytes, alignment, and source element type before placement | Conditional typed store and nullable result pointer |
 | `gloin.raw_padding` | Query padding for a target element type at a raw address | Native address alignment arithmetic |
 | `gloin.pointer_offset` | Checked pointer offset measured in pointee elements | Null guard, then LLVM GEP |
 | `gloin.require_nonnull` | Nullable pointer access must trap on null | Pointer comparison and trap guard |
 | `gloin.pointer_compare` | Checked pointer equality or inequality | LLVM pointer comparison |
+| `gloin.copy_backward` | Internal copy-direction query on matching read-only typed pointers; no memory access | Unsigned LLVM pointer comparison of destination and source byte addresses |
 | `gloin.array_element_address` | Checked fixed-array element address | Bounds guard, then LLVM GEP |
 | `gloin.slice_from_array` | Borrow an exclusive-end array range with source mutability | Range guards, then pointer/length descriptor |
 | `gloin.slice_subrange` | Borrow an exclusive-end range of an existing slice | Range guards, then adjusted pointer/length descriptor |
@@ -229,6 +233,20 @@ defer internals behind the ABI boundary and reject unrelated direct LLVM
 operations in checked high-level IR. This cleanup retains `func`, `arith`,
 and `cf` for generic MLIR machinery; the current result operations already
 have typed GloinIR representation and verification.
+
+Packed array and slice selectors consume the same transient bounds proofs as
+ordinary selectors. Packed descriptors participate in exact-load/store SSA
+promotion; address-taking still blocks it. A proven unsigned upper bound does
+not remove a signed nonnegative guard. Native packed integer reads up to 56 bits
+use bounded prefix loads and a conditional final byte, preserving the precise
+footprint at every bit position; wider reads and writes retain static bit-position
+specialization.
+
+Storage compatibility checks resolve nominal aggregate layouts in the owning
+module, including aggregates nested inside arrays and results. A nonopaque LLVM
+struct with the wrong extent is not a valid substitute for the declared schema;
+source/layout bridges, allocation initialization and layout signatures retain
+this check.
 
 ## One conversion pipeline
 

@@ -1,0 +1,246 @@
+import "@packet";
+import "@packet6";
+import "@ipv6";
+import "@ip6_stack";
+import "@tcp";
+import "@memory";
+
+def packed struct(msb_first) Length { def value: be_u16, }
+
+def fragment(bytes: [const u8], output: [u8], prefix: u64, previous: u64,
+    offset: u64, count: u64, more: bool, id: be_u32) -> result<u64> {
+    for def mut i: u64 = 0; i < prefix; i = i + 1 { output[i] = bytes[i]; }
+
+    def total: u64             = prefix + 8 + count;
+    def payload: u64           = total - 40;
+    def length: result<be_u16> = be_u16(payload); if length.erroneous { return length.error; }
+
+    def size: result<void> = memory.write_packed<Length>(output[4..], Length { value: length.value });
+    if size.erroneous { return size.error; }
+
+    def next: u8 = bytes[previous];
+    output[previous] = 44;
+
+    def units: u64            = offset / 8;
+    def position: result<u13> = u13(units); if position.erroneous { return position.error; }
+
+    def mut flag: u1 = 0; if more { flag = 1; }
+
+    def header: result<void> = memory.write_packed<packet6.FragmentHeader>(output[prefix..], packet6.FragmentHeader {
+        next_header: next, reserved: 0, offset: position.value, reserved_bits: 0, more: flag, identification: id });
+    if header.erroneous { return header.error; }
+
+    for def mut i: u64 = 0; i < count; i = i + 1 { output[prefix + 8 + i] = bytes[prefix + offset + i]; }
+
+    return total;
+}
+
+def main() -> i32 {
+    def local: packet6.Address        = packet6.Address { high: 0x20010db800000000, low: 2 };
+    def remote: packet6.Address       = packet6.Address { high: 0x20010db800000000, low: 1 };
+    def mut storage: [u8; 2048]       = zeroed;
+    def mut present: [u8; 1024]       = zeroed;
+    def made: result<ipv6.Reassembly> = ipv6.Reassembly.create(storage[..], present[..], 60000);
+
+    if made.erroneous { return 1; }
+
+    def mut assembly: ipv6.Reassembly = made.value;
+    def mut original: [u8; 1500]      = zeroed;
+    def mut bytes: [u8; 1500]         = zeroed;
+    def mut payload: [u8; 33]         = zeroed;
+
+    for def mut i: u64 = 0; i < 33; i = i + 1 {
+        def value: result<u8> = u8(i * 7); if value.erroneous { return 2; }
+
+        payload[i] = value.value;
+    }
+
+    def udp: result<u64> = ipv6.udp(original[..], remote, local, 1234, 53, payload[..]);
+    if udp.erroneous { return 3; }
+
+    // Insert Destination Options before the Fragment header location. The
+    // reassembler must repair that header's Next Header byte, not base byte 6.
+    for def mut i: u64 = 81; i > 40; i = i - 1 { original[i + 7] = original[i - 1]; }
+
+    def head: result<void> = packet6.header(original[..], remote, local, 60, 89);
+    if head.erroneous { return 4; }
+
+    original[40] = 17;
+    for def mut i: u64 = 41; i < 48; i = i + 1 { original[i] = 0; }
+
+    def valid: result<packet6.UdpPacket> = packet6.udp(original[..89]);
+    if valid.erroneous { return 5; }
+
+    def mut tx: [u8; 128]      = zeroed;
+    def mut rx: [u8; 128]      = zeroed;
+    def mut map: [u8; 128]     = zeroed;
+    def slot: result<tcp.Slot> = tcp.Slot.create(tcp.Buffers { send: tx[..], receive: rx[..], present: map[..] }, tcp.Options.defaults());
+
+    if slot.erroneous { return 24; }
+
+    def mut slots: [tcp.Slot; 1]                  = {slot.value};
+    def ports: [be_u16; 1]                        = {53};
+    def empty: [be_u16; 0]                        = {};
+    def mut fragments: [ipv6.Reassembly; 1]       = {assembly};
+    def endpoint_made: result<ip6_stack.Endpoint> = ip6_stack.Endpoint.create(local, empty[..], ports[..], slots[..], fragments[..]);
+
+    if endpoint_made.erroneous { return 25; }
+
+    def mut endpoint: ip6_stack.Endpoint = endpoint_made.value;
+    def mut output: [u8; 1502]           = zeroed;
+    output[0] = 0xa5; output[1501] = 0x5a;
+
+    def event: result<ip6_stack.Event> = endpoint.input(original[..89], 0, 60011, output[1..1501]);
+    if event.erroneous { return 26; }
+
+    def incoming: ip6_stack.Event = event.value;
+    if incoming.protocol != 17 || incoming.payload.len != 33 || !incoming.source.equal(remote) { return 27; }
+
+    for def mut i: u64 = 0; i < 33; i = i + 1 { if incoming.payload[i] != payload[i] { return 28; } }
+
+    // Drive out-of-order fragments through the endpoint pool and dispatch.
+    def tail: result<u64> = fragment(original[..89], bytes[..], 48, 40, 16, 25, false, 9);
+    if tail.erroneous { return 94; }
+
+    def queued: result<ip6_stack.Event> = endpoint.input(bytes[..tail.value], 0, 60011, output[1..1501]);
+    if queued.erroneous { return 95; }
+    if queued.value.protocol != 0 || queued.value.reply_bytes != 0 { return 96; }
+
+    def first: result<u64> = fragment(original[..89], bytes[..], 48, 40, 0, 16, true, 9);
+    if first.erroneous { return 97; }
+
+    def complete: result<ip6_stack.Event> = endpoint.input(bytes[..first.value], 0, 60011, output[1..1501]);
+    if complete.erroneous { return 98; }
+
+    def delivered: ip6_stack.Event = complete.value;
+    if delivered.protocol != 17 || delivered.reply_bytes != 0 || delivered.payload.len != 33
+        || !delivered.source.equal(remote) || delivered.source_port != 1234 || delivered.destination_port != 53 { return 99; }
+
+    for def mut i: u64 = 0; i < 33; i = i + 1 { if delivered.payload[i] != payload[i] { return 100; } }
+
+    // Mandatory UDP checksum: zero is never accepted for ordinary IPv6 UDP.
+    original[54] = 0; original[55] = 0;
+
+    def absent: result<ip6_stack.Event> = endpoint.input(original[..89], 0, 60012, output[1..1501]);
+    if !absent.erroneous { return 29; }
+
+    def closed: result<u64> = ipv6.udp(original[..], remote, local, 1234, 54, payload[..]);
+    if closed.erroneous { return 30; }
+
+    def rejected: result<ip6_stack.Event> = endpoint.input(original[..closed.value], 0, 60013, output[1..1501]);
+    if rejected.erroneous { return 31; }
+    if rejected.value.reply_bytes != 129 { return 32; }
+
+    def reply: result<packet6.Packet> = packet6.parse(output[1..130]);
+    if reply.erroneous { return 33; }
+
+    def read: result<ipv6.IcmpHeader> = memory.read_packed<ipv6.IcmpHeader>(reply.value.payload);
+    if read.erroneous { return 34; }
+    if read.value.kind != 1 || read.value.code != 4 { return 35; }
+
+    def sum: result<be_u16> = packet6.transport_checksum(local, remote, 58, reply.value.payload, reply.value.payload.len);
+    if sum.erroneous { return 36; }
+    if sum.value != 0 { return 37; }
+
+    // Unknown option action 10 returns Parameter Problem with the exact pointer.
+    def options: result<void> = packet6.header(original[..], remote, local, 60, 48);
+    if options.erroneous { return 38; }
+
+    original[40] = 59; original[41] = 0; original[42] = 128; original[43] = 2;
+    original[44] = 1; original[45] = 2; original[46] = 0; original[47] = 0;
+
+    def problem: result<ip6_stack.Event> = endpoint.input(original[..48], 0, 60014, output[1..1501]);
+    if problem.erroneous { return 39; }
+    if problem.value.reply_bytes != 96 { return 40; }
+
+    def error_head: result<ipv6.IcmpHeader> = memory.read_packed<ipv6.IcmpHeader>(output[41..]);
+    if error_head.erroneous { return 41; }
+    if error_head.value.kind != 4 || error_head.value.code != 2 || error_head.value.rest != 42 { return 42; }
+
+    original[42] = 64;
+
+    def silent: result<ip6_stack.Event> = endpoint.input(original[..48], 0, 60015, output[1..1501]);
+    if silent.erroneous { return 43; }
+    if silent.value.reply_bytes != 0 { return 44; }
+
+    // Echo identifier and an odd binary payload survive both checksums.
+    def echo_ip: result<void> = packet6.header(original[..], remote, local, 58, 81);
+    if echo_ip.erroneous { return 45; }
+
+    def echo: result<void> = memory.write_packed<ipv6.IcmpHeader>(original[40..], ipv6.IcmpHeader { kind: 128, code: 0, checksum: 0, rest: 0x12345678 });
+    if echo.erroneous { return 46; }
+
+    for def mut i: u64 = 0; i < 33; i = i + 1 { original[48 + i] = payload[i]; }
+
+    def sealed: result<void> = packet6.seal(original[..81], 58); if sealed.erroneous { return 47; }
+
+    def echoed: result<ip6_stack.Event> = endpoint.input(original[..81], 0, 60016, output[1..1501]);
+    if echoed.erroneous { return 48; }
+    if echoed.value.reply_bytes != 81 { return 49; }
+
+    def echo_head: result<ipv6.IcmpHeader> = memory.read_packed<ipv6.IcmpHeader>(output[41..]);
+    if echo_head.erroneous { return 50; }
+    if echo_head.value.kind != 129 || echo_head.value.rest != 0x12345678 { return 51; }
+
+    for def mut i: u64 = 0; i < 33; i = i + 1 { if output[49 + i] != payload[i] { return 52; } }
+    if output[0] != 0xa5 || output[1501] != 0x5a { return 53; }
+
+    // Error suppression must see past all extension headers, including after
+    // the first semantic error. Redirects also never provoke ICMP errors.
+    def chain: result<void> = packet6.header(original[..], remote, local, 60, 64);
+    if chain.erroneous { return 54; }
+
+    for def mut i: u64 = 40; i < 64; i = i + 1 { original[i] = 0; }
+
+    original[40] = 60; original[42] = 128; original[43] = 2;
+    original[48] = 58; original[56] = 1;
+
+    def suppressed: result<ip6_stack.Event> = endpoint.input(original[..64], 0, 61016, output[1..1501]);
+    if suppressed.erroneous { return 55; }
+    if suppressed.value.reply_bytes != 0 { return 56; }
+
+    original[56] = 137;
+
+    def redirect: result<ip6_stack.Event> = endpoint.input(original[..64], 0, 61017, output[1..1501]);
+    if redirect.erroneous { return 57; }
+    if redirect.value.reply_bytes != 0 { return 58; }
+
+    original[56] = 128;
+
+    def informational: result<ip6_stack.Event> = endpoint.input(original[..64], 0, 61018, output[1..1501]);
+    if informational.erroneous { return 59; }
+    if informational.value.reply_bytes != 112 { return 60; }
+
+    // A later error must not override the first option's silent-discard action.
+    original[42] = 64; original[50] = 128; original[51] = 2;
+
+    def first_action: result<ip6_stack.Event> = endpoint.input(original[..64], 0, 61019, output[1..1501]);
+    if first_action.erroneous { return 61; }
+    if first_action.value.reply_bytes != 0 { return 62; }
+
+    // Bound error bursts, preserve caller canaries, and replenish on the clock.
+    def unknown: result<void> = packet6.header(original[..], remote, local, 250, 40);
+    if unknown.erroneous { return 63; }
+
+    for def mut i: u64 = 0; i < 12; i = i + 1 {
+        def limited: result<ip6_stack.Event> = endpoint.input(original[..40], 0, 62016 + i, output[1..1501]);
+        if limited.erroneous { return 64; }
+
+        def mut expected: u64 = 88; if i >= 10 { expected = 0; }
+        if limited.value.reply_bytes != expected { return 65; }
+    }
+
+    def replenished: result<ip6_stack.Event> = endpoint.input(original[..40], 0, 63016, output[1..1501]);
+    if replenished.erroneous { return 66; }
+    if replenished.value.reply_bytes != 88 { return 67; }
+
+    original[6] = 59;
+
+    def no_next: result<ip6_stack.Event> = endpoint.input(original[..40], 0, 63017, output[1..1501]);
+    if no_next.erroneous { return 68; }
+    if no_next.value.reply_bytes != 0 { return 69; }
+
+    if output[0] != 0xa5 || output[1501] != 0x5a { return 84; }
+
+    return 0;
+}

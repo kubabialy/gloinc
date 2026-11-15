@@ -56,6 +56,49 @@ mlir::OwningOpRef<mlir::ModuleOp> parse(mlir::MLIRContext &context, llvm::String
 }
 } // namespace
 
+TEST(LoweringTest, NominalAggregateStorageRejectsForgedElementExtents) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        import "@arena";
+        def struct Item { def value: u64, }
+        def main() -> i32 {
+            def mut a: arena.GeneralArena = arena.GeneralArena.create(); defer a.free();
+            def seed: [Item; 2] = {Item { value: 7 }; 2};
+            def r: result<[[Item; 2]]> = a.alloc_slice<[[Item; 2]]>(1, seed, 8);
+            if r.erroneous { return 1; }
+            return 0;
+        }
+    )",
+                                   "nominal-storage.gloin", context);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+    gloin::InitializeSliceOp initialized;
+    gloin::ToLayoutOp bridge;
+    compiled.module->walk([&](gloin::InitializeSliceOp op) { initialized = op; });
+    compiled.module->walk([&](gloin::ToLayoutOp op) {
+        auto array = mlir::dyn_cast<gloin::GloinArrayType>(op.getSourceValue().getType());
+        if (array && mlir::isa<gloin::GloinStructType>(array.getElement()))
+            bridge = op;
+    });
+    ASSERT_TRUE(initialized);
+    ASSERT_TRUE(bridge);
+    auto actual = initialized.getElementType();
+    auto array = mlir::cast<mlir::LLVM::LLVMArrayType>(actual);
+    auto empty = mlir::LLVM::LLVMStructType::getLiteral(&context, {});
+    auto forged = mlir::LLVM::LLVMArrayType::get(empty, array.getNumElements());
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    initialized.setElementType(forged);
+    EXPECT_TRUE(mlir::failed(initialized.verify()));
+    initialized.setElementType(actual);
+    EXPECT_TRUE(mlir::succeeded(initialized.verify()));
+    auto bridge_layout = bridge.getValue().getType();
+    bridge.getValue().setType(forged);
+    EXPECT_TRUE(mlir::failed(bridge.verify()));
+    bridge.getValue().setType(bridge_layout);
+    EXPECT_TRUE(mlir::succeeded(bridge.verify()));
+    EXPECT_TRUE(mlir::succeeded(mlir::verify(*compiled.module)));
+}
+
 TEST(LoweringTest, CompilerOffersVerifiedHighLevelAndLLVMOutput) {
     mlir::MLIRContext context;
     auto high = compile_source("def main() -> i32 { return 42; }", "answer.gloin", context);
@@ -186,6 +229,81 @@ TEST(LoweringTest, GIRProvesIntegerConstantsAndIdentitiesBeforeOverflowLowering)
     )", "integer-folding-effects.gloin", context, CompilationMode::Executable, CompilationOutput::LLVM);
     ASSERT_TRUE(effects.success()) << render(*effects.diagnostics);
     execute_lowered(*effects.module, 42);
+}
+
+TEST(LoweringTest, GIRPackedBoundsUseExactDescriptorsAndStaticArrayExtents) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        def indexed(source: packed(msb_first) [const u3], index: u64) -> u3 {
+            if index >= source.len { return 0; }
+            return source[index];
+        }
+        def fixed(index: u64) -> u3 {
+            def values: packed(lsb_first) [u3; 4] = {1, 2, 3, 4};
+            return values[index % 4];
+        }
+        def loop(source: packed(msb_first) [const u13]) -> u13 {
+            def mut index: u64 = 0;
+            def mut last: u13 = 0;
+            while index < source.len {
+                last = source[index];
+                index = index + 1;
+            }
+            return last;
+        }
+    )",
+                                   "packed-proof.gloin", context, CompilationMode::Module,
+                                   CompilationOutput::LLVM);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+    expect_exportable(*compiled.module);
+    for (const auto *name : {"indexed", "fixed", "loop"}) {
+        auto function = compiled.module->lookupSymbol<mlir::LLVM::LLVMFuncOp>(name);
+        ASSERT_TRUE(function);
+        unsigned traps = 0;
+        function.walk([&](mlir::LLVM::Trap) { ++traps; });
+        EXPECT_EQ(traps, 0u) << name << "\n" << print(*compiled.module);
+    }
+}
+
+TEST(LoweringTest, GIRPackedBoundsKeepGuardsAcrossAliasesJoinsAndSignedIndices) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(
+        def change(index: &u64, value: u64) -> void { *index = value; }
+        def alias(source: packed(msb_first) [const u3], initial: u64) -> u3 {
+            def mut index: u64 = initial;
+            if index >= source.len { return 0; }
+            change(&index, source.len);
+            return source[index];
+        }
+        def join(source: packed(msb_first) [const u3], initial: u64, replace: bool) -> u3 {
+            def mut index: u64 = initial;
+            if index >= source.len { return 0; }
+            if replace { index = source.len; }
+            return source[index];
+        }
+        def descriptor(initial: packed(msb_first) [const u3]) -> u3 {
+            def mut source: packed(msb_first) [const u3] = initial;
+            if source.len < 4 { return 0; }
+            source = source[..1];
+            return source[3];
+        }
+        def signed(source: packed(msb_first) [const u3], index: i64) -> u3 { return source[index]; }
+        def sibling(source: packed(msb_first) [const u3], index: u64, check: bool) -> u3 {
+            if check { if index >= source.len { return 0; } }
+            return source[index];
+        }
+    )",
+                                   "packed-proof-invalid.gloin", context, CompilationMode::Module,
+                                   CompilationOutput::LLVM);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+    expect_exportable(*compiled.module);
+    for (const auto *name : {"alias", "join", "descriptor", "signed", "sibling"}) {
+        auto function = compiled.module->lookupSymbol<mlir::LLVM::LLVMFuncOp>(name);
+        ASSERT_TRUE(function);
+        unsigned traps = 0;
+        function.walk([&](mlir::LLVM::Trap) { ++traps; });
+        EXPECT_GT(traps, 0u) << name;
+    }
 }
 
 TEST(LoweringTest, GIRRangeProofsUseUnsignedGuardsAndExactSliceSnapshots) {
@@ -697,6 +815,69 @@ TEST(LoweringTest, RawMemoryPlacementAndCallsUseGloinIR) {
     expect_exportable(*low);
 }
 
+TEST(LoweringTest, RawAlignmentChecksRetainTypedStorageAndRejectForgedPointers) {
+    mlir::MLIRContext context;
+    auto high = compile_source(R"(
+        import "@memory";
+        def main() -> i32 {
+            def mut bytes: [u8; 8] = zeroed;
+            def value: result<&u8> = memory.place_at<u8>(bytes[..], 3, 42, 1);
+            if value.erroneous { return 1; }
+            return 42;
+        }
+    )",
+                               "aligned-placement.gloin", context, CompilationMode::Executable);
+    ASSERT_TRUE(high.success()) << render(*high.diagnostics);
+    unsigned checks = 0;
+    high.module->walk([&](gloin::RawIsAlignedOp op) {
+        EXPECT_TRUE(mlir::isa<gloin::GloinPointerType>(op.getStorage().getType()));
+        ++checks;
+    });
+    EXPECT_GT(checks, 0u);
+    Diagnostics diagnostics;
+    auto lowered = lower_to_llvm(std::move(high.module), diagnostics);
+    ASSERT_TRUE(lowered) << render(diagnostics);
+    expect_exportable(*lowered);
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    for (const std::string type : {"!gloin.ptr<i32, true, false>", "!gloin.ptr<i8, true, true>",
+                                   "!gloin.ptr<i8, false, false>", "!llvm.ptr"}) {
+        EXPECT_FALSE(
+            parse(context, "module attributes {gloin.checked} { func.func @check(%p: " + type +
+                               ", %a: i64) -> i1 { %r = \"gloin.raw_is_aligned\"(%p, %a) : (" +
+                               type + ", i64) -> i1 return %r : i1 } }"));
+    }
+}
+
+TEST(LoweringTest, RawReservationRejectsForgedStorageAndElementTypes) {
+    mlir::MLIRContext context;
+    auto ir = [](const std::string &raw, const std::string &result, const std::string &element) {
+        return "module { func.func @reserve(%p: " + raw + ", %a: i64, %n: i64) -> " + result +
+               " attributes {gloin.layout_inputs = [!llvm.ptr, i64, i64], "
+               "gloin.layout_results = [!llvm.ptr]} { %r = \"gloin.raw_reserve\"(%p, %a, %n) "
+               "<{source_type = " +
+               result + ", element_type = " + element + "}> : (" + raw + ", i64, i64) -> " +
+               result + " return %r : " + result + " } }";
+    };
+    const std::string raw = "!gloin.ptr<i8, true, false>";
+    const std::string result = "!gloin.ptr<i64, true, false>";
+    auto valid = parse(context, ir(raw, result, "i64"));
+    ASSERT_TRUE(valid);
+    Diagnostics diagnostics;
+    auto lowered = lower_to_llvm(std::move(valid), diagnostics);
+    ASSERT_TRUE(lowered) << render(diagnostics);
+    expect_exportable(*lowered);
+    mlir::ScopedDiagnosticHandler suppress(&context,
+                                           [](mlir::Diagnostic &) { return mlir::success(); });
+    for (const auto *storage : {"!gloin.ptr<i8, true, true>", "!gloin.ptr<i32, true, false>",
+                                "!gloin.ptr<i8, false, false>"})
+        EXPECT_FALSE(parse(context, ir(storage, result, "i64")));
+    for (const auto *type : {"!gloin.ptr<i64, false, false>", "!gloin.ptr<i64, true, true>",
+                             "!gloin.ptr<i32, true, false>"})
+        EXPECT_FALSE(parse(context, ir(raw, type, "i64")));
+    EXPECT_FALSE(parse(context, ir(raw, result, "i32")));
+}
+
 TEST(LoweringTest, CheckedModuleRejectsDirectLLVMCalls) {
     mlir::MLIRContext context;
     auto module = parse(context, R"(
@@ -942,6 +1123,50 @@ TEST(LoweringTest, CheckedPointerOffsetUsesGloinIRUntilLowering) {
     ASSERT_TRUE(lowered) << render(diagnostics);
     EXPECT_EQ(print(*lowered).find("gloin."), std::string::npos);
     execute_lowered(*lowered, 42);
+}
+
+TEST(LoweringTest, SliceCopyDirectionRetainsTypesAndRejectsForgedOperands) {
+    for (const bool forged : {false, true}) {
+        mlir::MLIRContext context;
+        auto high =
+            compile_source(R"(
+            import "@slices";
+            def main() -> i32 {
+                def wrong: *const i64 = null;
+                if wrong != null { return 1; }
+                def mut values: [i32; 2] = {42, 1};
+                if !slices.copy<i32>(values[1..], values[..1]) { return 2; }
+                return values[1];
+            }
+        )",
+                           "slice-copy-direction.gloin", context, CompilationMode::Executable);
+        ASSERT_TRUE(high.success()) << render(*high.diagnostics);
+        gloin::CopyBackwardOp direction;
+        mlir::Value wrong;
+        high.module->walk([&](gloin::CopyBackwardOp candidate) { direction = candidate; });
+        high.module->walk([&](gloin::NullOp candidate) {
+            auto pointer = mlir::cast<gloin::GloinPointerType>(candidate.getSourceType());
+            if (pointer.getPointee().isInteger(64))
+                wrong = candidate.getValue();
+        });
+        ASSERT_TRUE(direction);
+        ASSERT_TRUE(wrong);
+        EXPECT_EQ(direction.getDestination().getType(), direction.getSourceType());
+        EXPECT_EQ(direction.getSource().getType(), direction.getSourceType());
+        if (forged)
+            direction->setOperand(1, wrong);
+        Diagnostics diagnostics;
+        auto lowered = lower_to_llvm(std::move(high.module), diagnostics);
+        if (forged) {
+            EXPECT_FALSE(lowered);
+            EXPECT_NE(render(diagnostics).find("requires matching read-only source pointer types"),
+                      std::string::npos)
+                << render(diagnostics);
+        } else {
+            ASSERT_TRUE(lowered) << render(diagnostics);
+            execute_lowered(*lowered, 42);
+        }
+    }
 }
 
 TEST(LoweringTest, PointerComparisonRejectsAnotherPointeeType) {

@@ -14,6 +14,32 @@ HTTP/1.1 head operations in the 0.1.0 candidate. Their public APIs use built-in
 `result<T>` for failures and ordinary payloads for expected readiness/EOF
 states. See [networking](../docs/networking.md) and the
 [local example](../examples/network_http.gloin).
+
+`@tcp`, `@ipv4`, and `@ip_stack` implement TCP/IP over raw IPv4 packets in Gloin.
+`@ipv6` and `@ip6_stack` add a static-address IPv6 host using the same TCP
+engine. See [IPv6](../docs/ipv6.md) for extensions, reassembly, ICMPv6 and limits.
+`@http_server` provides reusable HTTP/1.1 sessions, while `@tcp_tls` and
+`@http_service` provide bounded TLS and HTTP/HTTPS progress over those streams.
+`@net.PacketDevice` supplies Linux TUN/macOS utun transport. See the
+[TCP/IP server guide](../docs/tcpip-server.md) for buffers, ownership, timers,
+limits, and the concurrent server example.
+
+`@packet` uses packed structs and endian types for IPv4, UDP, and TCP headers.
+It provides bounded packet parsing, checksum verification/sealing, and incremental
+Internet checksums. `@memory.read_packed` and `write_packed` also support user-defined
+packed records. See [packet APIs](../docs/packets.md) and the
+[runnable example](../examples/packet_headers.gloin).
+
+`@packet6` adds packed IPv6 addresses/headers, bounded extension parsing, and
+TCP/UDP/ICMPv6 pseudo-header checksum validation and sealing. See
+[IPv6 wire codecs](../docs/ipv6.md) for bounds and borrowed-view contracts.
+
+The 0.3.0 development `@http` module also provides `RequestDecoder` and
+`RequestReader` for bounded incremental fixed-length and chunked HTTP/1.1
+request bodies. They use caller-owned buffers and built-in results, perform no
+I/O or allocation, and preserve pipelined suffixes. See the [request decoding
+guide](../docs/http-requests.md).
+
 `@net` also provides verified client TLS, reusable PEM server configurations,
 accepted TLS sessions and readiness-driven bidirectional shutdown. See
 [server TLS, ownership and cleanup](../docs/server-tls.md).
@@ -51,8 +77,15 @@ typed placement for user-written allocators. See [raw memory](../docs/raw-memory
 
 `import "@vector";` provides inline and arena vectors. The growable form now
 has `Vector<T>.empty(&memory, capacity)` so a dummy `T` value is unnecessary.
+Development 0.3.0 adds result-returning `try_empty`, `try_reserve`, `try_push`,
+`try_insert` and `try_append_from`, with recoverable allocation errors and
+unchanged vector state on failure. `try_clone(&destination)` copies live elements
+into an independent buffer in the chosen arena; element copies remain shallow.
+Ordinary assignment retains its existing aliasing rules.
 `import "@slices";` provides generic fill, reverse, and nonoverlapping copy on
-borrowed slices. See [slices and vectors](../docs/slices-vectors.md).
+borrowed slices. Development 0.3.0 adds `slices.copy<T>` for allocation-free
+overlap-safe copies; a short destination returns false without writing.
+See [slices and vectors](../docs/slices-vectors.md).
 
 Version 0.2.1 adds `import "@hashmap";` and
 `hashmap.HashMap<K, V>` for integer, boolean, and string keys. It supports
@@ -139,8 +172,19 @@ storage; append/clear allocate nothing, and `to_string` copies explicitly into a
 caller-supplied arena. Three additional module-private primitives handle checked
 buffer views/stores/writes using the existing native copy ABI.
 
+Development 0.3.0 stores StringBuilder state and payload in one aligned arena
+allocation, including state-only zero-capacity builders. Allocation failure
+leaves no separately allocated builder state; aliases and fixed capacity are unchanged.
+`StringBuilder.append_bytes([const u8])` copies byte slices without allocation,
+including NUL and invalid UTF-8. It retains no source borrow after the call and
+returns `TOO_LONG` without changing the builder when capacity is insufficient.
+
 SPEC-030c adds 29 concrete numeric APIs in `std.gloin`: six parsers, eight
-formatters, and fifteen explicit checked conversions. See the [numeric guide](../docs/numbers.md)
+formatters, and fifteen named numeric conversions. The 0.3.0 development compiler
+also provides `T(value)` for direct integer conversion, always returning
+`result<T>` with `OVERFLOW` on a range failure. Widening and endian-only
+constructors use the same result API; the existing named functions retain their
+signatures. See the [numeric guide](../docs/numbers.md)
 for every signature, usage example, range/rounding rule, failure, ownership, and
 cost. Numeric formatters allocate in the caller's arena and return recoverable
 results; boolean formatting returns static text. Parsing and conversion allocate

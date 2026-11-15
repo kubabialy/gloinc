@@ -1,0 +1,75 @@
+import "@memory";
+import "@status";
+
+def packed struct(msb_first) Header {
+    def mut length: u13,
+    def mut flags: u3,
+    def mut sequence: be_u32,
+    def mut little: le_u16,
+    def mut tail: u3,
+}
+
+def copy<T>(value: T) -> T { return value; }
+
+def main() -> i32 {
+    if memory.size_of<Header>() != 9 || memory.align_of<Header>() != 1 { return 1; }
+
+    def expected: [u8; 9]   = {0x91, 0xa5, 1, 2, 3, 4, 0x78, 0x56, 0xff};
+    def mut bytes: [u8; 64] = zeroed;
+
+    for def mut offset: u64 = 1; offset <= 16; offset = offset + 1 {
+        for def mut i: u64 = 0; i < 64; i = i + 1 { bytes[i] = 0xa5; }
+
+        for def mut i: u64 = 0; i < 9; i = i + 1 { bytes[offset + i] = expected[i]; }
+
+        def read: result<Header> = memory.read_packed<Header>(bytes[offset..offset + 9]);
+        if read.erroneous { return 2; }
+
+        def header: Header = copy<Header>(read.value);
+        if header.length != 0x1234 || header.flags != 5 || header.sequence != 0x01020304
+            || header.little != 0x5678 || header.tail != 7 { return 3; }
+
+        // Snapshot survives backing-buffer mutation; all five spare bits survive copies.
+        bytes[offset] = 0;
+
+        def written: result<void> = memory.write_packed<Header>(bytes[offset..offset + 9], header);
+        if written.erroneous { return 4; }
+
+        for def mut i: u64 = 0; i < 64; i = i + 1 {
+            if i < offset || i >= offset + 9 {
+                if bytes[i] != 0xa5 { return 5; }
+            } else if bytes[i] != expected[i - offset] { return 6; }
+        }
+
+        for def mut size: u64 = 0; size < 9; size = size + 1 {
+            def short_read: result<Header> = memory.read_packed<Header>(bytes[offset..offset + size]);
+            if !short_read.erroneous { return 7; }
+            if short_read.error.code != status.OUT_OF_RANGE { return 8; }
+
+            def short_write: result<void> = memory.write_packed<Header>(bytes[offset..offset + size], header);
+            if !short_write.erroneous { return 9; }
+
+            for def mut i: u64 = 0; i < 9; i = i + 1 {
+                if bytes[offset + i] != expected[i] { return 10; }
+            }
+        }
+
+        def mut changed: Header = header;
+        changed.flags = 2;
+        changed.tail  = 3;
+
+        def update: result<void> = memory.write_packed<Header>(bytes[offset..], changed);
+        if update.erroneous { return 11; }
+        if bytes[offset + 1] != 0xa2 || bytes[offset + 8] != 0x7f { return 12; }
+
+        // Overlapping materialized source and destination retain the captured value.
+        def overlap: result<Header> = memory.read_packed<Header>(bytes[offset..]);
+        if overlap.erroneous { return 13; }
+
+        def moved: result<void> = memory.write_packed<Header>(bytes[offset + 1..], overlap.value);
+        if moved.erroneous { return 14; }
+        if bytes[offset + 2] != 0xa2 || bytes[offset + 9] != 0x7f { return 15; }
+    }
+
+    return 0;
+}
