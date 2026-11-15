@@ -46,24 +46,33 @@ release assets, and numbered guides will be updated when the release is cut.
 The [endianness contract](endianness.md) defines byte-order behavior. The
 [development guide](site/development/index.html#endianness) introduces the syntax.
 
-## Queued candidate work
+## Candidate integration and scope
 
-The following items are planned for `0.3.0-candidate` after the current
-standard-library work. They are not implemented or merged by this queue entry.
-Each item gets its own branch and small, verified commits before integration
-into `0.3.0-candidate`; the branch names below are planned names.
+The development tree combines the 0.2.2 baseline, loop transfers, packed
+storage and the standard-library increments. Each feature used a separate
+branch; the packed reconciliation was prepared on
+`integration/packed-structs-into-0.3.0`. Final release validation follows integration.
 
-| Item | Planned branch | Scope |
-| --- | --- | --- |
-| `continue` keyword | `feature/continue` | Define loop targeting, iteration and condition evaluation, and scoped `defer` behavior; implement through checked GloinIR with regressions and documentation. |
-| `break` keyword | `feature/break` | Define legal targets, nesting, and scoped `defer` behavior; implement through checked GloinIR with regressions and documentation. |
-| Enum payloads | `feature/enum-payloads` | Agree syntax and semantics for construction, matching, exhaustiveness, representation, copying and payload lifetimes before implementation. |
-| Merge 0.2.2 | `integration/0.2.2-into-0.3.0` | Merge the `release/0.2.2` line into the candidate, resolve conflicts and validate the combined behavior. |
-| Merge current development | `integration/packed-structs-into-0.3.0` | Merge `packed-structs`, including the standard-library increments, into the candidate and validate the combined behavior. |
+| Item | Status |
+| --- | --- |
+| 0.2.2 baseline | Included in `0.3.0-candidate`, including the checked-floating-point optimization series. |
+| `continue` keyword | Merged through [PR #9](https://github.com/kubabialy/gloinc/pull/9); defers remain function-scoped. |
+| `break` keyword | Merged through [PR #10](https://github.com/kubabialy/gloinc/pull/10); exits the nearest loop and skips its update. |
+| Packed storage and standard library | Conflicts reconciled with the candidate; [PR #8](https://github.com/kubabialy/gloinc/pull/8) tracks the combined integration. |
+| Enum payloads | Excluded from 0.3.0. Reconsider only when a concrete use case justifies the syntax, representation, matching and ownership work; no implementation is planned now. |
 
-Integration branches start from `0.3.0-candidate`. Feature branches use the
-candidate baseline; reconcile both development lines before relying on their
-combined APIs. Final release validation still follows all candidate integration.
+### Possible 0.4.0 direction: C FFI
+
+C FFI/`extern` is a proposal for 0.4.0, not an implemented feature or committed
+release scope. The goal is to call C functions from Gloin using checked external
+signatures and explicit library linking.
+
+Before choosing syntax, define the supported C ABI types and calling conventions,
+symbol resolution in native and JIT execution, pointer nullability, buffer lengths,
+and ownership/lifetimes across calls. A first version could focus on scalar values,
+pointers and opaque handles. By-value aggregates, callbacks and variadic calls
+need separate decisions; Gloin packed records, exact-width values, slices and
+`result<T>` must not silently acquire a C ABI representation.
 
 ## Packed memory layouts
 
@@ -405,6 +414,32 @@ or cross-platform speedup claims. This development validation does not replace
 the final release gates below, hosted x86_64 execution, or execution on a
 big-endian host.
 
+## Combined integration validation, 2026-11-15
+
+The merged compiler tree at `6c2f01a` preserves the packed branch's proof
+invalidation and packed-slice promotion alongside the 0.2.2 floating-point
+analyses and both loop-transfer features. The integration regression combines
+three-bit packed views, independent expected bytes, checked conversions,
+`break`, `continue` and floating arithmetic in JIT/native O0/native O2.
+
+On macOS ARM64 with LLVM/MLIR 21.1.6:
+
+- Focused packed, endian, numeric, loop-transfer and lowering checks: **167/167**.
+- Core run: **1,241/1,243** passed. The two floating-array drivers used old textual
+  GIR without the newer slice signedness attributes. After updating those four
+  operations, both O0/O2 drivers passed, retaining their expected values, overlap
+  checks and traps. Every required core case has a passing result; this is not
+  reported as a single clean full-gate run.
+- Relocated installed compiler focused checks: **26/26**; the original install
+  directory was absent. Both source and installed documentation links passed.
+- Source formatting and whitespace passed; CTest discovery confirmed **1,290**
+  unique registered tests. The required core set contains **1,243** cases.
+
+Original failures and reruns remain under
+`build/candidate-integration-2026-11-15/reports/`. Hosted integration validation
+is tracked in PR #8; these local checks do not claim fresh Linux, sanitizer,
+wire interoperability or final-release coverage for the combined tree.
+
 ## Remaining release validation
 
 Before publishing 0.3.0, follow the existing
@@ -422,8 +457,8 @@ Packed structs, bitfields, exact-width integers, and checked integer constructor
 are included in the development implementation. Final release validation must
 cover them on every maintained target. Widths above 64 bits, endian-qualified
 sub-byte integers and floating types, automatic aggregate schema conversion,
-general FFI, and language-level
-threads/async/spawn remain outside the current 0.3.0 scope.
+enum payloads, general FFI, and language-level threads/async/spawn remain outside
+the current 0.3.0 scope.
 
 ## Integration with 0.2.2
 
