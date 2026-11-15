@@ -116,6 +116,8 @@ std::unique_ptr<Statement> statement(const Statement *source) {
     }
     if (auto *node = dynamic_cast<const ExpressionStatement *>(source))
         return copied<ExpressionStatement>(*node, expression(node->expression.get()));
+    if (auto *node = dynamic_cast<const BreakStatement *>(source))
+        return copied<BreakStatement>(*node);
     if (auto *node = dynamic_cast<const ContinueStatement *>(source))
         return copied<ContinueStatement>(*node);
     if (auto *node = dynamic_cast<const ReturnStatement *>(source))

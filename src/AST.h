@@ -252,6 +252,10 @@ struct BlockStatement : public Statement {
     }
 };
 
+struct BreakStatement : public Statement {
+    std::string to_string() const override { return "break;"; }
+};
+
 struct ContinueStatement : public Statement {
     std::string to_string() const override { return "continue;"; }
 };

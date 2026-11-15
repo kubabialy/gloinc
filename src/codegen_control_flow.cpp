@@ -76,7 +76,9 @@ void CodeGen::gen_while(const WhileStatement *statement) {
                                            exit_block, mlir::ValueRange{});
     builder.setInsertionPointToStart(body_block);
     continue_targets.emplace(statement, condition_block);
+    break_targets.emplace(statement, exit_block);
     gen_statement(statement->body.get());
+    break_targets.erase(statement);
     continue_targets.erase(statement);
     // A returning body has no backedge. A live nested continuation repeats the
     // entire condition, including its calls, guards, and short-circuit branches.
@@ -109,7 +111,9 @@ void CodeGen::gen_for(const ForStatement *statement) {
                                            exit_block, mlir::ValueRange{});
     builder.setInsertionPointToStart(body_block);
     continue_targets.emplace(statement, update_block);
+    break_targets.emplace(statement, exit_block);
     gen_statement(statement->body.get());
+    break_targets.erase(statement);
     continue_targets.erase(statement);
     // Preserve the existing loop shape when no continue targets the update.
     if (update_block->hasNoPredecessors())

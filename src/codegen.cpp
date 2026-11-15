@@ -308,6 +308,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
             checked_return_type = checked_data->symbols[checked_binding(func_def->name.get())].type;
         current_function_defers.clear();
         continue_targets.clear();
+        break_targets.clear();
         defer_record_types.clear();
         defer_head = {};
         auto funcOp = checked_data ? checked_functions.at(checked_binding(func_def->name.get()))
@@ -506,6 +507,13 @@ void CodeGen::gen_statement(const Statement *stmt) {
 
         builder.clearInsertionPoint();
 
+    } else if (auto *broken = dynamic_cast<const BreakStatement *>(stmt)) {
+        if (!checked_data || !checked_data->break_targets.contains(broken))
+            fail("break requires a checked loop target");
+        auto target = break_targets.find(checked_data->break_targets.at(broken));
+        if (target == break_targets.end())
+            fail("break target is not an active loop");
+        branch_if_open(target->second);
     } else if (auto *continued = dynamic_cast<const ContinueStatement *>(stmt)) {
         if (!checked_data || !checked_data->continue_targets.contains(continued))
             fail("continue requires a checked loop target");

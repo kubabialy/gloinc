@@ -763,6 +763,8 @@ void Sema::check_statement(const Statement *stmt) {
                 recording->defers[current_function].push_back(defer);
         }
 
+    } else if (const auto *broken = dynamic_cast<const BreakStatement *>(stmt)) {
+        check_break(broken);
     } else if (const auto *continued = dynamic_cast<const ContinueStatement *>(stmt)) {
         check_continue(continued);
     } else if (const auto *ret = dynamic_cast<const ReturnStatement *>(stmt)) {
@@ -822,9 +824,10 @@ void Sema::check_statement(const Statement *stmt) {
             result_proof[refinement->first] = refinement->second;
         }
         ++loop_depth;
-        loops.push_back({while_stmt, current_scope, {}});
+        loops.push_back({while_stmt, current_scope, {}, {}});
         check_statement(while_stmt->body.get());
-        merge_loop_continues(before);
+        merge_loop_flows(before, loops.back().continues);
+        auto breaks = std::move(loops.back().breaks);
         loops.pop_back();
         --loop_depth;
         bool body_reaches = falls_through;
@@ -837,6 +840,7 @@ void Sema::check_statement(const Statement *stmt) {
         result_handled = before_handled;
         merge_result_flow(before_proof, before_handled, before_reaches,
                           body_proof, body_handled, body_reaches);
+        merge_loop_flows(before, breaks);
         for (auto &[id, proof] : result_proof)
             proof = ResultProof::Unknown;
     } else if (const auto *expr_stmt = dynamic_cast<const ExpressionStatement *>(stmt)) {

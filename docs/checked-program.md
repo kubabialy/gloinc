@@ -283,6 +283,15 @@ incoming edges. A while continue branches to its condition; a for continue
 branches to its update block. Blocks with no incoming update path are removed.
 Unchecked AST codegen rejects continue without checked target metadata.
 
+Development [`break;`](break.md) records its nearest loop in
+`SemanticData::break_targets`. Break snapshots join the loop exit after normal
+body/continue analysis; they never contribute to a for update. The join retains
+the conservative zero-iteration path and includes result handling invalidated by
+assignments on a break path. Exited scopes, including a target for header, must
+have their results handled. GloinIR emits a verified `cf.br` to the existing
+loop exit block; it skips the update, further conditions, and defer draining.
+Unchecked AST generation requires checked break target metadata too.
+
 ## Ownership
 
 The checked program owns its AST and semantic tables. AST addresses remain stable
