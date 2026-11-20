@@ -117,6 +117,8 @@ failures; `check-core` is the required passing gate.
 The [0.3.0 draft](docs/release-0.3.0-draft.md) records the endianness feature,
 packed layouts, compatibility rules, completed development checks, and
 remaining release gates.
+The [proposed 0.4.0 roadmap](docs/roadmap-0.4.0.md) traces the concurrency
+backlog and sets out design decisions, interoperability candidates and release gates.
 The [0.2.0 development record](docs/release-0.2.0-draft.md) preserves the earlier
 switch/match, `result<T>` migration, and compiler validation work. The
 [compiler validation record](docs/compiler-validation.md) documents correctness
