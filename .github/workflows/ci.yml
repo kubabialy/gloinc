@@ -144,8 +144,8 @@ jobs:
   macos:
     name: macOS 15 arm64 / LLVM 21.1.6
     runs-on: macos-15
-    # Three builds, package matrices, sanitizers, and both full-suite audits.
-    timeout-minutes: 90
+    # Include both complete-suite audits after the expanded package and sanitizer gates.
+    timeout-minutes: 150
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1

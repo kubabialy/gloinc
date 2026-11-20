@@ -365,9 +365,11 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     # workers. Serialize these matrices on both platforms while retaining all
     # child deadlines, aggregate timeouts and assertions.
     set(GLOIN_SIGNAL_MATRIX_PROPERTIES RUN_SERIAL TRUE)
-    gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}:${GLOIN_ARITHMETIC_MATRIX_TEST}:${GLOIN_OPERATOR_MATRIX_TEST}:${GLOIN_CONVERSION_MATRIX_TEST}:${GLOIN_PACKED_CONSTRUCTION_TEST}:CliTest.GIR*"
+    # Both fixtures hit the child deadline during cold, parallel package runs.
+    set(GLOIN_ARRAY_CLI_TESTS "CoreAcceptanceTest.RepeatedArraysPreserveCapturedValuesAndEmptyEvaluation:PackedTest.PackedArrayBoundsTrapBeforeAssignmentValue")
+    gtest_discover_tests(gloinc_test TEST_FILTER "-NetworkLibraryTest.*:${GLOIN_SIGNATURE_MATRIX_TEST}:${GLOIN_ARITHMETIC_MATRIX_TEST}:${GLOIN_OPERATOR_MATRIX_TEST}:${GLOIN_CONVERSION_MATRIX_TEST}:${GLOIN_PACKED_CONSTRUCTION_TEST}:${GLOIN_ARRAY_CLI_TESTS}:CliTest.GIR*"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT})
-    gtest_discover_tests(gloinc_test TEST_FILTER "CliTest.GIR*"
+    gtest_discover_tests(gloinc_test TEST_FILTER "CliTest.GIR*:${GLOIN_ARRAY_CLI_TESTS}"
         PROPERTIES TIMEOUT ${GLOIN_COMPILER_TEST_TIMEOUT} ${GLOIN_SIGNAL_MATRIX_PROPERTIES})
     # Native, big-endian and little-endian types triple the scalar matrix.
     # Retain every assertion and each child deadline; scale only aggregate time.
@@ -378,7 +380,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     # Allow compilation under parallel load without dropping boundary coverage.
     math(EXPR GLOIN_CONVERSION_MATRIX_TIMEOUT "${GLOIN_COMPILER_TEST_TIMEOUT} * 4")
     gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_CONVERSION_MATRIX_TEST}"
-        PROPERTIES TIMEOUT ${GLOIN_CONVERSION_MATRIX_TIMEOUT})
+        PROPERTIES TIMEOUT ${GLOIN_CONVERSION_MATRIX_TIMEOUT} RUN_SERIAL TRUE)
     # The 52-layout packed oracle compiles in three modes. An isolated ASan JIT
     # run takes about 21 seconds; retain all encodings under parallel gate load.
     math(EXPR GLOIN_PACKED_CONSTRUCTION_TIMEOUT "${GLOIN_COMPILER_TEST_TIMEOUT} * 4")
@@ -403,8 +405,11 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_SIGNATURE_MATRIX_TEST}"
         PROPERTIES TIMEOUT ${GLOIN_SIGNATURE_MATRIX_TIMEOUT})
     # The round-trip case can compile twice (JIT and native), then run the binary.
-    gtest_discover_tests(gloinc_test TEST_FILTER "NetworkLibraryTest.*"
+    set(GLOIN_SERVER_MATRIX_TESTS "NetworkLibraryTest.TcpTableReuseAndHttpServerFramingWorkInAllModes:NetworkLibraryTest.BufferedTlsAndHttpHttpsOverLossyGloinTcpWorkInAllModes")
+    gtest_discover_tests(gloinc_test TEST_FILTER "NetworkLibraryTest.*-${GLOIN_SERVER_MATRIX_TESTS}"
         PROPERTIES TIMEOUT 150)
+    gtest_discover_tests(gloinc_test TEST_FILTER "${GLOIN_SERVER_MATRIX_TESTS}"
+        PROPERTIES TIMEOUT 150 RUN_SERIAL TRUE)
 
     add_executable(gloin_arena_test tests/runtime/arena_test.cpp)
     target_link_libraries(gloin_arena_test PRIVATE gloin_runtime GTest::gtest_main)
@@ -656,6 +661,8 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     set_tests_properties(${GLOIN_FLOAT_JIT_TESTS} PROPERTIES RUN_SERIAL TRUE)
     if(GLOIN_ENABLE_SANITIZERS)
         set_tests_properties(${GLOIN_FLOAT_JIT_TESTS} PROPERTIES TIMEOUT 360)
+        set_tests_properties(GloinFloatArraySmoke.NativeO0 GloinFloatArraySmoke.NativeO2
+            PROPERTIES RUN_SERIAL TRUE)
     endif()
 
     # Required supported-language suites; the unfiltered suite still reports deferred failures.

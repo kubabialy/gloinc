@@ -223,7 +223,10 @@ integer-simplification trap matrix also covers all three orders and has three
 times the ordinary compiler-test timeout. The arithmetic matrix runs alone on
 all platforms; on Linux, the integer-simplification trap matrix and the GIR CLI
 matrices also run alone because concurrent crash-report collection can exceed
-their deadlines. Other tests still run in parallel.
+their deadlines. Hosted 0.3.0 runs also exhausted child or aggregate deadlines
+in the repeated-array, packed-bounds, integer conversion, TCP server framing and
+buffered TLS matrices. CTest schedules those cases individually, plus the two
+native float-array drivers in sanitizer builds. Child and test time limits still apply.
 Individual compiler invocations allow ten seconds normally or 30 seconds under
 sanitizers. The HTTP compiler/API
 fixtures allow 60 seconds per compiler invocation and 150 seconds per CTest
