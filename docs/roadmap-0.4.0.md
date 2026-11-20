@@ -1,6 +1,6 @@
-# Gloin 0.4.0 roadmap proposal
+# Gloin 0.4.0 roadmap
 
-**Decision requested, 2026-11-20.** Make concurrency the organizing feature of 0.4.0. A program should be able to run an independent computation on another OS thread and keep servicing connections while an I/O operation is pending. Give both operations checked, typed completion and visible resource costs. Keep a narrow hosted C interface as a second candidate. Approve its inclusion separately once a real binding passes. This document proposes scope and release gates. Public spellings, implementation dates and release numbering beyond 0.4.0 still need a maintainer decision.
+**Development plan agreed on 2026-11-20.** The concurrency goals are an independent computation running on another OS thread and a single executor thread that keeps servicing connections while a read is pending. Both need typed completion, explicit failure handling and visible resource costs. Start the standard-library work with monotonic deadlines in `@time` and the existing HTTP client as its first consumer. Binary cursors can proceed independently. The asynchronous socket read depends on the executor contract. C imports and bit operations have separate acceptance gates. Public spellings and implementation dates remain open.
 
 ## What was actually planned
 
@@ -150,6 +150,6 @@ Before implementing threads, model at least one aliasing counterexample and one 
 3. Select bounded executor ownership, cancellation semantics, initial socket operation, and memory budget. Record what happens when user code never yields or a worker never returns.
 4. Decide whether C imports and bit operations are required, independent candidates, or moved to a later minor release. Assign a reviewer and acceptance fixture to each included track.
 5. Name a serial board and desktop integration environment only if those pilots become release gates. Keep cross-target firmware distinct: semantic analysis currently [requires 64-bit pointers](../src/sema.cpp), and [native output selects the host and adds a process entry](../src/native_output.cpp). A firmware milestone needs a target data layout, freestanding entry and link, startup code, MMIO semantics, interrupt discipline, and on-board verification.
-6. Approve deadlines, binary cursors and the executor-facing TCP read as the standard-library minimum. Decide separately whether the hosted serial module is ready for distribution and whether CRC ships with bit operations.
+6. Track deadlines, binary cursors and the executor-facing TCP read as the agreed library goals. Decide separately whether the hosted serial module is ready for distribution and whether CRC ships with bit operations.
 
 After those decisions, update this table of deliverables with the accepted scope and PRs. Change the version and publish artifacts only when cutting an authorized release.
