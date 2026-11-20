@@ -21,7 +21,7 @@ The [test inventory](../tests/README.md) names four historical failures. Two [as
 
 ## Release boundary
 
-**Proposed minimum.** One bounded worker-launch mechanism, one single-thread executor, one genuinely asynchronous socket-read operation, typed completion and explicit checks. Ship public monotonic deadlines and bounded binary cursors for synchronous and asynchronous callers. Supply realistic examples, failure injection, cleanup, runnable documentation and installed-package tests. Build on the maintained Apple Silicon macOS and Linux ARM64/x86_64 configurations. Reconcile the branch with the actual released 0.3.x baseline before opening a candidate.
+**Proposed minimum.** One bounded worker-launch mechanism, one single-thread executor, one genuinely asynchronous socket-read operation, typed completion and explicit checks. Ship public monotonic deadlines and bounded binary cursors for synchronous and asynchronous callers. Supply realistic examples, failure injection, cleanup, runnable documentation and installed-package tests. Build on the maintained Apple Silicon macOS and Linux ARM64/x86_64 configurations. The candidate includes the published [Gloin 0.3.0](release-0.3.0.md) tag at `ccf2b3d`.
 
 **Independent candidates.** Checked C imports and bit operations can proceed alongside the concurrency work once each contract is reviewed. Each must be independently releasable and documented. Serial telemetry is the first device-facing consumer. A desktop multimedia binding exercises a different library and ownership model. Promote a pilot to a release deliverable only when its platform support, maintenance owner and test equipment are identified.
 
@@ -111,7 +111,7 @@ The thread and deferred-I/O tracks have no dependency on public C imports. A mul
 
 ## Integration order and branch plan
 
-Use one branch per reviewable item against the agreed development base. The names below are suggested PR topics. Confirm the candidate base after the 0.3.x release record is settled. Merge only increments that build and pass the applicable gates.
+Use one branch per reviewable item against the agreed development base. The names below are suggested PR topics. Open feature branches against `0.4.0-candidate`. Merge only increments that build and pass the applicable gates.
 
 | Order | PR topic | Depends on | Reviewable outcome |
 | --- | --- | --- | --- |
