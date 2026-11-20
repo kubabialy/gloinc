@@ -4,29 +4,17 @@ Gloin is an experimental language with explicit types, manual memory management,
 and native executables. Its compiler, `gloinc`, is built on LLVM/MLIR, with
 language operations represented in the GloinIR dialect.
 
-**[Download 0.2.2](https://github.com/kubabialy/gloinc/releases/tag/v0.2.2)** ·
-[Language guide](docs/site/0.2.2/index.html) ·
+**[Download 0.3.0](https://github.com/kubabialy/gloinc/releases/tag/v0.3.0)** ·
+[Language guide](docs/site/0.3.0/index.html) ·
 [Examples](examples/README.md) ·
-[Release notes](docs/release-notes-0.2.2.md)
+[Release notes](docs/release-notes-0.3.0.md)
 
-Version 0.2.2 reduces redundant checked-floating-point work and enables SIMD in
-proved-safe private-array loops while preserving arithmetic and memory guarantees.
-It includes the arena-backed hash maps introduced in 0.2.1.
-See the [migration notes](docs/release-notes-0.2.0.md#migrating-from-010)
-when updating 0.1.0 programs.
-
-The [0.3.0 draft](docs/release-0.3.0-draft.md) introduces
-[first-class endian integer types](docs/endianness.md), explicit value conversions,
-and aggregate copies that preserve padding through Gloin calls. See the
-[development guide](docs/site/development/index.html); this feature is not
-included in the published 0.2.2 binaries.
-Development also implements [packed memory layouts](docs/packed-layout.md),
-native integer widths from 1 through 64 bits, and checked integer constructors.
+Version 0.3.0 adds [packed layouts](docs/packed-layout.md), [endian-qualified integers](docs/endianness.md), checked integer constructors, loop transfers and bounded protocol libraries. Rebuild native objects and use matching compiler, runtime and standard modules when upgrading.
 
 ## Get started
 
 Download and extract the archive for your platform. Verify it with the attached
-`.sha256` file; see the [installation guide](docs/release-0.2.2.md#installation-and-package).
+`.sha256` file; see the [installation guide](docs/release-0.3.0.md#installation-and-package).
 
 | Supported platform | Required LLVM/MLIR | Bundled toolchain installer |
 | --- | --- | --- |
@@ -76,27 +64,27 @@ TLS need OpenSSL. See the [CLI reference](docs/cli.md) for all options.
 - **Tools:** `gloinfmt`, written in Gloin, formats files and checks source trees.
 
 Gloin is in early development and is not ready for production use. Enum payloads
-and async/spawn remain unsupported. Packed layouts require the development compiler.
+and async/spawn remain unsupported.
 Windows support is not planned; contributions are welcome.
 
 ## Documentation
 
 | I want to… | Start here |
 | --- | --- |
-| Learn the language | [0.2.2 HTML guide](docs/site/0.2.2/index.html) |
+| Learn the language | [0.3.0 HTML guide](docs/site/0.3.0/index.html) |
 | Run complete programs | [Examples and usage](examples/README.md) |
 | Use library APIs | [Standard library](docs/standard-library.md), [I/O](docs/io.md), [processes](docs/child-processes.md), [networking](docs/networking.md), [HTTP](docs/http-client.md), [JSON](docs/json.md) |
 | Format Gloin code | [gloinfmt](docs/gloinfmt.md) and [source style](docs/gloin-style.md) |
 | Understand the compiler | [Checked programs](docs/checked-program.md) and [GloinIR/lowering](docs/lowering.md) |
-| Inspect release verification | [0.2.2 record](docs/release-0.2.2.md#verification-boundary) and [test inventory](tests/README.md) |
+| Inspect release verification | [0.3.0 record](docs/release-0.3.0.md#verification-boundary) and [test inventory](tests/README.md) |
 
 To read the HTML guide in a browser, open
-`share/doc/gloinc/docs/site/0.2.2/index.html` inside an extracted archive.
+`share/doc/gloinc/docs/site/0.3.0/index.html` inside an extracted archive.
 Older releases keep their own versioned guides.
 
 ## Build from source
 
-Follow the [macOS and Linux build instructions](docs/release-0.2.2.md#build-and-run).
+Follow the [macOS and Linux build instructions](docs/release-0.3.0.md#build-and-run).
 Source builds require a C++23 compiler, CMake 3.28+, Ninja, OpenSSL 3 and the
 pinned LLVM/MLIR installation above. See the [toolchain guide](docs/toolchain.md)
 for compiler-only builds and offline dependencies.
