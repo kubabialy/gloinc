@@ -13,10 +13,6 @@ the release build. Add it to the version selector. At publication, remove the
 candidate label, select it as `latestVersion` and update the root redirect.
 The old numbered pages remain unchanged.
 
-`0.2.1/` describes the latest release. The root redirect and `latestVersion`
-select 0.2.1; older numbered pages retain their release content. Platform
-validation is recorded in [the release guide](../release-0.2.1.md).
-
 For a new patch, minor, or major release, update its title, feature boundary,
 examples, and version selector's selected value, then append the version to
 `versions.js` and change the root redirect. Keep links relative so the site works from a source checkout, an
@@ -29,5 +25,4 @@ Build `gloin_checks`, then run `build/gloin-check-docs` from the repository root
 the site. Each versioned page links to the installed Markdown API guides for exact
 function signatures, ownership, costs, and errors.
 
-The `0.2.2/` guide is the release default. Its source is published only after
-the required platform checks pass.
+The numbered [0.3.0 guide](0.3.0/index.html) is the release default.

@@ -27,6 +27,35 @@ copies are shallow; referenced memory does not become owned by the arena.
 allocation fails; initializer side effects have already occurred. `alloc` and
 `create` trap on allocation failure. Fatal traps do not run deferred cleanup.
 
+In 0.3.0 development, `alloc_aligned<T>(value: T, alignment: u64) -> result<&T>`
+adds checked explicit base alignment. It uses the
+[alignment validation contract](raw-memory.md#checked-explicit-placement-030-development),
+returning `INVALID` for invalid alignment and `NO_MEMORY` for allocation failure,
+both with OS error zero. The initializer is evaluated once before validation;
+an invalid request performs no allocation. Success preserves the value's
+representation and does not change its type, size, or array stride. The arena
+owns the storage, with the same alias/reset/free rules as ordinary allocation.
+Calling through a cleared arena handle still traps. This method is implemented
+in Gloin using the existing checked native allocation ABI and typed placement.
+
+`alloc_slice<S>(count: u64, fill, alignment: u64) -> result<S>` takes a complete
+writable ordinary or packed slice type. For example,
+`a.alloc_slice<packed(msb_first) [u13]>(8, 7, 64)` allocates 13 bytes with a
+64-byte-aligned base and initializes eight values to seven. Base alignment
+never changes element stride. The fill evaluates once, including for zero count
+and invalid or failed requests. Alignment is validated first, followed by the
+checked byte extent; errors are `INVALID`, `OVERFLOW`, or `NO_MEMORY` with OS
+error zero. Invalid requests perform no allocation. Packed trailing bits start
+at zero. The returned descriptor borrows arena storage and follows its existing
+reset/free and alias rules. Read-only slice type arguments are rejected; a
+successful writable view may subsequently weaken to read-only.
+
+Zero-sized ordinary elements require no bytes. Their allocation accepts any
+`u64` count and skips representation writes; signed negative indices and range
+bounds still trap. A zero count grants no element access. Initialization remains
+explicit as `gloin.initialize_slice`, with raw capacity and alignment guards
+before any writes. The native runtime continues to allocate only byte blocks.
+
 Gloin 0.0.4 also provides `alloc_many(fill, capacity: i64) -> &T`.
 It allocates aligned space for `capacity` elements of the fill value's type,
 checks negative capacity and byte-size overflow, and copies the captured fill
@@ -37,10 +66,10 @@ aligned capacity without initializing unused elements. Only `@vector` can call
 that bridge from source.
 
 Growth never moves existing objects. `reset()` invalidates all objects and keeps
-all blocks for reuse, including large blocks. Never use old references after a
-reset, even if the same addresses are reused. `free()` releases blocks and the
-control object, and clears the receiving handle. Repeating free on that cleared
-handle is harmless; allocation/reset through it trap.
+ordinary bump-allocation blocks for reuse, including large blocks. Never use old
+references after a reset, even if the same addresses are reused. `free()` releases
+blocks and the control object, and clears the receiving handle. Repeating free
+on that cleared handle is harmless; allocation/reset through it trap.
 
 Copying an arena handle creates an alias, not an independent owner. Designate one
 owner and pass `&arena.GeneralArena` to helpers. Freeing through that owner makes
@@ -106,3 +135,17 @@ operation adds pointer arithmetic or bounds checks. These methods support the
 caller-owned strings used by [standard input and formatting](standard-library.md).
 The private `__arena_zero_bytes` operation is restricted to `@arena` and lowers
 to `gloin_arena_zero_bytes(void *, u64)` after successful allocation.
+
+## Internal releasable collection storage (0.3.0 development)
+
+Collections can use a separate arena-owned block list for replaceable backing
+storage. A block has one checked, aligned native allocation and can be unlinked
+and released in constant time without moving ordinary arena objects. Reset/free
+release any remaining collection blocks; ordinary bump storage retains its
+existing reset/reuse policy. Allocation failure leaves both lists unchanged.
+
+The `try_alloc_owned` / `release_owned` methods are compiler-restricted to the
+canonical `@hashmap` module. Their native primitives remain private to `@arena`
+and use checked ABI calls. They do not expose individual release of ordinary
+arena allocations. Only an original live collection-block pointer (or null) may
+be released, through its owning arena.

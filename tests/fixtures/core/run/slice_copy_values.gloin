@@ -1,0 +1,108 @@
+import "@slices";
+import "@memory";
+
+def packed struct(msb_first) Record {
+    def number: be_u16,
+    def tag: u3,
+}
+
+def struct Empty {}
+
+def skewed_copy(offset: u64, rightward: bool) -> bool {
+    def mut bytes: [u8; 12]         = {255; 12};
+    def initial: [Record; 3]        = zeroed;
+    def first: result<&[Record; 3]> = memory.place_at<[Record; 3]>(bytes[..], 0, initial, 1);
+
+    if first.erroneous { return false; }
+
+    def left: &[Record; 3]           = first.value;
+    def second: result<&[Record; 3]> = memory.place_at<[Record; 3]>(bytes[..], offset, initial, 1);
+
+    if second.erroneous { return false; }
+
+    def right: &[Record; 3] = second.value;
+
+    // Both placements are live; populate distinct bytes after their initialization.
+    for def mut index: u64 = 0; index < 12; index = index + 1 {
+        def value: result<u8> = u8(index + 1);
+        if value.erroneous { return false; }
+
+        bytes[index] = value.value;
+    }
+
+    def snapshot: [u8; 12]     = bytes;
+    def mut expected: [u8; 12] = snapshot;
+
+    for def mut index: u64 = 0; index < 9; index = index + 1 {
+        if rightward { expected[offset + index] = snapshot[index]; }
+        else { expected[index] = snapshot[offset + index]; }
+    }
+
+    if rightward {
+        if !slices.copy<Record>((*right)[..], (*left)[..]) { return false; }
+    } else {
+        if !slices.copy<Record>((*left)[..], (*right)[..]) { return false; }
+    }
+
+    for def mut index: u64 = 0; index < 12; index = index + 1 {
+        if bytes[index] != expected[index] { return false; }
+    }
+
+    return true;
+}
+
+def main() -> i32 {
+    if !skewed_copy(1, true) || !skewed_copy(2, true)
+        || !skewed_copy(1, false) || !skewed_copy(2, false) { return 11; }
+
+    // Includes spare bits that must survive typed copies, independent of field values.
+    def raw: [u8; 9]          = {18, 52, 255, 86, 120, 171, 154, 188, 85};
+    def first: result<Record> = memory.read_packed<Record>(raw[0..3]);
+
+    if first.erroneous { return 1; }
+
+    def a: Record              = first.value;
+    def second: result<Record> = memory.read_packed<Record>(raw[3..6]);
+
+    if second.erroneous { return 2; }
+
+    def b: Record             = second.value;
+    def third: result<Record> = memory.read_packed<Record>(raw[6..9]);
+
+    if third.erroneous { return 3; }
+
+    def c: Record               = third.value;
+    def mut values: [Record; 3] = {a, b, c};
+
+    if !slices.copy<Record>(values[1..], values[..2]) { return 4; }
+
+    def mut bytes: [u8; 9] = zeroed;
+
+    for def mut index: u64 = 0; index < 3; index = index + 1 {
+        def written: result<void> = memory.write_packed<Record>(bytes[index * 3..index * 3 + 3], values[index]);
+        if written.erroneous { return 5; }
+    }
+
+    def expected: [u8; 9] = {18, 52, 255, 18, 52, 255, 86, 120, 171};
+
+    for def mut index: u64 = 0; index < 9; index = index + 1 {
+        if bytes[index] != expected[index] { return 6; }
+    }
+
+    def mut x: i32              = 10;
+    def mut y: i32              = 20;
+    def mut z: i32              = 30;
+    def mut pointers: [*i32; 3] = {&x, &y, &z};
+
+    if !slices.copy<*i32>(pointers[1..], pointers[..2]) { return 7; }
+    if pointers[0] != &x || pointers[1] != &x || pointers[2] != &y { return 8; }
+
+    x = 42;
+
+    if *pointers[1] != 42 { return 9; }
+
+    def mut empty: [Empty; 3] = {Empty {}; 3};
+    if !slices.copy<Empty>(empty[1..], empty[..2]) { return 10; }
+
+    return 42;
+}

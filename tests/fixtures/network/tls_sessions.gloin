@@ -113,11 +113,25 @@ def exchange(certificate: string, key: string, hostname: string, trust: string, 
 
     if !connection_ready { return 11; }
 
-    def accepted: result<net.AcceptOutcome> = listener.accept(&owner);
-    if accepted.erroneous { return 12; }
-    if !accepted.value.available { return 13; }
+    // A completed client connect can precede readiness on the listening socket.
+    def first: result<net.AcceptOutcome> = listener.accept(&owner);
+    if first.erroneous { return 12; }
 
-    def mut peer: net.Socket = accepted.value.socket;
+    def mut accepted: net.AcceptOutcome = first.value;
+
+    while !accepted.available {
+        if !within(start) { return 13; }
+
+        def ready: result<i32> = listener.wait(net.READABLE, 10);
+        if ready.erroneous { return 12; }
+
+        def next: result<net.AcceptOutcome> = listener.accept(&owner);
+        if next.erroneous { return 12; }
+
+        accepted = next.value;
+    }
+
+    def mut peer: net.Socket = accepted.socket;
     defer close_socket(&peer);
 
     def made_client: result<net.TlsClient> = socket.start_tls_client(&owner, hostname, trust);

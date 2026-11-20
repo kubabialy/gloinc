@@ -1,0 +1,73 @@
+import "@memory";
+import "@arena";
+
+def packed struct(lsb_first) Envelope {
+    def tag: u8,
+
+    def counters: packed(msb_first) [be_u16; 2],
+}
+
+def identity<T>(value: T) -> T { return value; }
+
+def returned(value: packed(msb_first) [u3; 3]) -> result<packed(msb_first) [u3; 3]> {
+    return value;
+}
+
+def main() -> i32 {
+    def raw: *u8 = memory.alloc(64, 16);
+    if raw == null { return 1; }
+    defer memory.free(raw);
+
+    if memory.size_of<packed(msb_first) [u13; 8]>() != 13 { return 2; }
+    if memory.align_of<packed(msb_first) [u13; 8]>() != 1 { return 3; }
+    if memory.size_of<[u13; 8]>() != 16 { return 4; }
+
+    def values: packed(msb_first) [u3; 8] = {1, 2, 3, 4, 5, 6, 7, 0};
+
+    def stored: *packed(msb_first) [u3; 8] = memory.place<packed(msb_first) [u3; 8]>(raw + 1, 3, values);
+
+    if stored == null { return 5; }
+    if *(raw + 1) != 0x29 || *(raw + 2) != 0xCB || *(raw + 3) != 0xB8 { return 6; }
+
+    def small: *packed(msb_first) [u3; 3] = memory.place<packed(msb_first) [u3; 3]>(raw + 8, 2, {1, 2, 3});
+
+    if small == null { return 7; }
+    if *(raw + 8) != 0x29 || *(raw + 9) != 0x80 { return 8; }
+
+    *(raw + 9) = 0xFF;
+
+    def copied: packed(msb_first) [u3; 3] = identity<packed(msb_first) [u3; 3]>(*small);
+
+    def wrapped: result<packed(msb_first) [u3; 3]> = returned(copied);
+    if wrapped.erroneous { return 9; }
+
+    def target: *packed(msb_first) [u3; 3] = memory.place<packed(msb_first) [u3; 3]>(raw + 16, 2, wrapped.value);
+
+    if target == null { return 10; }
+    if *(raw + 16) != 0x29 || *(raw + 17) != 0xFF { return 11; }
+
+    def envelope: Envelope = Envelope { tag: 0xA5, counters: {0x1234, 0x5678} };
+    def packet: *Envelope  = memory.place<Envelope>(raw + 21, 5, envelope);
+
+    if packet == null { return 12; }
+    if *(raw + 21) != 0xA5 || *(raw + 22) != 0x12 || *(raw + 23) != 0x34 || *(raw + 24) != 0x56 || *(raw + 25) != 0x78 { return 13; }
+
+    def zeros: packed(lsb_first) [u13; 2] = zeroed;
+
+    def zero: *packed(lsb_first) [u13; 2] = memory.place<packed(lsb_first) [u13; 2]>(raw + 32, 4, zeros);
+
+    if zero == null { return 14; }
+    if *(raw + 32) != 0 || *(raw + 33) != 0 || *(raw + 34) != 0 || *(raw + 35) != 0 { return 15; }
+
+    def mut a: arena.GeneralArena = arena.GeneralArena.create();
+    defer a.free();
+
+    def allocated: result<&packed(msb_first) [u3; 3]> = a.alloc_aligned<packed(msb_first) [u3; 3]>(copied, 64);
+    if allocated.erroneous { return 16; }
+
+    *target = *allocated.value;
+
+    if *(raw + 17) != 0xFF { return 17; }
+
+    return 42;
+}

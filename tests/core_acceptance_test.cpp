@@ -53,6 +53,48 @@ class CoreAcceptanceTest : public gloin_test::CliFixture {
 
 TEST_F(CoreAcceptanceTest, RunMinimal) { runs("run/minimal.gloin", "42"); }
 
+TEST_F(CoreAcceptanceTest, PackedIntegerArrayValuesPreserveExactBytesAcrossCallsAndAllocation) {
+    const auto file = fixture("run/packed_array_values.gloin");
+    expect_run(invoke({file}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/packed-array-values";
+        auto built = invoke_raw({optimization, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+
+TEST_F(CoreAcceptanceTest, AlignedAllocationAndBoundedPlacementPreserveBytesAndFailures) {
+    const auto file = fixture("run/aligned_storage.gloin");
+    expect_run(invoke({file}), 42);
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/aligned-storage";
+        auto built = invoke_raw({optimization, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+
+TEST_F(CoreAcceptanceTest, PackedBytesAndSpareBitsSurviveUpdatesCopiesAndCallsInAllModes) {
+    runs("run/packed.gloin", "42");
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/packed";
+        auto built = invoke_raw({optimization, "-o", executable, fixture("run/packed.gloin")});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+
+TEST_F(CoreAcceptanceTest, EndianBytesAndPaddingSurviveCopiesAndCallsInAllModes) {
+    runs("run/endian.gloin", "42");
+    for (const auto *optimization : {"-O0", "-O2"}) {
+        const auto executable = directory + "/endian";
+        auto built = invoke_raw({optimization, "-o", executable, fixture("run/endian.gloin")});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
+
 TEST_F(CoreAcceptanceTest, RunBase64DecoderWithExactBuffersAndMalformedInputs) {
     expect_success(invoke({"--check", fixture("run/base64_decode/codec.gloin")}), "");
     runs("run/base64_decode/main.gloin", "42");
@@ -291,6 +333,40 @@ TEST_F(CoreAcceptanceTest, CollectionOperationsPreserveLivePrefixAndSelfAppend) 
     )");
     expect_success(invoke({"--check", file}), "");
     expect_run(invoke({file}), 42);
+}
+TEST_F(CoreAcceptanceTest, SliceCopyMatchesSnapshotForEverySmallRangePair) {
+    const auto file = fixture("run/slice_copy.gloin");
+    expect_run(invoke({file}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/slice-copy";
+        const auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+TEST_F(CoreAcceptanceTest, SliceCopyPreservesPackedBytesAndShallowReferents) {
+    const auto file = fixture("run/slice_copy_values.gloin");
+    expect_run(invoke({file}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/slice-copy-values";
+        const auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+TEST_F(CoreAcceptanceTest, SliceCopyCannotStrengthenAccessOrConvertEndianTypes) {
+    for (const auto *body :
+         {"def destination: [i32; 1] = {0}; def source: [i32; 1] = {1}; "
+          "slices.copy<i32>(destination[..], source[..]);",
+          "def mut destination: [u16; 1] = zeroed; def source: [be_u16; 1] = zeroed; "
+          "slices.copy<u16>(destination[..], source[..]);",
+          "__slices_copy_backward<i32>(null, null);",
+          "slices.__slices_copy_backward<i32>(null, null);"}) {
+        SCOPED_TRACE(body);
+        const auto file = source("import \"@slices\"; def main() -> i32 { " + std::string(body) +
+                                 " return 42; }");
+        expect_error(invoke({"--check", file}), 1, "error:");
+    }
 }
 TEST_F(CoreAcceptanceTest, TypedReservedArenaStorageIsInternalToVector) {
     auto file = source(R"(
@@ -744,6 +820,10 @@ TEST_F(CoreAcceptanceTest, RunNestedEarlyReturns) { runs("run/nested_early_retur
 
 TEST_F(CoreAcceptanceTest, RunForComponents) { runs("run/for_components.gloin", "42"); }
 
+TEST_F(CoreAcceptanceTest, RunBreak) { runs("run/break.gloin", "3"); }
+
+TEST_F(CoreAcceptanceTest, RunContinue) { runs("run/continue.gloin", "8"); }
+
 TEST_F(CoreAcceptanceTest, RunPrecedence) { runs("run/precedence.gloin", "42"); }
 
 TEST_F(CoreAcceptanceTest, RunUtf8Comments) { runs("run/utf8_comments.gloin", "42"); }
@@ -883,7 +963,7 @@ TEST_F(CoreAcceptanceTest, RejectChainedAssignment) {
 }
 
 TEST_F(CoreAcceptanceTest, RejectNumericCast) {
-    rejects("reject/numeric_cast.gloin", "Expected expression");
+    rejects("reject/numeric_cast.gloin", "Expected i32 but got result<i32>");
 }
 
 TEST_F(CoreAcceptanceTest, RejectMalformedNumber) {
@@ -952,12 +1032,12 @@ TEST_F(CoreAcceptanceTest, RejectDeferredRange) {
     rejects("reject/deferred_range.gloin", "expression");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredBreak) {
-    rejects("reject/deferred_break.gloin", "expression");
+TEST_F(CoreAcceptanceTest, RejectBreakOutsideLoop) {
+    rejects("reject/break_outside_loop.gloin", "break is only allowed inside a loop body");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredContinue) {
-    rejects("reject/deferred_continue.gloin", "expression");
+TEST_F(CoreAcceptanceTest, RejectContinueOutsideLoop) {
+    rejects("reject/continue_outside_loop.gloin", "continue is only allowed inside a loop body");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredBitwise) {
@@ -1044,12 +1124,12 @@ TEST_F(CoreAcceptanceTest, RejectDeferredTypeChar) {
     rejects("reject/deferred_type_char.gloin", "Unknown or unsupported core type");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredTypeI4) {
-    rejects("reject/deferred_type_i4.gloin", "Unknown or unsupported core type");
+TEST_F(CoreAcceptanceTest, RejectInvalidTypeI65) {
+    rejects("reject/invalid_type_i65.gloin", "Unknown or unsupported core type");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredTypeBeU16) {
-    rejects("reject/deferred_type_be_u16.gloin", "Unknown or unsupported core type");
+TEST_F(CoreAcceptanceTest, RejectDeferredTypeBeU128) {
+    rejects("reject/deferred_type_be_u128.gloin", "Unknown or unsupported core type");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredTypeU16Be) {

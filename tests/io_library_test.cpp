@@ -69,7 +69,8 @@ class IoLibraryTest : public gloin_test::CliFixture {
                                                         : root / "../share/gloinc/stdlib";
     }
     void copy_modules() {
-        for (auto name : {"io.gloin", "std.gloin", "strings.gloin", "arena.gloin", "status.gloin"})
+        for (auto name : {"memory.gloin", "io.gloin", "std.gloin", "strings.gloin", "arena.gloin",
+                          "status.gloin"})
             source(read((library() / name).string()), name);
     }
     static void replace(std::string &text, const std::string &from, const std::string &to) {

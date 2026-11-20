@@ -154,28 +154,40 @@ struct PointerType : public Type {
 struct ArrayType : public Type {
     std::shared_ptr<Type> element;
     size_t length;
-    ArrayType(std::shared_ptr<Type> element, size_t length)
-        : element(std::move(element)), length(length) {}
+    PackedBitOrder bit_order;
+    ArrayType(std::shared_ptr<Type> element, size_t length,
+              PackedBitOrder order = PackedBitOrder::None)
+        : element(std::move(element)), length(length), bit_order(order) {}
     std::string to_string() const override {
-        return "[" + element->to_string() + "; " + std::to_string(length) + "]";
+        const std::string prefix = bit_order == PackedBitOrder::None       ? ""
+                                   : bit_order == PackedBitOrder::MsbFirst ? "packed(msb_first) "
+                                                                           : "packed(lsb_first) ";
+        return prefix + "[" + element->to_string() + "; " + std::to_string(length) + "]";
     }
     bool equals(const Type &other) const override {
         const auto *array = dynamic_cast<const ArrayType *>(&other);
-        return array && length == array->length && element->equals(*array->element);
+        return array && length == array->length && bit_order == array->bit_order &&
+               element->equals(*array->element);
     }
 };
 
 struct SliceType : public Type {
     std::shared_ptr<Type> element;
     bool read_only;
-    SliceType(std::shared_ptr<Type> element, bool read_only)
-        : element(std::move(element)), read_only(read_only) {}
+    PackedBitOrder bit_order;
+    SliceType(std::shared_ptr<Type> element, bool read_only,
+              PackedBitOrder order = PackedBitOrder::None)
+        : element(std::move(element)), read_only(read_only), bit_order(order) {}
     std::string to_string() const override {
-        return "[" + std::string(read_only ? "const " : "") + element->to_string() + "]";
+        const std::string prefix = bit_order == PackedBitOrder::None       ? ""
+                                   : bit_order == PackedBitOrder::MsbFirst ? "packed(msb_first) "
+                                                                           : "packed(lsb_first) ";
+        return prefix + "[" + std::string(read_only ? "const " : "") + element->to_string() + "]";
     }
     bool equals(const Type &other) const override {
         const auto *slice = dynamic_cast<const SliceType *>(&other);
-        return slice && read_only == slice->read_only && element->equals(*slice->element);
+        return slice && read_only == slice->read_only && bit_order == slice->bit_order &&
+               element->equals(*slice->element);
     }
 };
 
@@ -280,6 +292,7 @@ class Sema {
     const FunctionDefinition *current_function = nullptr;
     std::optional<CoreType> numeric_anchor(const Expression *expression);
     std::shared_ptr<Type> check_numeric_literal(const Expression *expression);
+    std::shared_ptr<Type> check_integer_conversion(const CallExpression *call, bool &handled);
     std::pair<std::shared_ptr<Type>, std::shared_ptr<Type>>
     check_binary_operands(const InfixExpression *expression);
     enum class Initialization { Uninitialized, Initialized, MaybeInitialized };
@@ -288,6 +301,21 @@ class Sema {
     enum class ResultProof { Unknown, Success, Error };
     std::unordered_map<SymbolId, ResultProof> result_proof;
     std::unordered_map<SymbolId, bool> result_handled;
+    struct LoopFlow {
+        InitializationState initialization;
+        std::unordered_map<SymbolId, ResultProof> proof;
+        std::unordered_map<SymbolId, bool> handled;
+    };
+    struct LoopContext {
+        const Statement *statement;
+        std::shared_ptr<Scope> enclosing_scope;
+        std::vector<LoopFlow> continues;
+        std::vector<LoopFlow> breaks;
+    };
+    std::vector<LoopContext> loops;
+    void check_continue(const ContinueStatement *statement);
+    void check_break(const BreakStatement *statement);
+    void merge_loop_flows(const InitializationState &before, const std::vector<LoopFlow> &edges);
     void check_live_results_handled();
     std::optional<std::pair<SymbolId, ResultProof>> result_condition(const Expression *condition);
     void merge_result_flow(const std::unordered_map<SymbolId, ResultProof> &left,

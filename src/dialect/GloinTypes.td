@@ -20,12 +20,20 @@ def EndiannessAttr : I32EnumAttr<"Endianness", "Endianness of integer types",
   let cppNamespace = "::gloin";
 }
 
-// Custom Integer Type with Endianness
-// e.g., !gloin.int<32, Big>
+def SignedInteger : I32EnumAttrCase<"Signed", 0>;
+def UnsignedInteger : I32EnumAttrCase<"Unsigned", 1>;
+def IntegerSignednessAttr : I32EnumAttr<"IntegerSignedness", "Integer signedness",
+                                      [SignedInteger, UnsignedInteger]> {
+    let cppNamespace = "::gloin";
+}
+
+// SSA values are numeric; byte order specifies their addressable representation.
 def GloinInteger : Gloin_Type<"GloinInteger", "int"> {
     let summary = "Integer type with explicit width and endianness";
-    let parameters = (ins "unsigned":$width, "Endianness":$endianness);
-    let assemblyFormat = "`<` $width `,` $endianness `>`";
+    let parameters = (ins "unsigned":$width, "Endianness":$endianness,
+                          "IntegerSignedness":$signedness);
+    let assemblyFormat = "`<` $width `,` $endianness `,` $signedness `>`";
+    let genVerifyDecl = 1;
 }
 
 // Pointer Type
@@ -45,6 +53,26 @@ def GloinSlice : Gloin_Type<"GloinSlice", "slice"> {
     let summary = "Borrowed source slice type with element access capability";
     let parameters = (ins "Type":$element, "bool":$readOnly);
     let assemblyFormat = "`<` $element `,` $readOnly `>`";
+}
+
+def GloinPackedArray : Gloin_Type<"GloinPackedArray", "packed_array"> {
+    let summary = "Fixed array with exact integer bit stride and explicit storage order";
+    let parameters = (ins "Type":$element, "uint64_t":$length, "bool":$msbFirst);
+    let assemblyFormat = "`<` $element `,` $length `,` $msbFirst `>`";
+    let genVerifyDecl = 1;
+}
+
+// An internal checked element location, never an ordinary scalar pointer.
+def GloinPackedSlot : Gloin_Type<"GloinPackedSlot", "packed_slot"> {
+    let parameters = (ins "Type":$element, "bool":$msbFirst, "bool":$readOnly);
+    let assemblyFormat = "`<` $element `,` $msbFirst `,` $readOnly `>`";
+    let genVerifyDecl = 1;
+}
+
+def GloinPackedSlice : Gloin_Type<"GloinPackedSlice", "packed_slice"> {
+    let parameters = (ins "Type":$element, "bool":$msbFirst, "bool":$readOnly);
+    let assemblyFormat = "`<` $element `,` $msbFirst `,` $readOnly `>`";
+    let genVerifyDecl = 1;
 }
 
 def GloinEnum : Gloin_Type<"GloinEnum", "enum"> {

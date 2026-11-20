@@ -1,0 +1,376 @@
+// Incremental HTTP/1.1 server session, independent of sockets, TCP and TLS.
+import "@http";
+import "@strings";
+import "@status";
+
+def pub const REQUEST: i32                 = 0;
+def pub const HEAD: i32                    = 1;
+def pub const BODY: i32                    = 2;
+def pub const RESPONSE: i32                = 3;
+def pub const COMPLETE: i32                = 4;
+def pub const CLOSED: i32                  = 5;
+def pub const FAILED: i32                  = 6;
+def pub const NO_EXPECTATION: i32          = 0;
+def pub const CONTINUE: i32                = 1;
+def pub const UNSUPPORTED_EXPECTATION: i32 = 2;
+
+def pub struct Limits {
+    def pub body_bytes: u64,
+    def pub metadata_bytes: u64,
+    def pub request_timeout_ms: u64,
+    def pub response_timeout_ms: u64,
+    def pub idle_timeout_ms: u64,
+    def pub max_requests: u64,
+
+    def pub static defaults() -> Limits {
+        return Limits { body_bytes: 1048576, metadata_bytes: 32768,
+            request_timeout_ms: 30000, response_timeout_ms: 30000, idle_timeout_ms: 60000, max_requests: 1000 };
+    }
+}
+
+def byte(text: string, index: u64) -> u8 {
+    def value: result<u8> = strings.byte_at(text, index);
+    if value.erroneous { return 0; }
+
+    return value.value;
+}
+
+def slice(text: string, start: u64, count: u64) -> string {
+    def value: result<string> = strings.slice_bytes(text, start, count);
+    if value.erroneous { return ""; }
+
+    return value.value;
+}
+
+def close_token(text: string) -> bool {
+    def mut start: u64 = 0;
+    def length: u64    = strings.byte_length(text);
+
+    for def mut i: u64 = 0; i <= length; i = i + 1 {
+        if i == length || byte(text, i) == 44 {
+            if http.header_name_equal(strings.trim_ascii(slice(text, start, i - start)), "close") { return true; }
+
+            start = i + 1;
+        }
+    }
+
+    return false;
+}
+
+// Copies alias caller-owned buffers. Each session must be driven serially.
+// Every returned input count is exact: retain the suffix, including pipelined
+// requests. Advance to the next request only after the complete response drains.
+def pub struct Session {
+    def head_storage: [u8],
+    def output_storage: [u8],
+    def limits: Limits,
+    def mut decoder: http.RequestDecoder,
+    def mut phase: i32,
+    def mut request_complete: bool,
+    def mut keep_alive: bool,
+    def mut expectation: i32,
+    def mut head_request: bool,
+    def mut output_start: u64,
+    def mut output_end: u64,
+    def mut chunked: bool,
+    def mut body_remaining: u64,
+    def mut response_complete: bool,
+    def mut requests: u64,
+    def mut started: u64,
+    def mut last_now: u64,
+    def mut begun: bool,
+
+    def pub static create(head_storage: [u8], output_storage: [u8], limits: Limits, now_ms: u64) -> result<Session> {
+        if output_storage.len < 64 || limits.request_timeout_ms == 0 || limits.response_timeout_ms == 0
+            || limits.idle_timeout_ms == 0 || limits.max_requests == 0 {
+            return error("invalid HTTP server limits or buffers", status.INVALID, 0);
+        }
+
+        def decoder: result<http.RequestDecoder> = http.RequestDecoder.create(head_storage,
+            limits.body_bytes, limits.metadata_bytes);
+        if decoder.erroneous { return decoder.error; }
+
+        return Session { head_storage: head_storage, output_storage: output_storage, limits: limits,
+            decoder: decoder.value, phase: REQUEST, request_complete: false, keep_alive: true,
+            expectation: NO_EXPECTATION, head_request: false, output_start: 0, output_end: 0,
+            chunked: false, body_remaining: 0, response_complete: false, requests: 0,
+            started: now_ms, last_now: now_ms, begun: false };
+    }
+
+    def pub state(self: &const Session) -> i32 { return self.phase; }
+
+    def pub expected(self: &const Session) -> i32 { return self.expectation; }
+
+    def pub body_complete(self: &const Session) -> bool { return self.request_complete; }
+
+    def pub will_close(self: &const Session) -> bool { return !self.keep_alive; }
+
+    def pub head(self: &const Session) -> result<http.RequestInfo> {
+        if self.phase == REQUEST || self.phase == FAILED || self.phase == CLOSED {
+            return error("HTTP request head is unavailable", status.INVALID, 0);
+        }
+
+        def head: result<http.RequestInfo> = self.decoder.head();
+        if head.erroneous { return head.error; }
+
+        return head.value;
+    }
+
+    def pub next_timeout_ms(self: &const Session, now_ms: u64) -> result<u64> {
+        if now_ms < self.last_now { return error("HTTP server clock moved backwards", status.INVALID, 0); }
+        if self.phase == CLOSED || self.phase == FAILED { return 18446744073709551615; }
+
+        def mut limit: u64 = self.limits.request_timeout_ms;
+        if self.phase == RESPONSE || self.phase == COMPLETE { limit = self.limits.response_timeout_ms; }
+        if self.phase == REQUEST && !self.begun { limit = self.limits.idle_timeout_ms; }
+        if now_ms - self.started >= limit { return 0; }
+
+        return limit - (now_ms - self.started);
+    }
+
+    def pub tick(self: &Session, now_ms: u64) -> result<void> {
+        def remaining: result<u64> = self.next_timeout_ms(now_ms);
+        if remaining.erroneous { return remaining.error; }
+
+        self.last_now = now_ms;
+
+        if remaining.value == 0 {
+            self.phase = FAILED;
+
+            return error("HTTP server deadline expired", status.TIMED_OUT, 0);
+        }
+
+        return;
+    }
+
+    def pub cancel(self: &Session) -> void { self.phase = CLOSED; self.output_start = 0; self.output_end = 0; }
+
+    def pub input(self: &Session, bytes: [const u8], end: bool, body: [u8], now_ms: u64) -> result<http.StreamProgress> {
+        def timed: result<void> = self.tick(now_ms);
+        if timed.erroneous { return timed.error; }
+        if self.phase == FAILED || self.phase == CLOSED { return error("HTTP session is closed", status.CLOSED, 0); }
+        if self.phase != REQUEST && self.phase != BODY {
+            return http.StreamProgress { complete: self.request_complete, consumed: 0, produced: 0, head_ready: true };
+        }
+
+        if self.phase == REQUEST && !self.begun {
+            if bytes.len == 0 && end {
+                self.phase = CLOSED;
+
+                return http.StreamProgress { complete: false, consumed: 0, produced: 0, head_ready: false };
+            }
+
+            if bytes.len != 0 { self.begun = true; self.started = now_ms; }
+        }
+
+        def fed: result<http.StreamProgress> = self.decoder.feed(strings.view_bytes(bytes), end, body);
+        if fed.erroneous { self.phase = FAILED; return fed.error; }
+
+        def progress: http.StreamProgress = fed.value;
+        self.request_complete = progress.complete;
+
+        if progress.head_ready && self.phase == REQUEST {
+            self.phase = HEAD;
+
+            def head: result<http.RequestInfo> = self.decoder.head();
+            if head.erroneous { self.phase = FAILED; return head.error; }
+
+            def info: http.RequestInfo = head.value;
+            self.head_request = strings.equal(info.method, "HEAD");
+            if !info.chunked && info.content_length == 0 { self.request_complete = true; }
+
+            def headers: result<http.Headers> = http.headers(info.head, self.head_storage.len);
+            if headers.erroneous { self.phase = FAILED; return headers.error; }
+
+            def mut fields: http.Headers = headers.value;
+            def mut again: bool          = true;
+
+            while again {
+                def field: http.HeaderItem = fields.next();
+                again = field.available;
+
+                if field.available {
+                    if http.header_name_equal(field.field.name, "Connection") && close_token(field.field.value) { self.keep_alive = false; }
+                    if http.header_name_equal(field.field.name, "Expect") {
+                        if self.expectation == NO_EXPECTATION && http.header_name_equal(field.field.value, "100-continue") {
+                            self.expectation = CONTINUE;
+                        } else { self.expectation = UNSUPPORTED_EXPECTATION; }
+                    }
+
+                    if http.header_name_equal(field.field.name, "Upgrade") { self.keep_alive = false; }
+                }
+            }
+        }
+
+        return http.StreamProgress { complete: self.request_complete, consumed: progress.consumed,
+            produced: progress.produced, head_ready: progress.head_ready };
+    }
+
+    // Application chooses acceptance after seeing the head. Reject by beginning
+    // a final response instead; undrained requests always force Connection: close.
+    def pub accept_body(self: &Session) -> result<void> {
+        if self.phase != HEAD || self.expectation == UNSUPPORTED_EXPECTATION {
+            return error("HTTP body acceptance requires a supported request head", status.INVALID, 0);
+        }
+
+        if self.expectation == CONTINUE && !self.request_complete {
+            def text: string = "HTTP/1.1 100 Continue\r\n\r\n";
+
+            for def mut i: u64 = 0; i < strings.byte_length(text); i = i + 1 { self.output_storage[i] = byte(text, i); }
+
+            self.output_end = strings.byte_length(text);
+        }
+
+        self.phase = BODY;
+
+        return;
+    }
+
+    def pub output(self: &const Session) -> [const u8] {
+        if self.phase == CLOSED || self.phase == FAILED { return self.output_storage[..0]; }
+
+        return self.output_storage[self.output_start..self.output_end];
+    }
+
+    def pub consume_output(self: &Session, count: u64) -> result<void> {
+        if self.phase == CLOSED || self.phase == FAILED || count > self.output_end - self.output_start {
+            return error("invalid HTTP output acknowledgment", status.OUT_OF_RANGE, 0);
+        }
+
+        self.output_start = self.output_start + count;
+
+        if self.output_start == self.output_end {
+            self.output_start = 0;
+            self.output_end   = 0;
+            if self.phase == RESPONSE && self.response_complete { self.phase = COMPLETE; }
+        }
+
+        return;
+    }
+
+    def pub begin_response(self: &Session, code: i32, reason: string, headers: [const http.Header],
+        length: u64, chunked: bool, close: bool, now_ms: u64) -> result<void> {
+        def timed: result<void> = self.tick(now_ms);
+        if timed.erroneous { return timed.error; }
+        if (self.phase != HEAD && self.phase != BODY) || self.output_start != self.output_end {
+            return error("HTTP response requires a request and drained interim output", status.INVALID, 0);
+        }
+
+        def keep: bool = self.keep_alive && !close && self.request_complete && self.requests < self.limits.max_requests - 1;
+        def written: result<u64> = http.write_response_head(self.output_storage, code, reason,
+            headers, length, chunked, keep, self.head_request);
+
+        if written.erroneous { return written.error; }
+
+        self.output_end     = written.value;
+        self.output_start   = 0;
+        self.keep_alive     = keep;
+        self.phase          = RESPONSE;
+        self.started        = now_ms;
+        self.chunked        = chunked;
+        self.body_remaining = length;
+        if self.head_request || code == 204 || code == 205 || code == 304 { self.body_remaining = 0; }
+
+        self.response_complete = !chunked && self.body_remaining == 0;
+        self.requests          = self.requests + 1;
+
+        return;
+    }
+
+    // Copies as many bytes as fit. With chunking, output includes one complete
+    // chunk; a zero result means drain pending output before retrying.
+    def pub write_body(self: &Session, bytes: [const u8]) -> result<u64> {
+        if self.phase != RESPONSE || self.response_complete { return error("HTTP response body is closed", status.CLOSED, 0); }
+        if self.output_start != self.output_end { return 0; }
+
+        def mut count: u64 = bytes.len;
+        if !self.chunked && count > self.body_remaining { return error("HTTP response exceeds Content-Length", status.TOO_LONG, 0); }
+
+        def mut capacity: u64 = self.output_storage.len;
+        if self.chunked { capacity = capacity - 20; }
+        if count > capacity { count = capacity; }
+        if count == 0 { return 0; }
+
+        def mut offset: u64 = 0;
+
+        if self.chunked {
+            def mut digits: [u8; 16] = zeroed;
+            def mut cursor: u64      = 16;
+            def mut rest: u64        = count;
+
+            while rest != 0 {
+                cursor = cursor - 1;
+                digits[cursor] = byte("0123456789abcdef", rest % 16);
+                rest = rest / 16;
+            }
+
+            while cursor < 16 { self.output_storage[offset] = digits[cursor]; offset = offset + 1; cursor = cursor + 1; }
+
+            self.output_storage[offset]     = 13;
+            self.output_storage[offset + 1] = 10;
+            offset = offset + 2;
+        }
+
+        for def mut i: u64 = 0; i < count; i = i + 1 { self.output_storage[offset + i] = bytes[i]; }
+
+        self.output_end = offset + count;
+
+        if self.chunked {
+            self.output_storage[self.output_end]     = 13;
+            self.output_storage[self.output_end + 1] = 10;
+            self.output_end                          = self.output_end + 2;
+        } else {
+            self.body_remaining    = self.body_remaining - count;
+            self.response_complete = self.body_remaining == 0;
+        }
+
+        return count;
+    }
+
+    def pub finish_body(self: &Session) -> result<void> {
+        if self.phase != RESPONSE { return error("HTTP response is not active", status.INVALID, 0); }
+        if self.output_start != self.output_end { return error("HTTP output must drain before finishing", status.WOULD_BLOCK, 0); }
+
+        if !self.chunked {
+            if self.body_remaining != 0 { return error("HTTP response is shorter than Content-Length", status.INVALID, 0); }
+
+            self.response_complete = true;
+            self.phase             = COMPLETE;
+
+            return;
+        }
+
+        def text: string = "0\r\n\r\n";
+
+        for def mut i: u64 = 0; i < 5; i = i + 1 { self.output_storage[i] = byte(text, i); }
+
+        self.output_end        = 5;
+        self.response_complete = true;
+
+        return;
+    }
+
+    // Call after the application has finished using request views and all
+    // response bytes have been accepted by the stream. Pipelining stays ordered.
+    def pub advance(self: &Session, now_ms: u64) -> result<void> {
+        def timed: result<void> = self.tick(now_ms);
+        if timed.erroneous { return timed.error; }
+        if self.phase != COMPLETE { return error("HTTP response is incomplete", status.IN_PROGRESS, 0); }
+        if !self.keep_alive { self.phase = CLOSED; return; }
+
+        def decoder: result<http.RequestDecoder> = http.RequestDecoder.create(self.head_storage,
+            self.limits.body_bytes, self.limits.metadata_bytes);
+        if decoder.erroneous { self.phase = FAILED; return decoder.error; }
+
+        self.decoder           = decoder.value;
+        self.phase             = REQUEST;
+        self.started           = now_ms;
+        self.begun             = false;
+        self.request_complete  = false;
+        self.expectation       = NO_EXPECTATION;
+        self.head_request      = false;
+        self.response_complete = false;
+
+        return;
+    }
+}

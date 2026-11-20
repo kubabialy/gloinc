@@ -201,13 +201,15 @@ TEST(NumericTest, DefaultLiteralsDoNotInferWiderOrDifferentCategories) {
     rejects("def f(x: bool) -> void { def y: i8 = x; }", "Type mismatch");
 }
 
-TEST(NumericTest, TypedConversionsAndCastSyntaxRemainRejected) {
+TEST(NumericTest, ImplicitConversionsAndCastSyntaxRemainRejected) {
     for (const std::string source :
          {"def f(x: i8) -> void { def y: i64 = x; }", "def f(x: i64) -> void { def y: i8 = x; }",
           "def f(x: u32) -> void { def y: i32 = x; }", "def f(x: f32) -> void { def y: f64 = x; }"})
         rejects(source, "Type mismatch");
-    for (const std::string cast : {"i32(x)", "x as i32", "f64(x)"})
-        rejects("def f(x: i64) -> i32 { return " + cast + "; }", "", DiagnosticStage::Parsing);
+    verifies("def f(x: i64) -> result<i32> { def r: result<i32> = i32(x); "
+             "if r.erroneous { return r.error; } return r.value; }");
+    rejects("def f(x: i64) -> i32 { return f64(x); }", "integer type");
+    rejects("def f(x: i64) -> i32 { return x as i32; }", "", DiagnosticStage::Parsing);
     rejects("def f() -> i128 { return 1; }", "unsupported core type");
     rejects("def f() -> u128 { return 1; }", "unsupported core type");
     rejects("def f() -> f128 { return 1.0; }", "unsupported core type");

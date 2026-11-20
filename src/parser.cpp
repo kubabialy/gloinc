@@ -130,6 +130,14 @@ bool GloinParser::generic_type_prefix_ahead() const {
     int depth = 0;
     for (size_t i = open; i + 1 < tokens.size(); ++i) {
         auto type = tokens[i].type;
+        if (type == GLOIN_TOKEN_PACKED) {
+            if (i + 3 >= tokens.size() || tokens[i + 1].type != GLOIN_TOKEN_LPAREN ||
+                tokens[i + 2].type != GLOIN_TOKEN_IDENTIFIER ||
+                tokens[i + 3].type != GLOIN_TOKEN_RPAREN)
+                return false;
+            i += 3;
+            continue;
+        }
         if (type == GLOIN_TOKEN_LT)
             ++depth;
         else if (type == GLOIN_TOKEN_GT)
@@ -279,6 +287,11 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         return expression;
     }
     default:
+        if (is_type_token(current_token.type) && next_token.type == GLOIN_TOKEN_LPAREN) {
+            auto name = located_node<Identifier>(std::string(current_token.literal));
+            advance_token();
+            return name;
+        }
         fail("Expected expression, got '" + std::string(current_token.literal) + "'");
     }
 }
@@ -429,6 +442,18 @@ std::unique_ptr<Statement> GloinParser::parse_statement_impl() {
         return parse_def_statement();
     case GLOIN_TOKEN_RETURN:
         return parse_return_statement();
+    case GLOIN_TOKEN_BREAK: {
+        auto statement = located_node<BreakStatement>();
+        advance_token();
+        expect(GLOIN_TOKEN_SEMICOLON, "Expected ';' after break");
+        return statement;
+    }
+    case GLOIN_TOKEN_CONTINUE: {
+        auto statement = located_node<ContinueStatement>();
+        advance_token();
+        expect(GLOIN_TOKEN_SEMICOLON, "Expected ';' after continue");
+        return statement;
+    }
     case GLOIN_TOKEN_IF:
         return parse_if_statement();
     case GLOIN_TOKEN_UNLESS:
@@ -507,6 +532,16 @@ std::unique_ptr<Identifier> GloinParser::parse_type_impl() {
         advance_token();
         if (accept(GLOIN_TOKEN_CONST))
             text += "const ";
+    }
+    if (accept(GLOIN_TOKEN_PACKED)) {
+        expect(GLOIN_TOKEN_LPAREN, "Expected '(' after packed storage qualifier");
+        auto order = parse_name()->value;
+        if (order != "msb_first" && order != "lsb_first")
+            fail("Packed storage requires msb_first or lsb_first");
+        expect(GLOIN_TOKEN_RPAREN, "Expected ')' after packed storage order");
+        if (current_token.type != GLOIN_TOKEN_LBRACKET)
+            fail("Packed storage qualifier requires an array or slice");
+        text += "packed(" + order + ") ";
     }
     if (accept(GLOIN_TOKEN_LBRACKET)) {
         const bool read_only = accept(GLOIN_TOKEN_CONST);
@@ -718,14 +753,22 @@ std::unique_ptr<ExpressionStatement> GloinParser::parse_expression_statement_imp
 }
 
 std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed) {
-    if (packed)
-        require_extended("Packed structs");
     expect(GLOIN_TOKEN_STRUCT, "Expected 'struct'");
     std::unique_ptr<Identifier> backing;
+    PackedBitOrder bit_order = PackedBitOrder::None;
     if (packed && accept(GLOIN_TOKEN_LPAREN)) {
-        backing = parse_type();
-        expect(GLOIN_TOKEN_RPAREN, "Expected ')' after backing type");
+        if (current_token.literal == "msb_first" || current_token.literal == "lsb_first") {
+            bit_order = current_token.literal == "msb_first" ? PackedBitOrder::MsbFirst
+                                                             : PackedBitOrder::LsbFirst;
+            advance_token();
+        } else {
+            require_extended("Packed structs require msb_first or lsb_first bit order");
+            backing = parse_type();
+        }
+        expect(GLOIN_TOKEN_RPAREN, "Expected ')' after packed bit order");
     }
+    if (packed && bit_order == PackedBitOrder::None)
+        require_extended("Packed structs require explicit msb_first or lsb_first bit order");
     auto name = parse_name();
     auto generics = parse_generic_params();
     expect(GLOIN_TOKEN_LBRACE, "Expected '{' after struct name");
@@ -761,6 +804,7 @@ std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed
             auto type = parse_type();
             int offset = -1;
             if (accept(GLOIN_TOKEN_KEYWORD_AT)) {
+                require_extended("Explicit packed field offsets are not supported");
                 if (!packed)
                     fail("Field offsets require a packed struct");
                 if (current_token.type != GLOIN_TOKEN_NUMBER)
@@ -775,9 +819,11 @@ std::unique_ptr<Statement> GloinParser::parse_struct_definition_impl(bool packed
         }
     }
     expect(GLOIN_TOKEN_RBRACE, "Expected closing struct brace");
-    return std::make_unique<StructDefinition>(std::move(name), std::move(fields),
-                                              std::move(methods), packed, std::move(backing),
-                                              std::move(generics));
+    auto definition =
+        std::make_unique<StructDefinition>(std::move(name), std::move(fields), std::move(methods),
+                                           packed, std::move(backing), std::move(generics));
+    definition->bit_order = bit_order;
+    return definition;
 }
 
 std::unique_ptr<Statement> GloinParser::parse_enum_definition_impl() {

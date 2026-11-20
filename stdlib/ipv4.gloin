@@ -1,0 +1,381 @@
+// Bounded IPv4 reassembly and datagram construction. Packet transport is external.
+import "@packet";
+import "@memory";
+import "@status";
+
+def pub const ICMP: u8 = 1;
+
+def pub struct Datagram {
+    def pub complete: bool,
+    // Borrowed until the next input/reset of the owning reassembler.
+    def pub bytes: [const u8],
+}
+
+// One datagram at a time. Storage reserves 60 prefix bytes and one byte per
+// payload byte; presence needs one byte per possible payload byte. Copies alias
+// both buffers. Inputs must not overlap these buffers. No hidden allocation.
+def pub struct Reassembly {
+    def storage: [u8],
+    def present: [u8],
+    def timeout: u64,
+    def mut active: bool,
+    def mut source: be_u32,
+    def mut destination: be_u32,
+    def mut identification: be_u16,
+    def mut protocol: u8,
+    def mut started: u64,
+    def mut last_now: u64,
+    def mut head_size: u64,
+    def mut final_size: u64,
+    def mut have_end: bool,
+    def mut extent: u64,
+    def mut more_extent: u64,
+    def mut received: u64,
+    def mut not_ect: bool,
+    def mut ect0: bool,
+    def mut ect1: bool,
+    def mut ce: bool,
+
+    def pub static create(storage: [u8], presence: [u8], timeout_ms: u64) -> result<Reassembly> {
+        if presence.len == 0 || presence.len > 65515 || storage.len < 60 + presence.len || timeout_ms == 0 {
+            return error("invalid IPv4 reassembly storage or timeout", status.INVALID, 0);
+        }
+
+        return Reassembly { storage: storage, present: presence, timeout: timeout_ms,
+            active: false, source: 0, destination: 0, identification: 0, protocol: 0,
+            started: 0, last_now: 0, head_size: 0, final_size: 0, have_end: false,
+            extent: 0, more_extent: 0, received: 0, not_ect: false, ect0: false, ect1: false, ce: false };
+    }
+
+    def pub reset(self: &Reassembly) -> void { self.active = false; }
+
+    def pub occupied(self: &const Reassembly) -> bool { return self.active; }
+
+    def pub matches(self: &const Reassembly, header: packet.Ipv4Header) -> bool {
+        return self.active && self.source == header.source && self.destination == header.destination
+            && self.identification == header.identification && self.protocol == header.protocol;
+    }
+
+    def pub expire(self: &Reassembly, now_ms: u64) -> result<bool> {
+        if now_ms < self.last_now { return error("IPv4 clock moved backwards", status.INVALID, 0); }
+
+        self.last_now = now_ms;
+
+        if self.active && now_ms - self.started >= self.timeout { self.active = false; return true; }
+
+        return false;
+    }
+
+    def pub next_timeout_ms(self: &const Reassembly, now_ms: u64) -> result<u64> {
+        if now_ms < self.last_now { return error("IPv4 clock moved backwards", status.INVALID, 0); }
+        if !self.active { return 18446744073709551615; }
+        if now_ms - self.started >= self.timeout { return 0; }
+
+        return self.timeout - (now_ms - self.started);
+    }
+
+    def pub input(self: &Reassembly, bytes: [const u8], now_ms: u64) -> result<Datagram> {
+        def parsed: result<packet.Ipv4Packet> = packet.parse_ipv4(bytes);
+        if parsed.erroneous { return parsed.error; }
+
+        def fragment: packet.Ipv4Packet = parsed.value;
+        def expired: result<bool>       = self.expire(now_ms);
+
+        if expired.erroneous { return expired.error; }
+        if fragment.header.more_fragments == 0 && fragment.header.fragment_offset == 0 {
+            return Datagram { complete: true, bytes: fragment.bytes };
+        }
+        if self.active && !self.matches(fragment.header) {
+            return error("IPv4 reassembly slot belongs to another datagram", status.WOULD_BLOCK, 0);
+        }
+
+        if !self.active {
+            for def mut i: u64 = 0; i < self.present.len; i = i + 1 { self.present[i] = 0; }
+
+            self.source         = fragment.header.source;
+            self.destination    = fragment.header.destination;
+            self.identification = fragment.header.identification;
+            self.protocol       = fragment.header.protocol;
+            self.started        = now_ms;
+            self.head_size      = 0;
+            self.have_end       = false;
+            self.final_size     = 0;
+            self.extent         = 0;
+            self.more_extent    = 0;
+            self.received       = 0;
+            self.not_ect        = false;
+            self.ect0           = false;
+            self.ect1           = false;
+            self.ce             = false;
+            self.active         = true;
+        }
+
+        def offset: result<u64> = u64(fragment.header.fragment_offset);
+        if offset.erroneous { return offset.error; }
+
+        def start: u64     = offset.value * 8;
+        def end: u64       = start + fragment.payload.len;
+        def head_size: u64 = 20 + fragment.options.len;
+
+        if end > self.present.len || (self.head_size != 0 && end + self.head_size > 65535)
+            || (start == 0 && self.extent + head_size > 65535) {
+            self.active = false;
+
+            return error("IPv4 reassembly exceeds storage or datagram limit", status.TOO_LONG, 0);
+        }
+        if (self.have_end && (end > self.final_size || (fragment.header.more_fragments != 0 && end >= self.final_size)))
+            || (fragment.header.more_fragments == 0 && ((self.have_end && end != self.final_size)
+                || self.extent > end || self.more_extent >= end)) {
+            self.active = false;
+
+            return error("conflicting IPv4 final fragment", status.INVALID, 0);
+        }
+
+        def mut overlap: u64 = 0;
+
+        for def mut i: u64 = start; i < end; i = i + 1 {
+            if self.present[i] != 0 {
+                overlap = overlap + 1;
+
+                if self.storage[60 + i] != fragment.payload[i - start] {
+                    self.active = false;
+
+                    return error("conflicting IPv4 fragment bytes", status.INVALID, 0);
+                }
+            }
+        }
+
+        // Identical fully covered retransmissions are harmless. Partial overlap
+        // discards the assembly, avoiding competing first/last-wins interpretations.
+        if overlap != 0 && overlap != fragment.payload.len {
+            self.active = false;
+
+            return error("partially overlapping IPv4 fragments", status.INVALID, 0);
+        }
+
+        if start == 0 {
+            if self.head_size != 0 {
+                if self.head_size != head_size {
+                    self.active = false;
+
+                    return error("conflicting IPv4 first header", status.INVALID, 0);
+                }
+
+                for def mut i: u64 = 20; i < head_size; i = i + 1 {
+                    if self.storage[60 - head_size + i] != bytes[i] {
+                        self.active = false;
+
+                        return error("conflicting IPv4 first options", status.INVALID, 0);
+                    }
+                }
+            } else {
+                for def mut i: u64 = 0; i < head_size; i = i + 1 { self.storage[60 - head_size + i] = bytes[i]; }
+
+                self.head_size = head_size;
+            }
+        }
+
+        if fragment.header.ecn == 0 { self.not_ect = true; }
+        if fragment.header.ecn == 1 { self.ect1 = true; }
+        if fragment.header.ecn == 2 { self.ect0 = true; }
+        if fragment.header.ecn == 3 { self.ce = true; }
+        if self.not_ect && (self.ect0 || self.ect1 || self.ce) {
+            self.active = false;
+
+            return error("incompatible IPv4 fragment ECN markings", status.INVALID, 0);
+        }
+
+        if overlap == 0 {
+            for def mut i: u64 = start; i < end; i = i + 1 {
+                self.storage[60 + i] = fragment.payload[i - start];
+                self.present[i]      = 1;
+            }
+
+            self.received = self.received + fragment.payload.len;
+        }
+
+        if fragment.header.more_fragments == 0 { self.have_end = true; self.final_size = end; }
+        if end > self.extent { self.extent = end; }
+        if fragment.header.more_fragments != 0 && end > self.more_extent { self.more_extent = end; }
+        if self.have_end && self.head_size != 0 && self.received == self.final_size {
+            def begin: u64                       = 60 - self.head_size;
+            def saved: result<packet.Ipv4Header> = memory.read_packed<packet.Ipv4Header>(self.storage[begin..]);
+
+            if saved.erroneous { return saved.error; }
+
+            def mut header: packet.Ipv4Header = saved.value;
+            def size: result<be_u16>          = be_u16(self.head_size + self.final_size);
+
+            if size.erroneous { return size.error; }
+
+            header.total_length    = size.value;
+            header.more_fragments  = 0;
+            header.fragment_offset = 0;
+            header.ecn             = 0;
+            if self.ect1 { header.ecn = 1; }
+            if self.ect0 { header.ecn = 2; }
+            if self.ce { header.ecn = 3; }
+
+            def written: result<void> = memory.write_packed<packet.Ipv4Header>(self.storage[begin..], header);
+            if written.erroneous { return written.error; }
+
+            def finish: u64          = 60 + self.final_size;
+            def sealed: result<void> = packet.seal_ipv4(self.storage[begin..finish]);
+
+            if sealed.erroneous { return sealed.error; }
+
+            self.active = false;
+
+            return Datagram { complete: true, bytes: self.storage[begin..finish] };
+        }
+
+        return Datagram { complete: false, bytes: bytes[..0] };
+    }
+}
+
+// Network addresses and ports retain their byte-order qualification at the API.
+def pub header(output: [u8], source: be_u32, destination: be_u32,
+    protocol: u8, length: u64, identification: be_u16) -> result<void> {
+    if length < 20 || length > 65535 || output.len < length {
+        return error("invalid IPv4 output length", status.OUT_OF_RANGE, 0);
+    }
+
+    def total: result<be_u16> = be_u16(length);
+    if total.erroneous { return total.error; }
+
+    def written: result<void> = memory.write_packed<packet.Ipv4Header>(output, packet.Ipv4Header {
+        version: 4, header_words: 5, dscp: 0, ecn: 0, total_length: total.value,
+        identification: identification, reserved: 0, dont_fragment: 1, more_fragments: 0,
+        fragment_offset: 0, ttl: 64, protocol: protocol, checksum: 0,
+        source: source, destination: destination });
+    if written.erroneous { return written.error; }
+
+    return;
+}
+
+def pub udp(output: [u8], source: be_u32, destination: be_u32,
+    source_port: be_u16, destination_port: be_u16, payload: [const u8], identification: be_u16) -> result<u64> {
+    if payload.len > 65507 || output.len < 28 + payload.len || destination_port == 0 {
+        return error("invalid UDP output length or port", status.OUT_OF_RANGE, 0);
+    }
+
+    def transport_length: u64  = payload.len + 8;
+    def length: result<be_u16> = be_u16(transport_length);
+
+    if length.erroneous { return length.error; }
+
+    def ip: result<void> = header(output, source, destination, packet.UDP, 28 + payload.len, identification);
+    if ip.erroneous { return ip.error; }
+
+    def transport: result<void> = memory.write_packed<packet.UdpHeader>(output[20..], packet.UdpHeader {
+        source_port: source_port, destination_port: destination_port, length: length.value, checksum: 0 });
+    if transport.erroneous { return transport.error; }
+
+    for def mut i: u64 = 0; i < payload.len; i = i + 1 { output[28 + i] = payload[i]; }
+
+    def sealed: result<void> = packet.seal_udp_ipv4(output[..28 + payload.len]);
+    if sealed.erroneous { return sealed.error; }
+
+    return 28 + payload.len;
+}
+
+def pub packed struct(msb_first) IcmpHeader {
+    def pub mut kind: u8,
+    def pub mut code: u8,
+    def pub mut checksum: be_u16,
+    def pub mut rest: be_u32,
+}
+
+// Caller filters local unicast destinations. Returns zero for non-echo ICMP.
+// Input and output must not overlap. Copies echo identifiers and payload verbatim.
+def pub echo_reply(bytes: [const u8], output: [u8], identification: be_u16) -> result<u64> {
+    def parsed: result<packet.Ipv4Packet> = packet.parse_ipv4(bytes);
+    if parsed.erroneous { return parsed.error; }
+
+    def ip: packet.Ipv4Packet = parsed.value;
+    if ip.header.protocol != ICMP || ip.header.more_fragments != 0 || ip.header.fragment_offset != 0 {
+        return error("ICMP requires an unfragmented IPv4 datagram", status.INVALID, 0);
+    }
+
+    def read: result<IcmpHeader> = memory.read_packed<IcmpHeader>(ip.payload);
+    if read.erroneous { return read.error; }
+
+    def value: IcmpHeader       = read.value;
+    def checked: result<be_u16> = packet.checksum(ip.payload);
+
+    if checked.erroneous { return checked.error; }
+    if checked.value != 0 { return error("invalid ICMP checksum", status.INVALID, 0); }
+    if value.kind != 8 || value.code != 0 { return 0; }
+
+    def length: u64           = 20 + ip.payload.len;
+    def written: result<void> = header(output, ip.header.destination, ip.header.source, ICMP, length, identification);
+
+    if written.erroneous { return written.error; }
+
+    for def mut i: u64 = 0; i < ip.payload.len; i = i + 1 { output[20 + i] = ip.payload[i]; }
+
+    output[20] = 0;
+    output[22] = 0;
+    output[23] = 0;
+
+    def checksum: result<be_u16> = packet.checksum(output[20..length]);
+    if checksum.erroneous { return checksum.error; }
+
+    def mut reply: IcmpHeader = value;
+    reply.kind     = 0;
+    reply.checksum = checksum.value;
+
+    def encoded: result<void> = memory.write_packed<IcmpHeader>(output[20..], reply);
+    if encoded.erroneous { return encoded.error; }
+
+    def sealed: result<void> = packet.seal_ipv4(output[..length]);
+    if sealed.erroneous { return sealed.error; }
+
+    return length;
+}
+
+// ICMP destination-unreachable response for a validated local unicast packet.
+// Never answer an ICMP error or a noninitial fragment. Quote the original header
+// plus eight payload bytes (or all available bytes for shorter datagrams).
+def pub unreachable(bytes: [const u8], output: [u8], code: u8, identification: be_u16) -> result<u64> {
+    if code != 2 && code != 3 { return error("unsupported ICMP unreachable code", status.INVALID, 0); }
+
+    def parsed: result<packet.Ipv4Packet> = packet.parse_ipv4(bytes);
+    if parsed.erroneous { return parsed.error; }
+
+    def original: packet.Ipv4Packet = parsed.value;
+    if original.header.fragment_offset != 0 { return 0; }
+
+    if original.header.protocol == ICMP {
+        if original.payload.len == 0 { return 0; }
+
+        def kind: u8 = original.payload[0];
+        if kind == 3 || kind == 4 || kind == 5 || kind == 11 || kind == 12 { return 0; }
+    }
+
+    def mut quote: u64 = 28 + original.options.len;
+    if quote > original.bytes.len { quote = original.bytes.len; }
+
+    def length: u64           = 28 + quote;
+    def written: result<void> = header(output, original.header.destination, original.header.source, ICMP, length, identification);
+
+    if written.erroneous { return written.error; }
+
+    def transport: result<void> = memory.write_packed<IcmpHeader>(output[20..],
+        IcmpHeader { kind: 3, code: code, checksum: 0, rest: 0 });
+    if transport.erroneous { return transport.error; }
+
+    for def mut i: u64 = 0; i < quote; i = i + 1 { output[28 + i] = original.bytes[i]; }
+
+    def sum: result<be_u16> = packet.checksum(output[20..length]);
+    if sum.erroneous { return sum.error; }
+
+    def encoded: result<void> = memory.write_packed<IcmpHeader>(output[20..],
+        IcmpHeader { kind: 3, code: code, checksum: sum.value, rest: 0 });
+    if encoded.erroneous { return encoded.error; }
+
+    def sealed: result<void> = packet.seal_ipv4(output[..length]);
+    if sealed.erroneous { return sealed.error; }
+
+    return length;
+}

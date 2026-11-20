@@ -1,0 +1,101 @@
+import "@ip_stack";
+import "@ipv4";
+import "@tcp";
+import "@packet";
+import "@memory";
+
+def main() -> i32 {
+    def mut tx: [u8; 256]      = zeroed;
+    def mut rx: [u8; 256]      = zeroed;
+    def mut present: [u8; 256] = zeroed;
+    def made: result<tcp.Slot> = tcp.Slot.create(tcp.Buffers { send: tx[..], receive: rx[..], present: present[..] }, tcp.Options.defaults());
+
+    if made.erroneous { return 1; }
+
+    def mut slots: [tcp.Slot; 1]            = {made.value};
+    def ports: [be_u16; 1]                  = {80};
+    def udp_ports: [be_u16; 1]              = {53};
+    def mut fragments: [ipv4.Reassembly; 0] = {};
+    def created: result<ip_stack.Endpoint>  = ip_stack.Endpoint.create(0xc6336402, ports[..], udp_ports[..], slots[..], fragments[..]);
+
+    if created.erroneous { return 2; }
+
+    def mut endpoint: ip_stack.Endpoint = created.value;
+    def mut input: [u8; 1500]           = zeroed;
+    def mut output: [u8; 1502]          = zeroed;
+    def payload: [u8; 5]                = {0,255,97,98,99};
+    def udp: result<u64>                = ipv4.udp(input[..], 0xc0000201, 0xc6336402, 1234, 53, payload[..], 123);
+
+    if udp.erroneous { return 3; }
+
+    def received: result<ip_stack.Event> = endpoint.input(input[..udp.value], 0, 0, output[1..1501]);
+    if received.erroneous { return 4; }
+    if received.value.protocol != packet.UDP || received.value.source != 0xc0000201
+        || received.value.source_port != 1234 || received.value.destination_port != 53
+        || received.value.reply_bytes != 0 || received.value.payload.len != 5 { return 5; }
+
+    for def mut i: u64 = 0; i < 5; i = i + 1 { if received.value.payload[i] != payload[i] { return 6; } }
+
+    def closed: result<u64> = ipv4.udp(input[..], 0xc0000201, 0xc6336402, 1234, 54, payload[..], 124);
+    if closed.erroneous { return 7; }
+
+    def rejected: result<ip_stack.Event> = endpoint.input(input[..closed.value], 0, 1, output[1..1501]);
+    if rejected.erroneous { return 8; }
+    if rejected.value.reply_bytes != 56 || rejected.value.protocol != 0 { return 9; }
+
+    def parsed: result<packet.Ipv4Packet> = packet.parse_ipv4(output[1..57]);
+    if parsed.erroneous { return 10; }
+
+    def ip: packet.Ipv4Packet = parsed.value;
+    if ip.header.source != 0xc6336402 || ip.header.destination != 0xc0000201 || ip.header.protocol != 1 { return 11; }
+
+    def icmp: result<ipv4.IcmpHeader> = memory.read_packed<ipv4.IcmpHeader>(ip.payload);
+    if icmp.erroneous { return 12; }
+    if icmp.value.kind != 3 || icmp.value.code != 3 || icmp.value.rest != 0 { return 13; }
+
+    def sum: result<be_u16> = packet.checksum(ip.payload);
+    if sum.erroneous { return 14; }
+    if sum.value != 0 { return 15; }
+
+    for def mut i: u64 = 0; i < 28; i = i + 1 { if ip.payload[8 + i] != input[i] { return 16; } }
+
+    // Echo preserves identifier/sequence and binary payload; checksum includes odd tails.
+    def header: result<void> = ipv4.header(input[..], 0xc0000201, 0xc6336402, 1, 33, 125);
+    if header.erroneous { return 17; }
+
+    def echo: result<void> = memory.write_packed<ipv4.IcmpHeader>(input[20..], ipv4.IcmpHeader { kind: 8, code: 0, checksum: 0, rest: 0x01234567 });
+    if echo.erroneous { return 18; }
+
+    for def mut i: u64 = 0; i < 5; i = i + 1 { input[28 + i] = payload[i]; }
+
+    def checksum: result<be_u16> = packet.checksum(input[20..33]);
+    if checksum.erroneous { return 19; }
+
+    def sealed_echo: result<void> = memory.write_packed<ipv4.IcmpHeader>(input[20..], ipv4.IcmpHeader { kind: 8, code: 0, checksum: checksum.value, rest: 0x01234567 });
+    if sealed_echo.erroneous { return 20; }
+
+    def sealed_ip: result<void> = packet.seal_ipv4(input[..33]);
+    if sealed_ip.erroneous { return 21; }
+
+    def replied: result<ip_stack.Event> = endpoint.input(input[..33], 0, 2, output[1..1501]);
+    if replied.erroneous { return 22; }
+    if replied.value.reply_bytes != 33 { return 23; }
+
+    def read: result<ipv4.IcmpHeader> = memory.read_packed<ipv4.IcmpHeader>(output[21..34]);
+    if read.erroneous { return 24; }
+    if read.value.kind != 0 || read.value.code != 0 || read.value.rest != 0x01234567 { return 25; }
+
+    def valid: result<be_u16> = packet.checksum(output[21..34]);
+    if valid.erroneous { return 26; }
+    if valid.value != 0 { return 27; }
+
+    for def mut i: u64 = 0; i < 5; i = i + 1 { if output[29 + i] != payload[i] { return 28; } }
+    if output[0] != 0 || output[1501] != 0 { return 29; }
+
+    input[32] = 0;
+
+    def corrupt: result<ip_stack.Event> = endpoint.input(input[..33], 0, 3, output[1..1501]);
+    if !corrupt.erroneous { return 30; }
+
+    return 0;
+}

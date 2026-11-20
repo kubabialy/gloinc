@@ -40,7 +40,7 @@ std::shared_ptr<Type> Sema::check_typed_expression(const Expression *expression,
     }
     auto slice = std::dynamic_pointer_cast<SliceType>(actual);
     auto expected_slice = std::dynamic_pointer_cast<SliceType>(expected);
-    if (recording && slice && expected_slice &&
+    if (recording && slice && expected_slice && slice->bit_order == expected_slice->bit_order &&
         slice->element->equals(*expected_slice->element) &&
         (!slice->read_only || expected_slice->read_only)) {
         actual = expected_slice;
@@ -103,6 +103,13 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
         return {type, !pointer.pointers.front().read_only, true};
     }
     if (const auto *index = dynamic_cast<const IndexExpression *>(expression)) {
+        const auto &container = recording->types.at(index->left.get());
+        if (take_address && !std::dynamic_pointer_cast<StructType>(type) &&
+            (container.array_order != PackedBitOrder::None ||
+             container.slice_order != PackedBitOrder::None)) {
+            log_error("Cannot take an ordinary reference to a packed scalar element");
+            return {};
+        }
         if (auto slice = std::dynamic_pointer_cast<SliceType>(
                 check_expression(index->left.get())))
             return {type, !slice->read_only, true};
@@ -136,6 +143,12 @@ Sema::Place Sema::check_place(const Expression *expression, bool take_address) {
         }
         const auto &field = recording->structures.at(*base_type.structure)
                                 .fields.at(recording->field_indices.at(member));
+        if (take_address &&
+            recording->structures.at(*base_type.structure).bit_order != PackedBitOrder::None &&
+            !field.type.structure && !field.type.is_array()) {
+            log_error("Cannot take an ordinary reference to a packed scalar field");
+            return {};
+        }
         return {type, base.writable && field.is_mutable, base.addressable};
     }
     log_error(

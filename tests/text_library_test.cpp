@@ -34,8 +34,25 @@ class TextLibraryTest : public gloin_test::CliFixture {
                                                         : root / "../share/gloinc/stdlib";
     }
     void copy_modules() {
-        for (const auto *name : {"strings.gloin", "std.gloin", "status.gloin", "arena.gloin"})
+        for (const auto *name :
+             {"memory.gloin", "strings.gloin", "std.gloin", "status.gloin", "arena.gloin"})
             source(read((library() / name).string()), name);
+    }
+    void modes(const std::string &file, bool replacement = false) {
+        const std::vector<std::string> options =
+            replacement ? std::vector<std::string>{"--stdlib-dir", directory}
+                        : std::vector<std::string>{};
+        auto arguments = options;
+        arguments.push_back(file);
+        expect_run(invoke(arguments), 0);
+        for (const auto *mode : {"-O0", "-O2"}) {
+            const auto executable = directory + "/builder";
+            arguments = options;
+            arguments.insert(arguments.end(), {mode, "-o", executable, file});
+            const auto built = invoke_raw(arguments);
+            ASSERT_EQ(built.status, 0) << built.err;
+            EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 0);
+        }
     }
     // Per-handle deterministic failure injection, while retaining the actual
     // typed allocation bridge, runtime allocation, and normal cleanup.
@@ -43,17 +60,21 @@ class TextLibraryTest : public gloin_test::CliFixture {
         copy_modules();
         auto arena = read((library() / "arena.gloin").string());
         auto replace = [&](const std::string &from, const std::string &to) {
-            size_t pos = 0;
+            size_t pos = 0, count = 0;
             while ((pos = arena.find(from, pos)) != std::string::npos) {
                 arena.replace(pos, from.size(), to);
                 pos += to.size();
+                ++count;
             }
+            EXPECT_GT(count, 0u) << from;
         };
         replace("def mut state: *u8,", "def mut state: *u8, def mut requests: u64,");
         replace("GeneralArena {\n            state: state\n        }",
                 "GeneralArena {\n            state: state,\n            requests: 0\n        }");
         replace("__arena_general_alloc(self.state, size, alignment)",
                 "self.test_allocate(size, alignment)");
+        replace("__arena_general_alloc(self.state, size.value, alignment)",
+                "self.test_allocate(size.value, alignment)");
         replace("__arena_general_alloc(self.state, size, 1)", "self.test_allocate(size, 1)");
         const auto insertion = arena.rfind('}');
         ASSERT_NE(insertion, std::string::npos);
@@ -338,14 +359,22 @@ TEST_F(TextLibraryTest, ZeroCapacityBuilderAndSnapshotLifetime) {
                0);
 }
 
-TEST_F(TextLibraryTest, BuilderReportsBothAllocationFailuresAndRejectsUncheckedHandle) {
-    for (unsigned allocation : {1u, 2u}) {
-        fail_allocation(allocation);
-        auto file = program(
-            R"(def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8);
-        if !made.erroneous { return 97; }
-            if made.error.code != status.NO_MEMORY { return 1; } return 0;)");
-        expect_run(invoke({"--stdlib-dir", directory, file}), 0);
+TEST_F(TextLibraryTest, BuilderCreationFailureIsRecoverableAndRejectsUncheckedHandle) {
+    fail_allocation(1);
+    for (const auto capacity : {0u, 8u}) {
+        SCOPED_TRACE(capacity);
+        auto file = program("def capacity: u64 = " + std::to_string(capacity) + R"(;
+            def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,capacity);
+            if !made.erroneous { return 1; }
+            if made.error.code != status.NO_MEMORY || made.error.os_error != 0
+                || !strings.equal(made.error.message, "cannot allocate string builder") { return 2; }
+            def retry: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,capacity);
+            if retry.erroneous { return 3; }
+            def mut builder: strings.StringBuilder = retry.value;
+            if builder.capacity() != capacity || builder.byte_length() != 0 { return 4; }
+            if void_code(builder.append("")) != status.OK { return 5; }
+            return 0;)");
+        modes(file, true);
         file = program(
             R"(def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8);
             def mut invalid: strings.StringBuilder = made.value; invalid.clear(); return 0;)");
@@ -363,7 +392,7 @@ TEST_F(TextLibraryTest, BuilderReportsBothAllocationFailuresAndRejectsUncheckedH
 }
 
 TEST_F(TextLibraryTest, AppendClearAndCursorsAllocateNothingSnapshotFailurePreservesBuilder) {
-    fail_allocation(3);
+    fail_allocation(2);
     auto file = program(R"(
         def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8);
         if made.erroneous { return 97; }
@@ -382,6 +411,155 @@ TEST_F(TextLibraryTest, AppendClearAndCursorsAllocateNothingSnapshotFailurePrese
         if failed.error.code != status.NO_MEMORY || failed.error.os_error != 0 || b.byte_length() != 4 { return 4; }
         if !ok(b.to_string(&memory),"abc\0") { return 5; } return 0;)");
     expect_run(invoke({"--stdlib-dir", directory, file}), 0);
+}
+
+TEST_F(TextLibraryTest, BuilderUsesOneAlignedBlockAndPreservesAliasesAndSnapshots) {
+    fail_allocation(3);
+    for (const auto capacity : {0u, 1u, 17u, 256u}) {
+        SCOPED_TRACE(capacity);
+        modes(program("def capacity: u64 = " + std::to_string(capacity) + R"(;
+            def preceding: *u8 = memory.try_alloc_bytes(1);
+            if preceding == null { return 1; }
+            *preceding = 108;
+            def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,capacity);
+            if made.erroneous { return 2; }
+            def mut a: strings.StringBuilder = made.value;
+            def mut b: strings.StringBuilder = a;
+            for def mut index: u64 = 0; index < capacity; index = index + 1 {
+                def byte: result<u8> = u8(index);
+                if byte.erroneous { return 3; }
+                if void_code(b.append_byte(byte.value)) != status.OK { return 4; }
+            }
+            if a.capacity() != capacity || a.byte_length() != capacity
+                || void_code(a.append_byte(42)) != status.TOO_LONG { return 5; }
+            def mut retained: arena.GeneralArena = arena.GeneralArena.create();
+            defer retained.free();
+            def saved: result<string> = a.to_string(&retained);
+            if saved.erroneous { return 6; }
+            def snapshot: string = saved.value;
+            b.clear();
+            if a.byte_length() != 0 || void_code(a.append("")) != status.OK { return 7; }
+            if capacity > 0 {
+                if void_code(a.append_byte(90)) != status.OK || b.byte_length() != 1 { return 8; }
+            }
+            def failed: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,capacity);
+            if !failed.erroneous { return 9; }
+            if failed.error.code != status.NO_MEMORY || *preceding != 108 { return 10; }
+            def retry: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,capacity);
+            if retry.erroneous { return 11; }
+            def fresh: strings.StringBuilder = retry.value;
+            if fresh.byte_length() != 0 || fresh.capacity() != capacity || a.capacity() != capacity { return 12; }
+            if capacity > 0 && a.byte_length() != 1 { return 13; }
+            memory.reset();
+            if strings.byte_length(snapshot) != capacity { return 14; }
+            for def mut index: u64 = 0; index < capacity; index = index + 1 {
+                def byte: result<u8> = u8(index);
+                if byte.erroneous { return 15; }
+                if strings.byte(snapshot,index) != byte.value { return 16; }
+            }
+            return 0;
+        )"),
+              true);
+    }
+}
+
+TEST_F(TextLibraryTest, BuilderRejectsUnrepresentableCombinedExtentsBeforeAllocating) {
+    fail_allocation(1);
+    modes(program(R"(
+        def capacities: [u64; 2] = {18446744073709551615, 9223372036854775807};
+        for def mut index: u64 = 0; index < 2; index = index + 1 {
+            def rejected: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,capacities[index]);
+            if !rejected.erroneous { return 1; }
+            if rejected.error.code != status.NO_MEMORY || rejected.error.os_error != 0 { return 2; }
+        }
+        def failed: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,0);
+        if !failed.erroneous { return 3; }
+        if failed.error.code != status.NO_MEMORY { return 4; }
+        def retry: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,1);
+        if retry.erroneous { return 5; }
+        def mut builder: strings.StringBuilder = retry.value;
+        if void_code(builder.append("x")) != status.OK || builder.byte_length() != 1 { return 6; }
+        return 0;
+    )"),
+          true);
+}
+
+TEST_F(TextLibraryTest, BuilderAppendsByteSlicesWithoutAllocationOrRetainingSource) {
+    fail_allocation(2);
+    modes(program(R"(
+        def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,257);
+        if made.erroneous { return 1; }
+        def mut builder: strings.StringBuilder = made.value;
+        def mut alias: strings.StringBuilder = builder;
+        def mut bytes: [u8; 256] = {0; 256};
+        for def mut index: u64 = 0; index < 256; index = index + 1 {
+            def value: result<u8> = u8(index);
+            if value.erroneous { return 2; }
+            bytes[index] = value.value;
+        }
+        if void_code(builder.append("!")) != status.OK
+            || void_code(alias.append_bytes(bytes[0..128])) != status.OK { return 3; }
+        def readonly: [const u8] = bytes[128..256];
+        if void_code(builder.append_bytes(readonly)) != status.OK
+            || alias.byte_length() != 257 || builder.capacity() != 257 { return 4; }
+        if void_code(alias.append_bytes(bytes[256..256])) != status.OK { return 5; }
+        def full: result<void> = builder.append_bytes(bytes[0..1]);
+        if !full.erroneous { return 6; }
+        if full.error.code != status.TOO_LONG || full.error.os_error != 0
+            || !strings.equal(full.error.message,"string builder capacity exceeded") { return 7; }
+        for def mut index: u64 = 0; index < 256; index = index + 1 { bytes[index] = 42; }
+        // The next allocation must still be request two: appends allocate nothing.
+        def failed: result<string> = builder.to_string(&memory);
+        if !failed.erroneous { return 8; }
+        if failed.error.code != status.NO_MEMORY { return 9; }
+        def saved: result<string> = builder.to_string(&memory);
+        if saved.erroneous { return 10; }
+        def snapshot: string = saved.value;
+        if strings.byte_length(snapshot) != 257 || strings.byte(snapshot,0) != 33 { return 11; }
+        for def mut index: u64 = 0; index < 256; index = index + 1 {
+            def value: result<u8> = u8(index);
+            if value.erroneous { return 12; }
+            if strings.byte(snapshot,index + 1) != value.value { return 13; }
+        }
+        alias.clear();
+        if void_code(builder.append_bytes(bytes[0..256])) != status.OK { return 14; }
+        if void_code(alias.append_bytes(bytes[0..2])) != status.TOO_LONG
+            || builder.byte_length() != 256 { return 15; }
+        bytes[0] = 90;
+        if void_code(alias.append_bytes(bytes[0..1])) != status.OK { return 16; }
+        def retried: result<string> = builder.to_string(&memory);
+        if retried.erroneous { return 17; }
+        def result_text: string = retried.value;
+        for def mut index: u64 = 0; index < 256; index = index + 1 {
+            if strings.byte(result_text,index) != 42 { return 18; }
+        }
+        if strings.byte(result_text,256) != 90 || strings.byte(snapshot,1) != 0 { return 19; }
+        def zero: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,0);
+        if zero.erroneous { return 20; }
+        def mut empty: strings.StringBuilder = zero.value;
+        if void_code(empty.append_bytes(bytes[0..0])) != status.OK
+            || void_code(empty.append_bytes(readonly)) != status.TOO_LONG { return 21; }
+        return 0;
+    )"),
+          true);
+}
+
+TEST_F(TextLibraryTest, BuilderByteAppendRequiresMutableReceiverByteSliceAndHandledResult) {
+    for (const std::string body :
+         {"def b: strings.StringBuilder = made.value; "
+          "def r: result<void> = b.append_bytes(bytes[0..1]); if r.erroneous { return 2; }",
+          "def mut b: strings.StringBuilder = made.value; b.append_bytes(bytes[0..1]);",
+          "def mut b: strings.StringBuilder = made.value; "
+          "def r: result<void> = b.append_bytes(\"x\"); if r.erroneous { return 2; }",
+          "def mut b: strings.StringBuilder = made.value; def words: [u16; 1] = {1}; "
+          "def r: result<void> = b.append_bytes(words[0..1]); if r.erroneous { return 2; }"}) {
+        const auto file = program(
+            "def made: result<strings.StringBuilder> = strings.StringBuilder.create(&memory,8); "
+            "if made.erroneous { return 1; } def bytes: [u8; 1] = {65}; " +
+            body + " return 0;");
+        for (const std::string mode : {"--check", "--emit-ir", "--emit-llvm", "--run"})
+            expect_error(invoke({mode, file}), 1, "error:");
+    }
 }
 
 TEST_F(TextLibraryTest, TransformAllocationFailuresPreserveDiagnosticCodes) {

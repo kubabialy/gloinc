@@ -31,15 +31,16 @@ ID when present. Entry validation does not itself run or lower the module.
 
 [numeric.h](../src/numeric.h) defines canonical `CoreType` IDs for
 `void`, `bool`, signed/unsigned 8/16/32/64-bit integers, `f32`/`f64`, and `string`. The type
-descriptor records storage width, integer category, and signedness. `bool` has
-its own identity. MLIR stores signed and unsigned language integers in signless
-integer types; semantic data preserves the distinction for operator selection.
+descriptor records storage width, integer category, signedness, and byte order.
+The development compiler also defines distinct `be_` and `le_` variants for each
+integer width. `bool` has its own identity. Native integers use signless MLIR
+types; endian-qualified integers retain their full GloinIR type until lowering.
 
 Sema resolves `int` to `i32` and `usize` to `u64` for the supported 64-bit
 macOS and Linux targets. Target information belongs to the checked program; a different
 pointer width is rejected instead of using the host process's `sizeof(void*)`.
 This is not a cross-compilation implementation. Unknown and deferred types,
-including undeclared names and 128-bit/custom-width/endian types, fail even in
+including undeclared names and 128-bit/custom-width types, fail even in
 unused parameters, bindings, or return annotations. `void` is restricted to
 return annotations.
 
@@ -144,9 +145,11 @@ Sema supplies context from declarations, assignment targets, parameters, returns
 and typed arithmetic operands. Typed operands determine the common operand type;
 they are never implicitly widened or narrowed. Literal-only arithmetic receives
 its enclosing numeric context. Unconstrained integers/floats default to i32/f32.
-Integer and floating spellings retain separate categories. The first release
-rejects implicit conversions between already typed values and numeric cast
-syntax. Explicit named standard-library conversion functions are checked
+Integer and floating spellings retain separate categories. Implicit conversions
+between already typed values remain rejected. The development compiler accepts
+`T(value)` for same-width, same-signedness integer byte-order conversions; see
+[the endian contract](endianness.md). Width, sign, and floating conversions use
+explicit named standard-library functions, checked
 against their declared signatures. The private exact i32-to-i64 primitive is
 selected through the checked standard-call table and emits
 [`gloin.exact_int_widen`](lowering.md#exact-integer-widening-020-perf-008),
@@ -271,6 +274,24 @@ short-circuiting retain their final continuation throughout the header. Returnin
 paths skip the update and further condition checks. SPEC-027 registers defers
 only on reached paths and drains them on function return, not iteration exit.
 
+Development 0.3.0 adds [`continue;`](continue.md). Semantic analysis records its
+nearest enclosing loop identity in `SemanticData::continue_targets`, checks
+iteration-local result obligations, and terminates that source path. Continue
+snapshots join normal body fallthrough before checking a for update. Only names
+live before the body participate in that join; result proofs must agree on all
+incoming edges. A while continue branches to its condition; a for continue
+branches to its update block. Blocks with no incoming update path are removed.
+Unchecked AST codegen rejects continue without checked target metadata.
+
+Development [`break;`](break.md) records its nearest loop in
+`SemanticData::break_targets`. Break snapshots join the loop exit after normal
+body/continue analysis; they never contribute to a for update. The join retains
+the conservative zero-iteration path and includes result handling invalidated by
+assignments on a break path. Exited scopes, including a target for header, must
+have their results handled. GloinIR emits a verified `cf.br` to the existing
+loop exit block; it skips the update, further conditions, and defer draining.
+Unchecked AST generation requires checked break target metadata too.
+
 ## Ownership
 
 The checked program owns its AST and semantic tables. AST addresses remain stable
@@ -347,6 +368,14 @@ use LLVM address comparison. Nullable accesses branch to a trap before a load,
 store, or reference creation. GEPs and loads use the checked pointee type.
 Version 0.0.3 also checks `*T + i64` offsets as described in
 [pointer offsets](pointer-offsets.md).
+
+The 0.3.0 `@slices` copy loop uses the canonical-module-only
+`__slices_copy_backward<T>` query. Sema checks matching read-only typed pointer
+arguments; `CheckedProgram` records a memory intrinsic, and `gloin.copy_backward`
+retains those types through verification. It compares byte addresses without
+accessing memory, so placements with different element boundaries select a safe
+copy direction. This does not introduce source-language pointer ordering or
+change ownership, bounds checks or synchronization requirements.
 
 Address-taking records declaration IDs so even immutable locals and value
 parameters receive stable entry-block stack slots when necessary. Struct fields

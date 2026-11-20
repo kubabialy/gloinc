@@ -1,4 +1,4 @@
-// One local POST /echo, a fixed JSON acknowledgement, then exit.
+// One local fixed-length or chunked POST /echo, a JSON acknowledgement, then exit.
 // Start before http_client.gloin. This bounded example is not a general server.
 import "@arena";
 import "@http";
@@ -48,44 +48,42 @@ def send_all(socket: &net.Socket, bytes: string, start: time.Instant) -> result<
 }
 
 def exchange(owner: &arena.GeneralArena, socket: &net.Socket, start: time.Instant) -> result<void> {
-    def mut storage: [u8; 8192] = zeroed;
-    def mut used: u64           = 0;
-    def mut head_bytes: u64     = 0;
-    def mut body_bytes: u64     = 0;
-    def mut complete: bool      = false;
+    def mut head_storage: [u8; 4096] = zeroed;
+    def mut body_storage: [u8; 4096] = zeroed;
+    def mut receive: [u8; 2048]      = zeroed;
+    def made: result<http.RequestReader> = http.RequestReader.create(
+        head_storage[..], body_storage[..], 8192);
+
+    if made.erroneous { return made.error; }
+
+    def mut reader: http.RequestReader = made.value;
+    def mut complete: bool             = false;
 
     while !complete && within(start) {
-        if used == 8192 { return error("HTTP request exceeds example storage"); }
-
-        def read: result<net.ReadOutcome> = socket.read(storage[used..]);
+        def read: result<net.ReadOutcome> = socket.read(receive[..]);
         if read.erroneous { return read.error; }
-        if read.value.state == status.END { return error("HTTP request ended early"); }
 
-        used = used + read.value.count;
+        def decoded: result<http.RequestProgress> = reader.feed(
+            strings.view_bytes(receive[..read.value.count]), read.value.state == status.END);
+        if decoded.erroneous { return decoded.error; }
 
-        if head_bytes == 0 {
-            def parsed: result<http.RequestHead> = http.parse_request(strings.view_bytes(storage[..used]), 4096);
-            if parsed.erroneous { return parsed.error; }
+        complete = decoded.value.complete;
 
-            if parsed.value.complete {
-                def head: http.RequestHead = parsed.value;
-                if !strings.equal(head.method, "POST") || !strings.equal(head.target, "/echo") { return error("expected POST /echo"); }
-
-                head_bytes = head.header_bytes;
-                body_bytes = head.content_length;
-
-                if body_bytes > 4096 { return error("request body exceeds 4096 bytes"); }
-            }
-        }
-
-        if head_bytes > 0 { complete = used >= head_bytes + body_bytes; }
-        if read.value.state == status.WOULD_BLOCK {
+        // This example serves one request and closes. A persistent server must
+        // retain bytes beyond decoded.value.consumed for its next request.
+        if !complete && read.value.state == status.WOULD_BLOCK {
             def waited: result<i32> = socket.wait(net.READABLE, 10);
             if waited.erroneous { return waited.error; }
         }
     }
 
     if !complete { return error("HTTP request deadline exceeded"); }
+
+    def request: result<http.Request> = reader.request();
+    if request.erroneous { return request.error; }
+    if !strings.equal(request.value.method, "POST") || !strings.equal(request.value.target, "/echo") {
+        return error("expected POST /echo");
+    }
 
     def body: string              = "{\"ok\":true}";
     def formatted: result<string> = http.format_response(owner, 200, "OK", "application/json", strings.byte_length(body), 1024);

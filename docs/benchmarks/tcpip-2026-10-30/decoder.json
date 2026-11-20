@@ -1,0 +1,77 @@
+{
+  "order_seed": 30102026,
+  "samples": [
+    {
+      "variant": "baseline",
+      "nanoseconds": 193501000,
+      "requests": 200000,
+      "warmup": true
+    },
+    {
+      "variant": "baseline",
+      "nanoseconds": 192656000,
+      "requests": 200000,
+      "warmup": false
+    },
+    {
+      "variant": "current",
+      "nanoseconds": 202038000,
+      "requests": 200000,
+      "warmup": true
+    },
+    {
+      "variant": "baseline",
+      "nanoseconds": 213567000,
+      "requests": 200000,
+      "warmup": false
+    },
+    {
+      "variant": "current",
+      "nanoseconds": 225855000,
+      "requests": 200000,
+      "warmup": false
+    },
+    {
+      "variant": "current",
+      "nanoseconds": 230070000,
+      "requests": 200000,
+      "warmup": false
+    },
+    {
+      "variant": "baseline",
+      "nanoseconds": 257908000,
+      "requests": 200000,
+      "warmup": false
+    },
+    {
+      "variant": "baseline",
+      "nanoseconds": 243122000,
+      "requests": 200000,
+      "warmup": false
+    },
+    {
+      "variant": "current",
+      "nanoseconds": 215883000,
+      "requests": 200000,
+      "warmup": false
+    },
+    {
+      "variant": "current",
+      "nanoseconds": 192055000,
+      "requests": 200000,
+      "warmup": false
+    },
+    {
+      "variant": "current",
+      "nanoseconds": 191929000,
+      "requests": 200000,
+      "warmup": false
+    },
+    {
+      "variant": "baseline",
+      "nanoseconds": 192225000,
+      "requests": 200000,
+      "warmup": false
+    }
+  ]
+}

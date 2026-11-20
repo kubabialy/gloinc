@@ -84,6 +84,51 @@ void Sema::check_conditional(const Expression *condition, const BlockStatement *
                       other_proof, other_handled, other_reaches);
 }
 
+void Sema::check_continue(const ContinueStatement *statement) {
+    if (!recording || !current_function || loops.empty()) {
+        log_error("continue is only allowed inside a loop body");
+        return;
+    }
+    auto &loop = loops.back();
+    // Only iteration-local results leave scope. Outer and for-header results
+    // remain live and may be handled by the update or after the loop.
+    for (auto scope = current_scope; scope != loop.enclosing_scope; scope = scope->parent)
+        for (const auto &[name, symbol] : scope->symbols)
+            if (dynamic_cast<ResultType *>(symbol.type.get()) && !result_handled[symbol.id])
+                log_error("Result '" + name + "' must be checked with .erroneous or match");
+    recording->continue_targets[statement] = loop.statement;
+    loop.continues.push_back({initialization, result_proof, result_handled});
+    falls_through = false;
+}
+
+void Sema::check_break(const BreakStatement *statement) {
+    if (!recording || !current_function || loops.empty()) {
+        log_error("break is only allowed inside a loop body");
+        return;
+    }
+    auto &loop = loops.back();
+    // A break also leaves a for header. Results outside the target loop remain
+    // live, and their handling state must join every other path after the loop.
+    auto destination_scope = dynamic_cast<const ForStatement *>(loop.statement)
+                                 ? loop.enclosing_scope->parent
+                                 : loop.enclosing_scope;
+    for (auto scope = current_scope; scope != destination_scope; scope = scope->parent)
+        for (const auto &[name, symbol] : scope->symbols)
+            if (dynamic_cast<ResultType *>(symbol.type.get()) && !result_handled[symbol.id])
+                log_error("Result '" + name + "' must be checked with .erroneous or match");
+    recording->break_targets[statement] = loop.statement;
+    loop.breaks.push_back({initialization, result_proof, result_handled});
+    falls_through = false;
+}
+
+void Sema::merge_loop_flows(const InitializationState &before, const std::vector<LoopFlow> &edges) {
+    for (const auto &edge : edges) {
+        const bool reaches = falls_through;
+        merge_initialization(before, initialization, reaches, edge.initialization, true);
+        merge_result_flow(result_proof, result_handled, reaches, edge.proof, edge.handled, true);
+    }
+}
+
 void Sema::check_for(const ForStatement *statement) {
     enter_scope();
     if (statement->init) {
@@ -113,12 +158,19 @@ void Sema::check_for(const ForStatement *statement) {
         result_proof[refinement->first] = refinement->second;
     }
     ++loop_depth;
+    loops.push_back({statement, current_scope, {}, {}});
     check_statement(statement->body.get());
+    merge_loop_flows(before, loops.back().continues);
+    auto breaks = std::move(loops.back().breaks);
+    loops.pop_back();
     bool body_reaches = falls_through;
     // Validate the update even if every body path returns, without borrowing
     // initialization that exists only on returning paths or body-local names.
-    if (!body_reaches)
+    if (!body_reaches) {
         initialization = before;
+        result_proof = before_proof;
+        result_handled = before_handled;
+    }
     if (statement->increment) {
         auto type = check_expression(statement->increment.get(), std::nullopt, true);
         if (recording && dynamic_cast<ResultType *>(type.get()))
@@ -132,6 +184,7 @@ void Sema::check_for(const ForStatement *statement) {
     result_handled = before_handled;
     merge_result_flow(before_proof, before_handled, before_reaches,
                       body_proof, body_handled, body_reaches);
+    merge_loop_flows(before, breaks);
     for (auto &[id, proof] : result_proof)
         proof = ResultProof::Unknown;
     leave_scope();

@@ -144,8 +144,8 @@ jobs:
   macos:
     name: macOS 15 arm64 / LLVM 21.1.6
     runs-on: macos-15
-    # Three builds, package matrices, sanitizers, and both full-suite audits.
-    timeout-minutes: 90
+    # Include both complete-suite audits after the expanded package and sanitizer gates.
+    timeout-minutes: 150
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
@@ -318,9 +318,9 @@ jobs:
             build-ci-sanitized/CMakeCache.txt
 
   release:
-    name: Publish validated 0.2.2 packages
+    name: Publish validated 0.3.0 packages
     needs: [linux, macos]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'kubabialy/gloinc' && contains(github.event.head_commit.message, '[publish v0.2.2]')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'kubabialy/gloinc' && contains(github.event.head_commit.message, '[publish v0.3.0]')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -333,4 +333,4 @@ jobs:
       - name: Publish packages and validation provenance
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/publish-0.2.2.sh
+        run: bash scripts/publish-0.3.0.sh

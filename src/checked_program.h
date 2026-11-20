@@ -29,8 +29,10 @@ struct ValueType {
     std::vector<PointerLayer> pointers; // Outermost first; base retains its nominal identity.
     std::shared_ptr<ValueType> array_element;
     size_t array_length = 0;
+    PackedBitOrder array_order = PackedBitOrder::None;
     std::shared_ptr<ValueType> slice_element;
     bool slice_read_only = false;
+    PackedBitOrder slice_order = PackedBitOrder::None;
     std::shared_ptr<ValueType> result_value;
     bool error_type = false;
     ValueType() = default;
@@ -45,16 +47,20 @@ struct ValueType {
         type.const_size = value;
         return type;
     }
-    static ValueType array(ValueType element, size_t length) {
+    static ValueType array(ValueType element, size_t length,
+                           PackedBitOrder order = PackedBitOrder::None) {
         ValueType type;
         type.array_element = std::make_shared<ValueType>(std::move(element));
         type.array_length = length;
+        type.array_order = order;
         return type;
     }
-    static ValueType slice(ValueType element, bool read_only) {
+    static ValueType slice(ValueType element, bool read_only,
+                           PackedBitOrder order = PackedBitOrder::None) {
         ValueType type;
         type.slice_element = std::make_shared<ValueType>(std::move(element));
         type.slice_read_only = read_only;
+        type.slice_order = order;
         return type;
     }
     static ValueType result(ValueType value) {
@@ -87,18 +93,16 @@ struct ValueType {
     }
     bool operator==(const ValueType &other) const {
         return scalar == other.scalar && structure == other.structure &&
-               const_size == other.const_size &&
-               pointers == other.pointers && array_length == other.array_length &&
+               const_size == other.const_size && pointers == other.pointers &&
+               array_length == other.array_length && array_order == other.array_order &&
                slice_read_only == other.slice_read_only && error_type == other.error_type &&
-               (array_element && other.array_element
-                    ? *array_element == *other.array_element
-                    : !array_element && !other.array_element) &&
-               (slice_element && other.slice_element
-                    ? *slice_element == *other.slice_element
-                    : !slice_element && !other.slice_element) &&
-               (result_value && other.result_value
-                    ? *result_value == *other.result_value
-                    : !result_value && !other.result_value);
+               slice_order == other.slice_order &&
+               (array_element && other.array_element ? *array_element == *other.array_element
+                                                     : !array_element && !other.array_element) &&
+               (slice_element && other.slice_element ? *slice_element == *other.slice_element
+                                                     : !slice_element && !other.slice_element) &&
+               (result_value && other.result_value ? *result_value == *other.result_value
+                                                   : !result_value && !other.result_value);
     }
 };
 struct CheckedField {
@@ -110,6 +114,9 @@ struct CheckedField {
 struct CheckedStruct {
     std::string name;
     std::vector<CheckedField> fields;
+    PackedBitOrder bit_order = PackedBitOrder::None;
+    std::vector<int64_t> bit_offsets;
+    uint64_t byte_size = 0;
 };
 struct ResolvedSymbol {
     SymbolId id;
@@ -134,12 +141,15 @@ struct SemanticData {
     std::unordered_map<const CallExpression *, std::pair<MemoryIntrinsic, ValueType>> memory_intrinsics;
     std::unordered_map<const CallExpression *, StandardPrimitive> standard_calls;
     std::unordered_set<const CallExpression *> error_constructors;
+    std::unordered_set<const CallExpression *> integer_conversions;
     // Typed allocation calls target a checked library layout method. true is try_alloc.
     std::unordered_map<const CallExpression *, bool> arena_allocations;
     std::unordered_set<const CallExpression *> arena_many_allocations;
     std::unordered_set<const CallExpression *> arena_reserved_allocations;
     std::unordered_set<const CallExpression *> arena_typed_reservations;
     std::unordered_map<const FunctionDefinition *, std::vector<const DeferStatement *>> defers;
+    std::unordered_map<const ContinueStatement *, const Statement *> continue_targets;
+    std::unordered_map<const BreakStatement *, const Statement *> break_targets;
     // Instance calls pass the receiver once, before explicit arguments.
     // true takes the address of struct storage; false passes a pointer value.
     std::unordered_map<const CallExpression *, bool> method_receivers;

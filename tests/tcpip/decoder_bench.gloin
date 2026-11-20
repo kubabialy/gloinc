@@ -1,0 +1,73 @@
+// Same bounded parser workload is compatible with the pre-server HTTP package.
+import "@http";
+import "@strings";
+import "@time";
+import "@std";
+import "@arena";
+
+def main() -> i32 {
+    def mut owner: arena.GeneralArena = arena.GeneralArena.create();
+    defer owner.free();
+
+    def mut head: [u8; 1024]        = zeroed;
+    def mut body: [u8; 3]           = zeroed;
+    def mut checksum: u64           = 0;
+    def start: result<time.Instant> = time.monotonic_now();
+
+    if start.erroneous { return 1; }
+
+    def first: time.Instant = start.value;
+
+    for def mut iteration: u64 = 0; iteration < 200000; iteration = iteration + 1 {
+        def mut request: string = "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 7\r\n\r\nabc\0xyz";
+
+        if iteration % 2 != 0 {
+            request = "POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n4\r\n\0xyz\r\n0\r\nX-End: yes\r\n\r\n";
+        }
+
+        def made: result<http.RequestDecoder> = http.RequestDecoder.create(head[..], 7, 1024);
+        if made.erroneous { return 2; }
+
+        def mut decoder: http.RequestDecoder = made.value;
+        def mut offset: u64                  = 0;
+        def mut complete: bool               = false;
+        def mut count: u64                   = 0;
+
+        while !complete {
+            def rest: result<string> = strings.slice_bytes(request, offset, strings.byte_length(request) - offset);
+            if rest.erroneous { return 3; }
+
+            def fed: result<http.StreamProgress> = decoder.feed(rest.value, true, body[..]);
+            if fed.erroneous { return 4; }
+
+            def progress: http.StreamProgress = fed.value;
+            offset   = offset + progress.consumed;
+            complete = progress.complete;
+            count    = count + progress.produced;
+
+            for def mut i: u64 = 0; i < progress.produced; i = i + 1 {
+                def value: result<u64> = u64(body[i]);
+                if value.erroneous { return 5; }
+
+                checksum = checksum + value.value;
+            }
+        }
+
+        if count != 7 || offset != strings.byte_length(request) { return 6; }
+    }
+
+    if checksum != 131400000 { return 7; }
+
+    def end: result<time.Instant> = time.monotonic_now();
+    if end.erroneous { return 8; }
+
+    def elapsed: result<time.Duration> = time.elapsed(first, end.value);
+    if elapsed.erroneous { return 9; }
+
+    def text: result<string> = std.to_string_u64(&owner, elapsed.value.nanoseconds);
+    if text.erroneous { return 10; }
+
+    std.println(text.value);
+
+    return 0;
+}

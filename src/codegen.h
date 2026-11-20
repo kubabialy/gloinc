@@ -51,7 +51,9 @@ class CodeGen {
     mlir::ModuleOp generate_impl(const std::vector<std::unique_ptr<Statement>> &program);
     void initialize_unchecked_types();
     mlir::Type lower_type(ValueType type);
+    uint64_t packed_element_bits(const ValueType &type);
     mlir::Type source_type(ValueType type);
+    gloin::GloinIntegerType integer_type(CoreType type);
     mlir::Value as_source_value(mlir::Value layout, mlir::Type source);
     std::unordered_map<size_t, mlir::Type> checked_struct_types;
     mlir::Value emit_constant(const ConstantValue &constant);
@@ -82,6 +84,8 @@ class CodeGen {
     std::shared_ptr<GenScope> current_scope;
     std::map<SymbolId, SymbolInfo> checked_values;
     std::map<SymbolId, mlir::func::FuncOp> checked_functions;
+    std::map<const Statement *, mlir::Block *> continue_targets;
+    std::map<const Statement *, mlir::Block *> break_targets;
     void declare_binding(const Identifier *name, mlir::Value value, bool address, mlir::Type type,
                          const std::string &source_type);
     SymbolInfo lookup_binding(const Identifier *name);
@@ -158,6 +162,7 @@ class CodeGen {
     mlir::Value gen_expression_impl(const Expression *expr);
     mlir::Value gen_address(const Expression *expr);
     mlir::Value gen_array_address(const IndexExpression *expr, bool allow_temporary);
+    mlir::Value gen_packed_slot(const IndexExpression *expr, bool writing);
     mlir::Value gen_integer_index(const Expression *expression);
     mlir::Value gen_slice(const SliceExpression *expression);
     mlir::Value gen_pointer_address(const Expression *expr);

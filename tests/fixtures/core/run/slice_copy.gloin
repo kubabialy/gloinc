@@ -1,0 +1,43 @@
+import "@slices";
+
+def main() -> i32 {
+    // Compare every pair of ranges with an independent, immutable source snapshot.
+    def original: [i32; 7] = {11, 22, 33, 44, 55, 66, 77};
+
+    for def mut begin: u64 = 0; begin <= 7; begin = begin + 1 {
+        for def mut end: u64 = begin; end <= 7; end = end + 1 {
+            for def mut target: u64 = 0; target <= 7; target = target + 1 {
+                for def mut limit: u64 = target; limit <= 7; limit = limit + 1 {
+                    def mut values: [i32; 7]   = original;
+                    def mut expected: [i32; 7] = original;
+                    def fits: bool             = limit - target >= end - begin;
+
+                    if fits {
+                        for def mut index: u64 = 0; index < end - begin; index = index + 1 {
+                            expected[target + index] = original[begin + index];
+                        }
+                    }
+
+                    def view: [i32] = values[..];
+                    if slices.copy<i32>(view[target..limit], view[begin..end]) != fits { return 1; }
+
+                    for def mut index: u64 = 0; index < 7; index = index + 1 {
+                        if values[index] != expected[index] { return 2; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Separate allocations, a read-only source, and untouched destination tail.
+    def mut destination: [i32; 9] = {-1; 9};
+    if !slices.copy<i32>(destination[..], original[..]) { return 3; }
+
+    for def mut index: u64 = 0; index < 7; index = index + 1 {
+        if destination[index] != original[index] { return 4; }
+    }
+
+    if destination[7] != -1 || destination[8] != -1 { return 5; }
+
+    return 42;
+}

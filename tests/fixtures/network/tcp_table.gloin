@@ -1,0 +1,98 @@
+import "@tcp";
+import "@packet";
+
+def main() -> i32 {
+    def mut tx: [u8; 512]      = zeroed;
+    def mut rx: [u8; 512]      = zeroed;
+    def mut present: [u8; 512] = zeroed;
+    def mut ctx: [u8; 512]     = zeroed;
+    def mut crx: [u8; 512]     = zeroed;
+    def mut cmap: [u8; 512]    = zeroed;
+    def mut wire: [u8; 1500]   = zeroed;
+    def mut reply: [u8; 1500]  = zeroed;
+    def slot: result<tcp.Slot> = tcp.Slot.create(tcp.Buffers {
+        send: tx[..], receive: rx[..], present: present[..] }, tcp.Options.defaults());
+
+    if slot.erroneous { return 1; }
+
+    def mut slots: [tcp.Slot; 1] = {slot.value};
+    def ports: [be_u16; 1]       = {80};
+    def made: result<tcp.Table>  = tcp.Table.create(0xc0000202, ports[..], slots[..]);
+
+    if made.erroneous { return 2; }
+
+    def mut table: tcp.Table     = made.value;
+    def local: tcp.Address       = tcp.Address { host: 0xc0000201, port: 1234 };
+    def remote: tcp.Address      = tcp.Address { host: 0xc0000202, port: 80 };
+    def mut previous: tcp.Handle = tcp.Handle { index: 0, generation: 0 };
+
+    for def mut iteration: u64 = 0; iteration < 1000; iteration = iteration + 1 {
+        def now: u64 = iteration * 100;
+        def client: result<tcp.Connection> = tcp.Connection.connect(local, remote, 4294967294,
+            tcp.Buffers { send: ctx[..], receive: crx[..], present: cmap[..] }, tcp.Options.defaults(), now);
+
+        if client.erroneous { return 3; }
+
+        def mut c: tcp.Connection = client.value;
+        def syn: result<u64>      = c.emit(wire[..], now);
+
+        if syn.erroneous { return 4; }
+
+        def offered: result<tcp.Input> = table.input(wire[..syn.value], 4294967290, now, reply[..]);
+        if offered.erroneous { return 5; }
+
+        def handle: tcp.Handle = offered.value.connection;
+        if !offered.value.created || offered.value.reply_bytes != 0 || handle.generation != iteration + 1 { return 6; }
+
+        def stale: result<i32> = table.state(previous);
+        if !stale.erroneous { return 7; }
+
+        def early: result<void> = table.release(handle);
+        if !early.erroneous { return 8; }
+
+        def synack: result<u64> = table.emit(reply[..], now);
+        if synack.erroneous { return 9; }
+
+        def established: result<void> = c.input(reply[..synack.value], now);
+        if established.erroneous { return 10; }
+
+        def ack: result<u64> = c.emit(wire[..], now);
+        if ack.erroneous { return 11; }
+
+        def accepted: result<tcp.Input> = table.input(wire[..ack.value], 0, now, reply[..]);
+        if accepted.erroneous { return 12; }
+        if accepted.value.created { return 13; }
+
+        def state: result<i32> = table.state(handle);
+        if state.erroneous { return 14; }
+        if state.value != tcp.ESTABLISHED { return 15; }
+
+        def cancelled: result<void> = table.cancel(handle);
+        if cancelled.erroneous { return 16; }
+
+        def pending: result<void> = table.release(handle);
+        if !pending.erroneous { return 17; }
+
+        def reset: result<u64> = table.emit(reply[..], now);
+        if reset.erroneous { return 18; }
+        if reset.value != 40 { return 19; }
+
+        def flushed: result<void> = c.input(reply[..40], now);
+        if flushed.erroneous { return 20; }
+        if c.state() != tcp.RESET { return 21; }
+
+        def released: result<void> = table.release(handle);
+        if released.erroneous { return 22; }
+
+        def absent: result<tcp.Handle> = table.handle_at(0);
+        if !absent.erroneous { return 23; }
+
+        previous = handle;
+
+        def idle: result<u64> = table.next_timeout_ms(now);
+        if idle.erroneous { return 24; }
+        if idle.value != 18446744073709551615 { return 25; }
+    }
+
+    return 0;
+}

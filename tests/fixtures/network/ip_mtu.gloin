@@ -1,0 +1,161 @@
+import "@tcp";
+import "@packet";
+import "@ip_stack";
+import "@ipv4";
+import "@memory";
+
+def exercise(old_style: bool) -> i32 {
+    def mut tx: [u8; 256]      = zeroed;
+    def mut rx: [u8; 256]      = zeroed;
+    def mut map: [u8; 256]     = zeroed;
+    def mut ptx: [u8; 256]     = zeroed;
+    def mut prx: [u8; 256]     = zeroed;
+    def mut pmap: [u8; 256]    = zeroed;
+    def options: tcp.Options   = tcp.Options { mss: 128, max_retries: 5, idle_timeout_ms: 30000, time_wait_ms: 2000, no_delay: true };
+    def slot: result<tcp.Slot> = tcp.Slot.create(tcp.Buffers { send: tx[..], receive: rx[..], present: map[..] }, options);
+
+    if slot.erroneous { return 1; }
+
+    def mut slots: [tcp.Slot; 1]            = {slot.value};
+    def ports: [be_u16; 0]                  = {};
+    def mut fragments: [ipv4.Reassembly; 0] = {};
+    def made: result<ip_stack.Endpoint>     = ip_stack.Endpoint.create(0xc0000201, ports[..], ports[..], slots[..], fragments[..]);
+
+    if made.erroneous { return 2; }
+
+    def mut endpoint: ip_stack.Endpoint = made.value;
+    def remote: tcp.Address             = tcp.Address { host: 0xc0000202, port: 80 };
+    def opened: result<tcp.Handle>      = endpoint.connections.connect(1234, remote, 4294967294, 0);
+
+    if opened.erroneous { return 4; }
+
+    def handle: tcp.Handle    = opened.value;
+    def mut wire: [u8; 1500]  = zeroed;
+    def mut reply: [u8; 1500] = zeroed;
+    def syn: result<u64>      = endpoint.connections.emit(wire[..], 0);
+
+    if syn.erroneous { return 5; }
+
+    def accepted: result<tcp.Connection> = tcp.Connection.accept(wire[..syn.value], remote, 4294967290,
+        tcp.Buffers { send: ptx[..], receive: prx[..], present: pmap[..] }, options, 0);
+    if accepted.erroneous { return 6; }
+
+    def mut peer: tcp.Connection = accepted.value;
+    def synack: result<u64>      = peer.emit(wire[..], 1);
+
+    if synack.erroneous { return 7; }
+
+    def input: result<tcp.Input> = endpoint.connections.input(wire[..synack.value], 0, 1, reply[..]);
+    if input.erroneous { return 8; }
+
+    def ack: result<u64> = endpoint.connections.emit(wire[..], 2);
+    if ack.erroneous { return 9; }
+
+    def fed: result<void> = peer.input(wire[..ack.value], 2);
+    if fed.erroneous { return 10; }
+
+    // Path-MTU quote guards and complete resegmentation without one RTO per piece.
+    def data: [u8; 64]      = zeroed;
+    def queued: result<u64> = endpoint.connections.write(handle, data[..]);
+
+    if queued.erroneous { return 11; }
+
+    def original: result<u64> = endpoint.connections.emit(wire[..], 3);
+    if original.erroneous { return 12; }
+    if original.value != 104 { return 13; }
+
+    def mut message: [u8; 56] = zeroed;
+    def mut saved: [u8; 28]   = zeroed;
+
+    for def mut i: u64 = 0; i < 28; i = i + 1 { saved[i] = wire[i]; }
+
+    // Independent ICMP layout: eight control bytes followed by the exact IP
+    // header and first eight TCP bytes emitted by this endpoint.
+    def ip: result<void> = ipv4.header(message[..], 0xc00002fe, 0xc0000201, 1, 56, 55);
+    if ip.erroneous { return 14; }
+
+    def outer: result<void> = packet.seal_ipv4(message[..]);
+    if outer.erroneous { return 15; }
+
+    for def mut trial: u64 = 0; trial < 4; trial = trial + 1 {
+        for def mut i: u64 = 0; i < 28; i = i + 1 { message[28 + i] = saved[i]; }
+
+        def mut mtu: be_u32 = 68;
+        if old_style { mtu = 0; }
+
+        def control: result<void> = memory.write_packed<ipv4.IcmpHeader>(message[20..], ipv4.IcmpHeader {
+            kind: 3, code: 4, checksum: 0, rest: mtu });
+        if control.erroneous { return 16; }
+
+        if trial == 1 {
+            // Valid checksums but another quoted source address.
+            message[43] = 3;
+            message[38] = 0;
+            message[39] = 0;
+
+            def sum: result<be_u16> = packet.checksum(message[28..48]);
+            if sum.erroneous { return 17; }
+
+            def stored: result<void> = memory.write_packed<Sum>(message[38..], Sum { value: sum.value });
+            if stored.erroneous { return 18; }
+        }
+
+        if trial == 2 { message[52] = 0; } // Exact tuple, sequence outside flight.
+
+        def checksum: result<be_u16> = packet.checksum(message[20..]);
+        if checksum.erroneous { return 19; }
+
+        def sealed: result<void> = memory.write_packed<Sum>(message[22..], Sum { value: checksum.value });
+        if sealed.erroneous { return 20; }
+
+        if trial == 0 { message[22] = 0; message[23] = 0; }
+
+        def event: result<ip_stack.Event> = endpoint.input(message[..], 0, 4 + trial, reply[..]);
+
+        if trial == 0 {
+            if !event.erroneous { return 21; }
+        } else {
+            if event.erroneous { return 22; }
+            if event.value.reply_bytes != 0 { return 23; }
+        }
+
+        if trial != 3 {
+            def unchanged: result<u64> = endpoint.emit(wire[..], 4 + trial);
+            if unchanged.erroneous { return 24; }
+            if unchanged.value != 0 { return 25; }
+        }
+    }
+
+    def lengths: [u64; 3]      = {68,68,48};
+    def sequences: [be_u32; 3] = {4294967295,27,55};
+
+    for def mut i: u64 = 0; i < 3; i = i + 1 {
+        def emitted: result<u64> = endpoint.emit(wire[..], 8 + i);
+        if emitted.erroneous { return 26; }
+        if emitted.value != lengths[i] { return 27; }
+
+        def parsed: result<packet.TcpPacket> = packet.parse_tcp_ipv4(wire[..emitted.value]);
+        if parsed.erroneous { return 28; }
+        if parsed.value.header.sequence != sequences[i] { return 29; }
+
+        def delivered: result<void> = peer.input(wire[..lengths[i]], 8 + i);
+        if delivered.erroneous { return 30; }
+    }
+
+    def mut body: [u8; 64]         = zeroed;
+    def received: result<tcp.Read> = peer.read(body[..]);
+
+    if received.erroneous { return 31; }
+    if received.value.count != 64 { return 32; }
+
+    return 0;
+}
+
+def packed struct(msb_first) Sum { def value: be_u16, }
+
+def main() -> i32 {
+    def modern: i32 = exercise(false);
+    if modern != 0 { return modern; }
+
+    return exercise(true);
+}

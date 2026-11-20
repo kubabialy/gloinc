@@ -16,6 +16,9 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 
 | Contract | Source fixtures |
 | --- | --- |
+| Overlap-safe ordinary slice copies, short destinations, shallow referents and packed representation bytes in JIT/native modes | [all small range pairs](run/slice_copy.gloin), [element values](run/slice_copy_values.gloin) |
+| Explicit packed bit order, exact bytes, narrow values, spare-bit copies, generic methods, and internal calls in JIT/native modes | [packed layouts](run/packed.gloin) |
+| Endian-qualified integer values and padding-preserving aggregate calls | [endianness](run/endian.gloin) |
 | Base64 decoding: exact/short buffers, malformed alphabet/padding, binary values, JIT and native `-O0`/`-O2` | [program](run/base64_decode/main.gloin), [scalar codec](run/base64_decode/codec.gloin) |
 | Repeated array initialization: captured values, nested/empty arrays, copies and aliases, JIT and native `-O0`/`-O2` | [repeated arrays](run/repeated_arrays.gloin) |
 | Result payload and row-slice capability weakening across generic modules; alias identity in JIT and native `-O0`/`-O2` | [program](run/capability_conversions/main.gloin), [generic helpers](run/capability_conversions/helpers.gloin) |
@@ -30,6 +33,8 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 | Constants, visibility, immutable/mutable locals, shadowing, definite initialization | [scope_initialization](run/scope_initialization.gloin) |
 | Mutation, nested if/else/while/for/unless and early returns | [control_flow](run/control_flow.gloin), [nested_early_returns](run/nested_early_returns.gloin) |
 | Omitted for components, initializer effects/scope, skipped body/update | [for_components](run/for_components.gloin) |
+| Continue skips the body remainder and retains the for update | [continue](run/continue.gloin), [invalid target](reject/continue_outside_loop.gloin); `ContinueTest` covers nested loops, switches, results, defers and JIT/native execution. |
+| Break exits the nearest loop and skips its update | [break](run/break.gloin), [invalid target](reject/break_outside_loop.gloin); `BreakTest` covers scope obligations, exit joins, defers, checked edges and JIT/native execution. |
 | Precedence and parentheses | [precedence](run/precedence.gloin) |
 | UTF-8 comments, CRLF, multiline expressions | [utf8_comments](run/utf8_comments.gloin) |
 | i32 result mapped to host exit status modulo 256, with no implicit output | [negative](run/negative_result.gloin), [zero](run/zero_result.gloin), [minimum](run/minimum_result.gloin), [maximum](run/maximum_result.gloin) |
@@ -48,11 +53,24 @@ ctest --test-dir build -j 4 --no-tests=error -R '^CoreAcceptanceTest\.' --output
 | Eleven normative invalid fragments | `reject/canonical_01.gloin` through `canonical_11.gloin`; the unknown-type binding is wrapped in a function to reach type checking |
 | Initialization, immutability, scopes, types, literal ranges, calls, returns, constants | Named files under [reject](reject), including [uninitialized](reject/uninitialized.gloin), [mixed_widths](reject/mixed_widths.gloin), [missing_return](reject/missing_return.gloin) |
 | Invalid selection subjects and coverage (SPEC-017a) | [float switch](reject/deferred_switch.gloin), [non-exhaustive integer match](reject/deferred_match.gloin); positive and negative selection programs also run through `SelectionTest`. |
-| Deferred syntax/type families and unsupported operators | `reject/deferred_*.gloin`: unsupported string escapes, packed structs, bracket array literals, concurrency, extended numeric/layout types, legacy syntax, range loops, bitwise/shift/compound operators. `reject/missing_package_import.gloin` checks an absent `#package` directory. |
+| Deferred syntax/type families and unsupported operators | `reject/deferred_*.gloin`: unsupported string escapes, packed declarations without explicit bit order, bracket array literals, concurrency, extended numeric/layout types, legacy syntax, range loops, bitwise/shift/compound operators. `reject/missing_package_import.gloin` checks an absent `#package` directory. |
 | Checked integer overflow at every width; zero division and signed-minimum remainder | `trap/overflow_i*.gloin`, `trap/overflow_u*.gloin`, [division_zero](trap/division_zero.gloin), [signed_remainder](trap/signed_remainder.gloin) |
 | Floating zero division and non-finite results at both widths | [f32 division](trap/division_zero_f32.gloin), [f64 division](trap/division_zero_f64.gloin), [f32 overflow](trap/overflow_f32.gloin), [f64 overflow](trap/overflow_f64.gloin) |
 
 ## What each case proves
+
+`run/packed.gloin` exhausts all 65,536 combinations of a `u13` and `u3` in both
+bit orders, checking a six-byte header with an unaligned BE sequence field.
+It checks field updates, nested records and arrays, generic packed methods,
+unused bits through copies/calls/results, and native narrow integer spare bits.
+`PackedTest` adds every integer width's bounds, checked conversion/trap cases,
+IR/foreign ABI verification, and native guard-page tests against a per-bit oracle.
+
+`run/endian.gloin` checks first-class byte-order types, raw byte aliases, scalar
+and aggregate construction, and copies including padding through Gloin calls.
+It also executes in native `-O0` and `-O2` modes. `EndianTest` verifies the GIR
+contracts and synthetic little/big target lowering; unsupported 128-bit endian
+types and suffix spellings remain rejection fixtures.
 
 The scalar `run` fixtures pass checking and then return the expected host exit
 status with empty stdout/stderr in three independent compile/run processes. The

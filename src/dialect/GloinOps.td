@@ -18,6 +18,129 @@ def StructDefinitionOp : Gloin_Op<"struct_definition", [Symbol]> {
     let hasVerifier = 1;
 }
 
+def PackedLiteralOp : Gloin_Op<"packed_literal", [Pure]> {
+    let arguments = (ins Variadic<AnyType>:$fields, DenseI64ArrayAttr:$indices,
+                         TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+def PackedExtractOp : Gloin_Op<"packed_extract", [Pure]> {
+    let arguments = (ins AnyType:$aggregate, I64Attr:$index,
+                         TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+def PackedLoadOp : Gloin_Op<"packed_load", [MemoryEffects<[MemRead]>]> {
+    let arguments = (ins AnyType:$address, I64Attr:$index,
+                         TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+// Boundary bytes are read before the field's bits are replaced.
+def PackedStoreOp : Gloin_Op<"packed_store", [MemoryEffects<[MemRead, MemWrite]>]> {
+    let arguments = (ins AnyType:$address, AnyType:$value, I64Attr:$index,
+                         TypeAttr:$source_type);
+    let hasVerifier = 1;
+}
+def PackedAddressOp : Gloin_Op<"packed_address", [Pure]> {
+    let arguments = (ins AnyType:$base, I64Attr:$index, TypeAttr:$source_type);
+    let results = (outs AnyType:$address);
+    let hasVerifier = 1;
+}
+
+def PackedArrayLiteralOp : Gloin_Op<"packed_array_literal", [Pure]> {
+    let summary = "Encode elements into exact packed array bytes";
+    let arguments = (ins Variadic<AnyType>:$elements, TypeAttr:$source_type,
+                         TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def PackedArrayRepeatOp : Gloin_Op<"packed_array_repeat", [Pure]> {
+    let arguments = (ins AnyType:$element, TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+// Effectful: selection traps on an invalid index before subsequent expressions.
+def PackedArraySelectOp : Gloin_Op<"packed_array_select"> {
+    let arguments = (ins AnyType:$base, I64:$index, TypeAttr:$source_type, TypeAttr:$slot_type);
+    let results = (outs AnyType:$slot);
+    let hasVerifier = 1;
+}
+
+// Only byte-aligned packed records have ordinary element references.
+// Effectful: retain the non-null reference check even for empty records.
+def PackedSlotAddressOp : Gloin_Op<"packed_slot_address"> {
+    let arguments = (ins AnyType:$slot, TypeAttr:$slot_type);
+    let results = (outs AnyType:$address);
+    let hasVerifier = 1;
+}
+
+def PackedElementLoadOp : Gloin_Op<"packed_element_load", [MemoryEffects<[MemRead]>]> {
+    let arguments = (ins AnyType:$slot, TypeAttr:$slot_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def PackedElementStoreOp : Gloin_Op<"packed_element_store", [MemoryEffects<[MemRead, MemWrite]>]> {
+    let arguments = (ins AnyType:$slot, AnyType:$value, TypeAttr:$slot_type);
+    let hasVerifier = 1;
+}
+
+def PackedSliceFromArrayOp : Gloin_Op<"packed_slice_from_array"> {
+    let arguments = (ins AnyType:$base, I64:$start, I64:$end, TypeAttr:$array_type,
+                         TypeAttr:$source_type, BoolAttr:$start_signed, BoolAttr:$end_signed);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def PackedSliceSubrangeOp : Gloin_Op<"packed_slice_subrange"> {
+    let arguments = (ins AnyType:$base, I64:$start, I64:$end, TypeAttr:$source_type,
+                         BoolAttr:$start_signed, BoolAttr:$end_signed);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+def PackedSliceSelectOp : Gloin_Op<"packed_slice_select"> {
+    let arguments = (ins AnyType:$base, I64:$index, TypeAttr:$source_type,
+                         TypeAttr:$slot_type, BoolAttr:$index_signed);
+    let results = (outs AnyType:$slot);
+    let hasVerifier = 1;
+}
+
+// Equal-length, same-encoding memmove semantics; boundary bytes are read and written.
+def PackedSliceCopyOp : Gloin_Op<"packed_slice_copy", [MemoryEffects<[MemRead, MemWrite]>]> {
+    let arguments = (ins AnyType:$destination, AnyType:$source, TypeAttr:$source_type);
+    let hasVerifier = 1;
+}
+
+def PackedSliceBitOffsetOp : Gloin_Op<"packed_slice_bit_offset", [Pure]> {
+    let summary = "Read the normalized starting bit without touching backing bytes";
+    let arguments = (ins AnyType:$base, TypeAttr:$source_type);
+    let results = (outs I64:$offset);
+    let hasVerifier = 1;
+}
+
+// Validate a borrowed byte extent without accessing its backing memory.
+// Error policy/messages are supplied by the Gloin standard-library wrapper.
+def CheckedPackedViewOp : Gloin_Op<"checked_packed_view", [Pure]> {
+    let arguments = (ins AnyType:$bytes, I64:$bit_offset, I64:$count,
+                         AnyType:$invalid_error, AnyType:$overflow_error, AnyType:$bounds_error,
+                         TypeAttr:$source_type, TypeAttr:$layout_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
+// Validate raw capacity/alignment before any write, initialize one captured fill,
+// and publish an ordinary or packed slice. Packed trailing bits are zeroed.
+def InitializeSliceOp : Gloin_Op<"initialize_slice"> {
+    let arguments = (ins AnyType:$storage, I64:$available, I64:$count, AnyType:$fill,
+                         TypeAttr:$source_type, TypeAttr:$layout_type, TypeAttr:$element_type);
+    let results = (outs AnyType:$value);
+    let hasVerifier = 1;
+}
+
 // Checked function boundaries retain source identity in func signatures while
 // the existing function bodies still work with their LLVM-compatible layout.
 def FromLayoutOp : Gloin_Op<"from_layout", [Pure]> {
@@ -111,6 +234,22 @@ def ExactIntegerWidenOp : Gloin_Op<"exact_int_widen", [Pure]> {
       cannot fail and does not introduce implicit source-language conversions.
     }];
     let arguments = (ins AnyType:$input, BoolAttr:$is_signed);
+    let results = (outs AnyType:$result);
+    let hasVerifier = 1;
+}
+
+def EndianConvertOp : Gloin_Op<"endian_convert", [Pure]> {
+    let summary = "Preserve an integer's numeric value while changing its byte-order type";
+    let arguments = (ins AnyType:$input, TypeAttr:$source_type, TypeAttr:$target_type);
+    let results = (outs AnyType:$result);
+    let hasVerifier = 1;
+}
+
+// Conversion failure is a recoverable OVERFLOW result, never a trap.
+def IntegerConvertOp : Gloin_Op<"integer_convert", [Pure]> {
+    let summary = "Convert an integer value to a success or overflow result";
+    let arguments = (ins AnyType:$input, AnyType:$overflow_error,
+                         TypeAttr:$source_type, TypeAttr:$target_type, TypeAttr:$layout_type);
     let results = (outs AnyType:$result);
     let hasVerifier = 1;
 }
@@ -284,11 +423,33 @@ def ArenaTypedPointerOp : Gloin_Op<"arena_typed_pointer"> {
     let hasVerifier = 1;
 }
 
+def RawReserveOp : Gloin_Op<"raw_reserve", [Pure]> {
+    let summary = "Check uninitialized typed capacity in raw storage without reading or writing it";
+    let arguments = (ins AnyType:$storage, I64:$available, I64:$count,
+                     TypeAttr:$source_type, TypeAttr:$element_type);
+    let results = (outs AnyType:$pointer);
+    let hasVerifier = 1;
+}
+
+def RawIsAlignedOp : Gloin_Op<"raw_is_aligned", [Pure]> {
+    let summary = "Test non-null byte storage against a positive power-of-two byte alignment";
+    let arguments = (ins AnyType:$storage, I64:$alignment);
+    let results = (outs I1:$aligned);
+    let hasVerifier = 1;
+}
+
 def RawPlaceOp : Gloin_Op<"raw_place"> {
     let summary = "Check raw storage and initialize one typed value";
     let arguments = (ins AnyType:$storage, I64:$available, AnyType:$initial,
                      TypeAttr:$source_type, TypeAttr:$element_source_type,
                      TypeAttr:$element_type);
+    let results = (outs AnyType:$pointer);
+    let hasVerifier = 1;
+}
+
+def RawPackedPointerOp : Gloin_Op<"raw_packed_pointer", [Pure]> {
+    let summary = "View raw bytes as an alignment-one packed record; bounds are caller checked";
+    let arguments = (ins AnyType:$storage, TypeAttr:$source_type);
     let results = (outs AnyType:$pointer);
     let hasVerifier = 1;
 }
@@ -323,6 +484,15 @@ def PointerCompareOp : Gloin_Op<"pointer_compare", [Pure]> {
     let hasVerifier = 1;
 }
 
+// Internal copy-direction query, not general source-language pointer ordering.
+// True when destination's byte address is above source's. No memory access.
+// Either direction is safe for distinct allocations or equal addresses.
+def CopyBackwardOp : Gloin_Op<"copy_backward", [Pure]> {
+    let arguments = (ins AnyType:$destination, AnyType:$source, TypeAttr:$source_type);
+    let results = (outs I1:$result);
+    let hasVerifier = 1;
+}
+
 def ArrayElementAddressOp : Gloin_Op<"array_element_address"> {
     let summary = "Address a fixed-array element, trapping on an out-of-bounds index";
     let arguments = (ins AnyType:$base, I64:$index, TypeAttr:$array_type,
@@ -352,7 +522,7 @@ def SliceSubrangeOp : Gloin_Op<"slice_subrange"> {
     let summary = "Borrow a checked subrange of a slice";
     let arguments = (ins AnyType:$base, I64:$start, I64:$end,
                      TypeAttr:$source_type, TypeAttr:$layout_type,
-                     TypeAttr:$element_type);
+                     TypeAttr:$element_type, BoolAttr:$start_signed, BoolAttr:$end_signed);
     let results = (outs AnyType:$value);
     let hasVerifier = 1;
 }
@@ -360,7 +530,7 @@ def SliceSubrangeOp : Gloin_Op<"slice_subrange"> {
 def SliceElementAddressOp : Gloin_Op<"slice_element_address"> {
     let summary = "Address a slice element with a bounds check";
     let arguments = (ins AnyType:$base, I64:$index, TypeAttr:$source_type,
-                     TypeAttr:$layout_type, TypeAttr:$element_type);
+                     TypeAttr:$layout_type, TypeAttr:$element_type, BoolAttr:$index_signed);
     let results = (outs AnyType:$address);
     let hasVerifier = 1;
 }
@@ -398,6 +568,17 @@ def LoadOp : Gloin_Op<"load"> {
 def StoreOp : Gloin_Op<"store"> {
     let summary = "Write a checked value to an address";
     let arguments = (ins AnyType:$value, AnyType:$address, TypeAttr:$source_type);
+    let hasVerifier = 1;
+}
+
+def CopyOp : Gloin_Op<"copy"> {
+    let summary = "Copy a materialized value's complete representation, including padding";
+    let description = [{
+      Source and destination have the same source type and layout. Copy all
+      storage bytes with memmove semantics; never decode or encode fields.
+    }];
+    let arguments = (ins AnyType:$source, AnyType:$destination,
+                     TypeAttr:$source_type, TypeAttr:$layout_type);
     let hasVerifier = 1;
 }
 

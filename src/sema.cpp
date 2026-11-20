@@ -10,6 +10,8 @@ bool zeroable_array_element(const std::shared_ptr<Type> &type) {
         return array->length == 0 || zeroable_array_element(array->element);
     if (const auto *pointer = dynamic_cast<const PointerType *>(type.get()))
         return pointer->nullable;
+    if (const auto *record = dynamic_cast<const StructType *>(type.get()))
+        return record->is_packed;
     if (const auto core = resolve_core_type(type->to_string()))
         return *core != CoreType::Void;
     return false;
@@ -121,6 +123,11 @@ std::shared_ptr<Type> Sema::get_builtin_type(const std::string &name) {
     if (it != builtin_types.end()) {
         return it->second;
     }
+    if (auto type = resolve_core_type(name)) {
+        auto result = std::make_shared<PrimitiveType>(std::string(core_type_info(*type).name));
+        builtin_types[name] = result;
+        return result;
+    }
     return nullptr;
 }
 
@@ -150,8 +157,47 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 return nullptr;
             return std::make_shared<PointerType>(pointee, name[0] == '*', read_only);
         }
+        if (name.starts_with("packed(")) {
+            const auto end = name.find(") ");
+            if (end == std::string::npos)
+                return nullptr;
+            const auto order = name.substr(7, end - 7);
+            if (order != "msb_first" && order != "lsb_first")
+                return nullptr;
+            auto storage = resolve_type_from_string(name.substr(end + 2));
+            auto array = std::dynamic_pointer_cast<ArrayType>(storage);
+            auto slice = std::dynamic_pointer_cast<SliceType>(storage);
+            if (!array && !slice) {
+                log_error("Packed storage requires an array or slice");
+                return nullptr;
+            }
+            auto value = array ? array->element : slice->element;
+            auto element = resolve_core_type(value->to_string());
+            auto record = std::dynamic_pointer_cast<StructType>(value);
+            if ((!element || !core_type_info(*element).is_integer) &&
+                (!record || !record->is_packed)) {
+                log_error("Packed storage requires integer or packed record elements");
+                return nullptr;
+            }
+            if (slice)
+                return std::make_shared<SliceType>(value, slice->read_only,
+                                                   order == "msb_first" ? PackedBitOrder::MsbFirst
+                                                                        : PackedBitOrder::LsbFirst);
+            return std::make_shared<ArrayType>(array->element, array->length,
+                                               order == "msb_first" ? PackedBitOrder::MsbFirst
+                                                                    : PackedBitOrder::LsbFirst);
+        }
         if (name.starts_with("[") && name.ends_with("]")) {
-            const auto separator = name.rfind("; ");
+            size_t separator = std::string::npos;
+            unsigned depth = 0;
+            for (size_t i = 0; i < name.size(); ++i) {
+                if (name[i] == '[')
+                    ++depth;
+                if (name[i] == ']')
+                    --depth;
+                if (name[i] == ';' && depth == 1)
+                    separator = i;
+            }
             if (separator == std::string::npos) {
                 auto inner = name.substr(1, name.size() - 2);
                 const bool read_only = inner.starts_with("const ");
@@ -195,6 +241,42 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
             const auto type_arguments =
                 split_type_arguments(std::string_view(name).substr(open + 1,
                                                                    name.size() - open - 2));
+            if (current_module && current_module->standard_name == "memory" &&
+                base == "__memory_slice_bytes") {
+                auto slice = type_arguments.size() == 1
+                                 ? std::dynamic_pointer_cast<SliceType>(
+                                       resolve_type_from_string(type_arguments.front()))
+                                 : nullptr;
+                if (!slice || slice->bit_order == PackedBitOrder::None) {
+                    log_error("Packed byte views require a packed slice type");
+                    return nullptr;
+                }
+                return std::make_shared<SliceType>(get_builtin_type("u8"), slice->read_only);
+            }
+            if (current_module && current_module->standard_name == "memory" &&
+                base == "__memory_const_slice") {
+                auto slice = type_arguments.size() == 1
+                                 ? std::dynamic_pointer_cast<SliceType>(
+                                       resolve_type_from_string(type_arguments.front()))
+                                 : nullptr;
+                if (!slice || slice->read_only || slice->bit_order == PackedBitOrder::None) {
+                    log_error("Packed copy requires a writable packed destination slice type");
+                    return nullptr;
+                }
+                return std::make_shared<SliceType>(slice->element, true, slice->bit_order);
+            }
+            if (current_module && current_module->standard_name == "arena" &&
+                base == "__memory_slice_element") {
+                auto slice = type_arguments.size() == 1
+                                 ? std::dynamic_pointer_cast<SliceType>(
+                                       resolve_type_from_string(type_arguments.front()))
+                                 : nullptr;
+                if (!slice || slice->read_only) {
+                    log_error("Slice allocation requires a writable slice type");
+                    return nullptr;
+                }
+                return slice->element;
+            }
             if (base == "result") {
                 if (type_arguments.size() != 1) {
                     log_error("result requires exactly one type argument");
@@ -344,6 +426,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
     initialization.clear();
     result_proof.clear();
     result_handled.clear();
+    loops.clear();
     falls_through = true;
     loop_depth = 0;
     current_return_type.reset();
@@ -575,10 +658,22 @@ std::shared_ptr<Type> Sema::check_generic_function_call(const CallExpression *ca
     const auto base = qualifier + name;
     const auto argument_names = split_type_arguments(
         std::string_view(callee->value).substr(open + 1, callee->value.size() - open - 2));
+    if (!imported_module && current_module && current_module->standard_name == "slices" &&
+        name == "__slices_copy_backward")
+        return check_memory_intrinsic(call, name, argument_names);
+    if (!imported_module && current_module && current_module->standard_name == "hashmap" &&
+        name == "__memory_reserve")
+        return check_memory_intrinsic(call, name, argument_names);
+    if (!imported_module && current_module && current_module->standard_name == "arena" &&
+        name == "__memory_initialize_slice")
+        return check_memory_intrinsic(call, name, argument_names);
     if (!imported_module && current_module && current_module->standard_name == "memory" &&
-        (name == "__memory_size_of" || name == "__memory_align_of" ||
-         name == "__memory_padding" ||
-         name == "__memory_place"))
+        (name == "__memory_size_of" || name == "__memory_align_of" || name == "__memory_padding" ||
+         name == "__memory_place" || name == "__memory_is_aligned" ||
+         name == "__memory_slice_unit" || name == "__memory_slice_alignment" ||
+         name == "__memory_slice_packed" || name == "__memory_packed_pointer" ||
+         name == "__memory_packed_mut_pointer" || name == "__memory_view_packed" ||
+         name == "__memory_packed_bit_offset" || name == "__memory_copy_packed"))
         return check_memory_intrinsic(call, name, argument_names);
     const FunctionDefinition *definition = nullptr;
     if (imported_module) {
@@ -638,7 +733,7 @@ void Sema::check_statement(const Statement *stmt) {
         return;
     }
     if (recording && !falls_through) {
-        log_error("Unreachable statement after an unconditional return");
+        log_error("Unreachable statement after an unconditional control transfer");
         return;
     }
     if (const auto *decl = dynamic_cast<const VariableDeclaration *>(stmt)) {
@@ -716,6 +811,7 @@ void Sema::check_statement(const Statement *stmt) {
         // Each body starts with independent control-flow and initialization state.
         falls_through = true;
         loop_depth = 0;
+        loops.clear();
         current_return_type = func_type->return_type;
         current_function = func_def;
         enter_scope();
@@ -761,6 +857,10 @@ void Sema::check_statement(const Statement *stmt) {
                 recording->defers[current_function].push_back(defer);
         }
 
+    } else if (const auto *broken = dynamic_cast<const BreakStatement *>(stmt)) {
+        check_break(broken);
+    } else if (const auto *continued = dynamic_cast<const ContinueStatement *>(stmt)) {
+        check_continue(continued);
     } else if (const auto *ret = dynamic_cast<const ReturnStatement *>(stmt)) {
         if (recording && !current_return_type) {
             log_error("Return is only allowed inside a function");
@@ -818,7 +918,11 @@ void Sema::check_statement(const Statement *stmt) {
             result_proof[refinement->first] = refinement->second;
         }
         ++loop_depth;
+        loops.push_back({while_stmt, current_scope, {}, {}});
         check_statement(while_stmt->body.get());
+        merge_loop_flows(before, loops.back().continues);
+        auto breaks = std::move(loops.back().breaks);
+        loops.pop_back();
         --loop_depth;
         bool body_reaches = falls_through;
         // The body may execute zero times. Repeated immutable stores to an outer
@@ -830,6 +934,7 @@ void Sema::check_statement(const Statement *stmt) {
         result_handled = before_handled;
         merge_result_flow(before_proof, before_handled, before_reaches,
                           body_proof, body_handled, body_reaches);
+        merge_loop_flows(before, breaks);
         for (auto &[id, proof] : result_proof)
             proof = ResultProof::Unknown;
     } else if (const auto *expr_stmt = dynamic_cast<const ExpressionStatement *>(stmt)) {
@@ -899,6 +1004,14 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         log_error("Missing expression");
         return nullptr;
     }
+    if (recording) {
+        if (const auto *call = dynamic_cast<const CallExpression *>(expr)) {
+            bool handled = false;
+            auto type = check_integer_conversion(call, handled);
+            if (handled)
+                return type;
+        }
+    }
     if (checking_constant)
         return check_constant_expression(expr);
     if (const auto *matching = dynamic_cast<const MatchExpression *>(expr))
@@ -920,7 +1033,8 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         }
         if (expected_array->length != 0 &&
             !zeroable_array_element(expected_array->element)) {
-            log_error("zeroed requires zeroable elements (not non-null references or structs)");
+            log_error(
+                "zeroed requires zeroable elements (not non-null references or ordinary structs)");
             return nullptr;
         }
         return expected_array;
@@ -1051,8 +1165,13 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
                 log_error("Slice range bound must be an integer");
             return nullptr;
         }
-        return std::make_shared<SliceType>(array ? array->element :
-                                           slice ? slice->element : pointer->pointee, read_only);
+        return std::make_shared<SliceType>(array   ? array->element
+                                           : slice ? slice->element
+                                                   : pointer->pointee,
+                                           read_only,
+                                           array   ? array->bit_order
+                                           : slice ? slice->bit_order
+                                                   : PackedBitOrder::None);
     } else if (const auto *prefix = dynamic_cast<const PrefixExpression *>(expr)) {
         if (recording && (prefix->op == "&" || prefix->op == "*"))
             return check_pointer_unary(prefix);
@@ -1390,6 +1509,11 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
     if (current_module && current_module->standard_name == "arena" &&
         arena_operation(name->value, arena_primitive_names)) {
         log_error("Cannot redeclare a native arena primitive");
+        return false;
+    }
+    if (current_module && current_module->standard_name == "hashmap" &&
+        name->value == "__memory_reserve") {
+        log_error("Cannot redeclare the internal typed storage primitive");
         return false;
     }
     if (current_scope->symbols.contains(name->value) ||

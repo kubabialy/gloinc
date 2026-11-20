@@ -4,21 +4,17 @@ Gloin is an experimental language with explicit types, manual memory management,
 and native executables. Its compiler, `gloinc`, is built on LLVM/MLIR, with
 language operations represented in the GloinIR dialect.
 
-**[Download 0.2.2](https://github.com/kubabialy/gloinc/releases/tag/v0.2.2)** ·
-[Language guide](docs/site/0.2.2/index.html) ·
+**[Download 0.3.0](https://github.com/kubabialy/gloinc/releases/tag/v0.3.0)** ·
+[Language guide](docs/site/0.3.0/index.html) ·
 [Examples](examples/README.md) ·
-[Release notes](docs/release-notes-0.2.2.md)
+[Release notes](docs/release-notes-0.3.0.md)
 
-Version 0.2.2 reduces redundant checked-floating-point work and enables SIMD in
-proved-safe private-array loops while preserving arithmetic and memory guarantees.
-It includes the arena-backed hash maps introduced in 0.2.1.
-See the [migration notes](docs/release-notes-0.2.0.md#migrating-from-010)
-when updating 0.1.0 programs.
+Version 0.3.0 adds [packed layouts](docs/packed-layout.md), [endian-qualified integers](docs/endianness.md), checked integer constructors, loop transfers and bounded protocol libraries. Rebuild native objects and use matching compiler, runtime and standard modules when upgrading.
 
 ## Get started
 
 Download and extract the archive for your platform. Verify it with the attached
-`.sha256` file; see the [installation guide](docs/release-0.2.2.md#installation-and-package).
+`.sha256` file; see the [installation guide](docs/release-0.3.0.md#installation-and-package).
 
 | Supported platform | Required LLVM/MLIR | Bundled toolchain installer |
 | --- | --- | --- |
@@ -67,28 +63,28 @@ TLS need OpenSSL. See the [CLI reference](docs/cli.md) for all options.
   and pipes, JSON, nonblocking TCP, client/server TLS, and streaming HTTP/HTTPS.
 - **Tools:** `gloinfmt`, written in Gloin, formats files and checks source trees.
 
-Gloin is in early development and is not ready for production use. Enum payloads,
-packed structs and async/spawn remain unsupported.
+Gloin is in early development and is not ready for production use. Enum payloads
+and async/spawn remain unsupported.
 Windows support is not planned; contributions are welcome.
 
 ## Documentation
 
 | I want to… | Start here |
 | --- | --- |
-| Learn the language | [0.2.2 HTML guide](docs/site/0.2.2/index.html) |
+| Learn the language | [0.3.0 HTML guide](docs/site/0.3.0/index.html) |
 | Run complete programs | [Examples and usage](examples/README.md) |
 | Use library APIs | [Standard library](docs/standard-library.md), [I/O](docs/io.md), [processes](docs/child-processes.md), [networking](docs/networking.md), [HTTP](docs/http-client.md), [JSON](docs/json.md) |
 | Format Gloin code | [gloinfmt](docs/gloinfmt.md) and [source style](docs/gloin-style.md) |
 | Understand the compiler | [Checked programs](docs/checked-program.md) and [GloinIR/lowering](docs/lowering.md) |
-| Inspect release verification | [0.2.2 record](docs/release-0.2.2.md#verification-boundary) and [test inventory](tests/README.md) |
+| Inspect release verification | [0.3.0 record](docs/release-0.3.0.md#verification-boundary) and [test inventory](tests/README.md) |
 
 To read the HTML guide in a browser, open
-`share/doc/gloinc/docs/site/0.2.2/index.html` inside an extracted archive.
+`share/doc/gloinc/docs/site/0.3.0/index.html` inside an extracted archive.
 Older releases keep their own versioned guides.
 
 ## Build from source
 
-Follow the [macOS and Linux build instructions](docs/release-0.2.2.md#build-and-run).
+Follow the [macOS and Linux build instructions](docs/release-0.3.0.md#build-and-run).
 Source builds require a C++23 compiler, CMake 3.28+, Ninja, OpenSSL 3 and the
 pinned LLVM/MLIR installation above. See the [toolchain guide](docs/toolchain.md)
 for compiler-only builds and offline dependencies.
@@ -106,9 +102,11 @@ failures; `check-core` is the required passing gate.
 
 ## Development and contributing
 
-The [0.2.0 development record](docs/release-0.2.0-draft.md) covers switch and match,
-standard-library migration to `result<T>`, and compiler validation fixes.
-Endianness, packed structs, threads and async are outside this release. The
+The [0.3.0 draft](docs/release-0.3.0-draft.md) records the endianness feature,
+packed layouts, compatibility rules, completed development checks, and
+remaining release gates.
+The [0.2.0 development record](docs/release-0.2.0-draft.md) preserves the earlier
+switch/match, `result<T>` migration, and compiler validation work. The
 [compiler validation record](docs/compiler-validation.md) documents correctness
 and performance issues found while testing larger programs. The
 [wiki specification](https://github.com/kubabialy/gloinc/wiki/Language-Spec)

@@ -27,6 +27,27 @@ def pub reverse<T>(values: [T]) -> void {
     }
 }
 
+// Copy original source values even when views overlap. No allocation; O(source.len).
+// A short destination returns false before any write; its unused tail is unchanged.
+def pub copy<T>(destination: [T], source: [const T]) -> bool {
+    if destination.len < source.len { return false; }
+    if source.len == 0 { return true; }
+
+    // Use byte addresses: typed placements can overlap between element boundaries.
+    def backward: bool     = __slices_copy_backward<T>(&destination[0], &source[0]);
+    def mut remaining: u64 = source.len;
+
+    while remaining > 0 {
+        def mut index: u64 = source.len - remaining;
+        if backward { index = remaining - 1; }
+
+        destination[index] = source[index];
+        remaining = remaining - 1;
+    }
+
+    return true;
+}
+
 // Returns false without writing when destination is too short. Source and
 // destination must not overlap; borrowed views can alias and are not tracked.
 def pub copy_nonoverlapping<T>(destination: [T], source: [const T]) -> bool {
