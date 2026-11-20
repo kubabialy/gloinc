@@ -21,7 +21,7 @@ The [test inventory](../tests/README.md) names four historical failures. Two [as
 
 ## Release boundary
 
-**Proposed minimum.** One bounded worker-launch mechanism, one single-thread executor, one genuinely asynchronous socket-read operation, typed completion and explicit checks. Supply one realistic example of each, plus failure injection, cleanup, runnable documentation and installed-package tests. Build on the maintained Apple Silicon macOS and Linux ARM64/x86_64 configurations. Reconcile the branch with the actual released 0.3.x baseline before opening a candidate.
+**Proposed minimum.** One bounded worker-launch mechanism, one single-thread executor, one genuinely asynchronous socket-read operation, typed completion and explicit checks. Ship public monotonic deadlines and bounded binary cursors for synchronous and asynchronous callers. Supply realistic examples, failure injection, cleanup, runnable documentation and installed-package tests. Build on the maintained Apple Silicon macOS and Linux ARM64/x86_64 configurations. Reconcile the branch with the actual released 0.3.x baseline before opening a candidate.
 
 **Independent candidates.** Checked C imports and bit operations can proceed alongside the concurrency work once each contract is reviewed. Each must be independently releasable and documented. Serial telemetry is the first device-facing consumer. A desktop multimedia binding exercises a different library and ownership model. Promote a pilot to a release deliverable only when its platform support, maintenance owner and test equipment are identified.
 
@@ -80,6 +80,24 @@ Ship two small Gloin examples. One computes independent checksums on copied inpu
 
 **Exit gate.** Replace each of the four named legacy assertions with a mapped positive or negative test of approved semantics. Remove an expected-failure entry only alongside its replacement and passing evidence. Exercise join before and after completion, repeated lifecycle reuse and early exits. Cross-check the JIT, native and installed-package test selections.
 
+## Standard library deliverables
+
+The proposed minimum includes three library additions. A protocol author can use deadlines and binary cursors in an ordinary synchronous program. The TCP read gives applications a supported entry point to the executor. Module and API names below are provisional.
+
+| Priority | What the caller gets | Contract and acceptance test |
+| --- | --- | --- |
+| 1. Deadlines in `@time` | Construct an absolute deadline from an explicit monotonic instant and duration. Query the time left using an instant supplied by the caller. Today the [HTTP client](../stdlib/http_client.gloin) has a private deadline, while [time](../stdlib/time.gloin) already supplies instants and durations. | Construction overflow and a clock reading before the start return errors. At or past expiry the remaining duration is zero. At the poll boundary, round a positive fraction of a millisecond up and cap a single wait at the native limit. Test zero, exact expiry, one nanosecond remaining and the largest duration. Retry a partial HTTP read against the original deadline and preserve the client's public timeout behavior. |
+| 2. Bounded binary readers and writers in `@binary` | Decode a fixed header followed by a variable number of fields from caller-owned bytes. Start with byte, packed-record and exact-length byte-copy operations, plus position and remaining length. Delegate record layout and endianness to [memory.read_packed and write_packed](../stdlib/memory.gloin). | No allocation. Each successful operation advances by the bytes consumed or produced. A short buffer returns a checked error with the position and destination bytes intact. Specify aliasing for copies. Exercise a Modbus TCP register block and a second length-prefixed telemetry frame with independent expected bytes, unaligned starts, exact fit, empty input and every truncated prefix. Record bytes copied per operation. |
+| 3. Executor-facing TCP read in `@net` | A Gloin application can suspend on a bounded TCP read with a deadline. Reuse the current [Socket.read and wait_many](../stdlib/net.gloin) and their distinction between bytes, EOF and temporary unavailability. Publish the bounded executor lifecycle alongside the API once SPEC-040 settles its spelling. | Keep buffer and socket ownership explicit through completion and shutdown. Preserve partial reads. Handle readiness followed by another would-block without extending the deadline. Pass the two-client progress test in milestone 4 and show the same synchronous socket caller still works. |
+
+**First device-facing candidate.** Provide a hosted `@serial` module for talking to a microcontroller over a USB serial port. Start with open/configure, bounded read/write progress, deadline handling and close. Use caller-owned byte buffers and document which line settings each maintained host supports. The pseudoterminal and physical-board gates below determine when to advertise device support. The binary cursor and deadlines can ship independently.
+
+**If bit operations land.** Add incremental CRC-16/MODBUS in Gloin. Publish the numeric checksum and specify its wire byte order separately. Test empty input, one-shot and fragmented input against independent vectors. Use it for serial RTU framing. Modbus TCP provides the cursor use case and has no RTU CRC field. The existing [Internet checksum](../stdlib/packet.gloin) remains a distinct algorithm. Also move the [existing SplitMix64](../stdlib/random.gloin) transition into Gloin and verify identical seeded sequences.
+
+**Games and later library work.** Use the existing monotonic clock, seeded RNG and caller-owned storage in the desktop pilot. Keep the multimedia binding in a local package so headless programs can install the standard library without SDL. Revisit a bounded ring when serial buffering and a second consumer agree on capacity, wraparound and partial writes. Host UDP/IPv6 sockets are a separate networking increment. Board-side UART, timers and GPIO belong with the freestanding target decision.
+
+**Worker eligibility.** Publish a table for APIs exercised on workers. Cover pure value operations, locally owned RNG state, arenas, collection aliases, host clock callbacks and native handles. List the ownership or runtime guarantee that admits each operation and test its rejection when that guarantee cannot be established. Copying a socket or an arena-backed collection must never grant a second worker independent ownership.
+
 ## Independent milestones for interoperability and low-level operations
 
 | Deliverable | Implementation boundary | Acceptance case |
@@ -89,7 +107,7 @@ Ship two small Gloin examples. One computes independent checksums on copied inpu
 | Host serial telemetry pilot | Model line configuration, a single handle owner, partial progress, absolute deadlines, disconnect and close. Choose either a narrow private OS bridge or the proposed C package mechanism. Keep framing and CRC in Gloin. | Pseudoterminal CI delivers split and adjacent frames, timeout, EOF and reconnect cases. Record one physical USB-serial board round trip and reset/disconnect observation before claiming device validation. |
 | Desktop game binding pilot | Use a local package and a small C shim for opaque window/render/audio handles and normalized input events. Use queued audio, explicit cleanup and caller-owned frame storage. | Build a small playable 2D game from a relocated installation. Record keyboard, resize, draw, sound and quit checks. Attribute the platform/ABI combinations actually exercised. |
 
-The thread and deferred-I/O tracks have no dependency on public C imports. A multimedia package or serial binding should be buildable without patching compiler source. If that requires broad ABI support, reduce the shim interface first. General host UDP/IPv6 sockets, reusable binary cursors and rings remain useful follow-ups once two consumers establish the common contract.
+The thread and deferred-I/O tracks have no dependency on public C imports. A multimedia package or serial binding should be buildable without patching compiler source. If that requires broad ABI support, reduce the shim interface first.
 
 ## Integration order and branch plan
 
@@ -106,7 +124,11 @@ Use one branch per reviewable item against the agreed development base. The name
 | 7 | Completion integration and examples | 4, 6 | Public join surface, error fidelity, failure-inventory reconciliation. |
 | 8 | C ABI design, scalar imports, package link fixture | Own design gate | Separate PRs for native linking and JIT resolution, then relocated example. |
 | 9 | Bit operations, wrapping operations, protocol fixtures | Own design gate | Separate verified increments with signed/width semantics and regression vectors. |
-| 10 | Candidate validation and guide | Approved release scope complete | Reproducible platform results, numbered guide, migration notes and inventoried limitations. |
+| Parallel with 1–4 | Public deadlines and HTTP client adoption | Existing time and HTTP modules | Deterministic clock arithmetic and unchanged HTTP behavior. Use the same deadline contract in PR 6. |
+| Parallel with 1–4 | Binary cursors and protocol fixtures | Existing packed memory APIs | Two codecs, truncation and short-write tests, installed-module example. |
+| After 9 | Incremental CRC and RNG migration | Accepted bit operations | Separate changes with independent CRC vectors and unchanged SplitMix64 sequences. |
+| Pilot | Hosted serial | Deadlines and selected OS bridge | Pseudoterminal tests, supported line settings and recorded board validation. |
+| 10 | Candidate validation and guide | Approved release scope complete | Reproducible platform results, stdlib ownership and cost tables, numbered guide, migration notes and inventoried limitations. |
 
 Before implementing threads, model at least one aliasing counterexample and one failed worker launch on paper. Before implementing the executor, model close versus readiness and a task suspended across arena reset. If either proof requires a general borrow checker, narrow the allowed values or give storage to an explicit owner. If the proposed restriction also excludes the reference application, reopen the design decision.
 
@@ -128,5 +150,6 @@ Before implementing threads, model at least one aliasing counterexample and one 
 3. Select bounded executor ownership, cancellation semantics, initial socket operation, and memory budget. Record what happens when user code never yields or a worker never returns.
 4. Decide whether C imports and bit operations are required, independent candidates, or moved to a later minor release. Assign a reviewer and acceptance fixture to each included track.
 5. Name a serial board and desktop integration environment only if those pilots become release gates. Keep cross-target firmware distinct: semantic analysis currently [requires 64-bit pointers](../src/sema.cpp), and [native output selects the host and adds a process entry](../src/native_output.cpp). A firmware milestone needs a target data layout, freestanding entry and link, startup code, MMIO semantics, interrupt discipline, and on-board verification.
+6. Approve deadlines, binary cursors and the executor-facing TCP read as the standard-library minimum. Decide separately whether the hosted serial module is ready for distribution and whether CRC ships with bit operations.
 
 After those decisions, update this table of deliverables with the accepted scope and PRs. Change the version and publish artifacts only when cutting an authorized release.
