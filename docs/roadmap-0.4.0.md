@@ -29,6 +29,8 @@ The [test inventory](../tests/README.md) names four historical failures. Two [as
 
 ## Milestone 1 — freeze the concurrency contract (SPEC-040)
 
+The [SPEC-040 concurrency contract](concurrency.md) is proposed for maintainer review. Compiler implementation follows acceptance of its ownership, completion and suspension rules.
+
 Deliver a short normative spec, cost table, runnable-style examples and paired rejection examples before stabilizing syntax. Describe three different events in every example: creation of the task, commencement of its work, and observation of completion. Document ordinary function calls and function-scoped `defer` alongside the new operations so the two meanings of “deferred” stay clear.
 
 | Decision | Recommended starting point | Evidence required before acceptance |
