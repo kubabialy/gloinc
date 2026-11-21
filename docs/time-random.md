@@ -83,6 +83,26 @@ For live timing, obtain both instants using `monotonic_now()` and check each
 reading's result before calculating elapsed time. Equal ticks are not a failed
 measurement; do not assume a minimum nonzero interval.
 
+## Monotonic deadlines (0.4.0 candidate)
+
+`time.Deadline.after(start, duration)` returns a `result<time.Deadline>`. It
+fixes the expiry at `start.ticks_ns + duration.nanoseconds`. A zero duration
+expires immediately. An unrepresentable expiry returns `status.OVERFLOW`.
+
+Pass an instant from the same clock domain to each query. Both queries return
+`status.INVALID` for a reading before the original start. They retain no
+history of previous readings. Construction and queries take constant time,
+allocate no memory and perform no clock reads. Copies keep the same expiry.
+
+| Query | Result |
+| --- | --- |
+| `deadline.remaining(now)` | `result<time.Duration>` with the exact nanoseconds left, or zero at and after expiry. |
+| `deadline.remaining_poll_ms(now)` | `result<i32>` for one readiness wait. A positive fraction rounds up to the next millisecond. A wait is capped at 2,147,483,647 ms. Zero means expired. |
+
+For example, with 1,000,001 ns left, poll for 2 ms. After a wakeup, partial
+read or interruption, sample the clock again and query the original deadline.
+A capped wait can finish while the deadline still has time left.
+
 ## Migration from 0.1.0
 
 Names, arguments, arithmetic boundaries and clock sources are unchanged.

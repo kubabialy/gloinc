@@ -87,6 +87,63 @@ TEST_F(TimeRandomLibraryTest, ElapsedIsExplicitAndRejectsBackwardsTicks) {
         return 0;)")}),
                0);
 }
+TEST_F(TimeRandomLibraryTest, DeadlineBoundariesAndPollRounding) {
+    const auto file = source(R"(
+        import "@time";
+        import "@status";
+
+        def tick(ns: u64) -> time.Instant { return time.Instant { ticks_ns: ns }; }
+        def span(ns: u64) -> time.Duration { return time.Duration { nanoseconds: ns }; }
+        def poll_is(deadline: time.Deadline, now: u64, expected: i32) -> bool {
+            def ms: result<i32> = deadline.remaining_poll_ms(tick(now));
+            if ms.erroneous { return false; }
+            return ms.value == expected;
+        }
+
+        def main() -> i32 {
+            def max: u64 = 18446744073709551615;
+            def full: result<time.Deadline> = time.Deadline.after(tick(0), span(max));
+            if full.erroneous { return 1; }
+            def d: time.Deadline = full.value;
+            def left: result<time.Duration> = d.remaining(tick(0));
+            if left.erroneous { return 2; }
+            if left.value.nanoseconds != max || !poll_is(d, 0, 2147483647) { return 3; }
+            if !poll_is(d, max - 2147483647000001, 2147483647) { return 4; }
+            if !poll_is(d, max - 2147483646000000, 2147483646) { return 5; }
+            if !poll_is(d, max - 1000001, 2) || !poll_is(d, max - 1000000, 1) { return 6; }
+            if !poll_is(d, max - 1, 1) || !poll_is(d, max, 0) { return 7; }
+
+            def overflow: result<time.Deadline> = time.Deadline.after(tick(max), span(1));
+            if !overflow.erroneous { return 8; }
+            if overflow.error.code != status.OVERFLOW || overflow.error.os_error != 0 { return 9; }
+            def zero: result<time.Deadline> = time.Deadline.after(tick(max), span(0));
+            if zero.erroneous { return 10; }
+            if !poll_is(zero.value, max, 0) { return 11; }
+
+            def bounded: result<time.Deadline> = time.Deadline.after(tick(7), span(5));
+            if bounded.erroneous { return 12; }
+            def short: time.Deadline = bounded.value;
+            def last: result<time.Duration> = short.remaining(tick(11));
+            if last.erroneous { return 13; }
+            if last.value.nanoseconds != 1 { return 14; }
+            if !poll_is(short, 12, 0) || !poll_is(short, 13, 0) { return 15; }
+            def backwards: result<time.Duration> = short.remaining(tick(6));
+            if !backwards.erroneous { return 16; }
+            if backwards.error.code != status.INVALID || backwards.error.os_error != 0 { return 17; }
+            def early: result<i32> = short.remaining_poll_ms(tick(6));
+            if !early.erroneous { return 18; }
+            if early.error.code != status.INVALID || early.error.os_error != 0 { return 19; }
+            return 42;
+        }
+    )");
+    expect_run(invoke({file}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/deadline";
+        const auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 10), 42);
+    }
+}
 TEST_F(TimeRandomLibraryTest, SeededVectorsAndIndependentValueCopies) {
     expect_run(invoke({program(R"(
         def mut rng: random.SplitMix64 = random.SplitMix64.seeded(0);

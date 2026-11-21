@@ -70,6 +70,50 @@ def pub struct Duration {
 
 }
 
+// One absolute deadline. Supply instants from the same monotonic clock on every query.
+def pub struct Deadline {
+    def start: Instant,
+    def end: Instant,
+
+    // O(1), no allocation or clock read. A zero duration expires at start.
+    def pub static after(start: Instant, duration: Duration) -> result<Deadline> {
+        if duration.nanoseconds > 18446744073709551615 - start.ticks_ns {
+            return error("deadline exceeds the monotonic clock range", status.OVERFLOW, 0);
+        }
+
+        return Deadline { start: start, end: Instant { ticks_ns: start.ticks_ns + duration.nanoseconds } };
+    }
+
+    // O(1), no allocation or clock read. Readings before start fail with INVALID.
+    def pub remaining(self: &const Deadline, now: Instant) -> result<Duration> {
+        if now.ticks_ns < self.start.ticks_ns {
+            return error("monotonic clock moved backwards", status.INVALID, 0);
+        }
+        if now.ticks_ns >= self.end.ticks_ns { return Duration { nanoseconds: 0 }; }
+
+        return Duration { nanoseconds: self.end.ticks_ns - now.ticks_ns };
+    }
+
+    // Milliseconds for one poll. After waking, query the same deadline again.
+    // O(1), no allocation or clock read. Propagates remaining() errors.
+    def pub remaining_poll_ms(self: &const Deadline, now: Instant) -> result<i32> {
+        def left: result<Duration> = self.remaining(now);
+        if left.erroneous { return left.error; }
+
+        def ns: u64 = left.value.nanoseconds;
+        if ns == 0 { return 0; }
+
+        // For positive ns this ceiling is exact even at u64::MAX.
+        def ms: u64 = 1 + (ns - 1) / 1000000;
+        if ms >= 2147483647 { return 2147483647; }
+
+        def narrowed: result<i32> = i32(ms);
+        if narrowed.erroneous { return narrowed.error; }
+
+        return narrowed.value;
+    }
+}
+
 // Example: start = time.monotonic_now(); check .erroneous before using start.value.
 // O(1) host clock read, no allocation; an injected host callback supplies its own cost.
 // Failure exposes only an error: IO_ERROR preserves errno; OVERFLOW/INVALID have os_error=0.
