@@ -4,7 +4,6 @@ import "@arena";
 import "@http";
 import "@net";
 import "@status";
-import "@std";
 import "@strings";
 import "@time";
 
@@ -22,51 +21,22 @@ def pub struct Request {
     def pub body: string,
 }
 
-def struct Deadline {
-    def start: u64,
-    def end: u64,
+def request_deadline(timeout_ms: i32) -> result<time.Deadline> {
+    if timeout_ms <= 0 { return error("HTTP timeout must be positive"); }
 
-    def static create(timeout_ms: i32) -> result<Deadline> {
-        if timeout_ms <= 0 { return error("HTTP timeout must be positive"); }
+    def now: result<time.Instant> = time.monotonic_now();
+    if now.erroneous { return error("HTTP clock read failed"); }
 
-        def now: result<time.Instant> = time.monotonic_now();
-        if now.erroneous { return error("HTTP clock read failed"); }
+    def ms: result<u64> = u64(timeout_ms);
+    if ms.erroneous { return ms.error; }
 
-        def converted: result<u64> = std.u64_from_i64(std.i64_from_i32(timeout_ms));
-        if converted.erroneous { return converted.error; }
+    def duration: result<time.Duration> = time.Duration.from_milliseconds(ms.value);
+    if duration.erroneous { return duration.error; }
 
-        def duration: u64 = converted.value * 1000000;
-        if duration > 18446744073709551615 - now.value.ticks_ns {
-            return error("HTTP deadline overflows clock range");
-        }
+    def deadline: result<time.Deadline> = time.Deadline.after(now.value, duration.value);
+    if deadline.erroneous { return error("HTTP deadline overflows clock range"); }
 
-        return Deadline {
-            start: now.value.ticks_ns,
-            end: now.value.ticks_ns + duration
-        };
-    }
-
-    def remaining(self: &const Deadline) -> result<i32> {
-        def now: result<time.Instant> = time.monotonic_now();
-        if now.erroneous { return error("HTTP clock read failed or moved backwards"); }
-        if now.value.ticks_ns < self.start {
-            return error("HTTP clock read failed or moved backwards");
-        }
-        if now.value.ticks_ns >= self.end { return error("HTTP request timed out"); }
-
-        def remaining: u64 = self.end - now.value.ticks_ns;
-        // Round upward so sub-millisecond waits do not become busy polling.
-        def milliseconds: u64 = (remaining + 999999) / 1000000;
-
-        def wide: result<i64> = std.i64_from_u64(milliseconds);
-        if wide.erroneous { return wide.error; }
-
-        def narrowed: result<i32> = std.i32_from_i64(wide.value);
-        if narrowed.erroneous { return narrowed.error; }
-
-        return narrowed.value;
-    }
-
+    return deadline.value;
 }
 
 def struct Transport {
@@ -201,7 +171,7 @@ def combine(a: i32, b: i32) -> i32 {
 def struct ExchangeState {
     def mut owner: arena.GeneralArena,
     def endpoint: Endpoint,
-    def deadline: Deadline,
+    def deadline: time.Deadline,
     def mut transport: Transport,
     def mut decoder: http.ResponseDecoder,
     def buffers: Buffers,
@@ -287,8 +257,12 @@ def struct ExchangeState {
         if self.phase == DONE { return self.event(COMPLETE, 0, 0); }
         if ready < 0 || ready > 3 { return error("invalid HTTP readiness mask"); }
 
-        def timed: result<i32> = self.deadline.remaining();
-        if timed.erroneous { return timed.error; }
+        def now: result<time.Instant> = time.monotonic_now();
+        if now.erroneous { return error("HTTP clock read failed or moved backwards"); }
+
+        def timed: result<i32> = self.deadline.remaining_poll_ms(now.value);
+        if timed.erroneous { return error("HTTP clock read failed or moved backwards"); }
+        if timed.value == 0 { return error("HTTP request timed out"); }
 
         def timeout_ms: i32 = timed.value;
         if self.body_offset < self.body_used { return self.event(HAVE_OUTPUT, 0, timeout_ms); }
@@ -462,7 +436,7 @@ def pub struct Exchange {
             return error("HTTPS requires a verification hostname");
         }
 
-        def timed: result<Deadline> = Deadline.create(limits.timeout_ms);
+        def timed: result<time.Deadline> = request_deadline(limits.timeout_ms);
         if timed.erroneous { return timed.error; }
 
         def decoded: result<http.ResponseDecoder> = http.ResponseDecoder.create(
