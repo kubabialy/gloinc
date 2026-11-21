@@ -19,7 +19,7 @@ Use `def spawnable` for worker entry points and `def deferred` for cooperative
 entry points. A spawnable function may also be called synchronously. A deferred
 entry requires explicit scheduling. A successful schedule returns a checked
 `task.Deferred<U>` handle tied to that executor. Worker and deferred handles
-are distinct even when their successful payload U matches. In v1 both launches name a free function
+are distinct even when their declared return type U matches. Both launches name a free function
 with a resolved signature. Closures, implicit receivers, method launches,
 nested launches and cross-executor joins are outside the proposed subset.
 `schedule` is contextual in the scheduling expression and library names
@@ -90,18 +90,28 @@ if take { def r: result<u32> = job.join(); if r.erroneous { return 1; } }
 def final: result<u32> = job.join();        // Already consumed on the take path.
 ```
 
-## Completion and error provenance
+## Collection and the worker's returned result
 
-Use one explicit result check at join. For a body returning `T`, join returns
-`result<T>`. For `void` it returns `result<void>`. For `result<T>` it returns
-that same result shape, preserving an application error's literal message,
-code and OS code byte for byte. A runtime collection error also produces a
-checked failure. Application codes can collide with runtime codes. The proposed
-`join_with_origin(&source)` additionally writes `task.Origin.Body` or
-`task.Origin.Runtime` on every return. Ordinary `join()` omits that output.
-Executor collection has the same result rule and a corresponding
-`drive_and_join_with_origin` form. Existing error values need no extra field.
-[Checked results](results.md#error-values-and-diagnostic-codes)
+**Maintainer decision.** Joining a worker that returns a result requires two
+explicit checks. First the caller checks whether the runtime collected the
+worker. On success it binds and checks the worker's own result. Both layers
+preserve their error metadata, including when their numeric codes coincide.
+Launch is a separate, earlier check.
+
+| Declared return | Worker handle | `job.join()` |
+| --- | --- | --- |
+| `u32` | `task.Worker<u32>` | `result<u32>` |
+| `void` | `task.Worker<void>` | `result<void>` |
+| `result<u32>` | `task.Worker<result<u32>>` | `result<result<u32>>` |
+| `result<void>` | `task.Worker<result<void>>` | `result<result<void>>` |
+
+The candidate currently rejects nested result types. Milestone 2 must support
+these completion types through CheckedProgram and verified GloinIR. Each layer
+has its own tag and handling obligation. Reject reading the inner payload after
+checking only the outer tag, and reject dropping the inner result on an
+outer-success path, including a fallible void return. An outer failure has no
+inner payload. The draft applies the same rule to executor collection.
+[Checked results](results.md)
 
 ```gloin
 import "@task";
@@ -114,13 +124,14 @@ def spawnable quotient(n: u32, d: u32) -> result<u32> {
 }
 
 def run(n: u32, d: u32) -> i32 {
-    def launched: result<task.Worker<u32>> = spawn quotient(n, d);
+    def launched: result<task.Worker<result<u32>>> = spawn quotient(n, d);
     if launched.erroneous { return 1; }
-    def job: task.Worker<u32> = launched.value;
-    def mut source: task.Origin = task.Origin.Body;
-    def answer: result<u32> = job.join_with_origin(&source);
+    def job: task.Worker<result<u32>> = launched.value;
+    def collected: result<result<u32>> = job.join();
+    if collected.erroneous { return 2; }
+
+    def answer: result<u32> = collected.value;
     if answer.erroneous {
-        if source == task.Origin.Runtime { return 2; }
         if strings.equal(answer.error.message, "zero denominator")
             && answer.error.code == 37 && answer.error.os_error == 9 { return 3; }
         return 4;
@@ -136,8 +147,8 @@ def main() -> i32 { return run(84, 2); }
 | --- | --- |
 | `run(84, 2)` | Exit 0. The worker runs on its own thread. Join observes 42, consumes the handle and releases the slot. |
 | No slot or injected native launch failure | Exit 1. No handle or live worker exists. Preserve the OS code when thread creation fails. |
-| `run(84, 0)` | Exit 3. Origin is Body and the message is `zero denominator`. The worker has been reaped. |
-| Inject a completion transport failure after termination | Exit 2. Origin is Runtime, even if its codes coincide with the body's. Join consumes on both variants. |
+| `run(84, 0)` | Exit 3. Collection succeeds. The inner error message is `zero denominator`. The worker has been reaped. |
+| Inject a completion transport failure after termination | Exit 2. The outer result fails. Join consumes on both variants. |
 | A checked arithmetic or bounds trap in the worker | The process traps under the ordinary language contract. No recoverable completion or defer execution is promised. |
 
 Returning a recoverable runtime error requires proof that execution ended
@@ -145,9 +156,9 @@ and storage can be released safely. If the host cannot establish termination,
 it must retain the worker resources and code until termination is established,
 or fail the process on an unrecoverable runtime invariant. Returning a
 collectable error while freeing storage under a running worker is invalid.
-Executor failures detected by the driver carry Runtime origin. An error handled
-inside the task, then returned by its body, carries Body origin even if it
-originated in an awaited operation.
+An executor collection failure occupies the outer result. If a task returns an
+error from an awaited operation, successful collection delivers that error in
+the inner result. Cancellation that prevents a return is an outer failure.
 
 ## Executor frames and bounded I/O
 
