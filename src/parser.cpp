@@ -391,7 +391,8 @@ std::unique_ptr<Statement> GloinParser::parse_def_statement_impl() {
     bool spawnable = false, deferred = false;
     if (!is_const && (current_token.type == GLOIN_TOKEN_SPAWNABLE ||
                       current_token.type == GLOIN_TOKEN_DEFERRED)) {
-        require_extended("Concurrency declarations");
+        if (current_token.type == GLOIN_TOKEN_DEFERRED)
+            require_extended("Concurrency declarations");
         spawnable = current_token.type == GLOIN_TOKEN_SPAWNABLE;
         deferred = current_token.type == GLOIN_TOKEN_DEFERRED;
         advance_token();

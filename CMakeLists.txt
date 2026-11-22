@@ -107,6 +107,7 @@ add_library(gloin_frontend STATIC
     src/sema_pointers.cpp
     src/sema_methods.cpp
     src/sema_arena.cpp
+    src/sema_spawnable.cpp
     src/sema_memory.cpp
     src/sema_modules.cpp
     src/sema_standard.cpp

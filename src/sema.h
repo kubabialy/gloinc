@@ -282,6 +282,11 @@ class Sema {
     bool prepare_modules(const std::vector<std::unique_ptr<Statement>> &program);
     void select_module(const SourceModule *module);
     void collect_declarations(const std::vector<std::unique_ptr<Statement>> &program);
+    std::unordered_map<const FunctionDefinition *, std::vector<const CallExpression *>> worker_calls;
+    std::unordered_map<const FunctionDefinition *, std::vector<SymbolId>> worker_locals;
+    std::unordered_map<const FunctionDefinition *, const Node *> worker_pointer_offsets;
+    bool worker_value(const ValueType &type) const;
+    void validate_spawnable_functions();
     void check_bodies(const std::vector<std::unique_ptr<Statement>> &program);
     Symbol *module_member(const MemberAccessExpression *member, bool &handled, bool diagnose);
 

@@ -1,9 +1,6 @@
 # SPEC-040 · Tasks and completion
 
-**0.4.0 design proposal for maintainer review.** The examples specify future
-checked Gloin. The candidate compiler rejects concurrency at its normal entry
-point. This document proposes the contract for subsequent compiler and runtime
-changes. [Roadmap](roadmap-0.4.0.md#milestone-1--freeze-the-concurrency-contract-spec-040)
+**0.4.0 development.** Free functions declared `def spawnable` can be called synchronously. The compiler checks worker signatures and the transitive call graph, including concrete generic helpers. This first subset supports call-local reference parameters in helpers. It rejects stored borrows, pointer arithmetic, deferred captures and unaudited native primitives on worker paths. Generic worker entry declarations, source-level launch and executor scheduling remain under development. [Roadmap](roadmap-0.4.0.md#milestone-1--freeze-the-concurrency-contract-spec-040)
 
 ## Who runs a call?
 

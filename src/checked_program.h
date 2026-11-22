@@ -162,6 +162,7 @@ struct SemanticData {
     std::unordered_map<const MemberAccessExpression *, uint32_t> enum_variants;
     std::unordered_map<const MemberAccessExpression *, size_t> field_indices;
     std::unordered_map<const StructLiteral *, std::vector<size_t>> literal_fields;
+    std::unordered_set<SymbolId> spawnable_functions;
     std::unordered_set<const CallExpression *> runtime_calls;
     std::unordered_map<SymbolId, std::string> linkage_names;
     TargetInfo target;

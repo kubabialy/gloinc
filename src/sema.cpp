@@ -411,6 +411,9 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         return false;
     current_scope = std::make_shared<Scope>();
     collected_functions.clear();
+    worker_calls.clear();
+    worker_locals.clear();
+    worker_pointer_offsets.clear();
     arena_methods.clear();
     arena_reserved_methods.clear();
     arena_many_methods.clear();
@@ -514,6 +517,8 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         select_module(nullptr);
         if (!has_error())
             validate_struct_cycles();
+        if (!has_error() && !recording->spawnable_functions.empty())
+            validate_spawnable_functions();
     } else {
         for (const auto &statement : program)
             check_statement(statement.get());
@@ -534,7 +539,7 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
         log_error("Generic function template requires explicit type arguments at a call");
         return nullptr;
     }
-    if (recording && (func_def->is_deferred || func_def->is_spawnable)) {
+    if (recording && func_def->is_deferred) {
         log_error("Unsupported function in checked core program");
         return nullptr;
     }
@@ -584,6 +589,8 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
          standard_operation(sym.name, standard_runtime_names)))
         recording->linkage_names[recording->bindings.at(func_def->name.get())] =
             "gloin.user." + sym.name;
+    if (recording && func_def->is_spawnable)
+        recording->spawnable_functions.insert(recording->bindings.at(func_def->name.get()));
     return func_type;
 }
 
@@ -1541,6 +1548,8 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
             return false;
         }
         symbol.id = recording->symbols.size();
+        if (current_function && kind == SymbolKind::Variable && !recording->spawnable_functions.empty())
+            worker_locals[current_function].push_back(symbol.id);
         recording->symbols.push_back({symbol.id, name->value, kind, *core, std::move(parameters),
                                       symbol.is_mutable, name->span});
         recording->bindings[name] = symbol.id;
@@ -1584,6 +1593,10 @@ std::shared_ptr<Type> Sema::check_expression(const Expression *expression,
                 return nullptr;
             }
             recording->types[expression] = *core;
+            if (current_function && !recording->spawnable_functions.empty()) {
+                if (auto *call = dynamic_cast<const CallExpression *>(expression))
+                    worker_calls[current_function].push_back(call);
+            }
         } else {
             log_error("Unsupported expression type in checked core program");
         }

@@ -216,6 +216,8 @@ std::shared_ptr<Type> Sema::check_pointer_comparison(const InfixExpression *expr
 
 std::shared_ptr<Type> Sema::check_pointer_offset(const InfixExpression *expression) {
     auto left = check_expression(expression->left.get());
+    if (current_function && recording && !recording->spawnable_functions.empty())
+        worker_pointer_offsets.try_emplace(current_function, expression);
     auto pointer = std::dynamic_pointer_cast<PointerType>(left);
     if (!pointer || !pointer->nullable || std::dynamic_pointer_cast<FunctionType>(pointer->pointee) ||
         pointer->pointee->to_string() == "void") {

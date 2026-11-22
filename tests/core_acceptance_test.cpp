@@ -1100,8 +1100,8 @@ TEST_F(CoreAcceptanceTest, RejectDeferredExtern) {
     rejects("reject/deferred_extern.gloin", "top-level function or constant");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredSpawnable) {
-    rejects("reject/deferred_spawnable.gloin", "Concurrency");
+TEST_F(CoreAcceptanceTest, RejectBorrowedWorkerInputs) {
+    rejects("reject/spawnable_borrow.gloin", "parameter can carry borrowed storage");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredDeferred) {
@@ -1205,3 +1205,21 @@ TEST_F(CoreAcceptanceTest, RejectImplicitStandardResult) {
     rejects("reject/standard_result_type.gloin", "Type mismatch");
 }
 TEST_F(CoreAcceptanceTest, TrapFormattingWithFreedArena) { traps("trap/format_freed.gloin"); }
+
+TEST_F(CoreAcceptanceTest, SpawnableDeclarationsAreCheckedOnSynchronousCalls) {
+    const auto file = fixture("run/spawnable.gloin");
+    auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    EXPECT_NE(ir.out.find("gloin.spawnable"), std::string::npos);
+    expect_run(invoke({file}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/spawnable";
+        auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+    auto unsafe = source(R"(import "@std";
+        def helper<T>(x: T) -> T { std.println("ambient output"); return x; }
+        def spawnable worker() -> i32 { return helper<i32>(3); })");
+    expect_error(invoke({"--check", unsafe}), 1, "worker -> helper<i32> -> println");
+}

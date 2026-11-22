@@ -429,7 +429,7 @@ TEST(ParserTest, RejectsTruncatedConstructsAndTrailingTokens) {
 TEST(ParserTest, RejectsUnsupportedCoreSyntax) {
     for (const std::string source :
          {"fn f() {}", "extern def f() -> void;", "struct X {}", "def packed struct(u32) X {}",
-          "def deferred f() -> void {}", "def spawnable f() -> void {}"})
+          "def deferred f() -> void {}"})
         rejected(source);
     for (const std::string expression :
          {"spawn f()", "await f()", "run f()", "[1, 2]",

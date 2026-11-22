@@ -1,0 +1,9 @@
+def struct Borrow {
+    def bytes: [const u8],
+}
+
+def spawnable first(value: Borrow) -> u8 {
+    return value.bytes[0];
+}
+
+def main() -> i32 { return 0; }

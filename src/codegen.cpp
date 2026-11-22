@@ -303,6 +303,8 @@ mlir::func::FuncOp CodeGen::declare_function(const FunctionDefinition *func_def)
     }
     auto funcOp = builder.create<mlir::func::FuncOp>(location(), emitted_name, funcType);
     if (checked_data) {
+        if (checked_data->spawnable_functions.contains(checked_binding(func_def->name.get())))
+            funcOp->setAttr("gloin.spawnable", builder.getUnitAttr());
         funcOp->setAttr("gloin.layout_inputs", builder.getArrayAttr(layoutInputs));
         funcOp->setAttr("gloin.layout_results", builder.getArrayAttr(layoutResults));
     }
