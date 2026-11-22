@@ -28,10 +28,22 @@ parser changes. The proposal omits `force_join` and reserves ordinary `defer`
 for cleanup. Existing code already uses qualified names such as `fs.join`.
 The proposed join spelling is a handle method and needs no reserved word.
 
-## Worker boundary
+## The spawnable guarantee
+
+Check the declaration even when every caller is synchronous. `work(i)` runs
+on the caller's thread and consumes no worker slot. Only `spawn work(i)`
+starts a thread, and the target must be declared `spawnable`. Two invocations
+can run concurrently without racing through their arguments or ambient state.
+A worker may still trap, block its own progress or run indefinitely.
+
+Check the instantiated call graph transitively, including recursive call
+groups. A worker may mutate its locals and pass a local reference to a helper
+whose checked effects keep that reference within the invocation. Reject any
+path to mutable global state, escaping references or unaudited native code.
+Report the offending chain, for example `work → sample → global counter`.
 
 Each program invocation has a finite worker-slot limit, exposed to the caller
-by `task.worker_capacity()`. The proposed native/JIT default is four. An
+by `threads.worker_capacity()`. The proposed native/JIT default is four. An
 embedding may set a smaller limit, including zero, before entry. Independent
 JIT invocations have separate budgets. A completed worker keeps its slot until
 collection. A full invocation fails launch with `status.WOULD_BLOCK`. Record
@@ -59,106 +71,158 @@ Passing either slice to a worker fails the transfer check, even through a field
 of a copied struct. Taking a value snapshot into a packed *record* before launch
 gives the worker independent storage. [Packed storage](packed-storage.md)
 
-## Handle ownership and control flow
+## Launch and join
 
-A successful launch result owns one obligation. After proving success,
-`.value` transfers that obligation once into a single immutable local handle.
-Extracting the handle a second time is an error. The failure arm owns nothing.
-The compiler must track unextracted successful results as well as extracted
-handles. V1 permits neither returning nor storing a handle, taking its address,
-capturing it in a defer, assigning it to another binding, or hiding it in a
-generic call. The owning thread collects it exactly once, including when the
-body has already finished. Self-join is structurally impossible.
+Import `@threads`. A worker with successful payload `T` has handle type
+`threads.Thread<T>`. Launch returns `result<threads.Thread<T>>`. Success
+creates one obligation to collect the thread. Failure creates none.
 
-| Source edge | Accept | Reject |
+| Declared return of the worker | Handle | Result of `join()` |
 | --- | --- | --- |
-| Launch | Handle launch failure, then extract once. | Discard launch, return on success without collecting, or copy the launch result. |
-| Alias | Use the original local for collection. | `def alias: task.Worker<u32> = job;`, `&job`, or assigning to an aggregate. |
-| Conditional | Consume on both outgoing paths, or keep live on both. | Join on only one path then use the handle after the branches meet. |
-| Loop | Consume a per-iteration launch before the back edge, break or continue. | Carry a new obligation past its binding's lifetime or rejoin on the next iteration. |
-| Exit | Collect all live handles before returning, including on an application error. | An early return with another live handle. |
-| Reuse | Create a fresh task after collection. | Join twice, reassign a live binding, drop an unhandled join result or read its unchecked payload. |
+| `i32` or `result<i32>` | `threads.Thread<i32>` | `result<i32>` |
+| `void` or `result<void>` | `threads.Thread<void>` | `result<void>` |
 
-For example, after a successful launch with local handle `job`, these are
-independent negative source fragments. Check each through the normal parser
-and semantic checker once the feature is implemented.
+**One result at join.** A plain return becomes a successful result. For a
+fallible body, successful collection delivers its result directly, preserving
+the original error message, code and OS code. A runtime collection failure
+uses the same failure arm. Error codes alone cannot establish the origin of a
+failure. Launch failure remains separately observable at `spawn`. [Checked results](results.md)
+
+Any join that returns to its caller has consumed the handle, including when the
+worker returned an error. The runtime can report a recoverable collection error
+only after establishing termination and safe reclamation. If it cannot establish
+termination, it must retain the resources and JIT code while resolving it or
+trap on an unrecoverable invariant. Arithmetic and bounds traps in workers
+retain their process-level semantics.
+
+### Four launches, then four joins
 
 ```gloin
-def other: task.Worker<u32> = job;          // Would create two owners.
-if skip { return 0; }                      // This path loses the live worker.
-if take { def r: result<u32> = job.join(); if r.erroneous { return 1; } }
-def final: result<u32> = job.join();        // Already consumed on the take path.
+import "@threads";
+
+def spawnable work(i: i32) -> i32 {
+    return i * i;
+}
+
+def main() -> i32 {
+    def mut workers: [threads.Thread<i32>; 4] = zeroed;
+    def mut count: i32 = 0;
+
+    for def mut i: i32 = 0; i < 4; i = i + 1 {
+        def started: result<threads.Thread<i32>> = spawn work(i);
+        if started.erroneous { break; }
+        workers[i] = started.value;
+        count = count + 1;
+    }
+
+    def mut total: i32 = 0;
+    def mut failed: bool = false;
+    for def mut i: i32 = 0; i < count; i = i + 1 {
+        def answer: result<i32> = workers[i].join();
+        if answer.erroneous {
+            failed = true;
+            continue;
+        }
+        total = total + answer.value;
+    }
+
+    if count != 4 || failed { return 1; }
+    if total != 14 { return 2; }
+    return 0;
+}
 ```
 
-## Collection and the worker's returned result
+If the third launch fails, `count` is two. The second loop still collects slots
+0 and 1. If slot 1 finishes before slot 0, it stays joinable until collected.
+On a join error, `continue` advances to the next slot. There is one checked
+result per launch and one per join.
 
-**Maintainer decision.** Joining a worker that returns a result requires two
-explicit checks. First the caller checks whether the runtime collected the
-worker. On success it binds and checks the worker's own result. Both layers
-preserve their error metadata, including when their numeric codes coincide.
-Launch is a separate, earlier check.
-
-| Declared return | Worker handle | `job.join()` |
-| --- | --- | --- |
-| `u32` | `task.Worker<u32>` | `result<u32>` |
-| `void` | `task.Worker<void>` | `result<void>` |
-| `result<u32>` | `task.Worker<result<u32>>` | `result<result<u32>>` |
-| `result<void>` | `task.Worker<result<void>>` | `result<result<void>>` |
-
-The candidate currently rejects nested result types. Milestone 2 must support
-these completion types through CheckedProgram and verified GloinIR. Each layer
-has its own tag and handling obligation. Reject reading the inner payload after
-checking only the outer tag, and reject dropping the inner result on an
-outer-success path, including a fallible void return. An outer failure has no
-inner payload. The draft applies the same rule to executor collection.
-[Checked results](results.md)
+For a fallible body, the launch and collection syntax stays the same.
+Calling `divide(84, 0)` synchronously and collecting that call from a worker
+both deliver `error("zero denominator", 37, 9)` when the worker is collected
+successfully.
 
 ```gloin
-import "@task";
-import "@strings";
-
-// Proposed source. Both arguments are copied. The denominator controls the worker outcome.
-def spawnable quotient(n: u32, d: u32) -> result<u32> {
+def spawnable divide(n: u32, d: u32) -> result<u32> {
     if d == 0 { return error("zero denominator", 37, 9); }
     return n / d;
 }
 
-def run(n: u32, d: u32) -> i32 {
-    def launched: result<task.Worker<result<u32>>> = spawn quotient(n, d);
-    if launched.erroneous { return 1; }
-    def job: task.Worker<result<u32>> = launched.value;
-    def collected: result<result<u32>> = job.join();
-    if collected.erroneous { return 2; }
-
-    def answer: result<u32> = collected.value;
-    if answer.erroneous {
-        if strings.equal(answer.error.message, "zero denominator")
-            && answer.error.code == 37 && answer.error.os_error == 9 { return 3; }
-        return 4;
-    }
-    if answer.value != 42 { return 5; }
-    return 0;
+def calculate(n: u32, d: u32) -> result<u32> {
+    def started: result<threads.Thread<u32>> = spawn divide(n, d);
+    if started.erroneous { return started.error; }
+    def job: threads.Thread<u32> = started.value;
+    def answer: result<u32> = job.join();
+    if answer.erroneous { return answer.error; }
+    return answer.value;
 }
-
-def main() -> i32 { return run(84, 2); }
 ```
 
-| Run of the program above | Expected outcome and owner |
-| --- | --- |
-| `run(84, 2)` | Exit 0. The worker runs on its own thread. Join observes 42, consumes the handle and releases the slot. |
-| No slot or injected native launch failure | Exit 1. No handle or live worker exists. Preserve the OS code when thread creation fails. |
-| `run(84, 0)` | Exit 3. Collection succeeds. The inner error message is `zero denominator`. The worker has been reaped. |
-| Inject a completion transport failure after termination | Exit 2. The outer result fails. Join consumes on both variants. |
-| A checked arithmetic or bounds trap in the worker | The process traps under the ordinary language contract. No recoverable completion or defer execution is promised. |
+## Verifying thread ownership
 
-Returning a recoverable runtime error requires proof that execution ended
-and storage can be released safely. If the host cannot establish termination,
-it must retain the worker resources and code until termination is established,
-or fail the process on an unrecoverable runtime invariant. Returning a
-collectable error while freeing storage under a running worker is invalid.
-An executor collection failure occupies the outer result. If a task returns an
-error from an awaited operation, successful collection delivers that error in
-the inner result. Cancellation that prevents a return is an outer failure.
+**Proposed v1 rule.** Track ownership specifically for thread handles. Each
+successful launch creates one obligation. Its owner is initially the launch
+result, then a named local or one element of a local fixed array. The spawning
+thread is the sole collector. A worker's stack, captured arguments and return
+slot stay live independently of the caller's stack. Finishing the body never
+discharges the obligation. Ordinary Gloin values keep their existing copy rules.
+
+| Operation | Required state | Effect |
+| --- | --- | --- |
+| Initialize a handle array with `zeroed` | Fresh local storage | Every slot is empty. No native worker or task record is created. |
+| `workers[i] = started.value` | Successful unextracted result and proven empty slot | Transfer the obligation and consume the source. Initialization of a named local from `started.value` follows the same rule. |
+| `workers[i].join()` | Slot proven live | Collect once. The slot becomes empty on every returning edge. The join result has its own handling obligation. |
+| Leave scope | Every owner leaving scope is empty or consumed | Release local storage. There is no implicit join or detach. |
+
+**A slot can own a worker, but reading it cannot make a copy.** Reject both
+`def twin: threads.Thread<i32> = workers[0];` and `workers[1] = workers[0];`.
+The only assignment that installs a handle in v1 consumes a fresh launch
+success. An indexed join acts directly on its slot.
+
+Reject whole-array copies, repeated initialization from a live handle,
+address-taking, slices over handle storage, user aggregates containing
+handles, passing or returning handles by value, and deferred captures.
+Generic copies and raw placement or view constructors must enforce these
+rules after substitution. The launch result is itself noncopyable. Every
+successful arm must transfer its payload before the result goes out of scope.
+
+### Static proof for two loops
+
+1. Track each owner by binding or array position in the control-flow graph.
+   A successful spawn introduces a fresh identity. Each transfer changes its
+   owner once. Asynchronous worker completion leaves the ownership fact intact.
+2. At the launch loop head, `count == i` and exactly `[0, count)` is live.
+   The store at `i` and increment extend that range by one. A failed spawn
+   breaks with the previous range intact. In the drain loop, exactly
+   `[i, count)` is live at the head. Join consumes its first element before
+   either result branch. Both paths reach the loop increment with identical
+   ownership. At loop exit, the live range is empty.
+3. Support constant slots and counted ranges first. Check both arms of
+   conditionals, loop back edges, `break`, `continue` and every normal return.
+   Invalidate index facts across mutation and possible alias writes. If a slot
+   cannot be proved empty for a transfer or live for a join on every incoming
+   path, reject the operation and identify the binding or range. This limits
+   arbitrary runtime-index shuffling in v1. No lifetime annotations are needed.
+4. Record transfers and consuming uses in CheckedProgram. Represent launch,
+   transfer into a slot and consuming join explicitly in GloinIR. Verify the
+   same ownership invariants across its control-flow edges, including the
+   range proof for indexed operations. Reject duplicated or lost obligations
+   and ordinary copies of handle storage before LLVM lowering. Preserve normal
+   index bounds checks until proved redundant. The runtime controls thread
+   termination, synchronization and resource reclamation.
+
+### Ownership acceptance cases
+
+| Case | Expected outcome |
+| --- | --- |
+| Use `started.value` twice, overwrite a live slot or join twice | Reject at the second use. Point to the first transfer or join. |
+| Return on a later launch failure or the first join error with workers outstanding | Reject the edge which leaves the live prefix or suffix. |
+| Substitute an arbitrary input index for the drain index | Reject when the live-slot proof is missing. |
+| Join slot 0, launch again into slot 0, then join it | Accept. The second launch has a fresh identity. |
+| Reach a join after only one branch has consumed that slot | Reject. Identify the path on which the slot was consumed. |
+| Worker returns `error("bad input", 37, 9)` | One checked join delivers that exact message and both codes. Inject a runtime collection failure separately and check that it also consumes once. |
+| Partial launches, arbitrary completion order and injected join failures | In JIT and native O0/O2, verify one reap per successful launch and full capacity reuse. |
+| Hand-built IR duplicates a handle, fabricates an occupied slot or bypasses transfer with an aggregate copy | Reject before lowering. |
 
 ## Executor frames and bounded I/O
 
@@ -202,7 +266,8 @@ Neither body runs during scheduling. The owner's `exec.drive_and_join(b)` drives
 the shared ready queue. A tries one read, sees would-block, saves its continuation
 and relinquishes the thread. B runs and yields 7 to the driver. The test peer
 then sends one byte. `exec.drive_and_join(a)` polls, resumes A, collects the
-byte and releases its frame. The driver closes the socket and shuts down the
+byte and releases its frame. Executor collection is also proposed to return
+one result. The driver closes the socket and shuts down the
 empty executor. If scheduling A fails, close the socket and shut down. If B
 fails to schedule, cancel and collect A first. If B's collection fails, A still
 needs collection. If A's read fails, its collection releases the frame with the
@@ -256,7 +321,10 @@ Replace the historical assertions as evidence becomes available.
 | `CodeGenTest.GenerateSpawn` | Verify typed launch and join, padded and packed value round trips, void completion, and preserved traps in JIT and native O0/O2. |
 | `AsyncTest.DeferredFunctionGeneration` | Run the two-task socket case above, then repeat with EOF, short read, would-block after readiness, expiry, cancellation, stale wakeup and close. |
 
-Record all branch and loop ownership errors through normal CLI diagnostics.
+Check that a synchronous call reaches the same body without acquiring a worker
+slot. Reject an unsafe helper chain at the spawnable declaration even in a
+program with synchronous calls only. Record branch and loop ownership errors
+through normal CLI diagnostics.
 Inject clock, readiness, launch and join failures. Check resource counters at
 capacity, immediately after failure and after shutdown. Execute installed and
 relocated examples before advertising concurrency support. [Test inventory](../tests/README.md#remaining-failures)
