@@ -109,6 +109,17 @@ std::shared_ptr<Type> Sema::worker_binding_type(const VariableDeclaration *decl)
         name.remove_prefix(resultPrefix.size());
         name.remove_suffix(1);
     }
+    std::optional<size_t> length;
+    bool slots = !launch && name.starts_with('[') && name.ends_with(']');
+    if (slots) {
+        auto separator = name.rfind("; ");
+        if (separator == std::string_view::npos)
+            return nullptr;
+        length = fixed_array_length(name.substr(separator + 2, name.size() - separator - 3));
+        if (!length)
+            return nullptr;
+        name = name.substr(1, separator - 1);
+    }
     auto dot = name.find('.');
     if (dot == std::string_view::npos || !name.substr(dot).starts_with(handlePrefix) ||
         !name.ends_with('>'))
@@ -123,6 +134,16 @@ std::shared_ptr<Type> Sema::worker_binding_type(const VariableDeclaration *decl)
     if (!core || core->is_result() || core->is_error() || core->const_size)
         return nullptr;
     std::shared_ptr<Type> type = std::make_shared<ThreadHandleType>(payload);
+    if (slots) {
+        type = std::make_shared<ArrayType>(type, *length);
+        recording->types[decl->type.get()] = *value_type(type);
+        if (!current_function || !decl->is_mutable ||
+            !dynamic_cast<const ZeroedLiteral *>(decl->initializer.get()))
+            log_error("A thread handle array requires a mutable local initialized with zeroed");
+        else
+            worker_owner_uses.insert(decl->initializer.get());
+        return type;
+    }
     if (launch)
         type = std::make_shared<ResultType>(type);
     recording->types[decl->type.get()] = *value_type(type);
@@ -163,4 +184,16 @@ std::shared_ptr<Type> Sema::check_worker_launch(const SpawnExpression *spawn) {
     auto result = std::dynamic_pointer_cast<ResultType>(returned);
     return std::make_shared<ResultType>(
         std::make_shared<ThreadHandleType>(result ? result->value : returned));
+}
+
+std::shared_ptr<ThreadHandleType> Sema::worker_slot(const IndexExpression *index) {
+    auto *name = index ? dynamic_cast<const Identifier *>(index->left.get()) : nullptr;
+    auto *binding = name ? current_scope->resolve(name->value) : nullptr;
+    auto *array = binding ? dynamic_cast<ArrayType *>(binding->type.get()) : nullptr;
+    auto handle = array ? std::dynamic_pointer_cast<ThreadHandleType>(array->element) : nullptr;
+    if (handle) {
+        worker_owner_uses.insert(name);
+        worker_owner_uses.insert(index);
+    }
+    return handle;
 }

@@ -75,7 +75,8 @@ struct ValueType {
         return type;
     }
     bool owns_thread() const {
-        return thread_payload || (result_value && result_value->thread_payload);
+        return thread_payload || (result_value && result_value->thread_payload) ||
+               (array_element && array_element->thread_payload);
     }
     bool is_pointer() const { return !pointers.empty(); }
     bool is_array() const { return pointers.empty() && static_cast<bool>(array_element); }
@@ -172,6 +173,8 @@ struct SemanticData {
     std::unordered_set<SymbolId> spawnable_functions;
     std::unordered_map<const SpawnExpression *, SymbolId> worker_launches;
     std::unordered_map<const CallExpression *, const Identifier *> worker_joins;
+    std::unordered_map<const CallExpression *, const IndexExpression *> worker_slot_joins;
+    std::unordered_map<const AssignmentExpression *, const IndexExpression *> worker_slot_stores;
     std::unordered_set<const CallExpression *> runtime_calls;
     std::unordered_map<SymbolId, std::string> linkage_names;
     TargetInfo target;

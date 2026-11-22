@@ -10,7 +10,8 @@ With `import "@threads";`, the named `calculate` example below runs in JIT
 and native builds. A successful spawn creates a joinable OS thread. The verifier follows both launch outcomes through
 branches and loops. Every returning success path must transfer the handle once
 and join it once. A worker returning `result<u32>` gives the caller one
-`result<u32>` at join. Fixed arrays of handles, generic worker entries and executor scheduling
+`result<u32>` at join. Local fixed arrays can transfer and join handles at constant indices.
+Counted-loop ownership proofs, generic worker entries and executor scheduling
 remain under development.
 [Roadmap](roadmap-0.4.0.md#milestone-1--freeze-the-concurrency-contract-spec-040)
 
@@ -175,7 +176,7 @@ def calculate(n: u32, d: u32) -> result<u32> {
 
 ## Verifying thread ownership
 
-**Proposed v1 rule.** Track ownership specifically for thread handles. Each
+Track ownership specifically for thread handles. Each
 successful launch creates one obligation. Its owner is initially the launch
 result, then a named local or one element of a local fixed array. The spawning
 thread is the sole collector. A worker's stack, captured arguments and return

@@ -1315,3 +1315,37 @@ TEST_F(CoreAcceptanceTest, AllWorkerSlotsCanBeReusedAfterCapacityFailure) {
     ASSERT_EQ(built.status, 0) << built.err;
     EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
 }
+
+TEST_F(CoreAcceptanceTest, FixedWorkerSlotTransfersOwnEachSuccessfulLaunch) {
+    const std::string prefix = R"(import "@threads";
+        def spawnable work() -> i32 { return 42; }
+        def main() -> i32 {
+            def mut jobs: [threads.Thread<i32>; 2] = zeroed;
+            def started: result<threads.Thread<i32>> = spawn work();
+            if started.erroneous { return 1; }
+        )";
+    const std::string put = "jobs[1] = started.value; ";
+    const std::string join = "def answer: result<i32> = jobs[1].join(); "
+                             "if answer.erroneous { return 2; } ";
+    auto file = source(prefix + put + join + "return answer.value; }");
+    expect_run(invoke({file}), 42);
+    auto executable = directory + "/worker-slot";
+    for (auto mode : {"-O0", "-O2"}) {
+        ASSERT_EQ(invoke_raw({mode, "-o", executable, file}).status, 0);
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+    auto reject = [&](std::string body, const char *reason) {
+        SCOPED_TRACE(body);
+        expect_error(invoke({"--check", source(prefix + body + " return 0; }")}), 1, reason);
+    };
+    reject(put, "must be joined");
+    reject(put + "jobs[0] = jobs[1];", "fresh successful launch");
+    reject(put + "&jobs[1];", "ownership cannot be copied");
+    reject(put + "def copy: [threads.Thread<i32>; 2] = jobs;", "initialized with zeroed");
+    reject(put + "def alias: [const i32] = jobs[0..1];", "ownership cannot be copied");
+    reject(put + "def other: result<i32> = jobs[0].join(); if other.erroneous { return 1; }",
+           "must be live");
+    reject(put + join + "def again: result<i32> = jobs[1].join(); if again.erroneous { return 1; }",
+           "must be live");
+    reject("jobs[2] = started.value;" + join, "in bounds");
+}

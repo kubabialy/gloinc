@@ -146,7 +146,34 @@ FailureOr<Adapter> make_adapter(ModuleOp module, func::FuncOp worker, Type paylo
 LogicalResult gloin::workers::lower_launches(ModuleOp module) {
     SmallVector<SpawnOp> launches;
     module.walk([&](SpawnOp op) { launches.push_back(op); });
-    if (launches.empty())
+    SmallVector<WorkerSlotsOp> arrays;
+    module.walk([&](WorkerSlotsOp op) { arrays.push_back(op); });
+    OpBuilder b(module.getContext());
+    auto ptr = LLVM::LLVMPointerType::get(b.getContext());
+    for (auto array : arrays) {
+        auto type = LLVM::LLVMArrayType::get(ptr, array.getSlots().getType().getLength());
+        auto storage = slot(b, array, type);
+        for (auto *use : llvm::make_early_inc_range(array.getSlots().getUsers())) {
+            b.setInsertionPoint(use);
+            auto loc = use->getLoc();
+            // Verification proves this exact index in bounds and live/empty on every edge.
+            auto address =
+                b.create<LLVM::GEPOp>(loc, ptr, ptr, storage, ValueRange{use->getOperand(1)});
+            if (auto put = dyn_cast<WorkerPutOp>(use)) {
+                b.create<LLVM::StoreOp>(loc, as_layout(b, loc, put.getHandle(), ptr), address);
+            } else {
+                auto take = cast<WorkerTakeOp>(use);
+                auto handle = b.create<LLVM::LoadOp>(loc, ptr, address);
+                take.getHandle().replaceAllUsesWith(
+                    as_source(b, loc, handle, take.getHandle().getType()));
+            }
+            use->erase();
+        }
+        array.erase();
+    }
+    SmallVector<JoinOp> joins;
+    module.walk([&](JoinOp op) { joins.push_back(op); });
+    if (launches.empty() && joins.empty())
         return success();
     auto launchFn = declare_runtime(module, launch_name);
     auto joinFn = declare_runtime(module, join_name);
@@ -164,8 +191,6 @@ LogicalResult gloin::workers::lower_launches(ModuleOp module) {
         return module.emitError(llvm::toString(host.takeError()));
     if (*layout != llvm::DataLayout(host->data_layout))
         return module.emitError("worker frames require the native runtime data layout");
-    OpBuilder b(module.getContext());
-    auto ptr = LLVM::LLVMPointerType::get(b.getContext());
     auto string = LLVM::LLVMStructType::getIdentified(b.getContext(), "gloin.string");
     if (!string.isInitialized() || string.isOpaque() ||
         !llvm::equal(string.getBody(), ArrayRef<Type>{ptr, b.getI64Type()}) || string.isPacked())
@@ -210,8 +235,6 @@ LogicalResult gloin::workers::lower_launches(ModuleOp module) {
             as_source(b, loc, loaded, launch.getHandle().getType()));
         launch.erase();
     }
-    SmallVector<JoinOp> joins;
-    module.walk([&](JoinOp op) { joins.push_back(op); });
     for (auto join : joins) {
         b.setInsertionPoint(join);
         auto loc = join.getLoc();

@@ -184,6 +184,18 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
     const auto *name = dynamic_cast<const Identifier *>(member->member.get());
     if (!name)
         return nullptr;
+    auto *index = dynamic_cast<const IndexExpression *>(member->left.get());
+    if (auto handle = worker_slot(index)) {
+        handled = true;
+        if (name->value != "join" || !call->arguments.empty()) {
+            log_error("A thread slot supports only join()");
+            return nullptr;
+        }
+        if (!check_expression(index))
+            return nullptr;
+        recording->worker_slot_joins.emplace(call, index);
+        return std::make_shared<ResultType>(handle->payload);
+    }
     if (auto *id = dynamic_cast<const Identifier *>(member->left.get())) {
         auto *binding = current_scope->resolve(id->value);
         if (auto *handle =

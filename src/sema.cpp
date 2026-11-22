@@ -137,6 +137,21 @@ void Sema::log_error(const std::string &msg) {
     diagnostics_->error(DiagnosticStage::Semantic, current_span, msg);
 }
 
+std::optional<size_t> Sema::fixed_array_length(std::string_view digits) {
+    size_t length = 0;
+    auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), length);
+    if (error != std::errc{} || end != digits.data() + digits.size()) {
+        auto bound = current_scope->resolve_type(std::string(digits));
+        auto *size = dynamic_cast<ConstSizeType *>(bound.get());
+        if (!size)
+            return std::nullopt;
+        length = size->value;
+    }
+    if (length > 1048576)
+        return std::nullopt;
+    return length;
+}
+
 std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
     if (recording) {
         if (name == "error")
@@ -221,19 +236,8 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 return nullptr;
             const auto digits = std::string_view(name).substr(separator + 2,
                                                        name.size() - separator - 3);
-            size_t length = 0;
-            auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(),
-                                                length);
-            if (error != std::errc{} || end != digits.data() + digits.size()) {
-                auto bound = current_scope->resolve_type(std::string(digits));
-                auto *size = dynamic_cast<ConstSizeType *>(bound.get());
-                if (!size)
-                    return nullptr;
-                length = size->value;
-            }
-            if (length > 1048576)
-                return nullptr;
-            return std::make_shared<ArrayType>(element, length);
+            auto length = fixed_array_length(digits);
+            return length ? std::make_shared<ArrayType>(element, *length) : nullptr;
         }
         const auto open = name.find('<');
         if (open != std::string::npos && name.ends_with('>')) {
@@ -1043,7 +1047,7 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
             log_error("zeroed requires a contextual fixed-array type [T; N]");
             return nullptr;
         }
-        if (expected_array->length != 0 &&
+        if (!worker_owner_uses.contains(expr) && expected_array->length != 0 &&
             !zeroable_array_element(expected_array->element)) {
             log_error(
                 "zeroed requires zeroable elements (not non-null references or ordinary structs)");
@@ -1231,6 +1235,21 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         return get_builtin_type(std::string(core_type_info(*result).name));
 
     } else if (const auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
+        const auto *index = dynamic_cast<const IndexExpression *>(assign->left.get());
+        if (recording && worker_slot(index)) {
+            auto *member = dynamic_cast<const MemberAccessExpression *>(assign->right.get());
+            auto *field = member ? dynamic_cast<const Identifier *>(member->member.get()) : nullptr;
+            if (!field || field->value != "value" ||
+                !dynamic_cast<const Identifier *>(member->left.get())) {
+                log_error("A thread slot accepts only a fresh successful launch");
+                return nullptr;
+            }
+            worker_owner_uses.insert(member);
+            recording->worker_slot_stores.emplace(assign, index);
+            if (!check_indirect_assignment(assign))
+                return nullptr;
+            return get_builtin_type("void");
+        }
         if (recording && !dynamic_cast<const Identifier *>(assign->left.get()))
             return check_indirect_assignment(assign);
         const auto *ident = dynamic_cast<const Identifier *>(assign->left.get());

@@ -299,6 +299,8 @@ class Sema {
     std::unordered_map<const FunctionDefinition *, const Node *> worker_pointer_offsets;
     bool worker_value(const ValueType &type) const;
     void validate_spawnable_functions();
+    std::optional<size_t> fixed_array_length(std::string_view digits);
+    std::shared_ptr<ThreadHandleType> worker_slot(const IndexExpression *index);
     std::shared_ptr<Type> worker_binding_type(const VariableDeclaration *decl);
     std::shared_ptr<Type> check_worker_launch(const SpawnExpression *spawn);
     std::unordered_set<const Expression *> worker_owner_uses;

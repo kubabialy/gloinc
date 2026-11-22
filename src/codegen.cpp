@@ -443,6 +443,14 @@ void CodeGen::gen_statement(const Statement *stmt) {
                                 : resolve_type(var_decl->type->value);
         }
 
+        if (checked_data) {
+            const auto &source = checked_data->types.at(var_decl->type.get());
+            if (source.is_array() && source.owns_thread()) {
+                auto slots = builder.create<gloin::WorkerSlotsOp>(location(), source_type(source));
+                declare_binding(var_decl->name.get(), slots, false, type, var_decl->type->value);
+                return;
+            }
+        }
         mlir::Value initVal;
         if (var_decl->initializer) {
             initVal = gen_expression(var_decl->initializer.get());
@@ -945,6 +953,14 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return builder.create<mlir::arith::CmpIOp>(location(), mlir::arith::CmpIPredicate::sgt,
                                                        left, right);
     } else if (auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
+        if (checked_data && checked_data->worker_slot_stores.contains(assign)) {
+            auto index = checked_data->worker_slot_stores.at(assign);
+            auto slots = gen_expression(index->left.get());
+            auto position = gen_integer_index(index->index.get());
+            auto handle = gen_expression(assign->right.get());
+            builder.create<gloin::WorkerPutOp>(location(), slots, position, handle);
+            return {};
+        }
         if (checked_data)
             if (auto *index = dynamic_cast<const IndexExpression *>(assign->left.get());
                 index && is_packed_storage(checked_data->types.at(index->left.get()))) {
@@ -1041,6 +1057,16 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
+        if (checked_data && checked_data->worker_slot_joins.contains(call)) {
+            auto index = checked_data->worker_slot_joins.at(call);
+            auto slots = gen_expression(index->left.get());
+            auto position = gen_integer_index(index->index.get());
+            auto handle = builder.create<gloin::WorkerTakeOp>(
+                location(), source_type(checked_data->types.at(index)), slots, position);
+            return builder.create<gloin::JoinOp>(location(),
+                                                 source_type(checked_data->types.at(call)), handle,
+                                                 mlir::TypeAttr::get(checked_type(call)));
+        }
         if (checked_data && checked_data->worker_joins.contains(call))
             return builder.create<gloin::JoinOp>(
                 location(), source_type(checked_data->types.at(call)),

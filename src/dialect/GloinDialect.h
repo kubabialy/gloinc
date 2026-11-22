@@ -27,6 +27,7 @@ class ModuleOp;
 }
 
 namespace gloin {
+mlir::LogicalResult verifyWorkerSlots(WorkerSlotsOp slots);
 mlir::LogicalResult verifyThreadOwnership(mlir::ModuleOp module);
 // Check exact LLVM-compatible storage, resolving nominal schemas in the owner module.
 bool matchesSourceStorage(mlir::Operation *owner, mlir::Type source, mlir::Type storage);

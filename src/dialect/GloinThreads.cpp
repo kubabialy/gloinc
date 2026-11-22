@@ -31,7 +31,8 @@ LogicalResult gloin::SpawnOp::verify() {
 
 LogicalResult gloin::JoinOp::verify() {
     auto owner = getHandle().getDefiningOp<ResultValueOp>();
-    if (!owner || !owner.getOutcome().getDefiningOp<SpawnOp>())
+    if ((!owner || !owner.getOutcome().getDefiningOp<SpawnOp>()) &&
+        !getHandle().getDefiningOp<WorkerTakeOp>())
         return emitOpError("requires a handle transferred from a worker launch");
     if (!matchesSourceStorage(*this, getResult().getType(), getLayoutType()))
         return emitOpError("requires the checked completion layout");
@@ -73,7 +74,7 @@ LogicalResult checkLaunch(gloin::SpawnOp launch) {
             return use->emitOpError("cannot copy or escape a launch result");
         if (auto transfer = dyn_cast<gloin::ResultValueOp>(use))
             for (auto *consumer : transfer.getValue().getUsers())
-                if (!isa<gloin::JoinOp>(consumer) ||
+                if (!isa<gloin::JoinOp, gloin::WorkerPutOp>(consumer) ||
                     consumer->getParentRegion() != launch->getParentRegion())
                     return consumer->emitOpError("cannot copy or escape a thread handle");
     }
@@ -122,9 +123,11 @@ LogicalResult checkLaunch(gloin::SpawnOp launch) {
                         op, "requires a successful launch with an untransferred handle", previous);
                 state = Owner::Live;
                 previous = op;
-            } else if (auto join = dyn_cast<gloin::JoinOp>(op)) {
-                auto take = join.getHandle().getDefiningOp<gloin::ResultValueOp>();
-                if (take.getOutcome() == result) {
+            } else if (isa<gloin::JoinOp, gloin::WorkerPutOp>(op)) {
+                Value handle = isa<gloin::JoinOp>(op) ? cast<gloin::JoinOp>(op).getHandle()
+                                                       : cast<gloin::WorkerPutOp>(op).getHandle();
+                auto take = handle.getDefiningOp<gloin::ResultValueOp>();
+                if (take && take.getOutcome() == result) {
                     if (state != Owner::Live)
                         return ownershipError(
                             op, "thread handle has already been joined on this path", previous);
@@ -153,6 +156,10 @@ LogicalResult gloin::verifyThreadOwnership(ModuleOp module) {
         return contains;
     };
     auto checked = module.walk([&](Operation *op) -> WalkResult {
+        if (auto slots = dyn_cast<WorkerSlotsOp>(op))
+            return failed(verifyWorkerSlots(slots)) ? WalkResult::interrupt() : WalkResult::advance();
+        if (isa<WorkerTakeOp>(op))
+            return WalkResult::advance();
         if (auto launch = dyn_cast<SpawnOp>(op))
             return failed(checkLaunch(launch)) ? WalkResult::interrupt() : WalkResult::advance();
         if (auto function = dyn_cast<func::FuncOp>(op);
