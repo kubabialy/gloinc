@@ -686,7 +686,7 @@ def SpawnOp : Gloin_Op<"spawn", [CallOpInterface]> {
 def JoinOp : Gloin_Op<"join", []> {
     let summary = "Consume one successful worker launch and collect its outcome";
     let hasVerifier = 1;
-    let arguments = (ins GloinSpawn:$handle);
+    let arguments = (ins GloinSpawn:$handle, TypeAttr:$layout_type);
     let results = (outs GloinResult:$result); 
     // let assemblyFormat = "$handle attr-dict `:` type($handle) `->` type($result)";
 }

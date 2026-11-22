@@ -33,6 +33,8 @@ LogicalResult gloin::JoinOp::verify() {
     auto owner = getHandle().getDefiningOp<ResultValueOp>();
     if (!owner || !owner.getOutcome().getDefiningOp<SpawnOp>())
         return emitOpError("requires a handle transferred from a worker launch");
+    if (!matchesSourceStorage(*this, getResult().getType(), getLayoutType()))
+        return emitOpError("requires the checked completion layout");
     if (getResult().getType().getValueType() != getHandle().getType().getValueType())
         return emitOpError("requires one result of the worker's completion type");
     return success();

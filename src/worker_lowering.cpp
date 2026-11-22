@@ -174,6 +174,7 @@ LogicalResult gloin::workers::lower_launches(ModuleOp module) {
         LLVM::LLVMStructType::getLiteral(b.getContext(), {string, b.getI32Type(), b.getI32Type()});
     auto receipt = LLVM::LLVMStructType::getLiteral(b.getContext(), {b.getI1Type(), ptr, error});
     llvm::DenseMap<Operation *, Adapter> adapters;
+    llvm::DenseMap<Type, Type> completionLayouts;
     for (auto launch : launches) {
         auto worker = module.lookupSymbol<func::FuncOp>(launch.getCallee());
         auto handle = cast<GloinSpawnType>(launch.getHandle().getType().getValueType());
@@ -185,23 +186,9 @@ LogicalResult gloin::workers::lower_launches(ModuleOp module) {
             found = adapters.try_emplace(worker, *adapter).first;
         }
         auto &adapter = found->second;
-        for (auto *use : launch.getHandle().getUsers()) {
-            if (auto transfer = dyn_cast<ResultValueOp>(use)) {
-                for (auto *consumer : llvm::make_early_inc_range(transfer.getValue().getUsers())) {
-                    auto join = cast<JoinOp>(consumer);
-                    b.setInsertionPoint(join);
-                    auto loc = join.getLoc();
-                    auto out = slot(b, join, adapter.completion);
-                    b.create<LLVM::CallOp>(loc, joinFn,
-                                           ValueRange{as_layout(b, loc, join.getHandle(), ptr), out,
-                                                      integer(b, loc, adapter.completion_size)});
-                    auto loaded = b.create<LLVM::LoadOp>(loc, adapter.completion, out);
-                    join.getResult().replaceAllUsesWith(
-                        as_source(b, loc, loaded, join.getResult().getType()));
-                    join.erase();
-                }
-            }
-        }
+        auto [entry, inserted] = completionLayouts.try_emplace(handle, adapter.completion);
+        if (!inserted && entry->second != adapter.completion)
+            return launch.emitOpError("inconsistent worker completion layout");
         auto loc = launch.getLoc();
         b.setInsertionPoint(launch);
         Value captured = b.create<LLVM::ZeroOp>(loc, adapter.arguments);
@@ -222,6 +209,26 @@ LogicalResult gloin::workers::lower_launches(ModuleOp module) {
         launch.getHandle().replaceAllUsesWith(
             as_source(b, loc, loaded, launch.getHandle().getType()));
         launch.erase();
+    }
+    SmallVector<JoinOp> joins;
+    module.walk([&](JoinOp op) { joins.push_back(op); });
+    for (auto join : joins) {
+        b.setInsertionPoint(join);
+        auto loc = join.getLoc();
+        auto completion = join.getLayoutType();
+        auto expected = completionLayouts.find(join.getHandle().getType());
+        if (expected != completionLayouts.end() && expected->second != completion)
+            return join.emitOpError("completion layout differs from the worker entry");
+        auto size = measure_type_layout(completion, *layout);
+        if (!size)
+            return join.emitOpError(llvm::toString(size.takeError()));
+        auto out = slot(b, join, completion);
+        b.create<LLVM::CallOp>(loc, joinFn,
+                               ValueRange{as_layout(b, loc, join.getHandle(), ptr), out,
+                                          integer(b, loc, size->size)});
+        auto loaded = b.create<LLVM::LoadOp>(loc, completion, out);
+        join.getResult().replaceAllUsesWith(as_source(b, loc, loaded, join.getResult().getType()));
+        join.erase();
     }
     return success();
 }

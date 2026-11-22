@@ -1044,7 +1044,8 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         if (checked_data && checked_data->worker_joins.contains(call))
             return builder.create<gloin::JoinOp>(
                 location(), source_type(checked_data->types.at(call)),
-                gen_expression(checked_data->worker_joins.at(call)));
+                gen_expression(checked_data->worker_joins.at(call)),
+                mlir::TypeAttr::get(checked_type(call)));
         if (checked_data && checked_data->integer_conversions.contains(call)) {
             auto input = gen_expression(call->arguments.front().get());
             auto source = checked_data->types.at(call->arguments.front().get()).builtin();
