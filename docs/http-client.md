@@ -72,11 +72,13 @@ The arguments after the request headers are:
 | `max_response_metadata: u64` | Cumulative bytes in all response heads, chunk-size lines, chunk CRLFs, and trailers |
 | `timeout_ms: i32` | Positive overall timeout for connect, handshake, send, and receive; it is not reset by progress |
 
-The deadline uses the monotonic clock and rounds readiness waits up to the next
-millisecond. It is checked before each active exchange step, including after
-successful progress. Clock failures and backwards clock readings produce an
-error. Synchronous TLS setup, certificate loading, allocation, decoding, cleanup,
-and host scheduling can add latency; this is not a hard real-time guarantee.
+The exchange creates one [`time.Deadline`](time-random.md#monotonic-deadlines-040-candidate)
+during `open`. Each active step reads the monotonic clock and asks that same
+deadline for its remaining poll wait, rounding up to milliseconds. A partial
+read consumes the original budget. At expiry the next active step returns
+`HTTP request timed out`. A failed clock read or a reading before the start
+also fails the exchange. Synchronous TLS setup, certificate loading, allocation,
+decoding, cleanup and host scheduling can delay when the caller observes expiry.
 
 The request body is a counted string and may contain arbitrary bytes, including
 NUL. The library derives Content-Length from its byte length. Request methods

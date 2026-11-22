@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1302 tests**:
+The current source definitions and CTest discovery contain **1303 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -74,7 +74,7 @@ The current source definitions and CTest discovery contain **1302 tests**:
 | ContextRuntimeTest | 40 |
 | MathLibraryTest | 14 |
 | MathRuntimeTest | 12 |
-| TimeRandomLibraryTest | 18 |
+| TimeRandomLibraryTest | 19 |
 | HashmapLibraryTest | 15 |
 | VectorLibraryTest | 10 |
 | IntegratedExamplesTest | 17 |
@@ -414,9 +414,11 @@ replaceable library source, malformed native signatures, and the packaged exampl
 
 ## Timing and seeded randomness (SPEC-030g)
 
-Eighteen `TimeRandomLibraryTest` cases cover duration overflow/units, backwards
+Nineteen `TimeRandomLibraryTest` cases cover duration overflow/units, backwards
 ticks, exact PRNG vectors, independent copies, invalid bounds without advancement,
 forced rejection, both unit-float endpoints, and the one-word float mapping.
+Deadline tests exercise the full tick range, expiry, backwards readings,
+poll rounding and the maximum poll wait in JIT and native `-O0` and `-O2`.
 They verify JIT clock binding/restoration, failure normalization, module privacy,
 replaceable source modules, malformed native ABIs, and external LLVM execution.
 Both guide programs and the packaged simulation execute verbatim; an injected
