@@ -1888,6 +1888,11 @@ bool check_legality(mlir::ModuleOp module, bool final) {
         });
     module.walk([&](mlir::Operation *op) {
         const auto dialect = op->getName().getDialectNamespace();
+        if (mlir::isa<gloin::SpawnOp, gloin::JoinOp>(op)) {
+            op->emitError("native worker execution is not implemented");
+            valid = false;
+            return;
+        }
         if (checked_module && mlir::isa<mlir::LLVM::CallOp>(op)) {
             op->emitError("checked source must call runtime functions through gloin.abi_call");
             valid = false;
@@ -2275,7 +2280,9 @@ bool verify_module(mlir::ModuleOp module, Diagnostics &diagnostics,
                          diagnostic.str(), source);
         return mlir::success();
     });
-    const auto result = mlir::verify(module);
+    auto result = mlir::verify(module);
+    if (mlir::succeeded(result))
+        result = gloin::verifyThreadOwnership(module);
     if (mlir::failed(result) && !diagnostics.has_errors())
         record_error(diagnostics, DiagnosticStage::Verification, module.getLoc(),
                      "Module verification failed", source);

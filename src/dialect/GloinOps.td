@@ -637,7 +637,8 @@ def DeferOp : Gloin_Op<"defer", []> {
 def SpawnOp : Gloin_Op<"spawn", [CallOpInterface]> {
     let summary = "Run a spawnable function in a new thread";
     let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands);
-    let results = (outs GloinSpawn:$handle);
+    let results = (outs GloinResult:$handle);
+    let hasVerifier = 1;
     
     let extraClassDeclaration = [{
         ::mlir::CallInterfaceCallable getCallableForCallee() {
@@ -683,7 +684,8 @@ def SpawnOp : Gloin_Op<"spawn", [CallOpInterface]> {
 }
 
 def JoinOp : Gloin_Op<"join", []> {
-    let summary = "Join a spawn handle";
+    let summary = "Consume one successful worker launch and collect its outcome";
+    let hasVerifier = 1;
     let arguments = (ins GloinSpawn:$handle);
     let results = (outs GloinResult:$result); 
     // let assemblyFormat = "$handle attr-dict `:` type($handle) `->` type($result)";

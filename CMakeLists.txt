@@ -144,6 +144,7 @@ add_library(gloin_backend STATIC
     src/gir_float_batches.cpp
     src/gir_range_proofs.cpp
     src/dialect/GloinDialect.cpp
+    src/dialect/GloinThreads.cpp
     src/jit_runner.cpp
     src/native_output.cpp
 )

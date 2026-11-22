@@ -1978,7 +1978,7 @@ TEST(LoweringTest, RejectsUnsupportedGloinOperationsInsteadOfSilentlyDroppingThe
 TEST(LoweringTest, RejectsCustomTypesNestedInsideFunctionSignatures) {
     mlir::MLIRContext context;
     auto module = parse(context, R"(
-        module { func.func private @pending(!gloin.spawn<i32>) }
+        module { func.func private @pending(!gloin.deferred<i32>) }
     )");
     ASSERT_TRUE(module);
     Diagnostics diagnostics;

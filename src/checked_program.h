@@ -33,6 +33,7 @@ struct ValueType {
     std::shared_ptr<ValueType> slice_element;
     bool slice_read_only = false;
     PackedBitOrder slice_order = PackedBitOrder::None;
+    std::shared_ptr<ValueType> thread_payload;
     std::shared_ptr<ValueType> result_value;
     bool error_type = false;
     ValueType() = default;
@@ -73,6 +74,9 @@ struct ValueType {
         type.error_type = true;
         return type;
     }
+    bool owns_thread() const {
+        return thread_payload || (result_value && result_value->thread_payload);
+    }
     bool is_pointer() const { return !pointers.empty(); }
     bool is_array() const { return pointers.empty() && static_cast<bool>(array_element); }
     bool is_slice() const { return pointers.empty() && static_cast<bool>(slice_element); }
@@ -86,8 +90,8 @@ struct ValueType {
         return result;
     }
     CoreType builtin() const {
-        if (structure || const_size || is_pointer() || is_array() || is_slice() || is_result() ||
-            is_error())
+        if (structure || const_size || thread_payload || is_pointer() || is_array() || is_slice() ||
+            is_result() || is_error())
             throw std::logic_error("Aggregate/pointer is not a builtin type");
         return scalar;
     }
@@ -101,6 +105,9 @@ struct ValueType {
                                                      : !array_element && !other.array_element) &&
                (slice_element && other.slice_element ? *slice_element == *other.slice_element
                                                      : !slice_element && !other.slice_element) &&
+               (thread_payload && other.thread_payload
+                    ? *thread_payload == *other.thread_payload
+                    : !thread_payload && !other.thread_payload) &&
                (result_value && other.result_value ? *result_value == *other.result_value
                                                    : !result_value && !other.result_value);
     }
@@ -163,6 +170,8 @@ struct SemanticData {
     std::unordered_map<const MemberAccessExpression *, size_t> field_indices;
     std::unordered_map<const StructLiteral *, std::vector<size_t>> literal_fields;
     std::unordered_set<SymbolId> spawnable_functions;
+    std::unordered_map<const SpawnExpression *, SymbolId> worker_launches;
+    std::unordered_map<const CallExpression *, const Identifier *> worker_joins;
     std::unordered_set<const CallExpression *> runtime_calls;
     std::unordered_map<SymbolId, std::string> linkage_names;
     TargetInfo target;

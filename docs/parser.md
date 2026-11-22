@@ -86,6 +86,8 @@ language mode and is not exposed by `compile_source`. It lets packed-struct,
 legacy array-literal, and concurrency tests inspect their stages while core
 compilation rejects those constructs. Generic struct templates, their methods,
 applications, and fixed arrays using `[T; N]` and `{...}` parse in core mode.
+Core also accepts `def spawnable` and `spawn f(args)`. The checked compiler
+verifies the callee and named handle ownership. [SPEC-040](concurrency.md)
 Legacy `spawn`/`await`, missing annotations, misplaced modifiers, and malformed
 lists still fail in syntax-only mode.
 

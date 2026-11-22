@@ -184,6 +184,22 @@ std::shared_ptr<Type> Sema::check_method_call(const CallExpression *call, bool &
     const auto *name = dynamic_cast<const Identifier *>(member->member.get());
     if (!name)
         return nullptr;
+    if (auto *id = dynamic_cast<const Identifier *>(member->left.get())) {
+        auto *binding = current_scope->resolve(id->value);
+        if (auto *handle =
+                binding ? dynamic_cast<ThreadHandleType *>(binding->type.get()) : nullptr) {
+            handled = true;
+            if (name->value != "join" || !call->arguments.empty()) {
+                log_error("Thread handles support only join() on the owner");
+                return nullptr;
+            }
+            worker_owner_uses.insert(id);
+            if (!check_expression(id))
+                return nullptr;
+            recording->worker_joins.emplace(call, id);
+            return std::make_shared<ResultType>(handle->payload);
+        }
+    }
     const auto open = name->value.find('<');
     const bool explicit_types = open != std::string::npos && name->value.ends_with('>');
     auto structure = method_type_receiver(member->left.get());

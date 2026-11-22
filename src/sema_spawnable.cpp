@@ -5,7 +5,8 @@
 // Inline array and record layout cycles have already been rejected. Stop at
 // pointer/slice boundaries rather than following recursive pointee types.
 bool Sema::worker_value(const ValueType &type) const {
-    if (type.is_pointer() || type.is_slice() || type.scalar == CoreType::String)
+    if (type.owns_thread() || type.is_pointer() || type.is_slice() ||
+        type.scalar == CoreType::String)
         return false;
     if (type.is_array())
         return worker_value(*type.array_element);
@@ -57,6 +58,12 @@ void Sema::validate_spawnable_functions() {
             }
             for (auto local : worker_locals[function]) {
                 const auto &binding = recording->symbols.at(local);
+                if (binding.type.owns_thread()) {
+                    DiagnosticScope where(current_span, binding.span);
+                    log_error("spawnable " + path +
+                              ": a worker cannot launch or collect another worker");
+                    return;
+                }
                 if (!worker_value(binding.type)) {
                     DiagnosticScope where(current_span, binding.span);
                     log_error("spawnable " + path + ": stored borrow in local " + binding.name);
@@ -91,4 +98,69 @@ void Sema::validate_spawnable_functions() {
         };
         visit(root.id, root.name);
     }
+}
+
+std::shared_ptr<Type> Sema::worker_binding_type(const VariableDeclaration *decl) {
+    std::string_view name = decl->type->value;
+    constexpr std::string_view resultPrefix = "result<";
+    constexpr std::string_view handlePrefix = ".Thread<";
+    bool launch = name.starts_with(resultPrefix) && name.ends_with('>');
+    if (launch) {
+        name.remove_prefix(resultPrefix.size());
+        name.remove_suffix(1);
+    }
+    auto dot = name.find('.');
+    if (dot == std::string_view::npos || !name.substr(dot).starts_with(handlePrefix) ||
+        !name.ends_with('>'))
+        return nullptr;
+    auto module = imports.find(std::string(name.substr(0, dot)));
+    if (module == imports.end() || module->second->standard_name != "threads")
+        return nullptr;
+    name.remove_prefix(dot + handlePrefix.size());
+    name.remove_suffix(1);
+    auto payload = resolve_type_from_string(std::string(name));
+    auto core = value_type(payload);
+    if (!core || core->is_result() || core->is_error() || core->const_size)
+        return nullptr;
+    std::shared_ptr<Type> type = std::make_shared<ThreadHandleType>(payload);
+    if (launch)
+        type = std::make_shared<ResultType>(type);
+    recording->types[decl->type.get()] = *value_type(type);
+    const auto *init = decl->initializer.get();
+    auto *member = dynamic_cast<const MemberAccessExpression *>(init);
+    auto *field = member ? dynamic_cast<const Identifier *>(member->member.get()) : nullptr;
+    bool transfer =
+        field && field->value == "value" && dynamic_cast<const Identifier *>(member->left.get());
+    if (!current_function || decl->is_mutable || decl->is_const ||
+        (launch ? !dynamic_cast<const SpawnExpression *>(init) : !transfer))
+        log_error(launch ? "A launch owner requires an immutable local initialized by spawn"
+                         : "A thread handle requires an immutable local initialized from a launch "
+                           "result's .value");
+    else
+        worker_owner_uses.insert(init);
+    return type;
+}
+
+std::shared_ptr<Type> Sema::check_worker_launch(const SpawnExpression *spawn) {
+    const auto *call = dynamic_cast<const CallExpression *>(spawn->call.get());
+    if (!call || spawn->op != GLOIN_TOKEN_SPAWN) {
+        log_error("spawn requires a direct spawnable function call");
+        return nullptr;
+    }
+    auto returned = check_expression(call, std::nullopt, true);
+    if (!returned)
+        return nullptr;
+    auto *name = dynamic_cast<const Identifier *>(call->function.get());
+    if (auto *member = dynamic_cast<const MemberAccessExpression *>(call->function.get()))
+        name = dynamic_cast<const Identifier *>(member->member.get());
+    auto target = recording->bindings.find(name);
+    if (target == recording->bindings.end() ||
+        !recording->spawnable_functions.contains(target->second)) {
+        log_error("spawn requires a direct spawnable function call");
+        return nullptr;
+    }
+    recording->worker_launches.emplace(spawn, target->second);
+    auto result = std::dynamic_pointer_cast<ResultType>(returned);
+    return std::make_shared<ResultType>(
+        std::make_shared<ThreadHandleType>(result ? result->value : returned));
 }

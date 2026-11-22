@@ -1041,6 +1041,10 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
+        if (checked_data && checked_data->worker_joins.contains(call))
+            return builder.create<gloin::JoinOp>(
+                location(), source_type(checked_data->types.at(call)),
+                gen_expression(checked_data->worker_joins.at(call)));
         if (checked_data && checked_data->integer_conversions.contains(call)) {
             auto input = gen_expression(call->arguments.front().get());
             auto source = checked_data->types.at(call->arguments.front().get()).builtin();
@@ -1185,6 +1189,16 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             fail("Unknown function: " + funcName);
         }
     } else if (auto *spawn = dynamic_cast<const SpawnExpression *>(expr)) {
+        if (checked_data) {
+            const auto &call = static_cast<const CallExpression &>(*spawn->call);
+            llvm::SmallVector<mlir::Value> arguments;
+            for (const auto &arg : call.arguments)
+                arguments.push_back(gen_expression(arg.get()));
+            auto target = checked_functions.at(checked_data->worker_launches.at(spawn));
+            return builder.create<gloin::SpawnOp>(location(),
+                                                  source_type(checked_data->types.at(spawn)),
+                                                  mlir::FlatSymbolRefAttr::get(target), arguments);
+        }
         if (auto *call = dynamic_cast<const CallExpression *>(spawn->call.get())) {
             std::string funcName;
             if (auto *id = dynamic_cast<const Identifier *>(call->function.get())) {
@@ -1844,7 +1858,7 @@ uint64_t CodeGen::packed_element_bits(const ValueType &type) {
 }
 
 mlir::Type CodeGen::lower_type(ValueType value_type) {
-    if (value_type.is_pointer())
+    if (value_type.thread_payload || value_type.is_pointer())
         return mlir::LLVM::LLVMPointerType::get(&context);
     if (value_type.is_array() && value_type.array_order != PackedBitOrder::None) {
         const auto bits = packed_element_bits(*value_type.array_element);
@@ -1914,6 +1928,8 @@ gloin::GloinIntegerType CodeGen::integer_type(CoreType type) {
 }
 
 mlir::Type CodeGen::source_type(ValueType value_type) {
+    if (value_type.thread_payload)
+        return gloin::GloinSpawnType::get(&context, source_type(*value_type.thread_payload));
     if (value_type.is_pointer()) {
         const auto layer = value_type.pointers.front();
         return gloin::GloinPointerType::get(

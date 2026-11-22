@@ -1,10 +1,12 @@
-#include <gtest/gtest.h>
-#include "mlir/IR/MLIRContext.h"
+#include "../src/codegen.h"
+#include "../src/dialect/GloinDialect.h"
+#include "compiler.h"
+#include "lowering.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "../src/dialect/GloinDialect.h"
-#include "../src/codegen.h"
+#include "mlir/IR/MLIRContext.h"
+#include <gtest/gtest.h>
 
 TEST(MLIRSetup, ContextCreation) {
     mlir::MLIRContext context;
@@ -43,45 +45,37 @@ TEST(MLIRSetup, DialectRegistration) {
     EXPECT_EQ(type.getEndianness(), gloin::Endianness::Big);
 }
 
-TEST(MLIRSetup, SpawnOpCreation) {
+TEST(MLIRSetup, ThreadOwnershipRejectsDuplicatedAndForgedHandles) {
     mlir::MLIRContext context;
-    context.getOrLoadDialect<gloin::GloinDialect>();
-    context.getOrLoadDialect<mlir::func::FuncDialect>();
-    
-    mlir::OpBuilder builder(&context);
-    
-    // Create a dummy function to spawn
-    auto location = builder.getUnknownLoc();
-    auto i32Type = builder.getI32Type();
-    
-    // Spawn type: !gloin.spawn<i32>
-    auto spawnType = gloin::GloinSpawnType::get(&context, i32Type);
-    
-    // create spawn op: spawn @func(args...) -> !gloin.spawn<i32>
-    // We need a module to hold the function and the spawn call
-    auto module = mlir::ModuleOp::create(location);
-    builder.setInsertionPointToStart(module.getBody());
-    
-    auto funcType = builder.getFunctionType({}, {i32Type});
-    auto workerFunc = builder.create<mlir::func::FuncOp>(location, "worker_func", funcType);
-    
-    // Create another function to call spawn in
-    auto mainFunc = builder.create<mlir::func::FuncOp>(location, "main", builder.getFunctionType({}, {}));
-    auto entryBlock = mainFunc.addEntryBlock();
-    builder.setInsertionPointToStart(entryBlock);
-    
-    auto spawnOp = builder.create<gloin::SpawnOp>(
-        location, 
-        spawnType, 
-        mlir::SymbolRefAttr::get(&context, "worker_func"), 
-        mlir::ValueRange{}
-    );
-    
-    ASSERT_TRUE(spawnOp != nullptr);
-    ASSERT_EQ(spawnOp.getOperation()->getNumResults(), 1);
-    ASSERT_TRUE(spawnOp.getType() == spawnType);
-    
-    builder.create<mlir::func::ReturnOp>(location);
-    
-    module.dump();
+    auto compiled = compile_source(R"(import "@threads";
+        def spawnable worker() -> i32 { return 7; }
+        def main() -> i32 {
+            def r: result<threads.Thread<i32>> = spawn worker();
+            if r.erroneous { return 1; }
+            def t: threads.Thread<i32> = r.value;
+            def answer: result<i32> = t.join();
+            if answer.erroneous { return 2; }
+            return answer.value;
+        })",
+                                   "owner.gloin", context);
+    ASSERT_TRUE(compiled.success());
+    gloin::JoinOp join;
+    compiled.module->walk([&](gloin::JoinOp found) { join = found; });
+    ASSERT_TRUE(join);
+    mlir::OpBuilder builder(join);
+    auto *duplicate = builder.clone(*join);
+    Diagnostics copied;
+    EXPECT_FALSE(verify_module(*compiled.module, copied));
+    ASSERT_TRUE(copied.has_errors());
+    EXPECT_NE(copied.all().front().message.find("already been joined"), std::string::npos);
+    duplicate->erase();
+
+    // Even an unused fabricated owner must fail before LLVM lowering.
+    auto pointer = builder.create<mlir::LLVM::ZeroOp>(
+        join.getLoc(), builder.getType<mlir::LLVM::LLVMPointerType>());
+    builder.create<gloin::FromLayoutOp>(join.getLoc(), join.getHandle().getType(), pointer);
+    Diagnostics forged;
+    EXPECT_FALSE(verify_module(*compiled.module, forged));
+    ASSERT_TRUE(forged.has_errors());
+    EXPECT_NE(forged.all().front().message.find("originate"), std::string::npos);
 }

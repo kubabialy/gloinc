@@ -52,7 +52,7 @@ bool matches_storage(mlir::Operation *owner, mlir::Type source, mlir::Type stora
         return packed_array_layout(array, owner) == storage;
     if (auto integer = mlir::dyn_cast<gloin::GloinIntegerType>(source))
         return storage.isSignlessInteger(integer_storage_bits(integer.getWidth()));
-    if (mlir::isa<gloin::GloinPointerType>(source))
+    if (mlir::isa<gloin::GloinPointerType, gloin::GloinSpawnType>(source))
         return mlir::isa<mlir::LLVM::LLVMPointerType>(storage);
     if (auto array = mlir::dyn_cast<gloin::GloinArrayType>(source)) {
         auto layout = mlir::dyn_cast<mlir::LLVM::LLVMArrayType>(storage);

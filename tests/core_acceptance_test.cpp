@@ -1019,7 +1019,7 @@ TEST_F(CoreAcceptanceTest, RejectIndexNonArray) {
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredSpawn) {
-    rejects("reject/deferred_spawn.gloin", "legacy");
+    rejects("reject/deferred_spawn.gloin", "spawnable");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredAwait) {
@@ -1222,4 +1222,76 @@ TEST_F(CoreAcceptanceTest, SpawnableDeclarationsAreCheckedOnSynchronousCalls) {
         def helper<T>(x: T) -> T { std.println("ambient output"); return x; }
         def spawnable worker() -> i32 { return helper<i32>(3); })");
     expect_error(invoke({"--check", unsafe}), 1, "worker -> helper<i32> -> println");
+}
+
+TEST_F(CoreAcceptanceTest, NamedThreadOwnershipFollowsLaunchAndJoinPaths) {
+    const std::string prelude = R"(import "@threads";
+        def spawnable work(n: i32) -> result<i32> {
+            if n < 0 { return error("negative"); }
+            return n;
+        }
+        def main() -> i32 { return collect_worker(true); }
+        def collect_worker(choose: bool) -> i32 {
+            def started: result<threads.Thread<i32>> = spawn work(42);
+        )";
+    const std::string success = "if started.erroneous { return 1; } ";
+    const std::string transfer = "def job: threads.Thread<i32> = started.value; ";
+    const std::string collect = "def answer: result<i32> = job.join(); "
+                                "if answer.erroneous { return 2; } ";
+    const auto file = source(prelude + success + transfer + collect + "return answer.value; }");
+    expect_success(invoke({"--check", file}), "");
+    auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    EXPECT_NE(ir.out.find("!gloin.result<!gloin.spawn<i32>>"), std::string::npos);
+    EXPECT_NE(ir.out.find("\"gloin.join\""), std::string::npos);
+    expect_error(invoke({"--run", file}), 1, "native worker execution is not implemented");
+
+    auto reject = [&](const std::string &body, const std::string &reason) {
+        SCOPED_TRACE(body);
+        expect_error(invoke({"--check", source(prelude + body + "return 0; }")}), 1, reason);
+    };
+    reject(success, "must be joined");
+    reject(success + transfer + "if choose { return 2; } " + collect, "must be joined");
+    reject(success + transfer + "def twin: threads.Thread<i32> = started.value; " + collect,
+           "untransferred handle");
+    reject(success + transfer + collect +
+               "def again: result<i32> = job.join(); "
+               "if again.erroneous { return 3; } ",
+           "already been joined");
+    reject(success + transfer + "def twin: threads.Thread<i32> = job; ", "immutable local");
+    reject("def copy: result<threads.Thread<i32>> = started; ", "initialized by spawn");
+    reject(success + transfer + "while choose { " + collect + " } ", "joined");
+    reject(success + transfer + "defer job.join(); ", "deferred result");
+    reject(success + transfer + "&job; ", "ownership cannot be copied");
+    auto branches =
+        source(prelude + "if !started.erroneous { " + transfer + "if choose { " + collect +
+               "return answer.value; } else { " + collect + "return answer.value; } } return 1; }");
+    expect_success(invoke({"--check", branches}), "");
+
+    const std::string loop = R"(import "@threads";
+        def spawnable work(n: i32) -> i32 { return n; }
+        def main() -> i32 {
+            for def mut i: i32 = 0; i < 4; i = i + 1 {
+                def started: result<threads.Thread<i32>> = spawn work(i);
+                if started.erroneous { break; }
+        )";
+    const std::string finish = " } return 0; }";
+    expect_success(invoke({"--check", source(loop + transfer + collect + "continue;" + finish)}),
+                   "");
+    for (const auto *edge : {"break;", "continue;"})
+        expect_error(invoke({"--check", source(loop + transfer + edge + finish)}), 1,
+                     "must be joined");
+}
+
+TEST_F(CoreAcceptanceTest, ThreadJoinPreservesOrdinaryAndVoidCompletionTypes) {
+    for (const auto &type : {std::string("i32"), std::string("void")}) {
+        const std::string body = type == "void" ? "return;" : "return 7;";
+        const auto program =
+            source("import \"@threads\"; def spawnable work() -> " + type + " { " + body +
+                   " } def main() -> i32 { def r: result<threads.Thread<" + type +
+                   ">> = spawn work(); if r.erroneous { return 1; } def t: threads.Thread<" + type +
+                   "> = r.value; def answer: result<" + type +
+                   "> = t.join(); if answer.erroneous { return 2; } return 0; }");
+        expect_success(invoke({"--check", program}), "");
+    }
 }

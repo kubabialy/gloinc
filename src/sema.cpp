@@ -411,6 +411,7 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         return false;
     current_scope = std::make_shared<Scope>();
     collected_functions.clear();
+    worker_owner_uses.clear();
     worker_calls.clear();
     worker_locals.clear();
     worker_pointer_offsets.clear();
@@ -755,7 +756,10 @@ void Sema::check_statement(const Statement *stmt) {
         // Resolve variable type
         std::shared_ptr<Type> var_type = nullptr;
         if (decl->type) {
-            var_type = resolve_annotation(decl->type.get());
+            if (recording)
+                var_type = worker_binding_type(decl);
+            if (!var_type)
+                var_type = resolve_annotation(decl->type.get());
             if (!var_type) {
                 log_error("Error: Unknown type '" + decl->type->value + "'\n");
                 return;
@@ -1416,6 +1420,8 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         log_error("Struct literals require checked semantic analysis");
         return nullptr;
     } else if (const auto *spawn = dynamic_cast<const SpawnExpression *>(expr)) {
+        if (recording)
+            return check_worker_launch(spawn);
         // Check inner call
         const auto *call = dynamic_cast<const CallExpression *>(spawn->call.get());
         if (!call) {
@@ -1588,6 +1594,10 @@ std::shared_ptr<Type> Sema::check_expression(const Expression *expression,
             if (!resolving_callee)
                 log_error("Function values are not supported in the core language");
         } else if (auto core = value_type(type)) {
+            if (core->owns_thread() && !worker_owner_uses.contains(expression)) {
+                log_error("Thread ownership cannot be copied, discarded or passed by value");
+                return nullptr;
+            }
             if (*core == CoreType::Void && !statement_context) {
                 log_error("A void call cannot be used as a value");
                 return nullptr;

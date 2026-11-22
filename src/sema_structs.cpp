@@ -6,6 +6,11 @@
 std::optional<ValueType> Sema::value_type(const std::shared_ptr<Type> &type) const {
     if (!type)
         return std::nullopt;
+    if (auto *handle = dynamic_cast<const ThreadHandleType *>(type.get())) {
+        ValueType result;
+        result.thread_payload = std::make_shared<ValueType>(value_type(handle->payload).value());
+        return result;
+    }
     if (dynamic_cast<const ErrorType *>(type.get()))
         return ValueType::error();
     if (const auto *result = dynamic_cast<const ResultType *>(type.get())) {
@@ -465,6 +470,12 @@ std::shared_ptr<Type> Sema::check_struct_literal(const StructLiteral *literal) {
 }
 
 std::shared_ptr<Type> Sema::check_field(const MemberAccessExpression *member) {
+    if (auto *id = dynamic_cast<const Identifier *>(member->left.get())) {
+        auto *binding = current_scope->resolve(id->value);
+        if (auto *r = binding ? dynamic_cast<ResultType *>(binding->type.get()) : nullptr;
+            r && dynamic_cast<ThreadHandleType *>(r->value.get()))
+            worker_owner_uses.insert(id);
+    }
     auto base = check_expression(member->left.get());
     const auto *name = dynamic_cast<const Identifier *>(member->member.get());
     if (auto result = std::dynamic_pointer_cast<ResultType>(base)) {
