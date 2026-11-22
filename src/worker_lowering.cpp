@@ -145,9 +145,19 @@ FailureOr<Adapter> make_adapter(ModuleOp module, func::FuncOp worker, Type paylo
 
 LogicalResult gloin::workers::lower_launches(ModuleOp module) {
     SmallVector<SpawnOp> launches;
-    module.walk([&](SpawnOp op) { launches.push_back(op); });
     SmallVector<WorkerSlotsOp> arrays;
-    module.walk([&](WorkerSlotsOp op) { arrays.push_back(op); });
+    SmallVector<JoinOp> joins;
+    module.walk([&](Operation *op) {
+        if (auto launch = dyn_cast<SpawnOp>(op))
+            launches.push_back(launch);
+        else if (auto array = dyn_cast<WorkerSlotsOp>(op))
+            arrays.push_back(array);
+        else if (auto join = dyn_cast<JoinOp>(op))
+            joins.push_back(join);
+    });
+    if (launches.empty() && arrays.empty() && joins.empty())
+        return success();
+    module.getContext()->getOrLoadDialect<LLVM::LLVMDialect>();
     OpBuilder b(module.getContext());
     auto ptr = LLVM::LLVMPointerType::get(b.getContext());
     for (auto array : arrays) {
@@ -175,8 +185,6 @@ LogicalResult gloin::workers::lower_launches(ModuleOp module) {
         }
         array.erase();
     }
-    SmallVector<JoinOp> joins;
-    module.walk([&](JoinOp op) { joins.push_back(op); });
     if (launches.empty() && joins.empty())
         return success();
     auto launchFn = declare_runtime(module, launch_name);
