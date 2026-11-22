@@ -53,11 +53,17 @@ Report the offending chain, for example `work → sample → global counter`.
 
 Each program invocation has a finite worker-slot limit, exposed to the caller
 by `threads.worker_capacity()`. The native/JIT default is four. An
-embedding may set a smaller limit, including zero, before entry. Independent
+embedding may pass a smaller limit, including zero, as the final
+`JitRunner::run` argument. `threads.worker_capacity() -> u32` reports that
+invocation limit, including slots currently in use. Independent
 JIT invocations have separate budgets. A completed worker keeps its slot until
 collection. A full invocation fails launch with `status.WOULD_BLOCK`. Record
 allocation and OS thread creation failures unwind every reservation before
 returning their checked error. A failed launch never enters the body.
+The pthread runtime keeps the record, captured argument bytes and completion
+storage alive through join. The OS supplies the thread stack. An unexpected
+`pthread_join` failure traps because the runtime cannot prove it is safe to
+release the frame or unload its JIT code.
 
 Transfer scalars, payloadless enums, fixed arrays and recursively transfer-safe
 ordinary and packed structs by value. Void is a valid return. Copy same-type

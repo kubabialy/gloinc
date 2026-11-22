@@ -1306,3 +1306,12 @@ TEST_F(CoreAcceptanceTest, WorkerFrameOwnsPackedFieldsPaddingAndFallibleCompleti
         EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
     }
 }
+
+TEST_F(CoreAcceptanceTest, AllWorkerSlotsCanBeReusedAfterCapacityFailure) {
+    auto program = fixture("run/worker_capacity.gloin");
+    expect_run(invoke({program}), 42);
+    auto executable = directory + "/worker-capacity";
+    auto built = invoke_raw({"-O2", "-o", executable, program});
+    ASSERT_EQ(built.status, 0) << built.err;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+}

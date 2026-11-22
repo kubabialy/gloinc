@@ -9,7 +9,7 @@ I reviewed compiler candidate `0fe96ab`, the [0.3.0 integration record](release-
 | Historical item | Current evidence | Proposed disposition |
 | --- | --- | --- |
 | SPEC-040, concurrency contract | The checklist leaves handle types, invocation, captures, failure and join behavior open. It uses both deferred/run and spawn/await vocabulary. | First blocking design review. Adopt one vocabulary for executable examples and diagnostics. |
-| SPEC-041, Spawn | Syntax-only and unchecked paths exist. The checked language rejects spawn. | Required. Demonstrate a typed call running on a separate OS thread. |
+| SPEC-041, Spawn | The OS-thread feature branch executes checked named handles in JIT and native builds. | Indexed handle ownership remains open. [Worker contract and implementation](concurrency.md) |
 | SPEC-042, Deferred | The checklist requires genuine suspension and at least one asynchronous I/O operation. | Required. Demonstrate two independent tasks progressing on one executor thread. |
 | SPEC-043, join and force_join | Both are historical design items. Their signatures and failure behavior were left open. | Required completion contract. Decide explicitly whether to expose force_join in v1. Preserve recoverable errors at ordinary joins. |
 | SPEC-044, external packages | Local source packages already work. Version resolution, locking and offline/cache rules are separate historical requirements. | Carry forward full resolution. Specify only the local dependency/link information needed by the first C binding. See [modules](modules.md). |

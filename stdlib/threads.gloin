@@ -1,1 +1,4 @@
 // Thread<T> is an opaque checked owner of one joinable OS thread.
+
+// Maximum live workers for this invocation, including finished workers awaiting join.
+def pub worker_capacity() -> u32 { return __worker_capacity(); }

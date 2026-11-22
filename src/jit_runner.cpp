@@ -223,6 +223,8 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::str
     {
         (*engine)->registerSymbols([](llvm::orc::MangleAndInterner mangle) {
             llvm::orc::SymbolMap symbols;
+            symbols[mangle("gloin_worker_capacity")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_worker_capacity), llvm::JITSymbolFlags::Exported);
             symbols[mangle(gloin::workers::launch_name)] = llvm::orc::ExecutorSymbolDef(
                 llvm::orc::ExecutorAddr::fromPtr(&gloin_worker_launch), llvm::JITSymbolFlags::Exported);
             symbols[mangle(gloin::workers::join_name)] = llvm::orc::ExecutorSymbolDef(
