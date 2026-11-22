@@ -10,9 +10,8 @@ With `import "@threads";`, the named `calculate` example below runs in JIT
 and native builds. A successful spawn creates a joinable OS thread. The verifier follows both launch outcomes through
 branches and loops. Every returning success path must transfer the handle once
 and join it once. A worker returning `result<u32>` gives the caller one
-`result<u32>` at join. Local fixed arrays can transfer and join handles at constant indices.
-Counted-loop ownership proofs, generic worker entries and executor scheduling
-remain under development.
+`result<u32>` at join. Local fixed arrays can transfer and join handles at constant indices or in
+counted loops. Generic worker entries and executor scheduling remain under development.
 [Roadmap](roadmap-0.4.0.md#milestone-1--freeze-the-concurrency-contract-spec-040)
 
 ## Who runs a call?
@@ -111,7 +110,7 @@ termination, it must retain the resources and JIT code while resolving it or
 trap on an unrecoverable invariant. Arithmetic and bounds traps in workers
 retain their process-level semantics.
 
-### Four launches, then four joins (proposed array support)
+### Four launches, then four joins
 
 ```gloin
 import "@threads";
@@ -226,6 +225,13 @@ successful arm must transfer its payload before the result goes out of scope.
    and ordinary copies of handle storage before LLVM lowering. Preserve normal
    index bounds checks until proved redundant. The runtime controls thread
    termination, synchronization and resource reclamation.
+
+The verifier follows the counted loops at compile time. It tracks integer loads
+and increments from private locals, keeping a separate set of occupied slots on
+each reachable path. A store through a known local alias updates the counter. Passing its address
+to another function makes its value unknown for this proof. A computed index requires a known in-bounds value on each path.
+When the verifier reaches its analysis budget it issues a diagnostic. The
+executable retains its loops and uses one pointer-sized stack slot per element.
 
 ### Ownership acceptance cases
 

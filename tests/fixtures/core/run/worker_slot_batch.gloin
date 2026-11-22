@@ -1,0 +1,78 @@
+import "@status";
+import "@threads";
+
+def spawnable work(i: i32) -> result<i32> {
+    if i == 1 { return error("bad reading", 37, 9); }
+
+    return i + 1;
+}
+
+def batch() -> i32 {
+    def mut workers: [threads.Thread<i32>; 4] = zeroed;
+    def mut count: i32                        = 0;
+    def mut failed: bool                      = false;
+
+    for def mut i: i32 = 0; i < 4; i = i + 1 {
+        def started: result<threads.Thread<i32>> = spawn work(i);
+
+        if started.erroneous {
+            if started.error.code != status.WOULD_BLOCK { failed = true; }
+
+            break;
+        }
+
+        workers[i] = started.value;
+        count = count + 1;
+    }
+
+    def mut total: i32 = 0;
+
+    for def mut i: i32 = 0; i < count; i = i + 1 {
+        def value: result<i32> = workers[i].join();
+
+        if value.erroneous {
+            if i != 1 || value.error.code != 37 || value.error.os_error != 9 {
+                failed = true;
+            }
+
+            total = total + 10;
+            continue;
+        }
+
+        total = total + value.value;
+    }
+
+    if failed { return -1; }
+
+    return count * 100 + total;
+}
+
+// Keep each named worker alive through the nested call. The batch sees exactly
+// 4 - reserved free slots, including the case where its first launch fails.
+def with_reserved(reserved: i32) -> i32 {
+    if reserved == 0 { return batch(); }
+
+    def started: result<threads.Thread<i32>> = spawn work(0);
+    if started.erroneous { return -2; }
+
+    def held: threads.Thread<i32> = started.value;
+    def partial: i32              = with_reserved(reserved - 1);
+    def done: result<i32>         = held.join();
+
+    if done.erroneous { return -3; }
+    if done.value != 1 { return -4; }
+
+    return partial;
+}
+
+def main() -> i32 {
+    def expected: [i32; 5] = { 418, 314, 211, 101, 0 };
+
+    for def mut reserved: i32 = 0; reserved < 5; reserved = reserved + 1 {
+        if with_reserved(reserved) != expected[reserved] { return 1; }
+    }
+
+    if batch() != 418 { return 2; }
+
+    return 42;
+}

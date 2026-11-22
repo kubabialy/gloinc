@@ -1349,3 +1349,32 @@ TEST_F(CoreAcceptanceTest, FixedWorkerSlotTransfersOwnEachSuccessfulLaunch) {
            "must be live");
     reject("jobs[2] = started.value;" + join, "in bounds");
 }
+
+TEST_F(CoreAcceptanceTest, CountedWorkerSlotsDrainEverySuccessfulPrefix) {
+    const auto file = fixture("run/worker_slot_batch.gloin");
+    expect_run(invoke({file}), 42);
+    for (auto mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/worker-batch";
+        auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+
+    auto reject = [&](std::string_view original, std::string_view replacement, const char *reason) {
+        auto program = read(file);
+        auto position = program.find(original);
+        ASSERT_NE(position, std::string::npos) << original;
+        program.replace(position, original.size(), replacement);
+        program += "\ndef clear(n: &i32) -> void { *n = 0; }";
+        SCOPED_TRACE(replacement);
+        expect_error(invoke({"--check", source(program)}), 1, reason);
+    };
+    reject("break;", "return -1;", "must be joined");
+    reject("workers[i] =", "workers[0] =", "overwrite live thread slot");
+    reject("workers[i].join()", "workers[0].join()", "must be live");
+    reject("workers[i] =", "def alias: &i32 = &i; *alias = 0; workers[i] =", "overwrite live thread slot");
+    reject("workers[i] =", "clear(&i); workers[i] =", "provably in bounds");
+    reject("count = count + 1;", "count = count + 0;", "must be joined");
+    reject("i < count;", "i < 4;", "must be live");
+    reject("continue;", "return -1;", "must be joined");
+}

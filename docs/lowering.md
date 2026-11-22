@@ -259,7 +259,9 @@ this check.
    the OS thread. The adapter calls the original typed function and stores one
    completion result. Join waits for termination, copies the result, and frees
    the record. The ordinary aggregate calling convention preserves padding
-   through the adapter. See [worker lowering](../src/worker_lowering.cpp).
+   through the adapter. Fixed arrays retain explicit slot creation, transfer
+   and consumption in GIR. After the ownership proof, the indexed operations
+   lower to stack pointer loads and stores. See [worker lowering](../src/worker_lowering.cpp).
 2. Prepare stored repeated arrays as verified GIR fills and simplify proven-safe
    integer constants/identities; preserve the checked CFG and operand effects.
 3. Checked function signatures and calls to their recorded LLVM layouts; remove
