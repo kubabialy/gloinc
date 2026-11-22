@@ -376,3 +376,22 @@ TEST(JitRunnerTest, FloatingArithmeticFailuresTrapInsteadOfReturningAValue) {
         EXPECT_EXIT(run_trapping_source(source), is_arithmetic_trap, "");
     }
 }
+
+TEST(JitRunnerTest, WorkerLaunchReportsCapacityPerInvocation) {
+    mlir::MLIRContext context;
+    auto program = compile_source(R"(import "@threads";
+        def spawnable work(x: u32) -> u32 { return 42 / x; }
+        def main() -> i32 {
+            def capacity: u32 = threads.worker_capacity();
+            def r: result<threads.Thread<u32>> = spawn work(capacity);
+            if r.erroneous { return r.error.code; }
+            def job: threads.Thread<u32> = r.value;
+            def answer: result<u32> = job.join();
+            if answer.erroneous { return 2; }
+            if answer.value == 42 { return 42; }
+            return 3;
+        })", "budget.gloin", context);
+    ASSERT_TRUE(program.success()) << render(*program.diagnostics);
+    expect_value(JitRunner::run(*program.module, {}, nullptr, nullptr, 0), 14);
+    expect_value(JitRunner::run(*program.module, {}, nullptr, nullptr, 1), 42);
+}

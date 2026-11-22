@@ -137,6 +137,21 @@ void Sema::log_error(const std::string &msg) {
     diagnostics_->error(DiagnosticStage::Semantic, current_span, msg);
 }
 
+std::optional<size_t> Sema::fixed_array_length(std::string_view digits) {
+    size_t length = 0;
+    auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), length);
+    if (error != std::errc{} || end != digits.data() + digits.size()) {
+        auto bound = current_scope->resolve_type(std::string(digits));
+        auto *size = dynamic_cast<ConstSizeType *>(bound.get());
+        if (!size)
+            return std::nullopt;
+        length = size->value;
+    }
+    if (length > 1048576)
+        return std::nullopt;
+    return length;
+}
+
 std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
     if (recording) {
         if (name == "error")
@@ -221,19 +236,8 @@ std::shared_ptr<Type> Sema::resolve_type_from_string(const std::string &name) {
                 return nullptr;
             const auto digits = std::string_view(name).substr(separator + 2,
                                                        name.size() - separator - 3);
-            size_t length = 0;
-            auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(),
-                                                length);
-            if (error != std::errc{} || end != digits.data() + digits.size()) {
-                auto bound = current_scope->resolve_type(std::string(digits));
-                auto *size = dynamic_cast<ConstSizeType *>(bound.get());
-                if (!size)
-                    return nullptr;
-                length = size->value;
-            }
-            if (length > 1048576)
-                return nullptr;
-            return std::make_shared<ArrayType>(element, length);
+            auto length = fixed_array_length(digits);
+            return length ? std::make_shared<ArrayType>(element, *length) : nullptr;
         }
         const auto open = name.find('<');
         if (open != std::string::npos && name.ends_with('>')) {
@@ -411,6 +415,10 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         return false;
     current_scope = std::make_shared<Scope>();
     collected_functions.clear();
+    worker_owner_uses.clear();
+    worker_calls.clear();
+    worker_locals.clear();
+    worker_pointer_offsets.clear();
     arena_methods.clear();
     arena_reserved_methods.clear();
     arena_many_methods.clear();
@@ -514,6 +522,8 @@ bool Sema::check_program(const std::vector<std::unique_ptr<Statement>> &program)
         select_module(nullptr);
         if (!has_error())
             validate_struct_cycles();
+        if (!has_error() && !recording->spawnable_functions.empty())
+            validate_spawnable_functions();
     } else {
         for (const auto &statement : program)
             check_statement(statement.get());
@@ -534,7 +544,7 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
         log_error("Generic function template requires explicit type arguments at a call");
         return nullptr;
     }
-    if (recording && (func_def->is_deferred || func_def->is_spawnable)) {
+    if (recording && func_def->is_deferred) {
         log_error("Unsupported function in checked core program");
         return nullptr;
     }
@@ -579,11 +589,14 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
     // Keep source functions independent of the defer bookkeeping's native ABI.
     if (recording && !current_module &&
         (sym.name == "malloc" || sym.name == "free" ||
+         sym.name == "gloin_worker_launch" || sym.name == "gloin_worker_join" ||
          arena_operation(sym.name, arena_runtime_names) ||
          memory_operation(sym.name, memory_runtime_names) ||
          standard_operation(sym.name, standard_runtime_names)))
         recording->linkage_names[recording->bindings.at(func_def->name.get())] =
             "gloin.user." + sym.name;
+    if (recording && func_def->is_spawnable)
+        recording->spawnable_functions.insert(recording->bindings.at(func_def->name.get()));
     return func_type;
 }
 
@@ -748,7 +761,10 @@ void Sema::check_statement(const Statement *stmt) {
         // Resolve variable type
         std::shared_ptr<Type> var_type = nullptr;
         if (decl->type) {
-            var_type = resolve_annotation(decl->type.get());
+            if (recording)
+                var_type = worker_binding_type(decl);
+            if (!var_type)
+                var_type = resolve_annotation(decl->type.get());
             if (!var_type) {
                 log_error("Error: Unknown type '" + decl->type->value + "'\n");
                 return;
@@ -1031,7 +1047,7 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
             log_error("zeroed requires a contextual fixed-array type [T; N]");
             return nullptr;
         }
-        if (expected_array->length != 0 &&
+        if (!worker_owner_uses.contains(expr) && expected_array->length != 0 &&
             !zeroable_array_element(expected_array->element)) {
             log_error(
                 "zeroed requires zeroable elements (not non-null references or ordinary structs)");
@@ -1219,6 +1235,21 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         return get_builtin_type(std::string(core_type_info(*result).name));
 
     } else if (const auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
+        const auto *index = dynamic_cast<const IndexExpression *>(assign->left.get());
+        if (recording && worker_slot(index)) {
+            auto *member = dynamic_cast<const MemberAccessExpression *>(assign->right.get());
+            auto *field = member ? dynamic_cast<const Identifier *>(member->member.get()) : nullptr;
+            if (!field || field->value != "value" ||
+                !dynamic_cast<const Identifier *>(member->left.get())) {
+                log_error("A thread slot accepts only a fresh successful launch");
+                return nullptr;
+            }
+            worker_owner_uses.insert(member);
+            recording->worker_slot_stores.emplace(assign, index);
+            if (!check_indirect_assignment(assign))
+                return nullptr;
+            return get_builtin_type("void");
+        }
         if (recording && !dynamic_cast<const Identifier *>(assign->left.get()))
             return check_indirect_assignment(assign);
         const auto *ident = dynamic_cast<const Identifier *>(assign->left.get());
@@ -1409,6 +1440,8 @@ std::shared_ptr<Type> Sema::check_expression_impl(const Expression *expr) {
         log_error("Struct literals require checked semantic analysis");
         return nullptr;
     } else if (const auto *spawn = dynamic_cast<const SpawnExpression *>(expr)) {
+        if (recording)
+            return check_worker_launch(spawn);
         // Check inner call
         const auto *call = dynamic_cast<const CallExpression *>(spawn->call.get());
         if (!call) {
@@ -1541,6 +1574,8 @@ bool Sema::define_symbol(const Identifier *name, Symbol symbol, SymbolKind kind)
             return false;
         }
         symbol.id = recording->symbols.size();
+        if (current_function && kind == SymbolKind::Variable && !recording->spawnable_functions.empty())
+            worker_locals[current_function].push_back(symbol.id);
         recording->symbols.push_back({symbol.id, name->value, kind, *core, std::move(parameters),
                                       symbol.is_mutable, name->span});
         recording->bindings[name] = symbol.id;
@@ -1579,11 +1614,19 @@ std::shared_ptr<Type> Sema::check_expression(const Expression *expression,
             if (!resolving_callee)
                 log_error("Function values are not supported in the core language");
         } else if (auto core = value_type(type)) {
+            if (core->owns_thread() && !worker_owner_uses.contains(expression)) {
+                log_error("Thread ownership cannot be copied, discarded or passed by value");
+                return nullptr;
+            }
             if (*core == CoreType::Void && !statement_context) {
                 log_error("A void call cannot be used as a value");
                 return nullptr;
             }
             recording->types[expression] = *core;
+            if (current_function && !recording->spawnable_functions.empty()) {
+                if (auto *call = dynamic_cast<const CallExpression *>(expression))
+                    worker_calls[current_function].push_back(call);
+            }
         } else {
             log_error("Unsupported expression type in checked core program");
         }

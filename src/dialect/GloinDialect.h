@@ -22,7 +22,13 @@
 #define GET_OP_CLASSES
 #include "src/dialect/GloinOps.h.inc"
 
+namespace mlir {
+class ModuleOp;
+}
+
 namespace gloin {
+mlir::LogicalResult verifyWorkerSlots(WorkerSlotsOp slots);
+mlir::LogicalResult verifyThreadOwnership(mlir::ModuleOp module);
 // Check exact LLVM-compatible storage, resolving nominal schemas in the owner module.
 bool matchesSourceStorage(mlir::Operation *owner, mlir::Type source, mlir::Type storage);
 // Permit identity or loss of outer pointer/slice capabilities only. Nested

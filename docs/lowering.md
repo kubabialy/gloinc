@@ -253,6 +253,17 @@ this check.
 [lowering.cpp](../src/lowering.cpp) owns the only conversion pass list:
 
 1. For checked executable/JIT input, prune unreachable source functions in GIR.
+   After ownership verification, each reachable worker receives an internal
+   pointer-only entry adapter. The launcher copies evaluated operands into a
+   target-layout frame, and the runtime snapshots that frame before starting
+   the OS thread. The adapter calls the original typed function and stores one
+   completion result. Join waits for termination, copies the result, and frees
+   the record. The ordinary aggregate calling convention preserves padding
+   through the adapter. Fixed arrays retain explicit slot creation, transfer
+   and consumption in GIR. Scope-exit operations require empty slots on normal
+   fallthrough, break, and continue. Function returns check every live array.
+   After the ownership proof, scope markers disappear and indexed operations
+   lower to stack pointer loads and stores. See [worker lowering](../src/worker_lowering.cpp).
 2. Prepare stored repeated arrays as verified GIR fills and simplify proven-safe
    integer constants/identities; preserve the checked CFG and operand effects.
 3. Checked function signatures and calls to their recorded LLVM layouts; remove

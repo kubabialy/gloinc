@@ -80,12 +80,18 @@ class CodeGen {
     struct GenScope {
         std::map<std::string, SymbolInfo> values;
         std::shared_ptr<GenScope> parent;
+        std::vector<mlir::Value> worker_slots;
     };
     std::shared_ptr<GenScope> current_scope;
     std::map<SymbolId, SymbolInfo> checked_values;
     std::map<SymbolId, mlir::func::FuncOp> checked_functions;
-    std::map<const Statement *, mlir::Block *> continue_targets;
-    std::map<const Statement *, mlir::Block *> break_targets;
+    struct LoopTarget {
+        mlir::Block *update;
+        mlir::Block *exit;
+        std::shared_ptr<GenScope> enclosing_scope;
+    };
+    std::map<const Statement *, LoopTarget> active_loops;
+    void end_worker_scopes(const std::shared_ptr<GenScope> &destination);
     void declare_binding(const Identifier *name, mlir::Value value, bool address, mlir::Type type,
                          const std::string &source_type);
     SymbolInfo lookup_binding(const Identifier *name);

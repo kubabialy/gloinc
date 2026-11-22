@@ -1,4 +1,6 @@
 #include "jit_runner.h"
+#include "worker_lowering.h"
+#include "worker_runtime.h"
 #include "compilation_timings.h"
 #include "arena_lowering.h"
 #include "arena_runtime.h"
@@ -84,6 +86,15 @@ mlir::LLVM::LLVMFuncOp validate_entry(mlir::ModuleOp module, Diagnostics &diagno
     }
     // Only explicitly registered output, defer, and memory ABIs can be external.
     for (auto function : module.getOps<mlir::LLVM::LLVMFuncOp>()) {
+        if (function.getName() == gloin::workers::launch_name ||
+            function.getName() == gloin::workers::join_name) {
+            if (!function.isExternal() ||
+                function.getFunctionType() != gloin::workers::runtime_type(module.getContext(), function.getName()) ||
+                function.getCConv() != mlir::LLVM::CConv::C ||
+                function.getLinkage() != mlir::LLVM::Linkage::External)
+                execution_error(diagnostics, function.getLoc(), "Invalid worker runtime ABI");
+            continue;
+        }
         if (auto kind = standard_operation(function.getName().str(), standard_runtime_names)) {
             if (!function.isExternal() ||
                 function.getFunctionType() != standard_runtime_type(*module.getContext(), *kind) ||
@@ -159,7 +170,7 @@ std::string add_entry_adapter(mlir::ModuleOp module, mlir::LLVM::LLVMFuncOp main
 } // namespace
 
 ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::string> &arguments,
-                              const GloinClockSource *clock, CompilationTimings *timings) {
+                              const GloinClockSource *clock, CompilationTimings *timings, uint32_t worker_capacity) {
     auto diagnostics = std::make_shared<Diagnostics>();
     auto failure = [&]() -> ExecutionResult {
         return {std::nullopt, diagnostics, diagnostics->all().back().stage};
@@ -212,6 +223,12 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::str
     {
         (*engine)->registerSymbols([](llvm::orc::MangleAndInterner mangle) {
             llvm::orc::SymbolMap symbols;
+            symbols[mangle("gloin_worker_capacity")] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_worker_capacity), llvm::JITSymbolFlags::Exported);
+            symbols[mangle(gloin::workers::launch_name)] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_worker_launch), llvm::JITSymbolFlags::Exported);
+            symbols[mangle(gloin::workers::join_name)] = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(&gloin_worker_join), llvm::JITSymbolFlags::Exported);
             symbols[mangle(standard_output_symbol)] = llvm::orc::ExecutorSymbolDef(
                 llvm::orc::ExecutorAddr::fromPtr(&standard_output), llvm::JITSymbolFlags::Exported);
             symbols[mangle("malloc")] = llvm::orc::ExecutorSymbolDef(
@@ -386,6 +403,7 @@ ExecutionResult JitRunner::run(mlir::ModuleOp module, const std::vector<std::str
     preparation.stop();
     if (timings)
         timings->finish(true);
+    gloin::workers::Invocation workers(worker_capacity);
     (*packed_entry)(entry_arguments);
     if (diagnostics->has_errors())
         return failure();

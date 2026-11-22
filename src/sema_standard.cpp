@@ -77,7 +77,7 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
         parameters = {byte_pointer, reference("i32")};
     else if (kind == StandardPrimitive::FsStringView)
         parameters = {byte_pointer, get_builtin_type("u64")};
-    else if (kind == StandardPrimitive::ProcessCount)
+    else if (kind == StandardPrimitive::ProcessCount || kind == StandardPrimitive::WorkerCapacity)
         parameters = {};
     else if (kind == StandardPrimitive::ProcessArg || kind == StandardPrimitive::ProcessEnv)
         parameters = {get_builtin_type(kind == StandardPrimitive::ProcessArg ? "u64" : "string"),
@@ -276,6 +276,8 @@ std::shared_ptr<Type> Sema::check_standard_primitive(const CallExpression *call,
         kind == StandardPrimitive::ProcessArg || kind == StandardPrimitive::ProcessEnv ||
         kind == StandardPrimitive::FsDirNext)
         return byte_pointer;
+    if (kind == StandardPrimitive::WorkerCapacity)
+        return get_builtin_type("u32");
     return get_builtin_type(
         (kind == StandardPrimitive::StringLength || kind == StandardPrimitive::ProcessCount ||
          kind == StandardPrimitive::RandomSplitMix64)

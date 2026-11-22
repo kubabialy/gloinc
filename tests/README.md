@@ -8,7 +8,7 @@ not additional test cases. `tests/runtime/arena_test.cpp` is a separate native
 `gloin_arena_test` target, registered with CTest and independent of LLVM. `tests/runtime/standard_test.cpp`
 `tests/runtime/numeric_test.cpp`, `tests/runtime/io_test.cpp`, `tests/runtime/net_test.cpp`, `tests/runtime/tls_test.cpp`, `tests/runtime/context_test.cpp`, `tests/runtime/math_test.cpp`, and `tests/runtime/time_random_test.cpp` comprise the independent `gloin_standard_test` target.
 
-The current source definitions and CTest discovery contain **1290 tests**:
+The current source definitions and CTest discovery contain **1302 tests**:
 
 | Suite | Tests |
 | --- | ---: |
@@ -28,7 +28,7 @@ The current source definitions and CTest discovery contain **1290 tests**:
 | ContinueTest | 8 |
 | BreakTest | 9 |
 | SelectionTest | 7 |
-| LoweringTest | 88 |
+| LoweringTest | 90 |
 | SemaTest | 9 |
 | SemaAsyncTest | 4 |
 | MLIRSetup | 4 |
@@ -45,7 +45,7 @@ The current source definitions and CTest discovery contain **1290 tests**:
 | AsyncTest | 2 |
 | ArrayStringTest | 4 |
 | UnlessTest | 1 |
-| JitRunnerTest | 17 |
+| JitRunnerTest | 18 |
 | CliTest | 35 |
 | StandardModuleTest | 17 |
 | StandardLibraryTest | 26 |
@@ -80,13 +80,14 @@ The current source definitions and CTest discovery contain **1290 tests**:
 | IntegratedExamplesTest | 17 |
 | TimeRandomRuntimeTest | 13 |
 | StandardRuntimeTest | 17 |
+| WorkerRuntimeTest | 1 |
 | ModuleTest | 29 |
 | OrdinaryStructTest | 14 |
 | EnumTest | 3 |
 | PointerTest | 20 |
 | MethodTest | 19 |
 | DeferTest | 24 |
-| CoreAcceptanceTest | 187 |
+| CoreAcceptanceTest | 195 |
 | E2ETest | 31 |
 | ExternalRunnerTest | 8 |
 
@@ -945,7 +946,7 @@ All repository-owned test drivers now run without Python.
 
 | Tests | Follow-up |
 | --- | --- |
-| `AsyncTest.SpawnGeneration`, `SemaAsyncTest.AsyncTypes` | SPEC-040/SPEC-041: legacy syntax is rejected; concurrency contract, canonical fixtures, and runtime remain open. |
+| `AsyncTest.SpawnGeneration`, `SemaAsyncTest.AsyncTypes` | These legacy syntax-only fixtures use the former launch and deferred-handle spellings. Checked OS-worker coverage lives in `WorkerRuntimeTest`, `JitRunnerTest` and `CoreAcceptanceTest`. |
 | `AsyncTest.DeferredFunctionGeneration` | SPEC-040: fixture uses obsolete `let` and an omitted return annotation; replace against the deferred-call contract when defined. |
 | `CodeGenTest.GenerateSpawn` | SPEC-040, SPEC-041: restored lit assertion finds no spawn operation |
 

@@ -266,6 +266,11 @@ std::unique_ptr<Expression> GloinParser::parse_prefix_impl() {
         return std::make_unique<SpawnExpression>(op, parse_expression(70));
     }
     case GLOIN_TOKEN_SPAWN:
+        if (mode == ParseMode::Core) {
+            advance_token();
+            return std::make_unique<SpawnExpression>(GLOIN_TOKEN_SPAWN, parse_expression(70));
+        }
+        [[fallthrough]];
     case GLOIN_TOKEN_AWAIT:
         fail("Reserved legacy syntax is not supported: " + std::string(current_token.literal));
     case GLOIN_TOKEN_CHAR:
@@ -391,7 +396,8 @@ std::unique_ptr<Statement> GloinParser::parse_def_statement_impl() {
     bool spawnable = false, deferred = false;
     if (!is_const && (current_token.type == GLOIN_TOKEN_SPAWNABLE ||
                       current_token.type == GLOIN_TOKEN_DEFERRED)) {
-        require_extended("Concurrency declarations");
+        if (current_token.type == GLOIN_TOKEN_DEFERRED)
+            require_extended("Concurrency declarations");
         spawnable = current_token.type == GLOIN_TOKEN_SPAWNABLE;
         deferred = current_token.type == GLOIN_TOKEN_DEFERRED;
         advance_token();

@@ -124,8 +124,16 @@ void CodeGen::enter_scope() {
     current_scope = new_scope;
 }
 
+void CodeGen::end_worker_scopes(const std::shared_ptr<GenScope> &destination) {
+    for (auto scope = current_scope; scope != destination; scope = scope->parent)
+        for (auto slots : scope->worker_slots)
+            builder.create<gloin::WorkerSlotsEndOp>(location(), slots);
+}
+
 void CodeGen::leave_scope() {
     if (current_scope->parent) {
+        if (builder.getBlock() && !current_scope->worker_slots.empty())
+            end_worker_scopes(current_scope->parent);
         current_scope = current_scope->parent;
     }
 }
@@ -303,6 +311,8 @@ mlir::func::FuncOp CodeGen::declare_function(const FunctionDefinition *func_def)
     }
     auto funcOp = builder.create<mlir::func::FuncOp>(location(), emitted_name, funcType);
     if (checked_data) {
+        if (checked_data->spawnable_functions.contains(checked_binding(func_def->name.get())))
+            funcOp->setAttr("gloin.spawnable", builder.getUnitAttr());
         funcOp->setAttr("gloin.layout_inputs", builder.getArrayAttr(layoutInputs));
         funcOp->setAttr("gloin.layout_results", builder.getArrayAttr(layoutResults));
     }
@@ -326,8 +336,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
         if (checked_data)
             checked_return_type = checked_data->symbols[checked_binding(func_def->name.get())].type;
         current_function_defers.clear();
-        continue_targets.clear();
-        break_targets.clear();
+        active_loops.clear();
         defer_record_types.clear();
         defer_head = {};
         auto funcOp = checked_data ? checked_functions.at(checked_binding(func_def->name.get()))
@@ -441,6 +450,15 @@ void CodeGen::gen_statement(const Statement *stmt) {
                                 : resolve_type(var_decl->type->value);
         }
 
+        if (checked_data) {
+            const auto &source = checked_data->types.at(var_decl->type.get());
+            if (source.is_array() && source.owns_thread()) {
+                auto slots = builder.create<gloin::WorkerSlotsOp>(location(), source_type(source));
+                current_scope->worker_slots.push_back(slots);
+                declare_binding(var_decl->name.get(), slots, false, type, var_decl->type->value);
+                return;
+            }
+        }
         mlir::Value initVal;
         if (var_decl->initializer) {
             initVal = gen_expression(var_decl->initializer.get());
@@ -529,17 +547,19 @@ void CodeGen::gen_statement(const Statement *stmt) {
     } else if (auto *broken = dynamic_cast<const BreakStatement *>(stmt)) {
         if (!checked_data || !checked_data->break_targets.contains(broken))
             fail("break requires a checked loop target");
-        auto target = break_targets.find(checked_data->break_targets.at(broken));
-        if (target == break_targets.end())
+        auto target = active_loops.find(checked_data->break_targets.at(broken));
+        if (target == active_loops.end())
             fail("break target is not an active loop");
-        branch_if_open(target->second);
+        end_worker_scopes(target->second.enclosing_scope);
+        branch_if_open(target->second.exit);
     } else if (auto *continued = dynamic_cast<const ContinueStatement *>(stmt)) {
         if (!checked_data || !checked_data->continue_targets.contains(continued))
             fail("continue requires a checked loop target");
-        auto target = continue_targets.find(checked_data->continue_targets.at(continued));
-        if (target == continue_targets.end())
+        auto target = active_loops.find(checked_data->continue_targets.at(continued));
+        if (target == active_loops.end())
             fail("continue target is not an active loop");
-        branch_if_open(target->second);
+        end_worker_scopes(target->second.enclosing_scope);
+        branch_if_open(target->second.update);
     } else if (auto *block = dynamic_cast<const BlockStatement *>(stmt)) {
         enter_scope();
         for (const auto &s : block->statements) {
@@ -943,6 +963,14 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             return builder.create<mlir::arith::CmpIOp>(location(), mlir::arith::CmpIPredicate::sgt,
                                                        left, right);
     } else if (auto *assign = dynamic_cast<const AssignmentExpression *>(expr)) {
+        if (checked_data && checked_data->worker_slot_stores.contains(assign)) {
+            auto index = checked_data->worker_slot_stores.at(assign);
+            auto slots = gen_expression(index->left.get());
+            auto position = gen_integer_index(index->index.get());
+            auto handle = gen_expression(assign->right.get());
+            builder.create<gloin::WorkerPutOp>(location(), slots, position, handle);
+            return {};
+        }
         if (checked_data)
             if (auto *index = dynamic_cast<const IndexExpression *>(assign->left.get());
                 index && is_packed_storage(checked_data->types.at(index->left.get()))) {
@@ -1039,6 +1067,21 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
         }
         return current;
     } else if (auto *call = dynamic_cast<const CallExpression *>(expr)) {
+        if (checked_data && checked_data->worker_slot_joins.contains(call)) {
+            auto index = checked_data->worker_slot_joins.at(call);
+            auto slots = gen_expression(index->left.get());
+            auto position = gen_integer_index(index->index.get());
+            auto handle = builder.create<gloin::WorkerTakeOp>(
+                location(), source_type(checked_data->types.at(index)), slots, position);
+            return builder.create<gloin::JoinOp>(location(),
+                                                 source_type(checked_data->types.at(call)), handle,
+                                                 mlir::TypeAttr::get(checked_type(call)));
+        }
+        if (checked_data && checked_data->worker_joins.contains(call))
+            return builder.create<gloin::JoinOp>(
+                location(), source_type(checked_data->types.at(call)),
+                gen_expression(checked_data->worker_joins.at(call)),
+                mlir::TypeAttr::get(checked_type(call)));
         if (checked_data && checked_data->integer_conversions.contains(call)) {
             auto input = gen_expression(call->arguments.front().get());
             auto source = checked_data->types.at(call->arguments.front().get()).builtin();
@@ -1183,6 +1226,16 @@ mlir::Value CodeGen::gen_expression_impl(const Expression *expr) {
             fail("Unknown function: " + funcName);
         }
     } else if (auto *spawn = dynamic_cast<const SpawnExpression *>(expr)) {
+        if (checked_data) {
+            const auto &call = static_cast<const CallExpression &>(*spawn->call);
+            llvm::SmallVector<mlir::Value> arguments;
+            for (const auto &arg : call.arguments)
+                arguments.push_back(gen_expression(arg.get()));
+            auto target = checked_functions.at(checked_data->worker_launches.at(spawn));
+            return builder.create<gloin::SpawnOp>(location(),
+                                                  source_type(checked_data->types.at(spawn)),
+                                                  mlir::FlatSymbolRefAttr::get(target), arguments);
+        }
         if (auto *call = dynamic_cast<const CallExpression *>(spawn->call.get())) {
             std::string funcName;
             if (auto *id = dynamic_cast<const Identifier *>(call->function.get())) {
@@ -1842,7 +1895,7 @@ uint64_t CodeGen::packed_element_bits(const ValueType &type) {
 }
 
 mlir::Type CodeGen::lower_type(ValueType value_type) {
-    if (value_type.is_pointer())
+    if (value_type.thread_payload || value_type.is_pointer())
         return mlir::LLVM::LLVMPointerType::get(&context);
     if (value_type.is_array() && value_type.array_order != PackedBitOrder::None) {
         const auto bits = packed_element_bits(*value_type.array_element);
@@ -1912,6 +1965,8 @@ gloin::GloinIntegerType CodeGen::integer_type(CoreType type) {
 }
 
 mlir::Type CodeGen::source_type(ValueType value_type) {
+    if (value_type.thread_payload)
+        return gloin::GloinSpawnType::get(&context, source_type(*value_type.thread_payload));
     if (value_type.is_pointer()) {
         const auto layer = value_type.pointers.front();
         return gloin::GloinPointerType::get(

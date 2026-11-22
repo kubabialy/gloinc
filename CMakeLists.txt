@@ -89,9 +89,11 @@ add_public_tablegen_target(GloinOpsIncGen)
 
 # LLVM-independent runtime. The JIT links it statically; external runners load
 # the shared variant, which is also shipped for emitted LLVM programs.
-add_library(gloin_runtime STATIC src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/packet_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/fs_replace_runtime.cpp src/process_runtime.cpp src/process_limits_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp src/hashmap_runtime.cpp)
-add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/packet_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/fs_replace_runtime.cpp src/process_runtime.cpp src/process_limits_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp src/hashmap_runtime.cpp)
+add_library(gloin_runtime STATIC src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/packet_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/fs_replace_runtime.cpp src/process_runtime.cpp src/process_limits_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp src/hashmap_runtime.cpp src/worker_runtime.cpp)
+add_library(gloin_runtime_shared SHARED src/arena_runtime.cpp src/memory_runtime.cpp src/stdlib_runtime.cpp src/numeric_runtime.cpp src/io_runtime.cpp src/net_runtime.cpp src/packet_runtime.cpp src/tls_runtime.cpp src/context_runtime.cpp src/fs_replace_runtime.cpp src/process_runtime.cpp src/process_limits_runtime.cpp src/math_runtime.cpp src/time_runtime.cpp src/random_runtime.cpp src/hashmap_runtime.cpp src/worker_runtime.cpp)
+find_package(Threads REQUIRED)
 foreach(runtime_target gloin_runtime gloin_runtime_shared)
+    target_link_libraries(${runtime_target} PUBLIC Threads::Threads)
     target_include_directories(${runtime_target} SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fast_float/include")
     target_link_libraries(${runtime_target} PUBLIC OpenSSL::SSL OpenSSL::Crypto)
 endforeach()
@@ -107,6 +109,7 @@ add_library(gloin_frontend STATIC
     src/sema_pointers.cpp
     src/sema_methods.cpp
     src/sema_arena.cpp
+    src/sema_spawnable.cpp
     src/sema_memory.cpp
     src/sema_modules.cpp
     src/sema_standard.cpp
@@ -143,6 +146,9 @@ add_library(gloin_backend STATIC
     src/gir_float_batches.cpp
     src/gir_range_proofs.cpp
     src/dialect/GloinDialect.cpp
+    src/dialect/GloinThreads.cpp
+    src/dialect/GloinWorkerSlots.cpp
+    src/worker_lowering.cpp
     src/jit_runner.cpp
     src/native_output.cpp
 )
@@ -416,7 +422,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     list(APPEND GLOIN_TARGETS gloin_arena_test)
     gtest_discover_tests(gloin_arena_test PROPERTIES TIMEOUT 30)
 
-    add_executable(gloin_standard_test tests/runtime/standard_test.cpp tests/runtime/numeric_test.cpp tests/runtime/io_test.cpp tests/runtime/net_test.cpp tests/runtime/tls_test.cpp tests/runtime/context_test.cpp tests/runtime/math_test.cpp tests/runtime/time_random_test.cpp)
+    add_executable(gloin_standard_test tests/runtime/standard_test.cpp tests/runtime/numeric_test.cpp tests/runtime/io_test.cpp tests/runtime/net_test.cpp tests/runtime/tls_test.cpp tests/runtime/context_test.cpp tests/runtime/math_test.cpp tests/runtime/time_random_test.cpp tests/runtime/worker_test.cpp)
     target_link_libraries(gloin_standard_test PRIVATE gloin_runtime GTest::gtest_main)
     target_include_directories(gloin_standard_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/tests/$<CONFIG>")
     add_dependencies(gloin_standard_test gloin_test_process)
@@ -666,7 +672,7 @@ inline constexpr auto process_fixture = R\"tool($<TARGET_FILE:gloin_test_process
     endif()
 
     # Required supported-language suites; the unfiltered suite still reports deferred failures.
-    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|EndianTest|PackedTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|ContinueTest|BreakTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|VectorLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress|GloinFloatProofSmoke|GloinFloatChainSmoke|GloinFloatBatchSmoke|GloinFloatScheduleSmoke|GloinFloatArraySmoke)\\.")
+    set(GLOIN_CORE_TEST_REGEX "^(LexerTest|DiagnosticsTest|CheckedProgramTest|ParserTest|ScopeTest|VariablesTest|NumericTest|EndianTest|PackedTest|FunctionsTest|OperatorsTest|ControlFlowTest|ForUnlessTest|ContinueTest|BreakTest|SelectionTest|LoweringTest|JitRunnerTest|CliTest|StandardModuleTest|StandardLibraryTest|StringLibraryTest|TextLibraryTest|NumericLibraryTest|IoLibraryTest|NetworkLibraryTest|ContextLibraryTest|MathLibraryTest|TimeRandomLibraryTest|HashmapLibraryTest|VectorLibraryTest|IntegratedExamplesTest|ModuleTest|OrdinaryStructTest|EnumTest|CheckedGenericsTest|ResultTest|PointerTest|MethodTest|DeferTest|ArenaTest|ArenaRuntimeTest|StandardRuntimeTest|WorkerRuntimeTest|NumericRuntimeTest|IoRuntimeTest|NetRuntimeTest|TlsRuntimeTest|ContextRuntimeTest|MathRuntimeTest|TimeRandomRuntimeTest|CoreAcceptanceTest|E2ETest|ExternalRunnerTest|MLIRSetup|TlsClientSmoke|HttpClientSmoke|HttpStreamSmoke|JsonSmoke|GloinFormatterSmoke|GloinToolingSmoke|GloinIntegratedStress|GloinFloatProofSmoke|GloinFloatChainSmoke|GloinFloatBatchSmoke|GloinFloatScheduleSmoke|GloinFloatArraySmoke)\\.")
     add_custom_target(check-core
         COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
             -j 4 --no-tests=error -R "${GLOIN_CORE_TEST_REGEX}" --output-on-failure

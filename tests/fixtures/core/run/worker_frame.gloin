@@ -1,0 +1,62 @@
+import "@strings";
+import "@threads";
+import "@memory";
+
+def packed struct(msb_first) Flags {
+    def count: u3,
+    def rest: u5,
+}
+
+def struct Packet {
+    def tag: Flags,
+    def number: be_u32,
+}
+
+def spawnable echo(packet: Packet, expected: u3) -> result<Packet> {
+    if packet.tag.count != expected { return error("bad count", 37, 9); }
+
+    return packet;
+}
+
+def main() -> i32 {
+    def raw: *u8 = memory.alloc(16, 8);
+    if raw == null { return 1; }
+    defer memory.free(raw);
+
+    def packet: *Packet = memory.place<Packet>(raw, 8, Packet {
+        tag: Flags { count: 5, rest: 0 },
+        number: 0x12345678
+    });
+    if packet == null { return 2; }
+
+    *(raw + 1) = 0xA1;
+    *(raw + 2) = 0xB2;
+    *(raw + 3) = 0xC3;
+
+    def started: result<threads.Thread<Packet>> = spawn echo(*packet, 5);
+    if started.erroneous { return 3; }
+
+    def job: threads.Thread<Packet> = started.value;
+    // Overwrite the original representation after launch.
+    *(raw + 1) = 0;
+    *(raw + 4) = 0;
+
+    def reply: result<Packet> = job.join();
+    if reply.erroneous { return 4; }
+
+    def copy: *Packet = memory.place<Packet>(raw + 8, 8, reply.value);
+    if copy == null { return 5; }
+    if *(raw + 8) != 0xA0 || *(raw + 9) != 0xA1 || *(raw + 10) != 0xB2 || *(raw + 11) != 0xC3 { return 6; }
+    if copy.number != 0x12345678 { return 7; }
+
+    def second: result<threads.Thread<Packet>> = spawn echo(*copy, 2);
+    if second.erroneous { return 8; }
+
+    def other: threads.Thread<Packet> = second.value;
+    def bad: result<Packet>           = other.join();
+
+    if !bad.erroneous { return 9; }
+    if bad.error.code != 37 || bad.error.os_error != 9 || !strings.equal(bad.error.message, "bad count") { return 10; }
+
+    return 42;
+}

@@ -637,7 +637,8 @@ def DeferOp : Gloin_Op<"defer", []> {
 def SpawnOp : Gloin_Op<"spawn", [CallOpInterface]> {
     let summary = "Run a spawnable function in a new thread";
     let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands);
-    let results = (outs GloinSpawn:$handle);
+    let results = (outs GloinResult:$handle);
+    let hasVerifier = 1;
     
     let extraClassDeclaration = [{
         ::mlir::CallInterfaceCallable getCallableForCallee() {
@@ -682,9 +683,35 @@ def SpawnOp : Gloin_Op<"spawn", [CallOpInterface]> {
     }];
 }
 
+def WorkerSlotsOp : Gloin_Op<"worker_slots"> {
+    let summary = "Create private, initially empty fixed worker slots";
+    let results = (outs GloinArray:$slots);
+    let hasVerifier = 1;
+}
+
+def WorkerSlotsEndOp : Gloin_Op<"worker_slots_end"> {
+    let summary = "End the scope of empty worker slots";
+    let arguments = (ins GloinArray:$slots);
+    let hasVerifier = 1;
+}
+
+def WorkerPutOp : Gloin_Op<"worker_put"> {
+    let summary = "Move a fresh launch success into an empty slot";
+    let arguments = (ins GloinArray:$slots, I64:$index, GloinSpawn:$handle);
+    let hasVerifier = 1;
+}
+
+def WorkerTakeOp : Gloin_Op<"worker_take"> {
+    let summary = "Consume a live slot for its immediately following join";
+    let arguments = (ins GloinArray:$slots, I64:$index);
+    let results = (outs GloinSpawn:$handle);
+    let hasVerifier = 1;
+}
+
 def JoinOp : Gloin_Op<"join", []> {
-    let summary = "Join a spawn handle";
-    let arguments = (ins GloinSpawn:$handle);
+    let summary = "Consume one successful worker launch and collect its outcome";
+    let hasVerifier = 1;
+    let arguments = (ins GloinSpawn:$handle, TypeAttr:$layout_type);
     let results = (outs GloinResult:$result); 
     // let assemblyFormat = "$handle attr-dict `:` type($handle) `->` type($result)";
 }

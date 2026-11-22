@@ -93,6 +93,8 @@ inline mlir::LLVM::LLVMFunctionType standard_runtime_type(mlir::MLIRContext &con
     case StandardPrimitive::NetTlsClose:
     case StandardPrimitive::NetTlsServerConfigClose:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer}, false);
+    case StandardPrimitive::WorkerCapacity:
+        return mlir::LLVM::LLVMFunctionType::get(i32, {}, false);
     case StandardPrimitive::TimeMonotonic:
         return mlir::LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false);
     case StandardPrimitive::RandomSplitMix64:

@@ -250,6 +250,7 @@ bool emit_native(mlir::ModuleOp module, const std::string &output, NativeOutput 
     const std::string crypto_arg = GLOIN_OPENSSL_CRYPTO_LIBRARY;
     llvm::SmallVector<llvm::StringRef> args{linker, object_arg, runtime_arg};
 #if defined(__linux__)
+    args.push_back("-pthread");
     args.push_back("-Wl,--as-needed");
 #endif
     args.push_back(ssl_arg);

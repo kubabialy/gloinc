@@ -217,8 +217,7 @@ TEST(DiagnosticsTest, GeneratedExpressionUsesItsOwnSourceLocation) {
 
 TEST(DiagnosticsTest, ReservedLegacyTokensDoNotActivateParserExtensions) {
     mlir::MLIRContext context;
-    for (std::string expression :
-         {"spawn work()", "await work()", "fn", "match", "'a'", "string"}) {
+    for (std::string expression : {"await work()", "fn", "match", "'a'", "string"}) {
         auto result = compile_source("def main() -> i32 { return " + expression + "; }",
                                      "reserved.gloin", context);
         EXPECT_FALSE(result.success()) << expression;

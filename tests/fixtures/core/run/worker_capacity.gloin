@@ -1,0 +1,35 @@
+import "@threads";
+import "@status";
+
+def spawnable identity(number: i32) -> i32 { return number; }
+
+// Recurse on the caller so each stack frame owns one distinct named handle.
+// Even workers that finish immediately occupy a slot until the unwind joins them.
+def fill(depth: i32) -> i32 {
+    if depth > 4 { return -1; }
+
+    def started: result<threads.Thread<i32>> = spawn identity(depth);
+
+    if started.erroneous {
+        if started.error.code == status.WOULD_BLOCK { return depth; }
+
+        return -2;
+    }
+
+    def job: threads.Thread<i32> = started.value;
+    def peak: i32                = fill(depth + 1);
+    def answer: result<i32>      = job.join();
+
+    if answer.erroneous { return -3; }
+    if answer.value != depth { return -4; }
+
+    return peak;
+}
+
+def main() -> i32 {
+    if threads.worker_capacity() != 4 { return 1; }
+    if fill(0) != 4 { return 2; }
+    if fill(0) != 4 { return 3; }
+
+    return 42;
+}

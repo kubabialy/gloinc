@@ -1019,7 +1019,7 @@ TEST_F(CoreAcceptanceTest, RejectIndexNonArray) {
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredSpawn) {
-    rejects("reject/deferred_spawn.gloin", "legacy");
+    rejects("reject/deferred_spawn.gloin", "spawnable");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredAwait) {
@@ -1100,8 +1100,8 @@ TEST_F(CoreAcceptanceTest, RejectDeferredExtern) {
     rejects("reject/deferred_extern.gloin", "top-level function or constant");
 }
 
-TEST_F(CoreAcceptanceTest, RejectDeferredSpawnable) {
-    rejects("reject/deferred_spawnable.gloin", "Concurrency");
+TEST_F(CoreAcceptanceTest, RejectBorrowedWorkerInputs) {
+    rejects("reject/spawnable_borrow.gloin", "parameter can carry borrowed storage");
 }
 
 TEST_F(CoreAcceptanceTest, RejectDeferredDeferred) {
@@ -1205,3 +1205,198 @@ TEST_F(CoreAcceptanceTest, RejectImplicitStandardResult) {
     rejects("reject/standard_result_type.gloin", "Type mismatch");
 }
 TEST_F(CoreAcceptanceTest, TrapFormattingWithFreedArena) { traps("trap/format_freed.gloin"); }
+
+TEST_F(CoreAcceptanceTest, SpawnableDeclarationsAreCheckedOnSynchronousCalls) {
+    const auto file = fixture("run/spawnable.gloin");
+    auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    EXPECT_NE(ir.out.find("gloin.spawnable"), std::string::npos);
+    expect_run(invoke({file}), 42);
+    for (const auto *mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/spawnable";
+        auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+    auto unsafe = source(R"(import "@std";
+        def helper<T>(x: T) -> T { std.println("ambient output"); return x; }
+        def spawnable worker() -> i32 { return helper<i32>(3); })");
+    expect_error(invoke({"--check", unsafe}), 1, "worker -> helper<i32> -> println");
+}
+
+TEST_F(CoreAcceptanceTest, NamedThreadOwnershipFollowsLaunchAndJoinPaths) {
+    const std::string prelude = R"(import "@threads";
+        def spawnable work(n: i32) -> result<i32> {
+            if n < 0 { return error("negative"); }
+            return n;
+        }
+        def main() -> i32 { return collect_worker(true); }
+        def collect_worker(choose: bool) -> i32 {
+            def started: result<threads.Thread<i32>> = spawn work(42);
+        )";
+    const std::string success = "if started.erroneous { return 1; } ";
+    const std::string transfer = "def job: threads.Thread<i32> = started.value; ";
+    const std::string collect = "def answer: result<i32> = job.join(); "
+                                "if answer.erroneous { return 2; } ";
+    const auto file = source(prelude + success + transfer + collect + "return answer.value; }");
+    expect_success(invoke({"--check", file}), "");
+    auto ir = invoke({"--emit-ir", file});
+    ASSERT_EQ(ir.status, 0) << ir.err;
+    EXPECT_NE(ir.out.find("!gloin.result<!gloin.spawn<i32>>"), std::string::npos);
+    EXPECT_NE(ir.out.find("\"gloin.join\""), std::string::npos);
+    expect_run(invoke({file}), 42);
+
+    auto reject = [&](const std::string &body, const std::string &reason) {
+        SCOPED_TRACE(body);
+        expect_error(invoke({"--check", source(prelude + body + "return 0; }")}), 1, reason);
+    };
+    reject(success, "must be joined");
+    reject(success + transfer + "if choose { return 2; } " + collect, "must be joined");
+    reject(success + transfer + "def twin: threads.Thread<i32> = started.value; " + collect,
+           "untransferred handle");
+    reject(success + transfer + collect +
+               "def again: result<i32> = job.join(); "
+               "if again.erroneous { return 3; } ",
+           "already been joined");
+    reject(success + transfer + "def twin: threads.Thread<i32> = job; ", "immutable local");
+    reject("def copy: result<threads.Thread<i32>> = started; ", "initialized by spawn");
+    reject(success + transfer + "while choose { " + collect + " } ", "joined");
+    reject(success + transfer + "defer job.join(); ", "deferred result");
+    reject(success + transfer + "&job; ", "ownership cannot be copied");
+    auto branches =
+        source(prelude + "if !started.erroneous { " + transfer + "if choose { " + collect +
+               "return answer.value; } else { " + collect + "return answer.value; } } return 1; }");
+    expect_success(invoke({"--check", branches}), "");
+
+    const std::string loop = R"(import "@threads";
+        def spawnable work(n: i32) -> i32 { return n; }
+        def main() -> i32 {
+            for def mut i: i32 = 0; i < 4; i = i + 1 {
+                def started: result<threads.Thread<i32>> = spawn work(i);
+                if started.erroneous { break; }
+        )";
+    const std::string finish = " } return 0; }";
+    expect_success(invoke({"--check", source(loop + transfer + collect + "continue;" + finish)}),
+                   "");
+    for (const auto *edge : {"break;", "continue;"})
+        expect_error(invoke({"--check", source(loop + transfer + edge + finish)}), 1,
+                     "must be joined");
+}
+
+TEST_F(CoreAcceptanceTest, ThreadJoinPreservesOrdinaryAndVoidCompletionTypes) {
+    for (const auto &type : {std::string("i32"), std::string("void")}) {
+        const std::string body = type == "void" ? "return;" : "return 7;";
+        const auto program =
+            source("import \"@threads\"; def spawnable work() -> " + type + " { " + body +
+                   " } def main() -> i32 { def r: result<threads.Thread<" + type +
+                   ">> = spawn work(); if r.erroneous { return 1; } def t: threads.Thread<" + type +
+                   "> = r.value; def answer: result<" + type +
+                   "> = t.join(); if answer.erroneous { return 2; } return 0; }");
+        expect_run(invoke({program}), 0);
+    }
+}
+
+TEST_F(CoreAcceptanceTest, WorkerFrameOwnsPackedFieldsPaddingAndFallibleCompletion) {
+    auto program = fixture("run/worker_frame.gloin");
+    expect_run(invoke({program}), 42);
+    for (auto optimization : {"-O0", "-O2"}) {
+        auto executable = directory + "/worker-frame";
+        auto built = invoke_raw({optimization, "-o", executable, program});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+}
+
+TEST_F(CoreAcceptanceTest, AllWorkerSlotsCanBeReusedAfterCapacityFailure) {
+    auto program = fixture("run/worker_capacity.gloin");
+    expect_run(invoke({program}), 42);
+    auto executable = directory + "/worker-capacity";
+    auto built = invoke_raw({"-O2", "-o", executable, program});
+    ASSERT_EQ(built.status, 0) << built.err;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+}
+
+TEST_F(CoreAcceptanceTest, FixedWorkerSlotTransfersOwnEachSuccessfulLaunch) {
+    const std::string prefix = R"(import "@threads";
+        def spawnable work() -> i32 { return 42; }
+        def main() -> i32 {
+            def mut jobs: [threads.Thread<i32>; 2] = zeroed;
+            def started: result<threads.Thread<i32>> = spawn work();
+            if started.erroneous { return 1; }
+        )";
+    const std::string put = "jobs[1] = started.value; ";
+    const std::string join = "def answer: result<i32> = jobs[1].join(); "
+                             "if answer.erroneous { return 2; } ";
+    auto file = source(prefix + put + join + "return answer.value; }");
+    expect_run(invoke({file}), 42);
+    auto executable = directory + "/worker-slot";
+    for (auto mode : {"-O0", "-O2"}) {
+        ASSERT_EQ(invoke_raw({mode, "-o", executable, file}).status, 0);
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+    auto reject = [&](std::string body, const char *reason) {
+        SCOPED_TRACE(body);
+        expect_error(invoke({"--check", source(prefix + body + " return 0; }")}), 1, reason);
+    };
+    reject(put, "must be joined");
+    reject(put + "jobs[0] = jobs[1];", "fresh successful launch");
+    reject(put + "&jobs[1];", "ownership cannot be copied");
+    reject(put + "def copy: [threads.Thread<i32>; 2] = jobs;", "initialized with zeroed");
+    reject(put + "def alias: [const i32] = jobs[0..1];", "ownership cannot be copied");
+    reject(put + "def other: result<i32> = jobs[0].join(); if other.erroneous { return 1; }",
+           "must be live");
+    reject(put + join + "def again: result<i32> = jobs[1].join(); if again.erroneous { return 1; }",
+           "must be live");
+    reject("jobs[2] = started.value;" + join, "in bounds");
+}
+
+TEST_F(CoreAcceptanceTest, CountedWorkerSlotsDrainEverySuccessfulPrefix) {
+    const auto file = fixture("run/worker_slot_batch.gloin");
+    expect_run(invoke({file}), 42);
+    for (auto mode : {"-O0", "-O2"}) {
+        const auto executable = directory + "/worker-batch";
+        auto built = invoke_raw({mode, "-o", executable, file});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
+    }
+
+    auto reject = [&](std::string_view original, std::string_view replacement, const char *reason) {
+        auto program = read(file);
+        auto position = program.find(original);
+        ASSERT_NE(position, std::string::npos) << original;
+        program.replace(position, original.size(), replacement);
+        program += "\ndef clear(n: &i32) -> void { *n = 0; }";
+        SCOPED_TRACE(replacement);
+        expect_error(invoke({"--check", source(program)}), 1, reason);
+    };
+    reject("break;", "return -1;", "must be joined");
+    reject("workers[i] =", "workers[0] =", "overwrite live thread slot");
+    reject("workers[i].join()", "workers[0].join()", "must be live");
+    reject("workers[i] =", "def alias: &i32 = &i; *alias = 0; workers[i] =", "overwrite live thread slot");
+    reject("workers[i] =", "clear(&i); workers[i] =", "provably in bounds");
+    reject("count = count + 1;", "count = count + 0;", "must be joined");
+    reject("i < count;", "i < 4;", "must be live");
+    reject("continue;", "return -1;", "must be joined");
+}
+
+TEST_F(CoreAcceptanceTest, WorkerSlotsMustBeEmptyAtLexicalScopeExits) {
+    const std::string start = R"(import "@threads";
+        def spawnable work() -> void { return; }
+        def main() -> i32 {
+          for def mut i: i32 = 0; i < 2; i = i + 1 {
+            def mut slots: [threads.Thread<void>; 1] = zeroed;
+            def r: result<threads.Thread<void>> = spawn work();
+            if r.erroneous { break; }
+            slots[0] = r.value;
+    )";
+    const std::string join = "def done: result<void> = slots[0].join(); "
+                             "if done.erroneous { return 1; } ";
+    for (auto edge : {"break;", "continue;", ""}) {
+        SCOPED_TRACE(edge);
+        // The loop after the scope never returns. Reject losing a live slot
+        // at the scope boundary itself, independently of function return.
+        auto finish = std::string(edge) + " } while true {} return 0; }";
+        expect_error(invoke({"--check", source(start + finish)}), 1, "worker_slots_end");
+        expect_success(invoke({"--check", source(start + join + finish)}), "");
+    }
+}

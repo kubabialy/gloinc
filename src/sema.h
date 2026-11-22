@@ -191,6 +191,18 @@ struct SliceType : public Type {
     }
 };
 
+struct ThreadHandleType : public Type {
+    std::shared_ptr<Type> payload;
+    explicit ThreadHandleType(std::shared_ptr<Type> payload) : payload(std::move(payload)) {}
+    std::string to_string() const override {
+        return "threads.Thread<" + payload->to_string() + ">";
+    }
+    bool equals(const Type &other) const override {
+        auto *thread = dynamic_cast<const ThreadHandleType *>(&other);
+        return thread && payload->equals(*thread->payload);
+    }
+};
+
 struct ErrorType : public Type {
     std::string to_string() const override { return "error"; }
     bool equals(const Type &other) const override {
@@ -282,6 +294,16 @@ class Sema {
     bool prepare_modules(const std::vector<std::unique_ptr<Statement>> &program);
     void select_module(const SourceModule *module);
     void collect_declarations(const std::vector<std::unique_ptr<Statement>> &program);
+    std::unordered_map<const FunctionDefinition *, std::vector<const CallExpression *>> worker_calls;
+    std::unordered_map<const FunctionDefinition *, std::vector<SymbolId>> worker_locals;
+    std::unordered_map<const FunctionDefinition *, const Node *> worker_pointer_offsets;
+    bool worker_value(const ValueType &type) const;
+    void validate_spawnable_functions();
+    std::optional<size_t> fixed_array_length(std::string_view digits);
+    std::shared_ptr<ThreadHandleType> worker_slot(const IndexExpression *index);
+    std::shared_ptr<Type> worker_binding_type(const VariableDeclaration *decl);
+    std::shared_ptr<Type> check_worker_launch(const SpawnExpression *spawn);
+    std::unordered_set<const Expression *> worker_owner_uses;
     void check_bodies(const std::vector<std::unique_ptr<Statement>> &program);
     Symbol *module_member(const MemberAccessExpression *member, bool &handled, bool diagnose);
 

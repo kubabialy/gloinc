@@ -1,4 +1,5 @@
 #include "lowering.h"
+#include "worker_lowering.h"
 #include "aggregate_representation.h"
 #include "compilation_timings.h"
 #include "dialect/GloinDialect.h"
@@ -2169,7 +2170,8 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                 mlir::isa<mlir::UnrealizedConversionCastOp>(op) ||
                 mlir::isa<
                     gloin::StructDefinitionOp, gloin::FromLayoutOp, gloin::ToLayoutOp,
-                    gloin::AbiCallOp, gloin::SwitchOp, gloin::MatchOp, gloin::MatchYieldOp,
+                    gloin::SpawnOp, gloin::JoinOp, gloin::WorkerSlotsOp, gloin::WorkerPutOp,
+                    gloin::WorkerTakeOp, gloin::WorkerSlotsEndOp, gloin::AbiCallOp, gloin::SwitchOp, gloin::MatchOp, gloin::MatchYieldOp,
                     gloin::CaseTestOp, gloin::ConstantOp, gloin::AssertOp,
                     gloin::ExactIntegerWidenOp, gloin::EndianConvertOp, gloin::IntegerConvertOp,
                     gloin::CheckedIntegerBinaryOp, gloin::CheckedFloatBinaryOp,
@@ -2214,7 +2216,7 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                                       gloin::GloinPackedArrayType, gloin::GloinPackedSlotType,
                                       gloin::GloinPackedSliceType, gloin::GloinEnumType,
                                       gloin::GloinStructType, gloin::GloinStringType,
-                                      gloin::GloinErrorType, gloin::GloinResultType>(type);
+                                      gloin::GloinErrorType, gloin::GloinResultType, gloin::GloinSpawnType>(type);
             if (!legal) {
                 op->emitError(final ? "Type is not legal at LLVM export: "
                                     : "No supported lowering for type: ")
@@ -2275,7 +2277,9 @@ bool verify_module(mlir::ModuleOp module, Diagnostics &diagnostics,
                          diagnostic.str(), source);
         return mlir::success();
     });
-    const auto result = mlir::verify(module);
+    auto result = mlir::verify(module);
+    if (mlir::succeeded(result))
+        result = gloin::verifyThreadOwnership(module);
     if (mlir::failed(result) && !diagnostics.has_errors())
         record_error(diagnostics, DiagnosticStage::Verification, module.getLoc(),
                      "Module verification failed", source);
@@ -2315,6 +2319,8 @@ mlir::OwningOpRef<mlir::ModuleOp> lower_to_llvm(mlir::OwningOpRef<mlir::ModuleOp
     }
     CompilationTimings::Stage lowering(timings, "lowering");
     const bool preserve_padding = (*module)->hasAttr("gloin.checked");
+    if (mlir::failed(gloin::workers::lower_launches(*module)))
+        return {};
     mlir::PassManager passes(module->getContext());
     passes.enableVerifier(true);
     passes.addPass(std::make_unique<PrepareGloinValuesPass>());
