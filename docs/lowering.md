@@ -260,7 +260,9 @@ this check.
    completion result. Join waits for termination, copies the result, and frees
    the record. The ordinary aggregate calling convention preserves padding
    through the adapter. Fixed arrays retain explicit slot creation, transfer
-   and consumption in GIR. After the ownership proof, the indexed operations
+   and consumption in GIR. Scope-exit operations require empty slots on normal
+   fallthrough, break, and continue. Function returns check every live array.
+   After the ownership proof, scope markers disappear and indexed operations
    lower to stack pointer loads and stores. See [worker lowering](../src/worker_lowering.cpp).
 2. Prepare stored repeated arrays as verified GIR fills and simplify proven-safe
    integer constants/identities; preserve the checked CFG and operand effects.

@@ -14,9 +14,15 @@ LogicalResult WorkerSlotsOp::verify() {
         !isa<func::FuncOp>((*this)->getParentOp()) || getSlots().getType().getLength() > 1048576)
         return emitOpError("requires local fixed storage of thread handles");
     for (auto *use : getSlots().getUsers())
-        if (!isa<WorkerPutOp, WorkerTakeOp>(use) ||
+        if (!isa<WorkerPutOp, WorkerTakeOp, WorkerSlotsEndOp>(use) ||
             use->getParentRegion() != (*this)->getParentRegion())
             return use->emitOpError("cannot copy or escape thread handle array storage");
+    return success();
+}
+
+LogicalResult WorkerSlotsEndOp::verify() {
+    if (!getSlots().getDefiningOp<WorkerSlotsOp>())
+        return emitOpError("requires private worker slots");
     return success();
 }
 
@@ -40,6 +46,7 @@ LogicalResult WorkerTakeOp::verify() {
 
 namespace {
 struct SlotState {
+    bool active = false;
     // The transfer site gives diagnostics a witness when branches converge.
     std::map<uint64_t, Operation *> live;
     std::map<Operation *, uint64_t> counters;
@@ -173,10 +180,17 @@ LogicalResult gloin::verifyWorkerSlots(WorkerSlotsOp slots) {
         BlockIntegers integers(state, locals, slots.getSlots().getType().getLength());
         for (auto &op : *block) {
             integers.step(op);
-            if (&op == slots && failed(outstanding(&op, state)))
-                return failure();
+            if (&op == slots ||
+                (isa<WorkerSlotsEndOp>(op) && op.getOperand(0) == slots.getSlots())) {
+                if (failed(outstanding(&op, state)))
+                    return failure();
+                state.active = &op == slots;
+                continue;
+            }
             if (!isa<WorkerPutOp, WorkerTakeOp>(op) || op.getOperand(0) != slots.getSlots())
                 continue;
+            if (!state.active)
+                return op.emitOpError("thread slot used outside its owning scope");
             auto number = integers.get(op.getOperand(1));
             if (!number || number->getLimitedValue() >= slots.getSlots().getType().getLength())
                 return op.emitOpError("thread slot index must be provably in bounds");

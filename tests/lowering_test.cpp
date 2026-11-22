@@ -2587,3 +2587,39 @@ TEST(LoweringTest, WorkerLaunchRejectsIncompatibleRuntimeDataLayout) {
     EXPECT_FALSE(lower_to_llvm(std::move(compiled.module), diagnostics));
     EXPECT_NE(render(diagnostics).find("native runtime data layout"), std::string::npos);
 }
+
+TEST(LoweringTest, WorkerSlotsRejectEscapedStorageAndUseAfterScopeEnd) {
+    for (bool escape : {false, true}) {
+        mlir::MLIRContext context;
+        auto compiled = compile_source(R"(import "@threads";
+            def spawnable work() -> i32 { return 42; }
+            def main() -> i32 {
+                def mut jobs: [threads.Thread<i32>; 1] = zeroed;
+                def started: result<threads.Thread<i32>> = spawn work();
+                if started.erroneous { return 1; }
+                jobs[0] = started.value;
+                def answer: result<i32> = jobs[0].join();
+                if answer.erroneous { return 2; }
+                return answer.value;
+            })",
+                                       "worker-slots.gloin", context);
+        ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+        gloin::WorkerPutOp put;
+        compiled.module->walk([&](gloin::WorkerPutOp op) { put = op; });
+        ASSERT_TRUE(put);
+        mlir::OpBuilder builder(put);
+        if (escape) {
+            auto ptr = mlir::LLVM::LLVMPointerType::get(&context);
+            auto layout = mlir::LLVM::LLVMArrayType::get(ptr, 1);
+            builder.create<gloin::ToLayoutOp>(put.getLoc(), layout, put.getSlots());
+        } else {
+            builder.create<gloin::WorkerSlotsEndOp>(put.getLoc(), put.getSlots());
+        }
+        Diagnostics diagnostics;
+        EXPECT_FALSE(verify_module(*compiled.module, diagnostics));
+        EXPECT_NE(
+            render(diagnostics).find(escape ? "cannot copy or escape" : "outside its owning scope"),
+            std::string::npos)
+            << render(diagnostics);
+    }
+}

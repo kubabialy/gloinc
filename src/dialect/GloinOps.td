@@ -689,6 +689,12 @@ def WorkerSlotsOp : Gloin_Op<"worker_slots"> {
     let hasVerifier = 1;
 }
 
+def WorkerSlotsEndOp : Gloin_Op<"worker_slots_end"> {
+    let summary = "End the scope of empty worker slots";
+    let arguments = (ins GloinArray:$slots);
+    let hasVerifier = 1;
+}
+
 def WorkerPutOp : Gloin_Op<"worker_put"> {
     let summary = "Move a fresh launch success into an empty slot";
     let arguments = (ins GloinArray:$slots, I64:$index, GloinSpawn:$handle);

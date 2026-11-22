@@ -124,8 +124,16 @@ void CodeGen::enter_scope() {
     current_scope = new_scope;
 }
 
+void CodeGen::end_worker_scopes(const std::shared_ptr<GenScope> &destination) {
+    for (auto scope = current_scope; scope != destination; scope = scope->parent)
+        for (auto slots : scope->worker_slots)
+            builder.create<gloin::WorkerSlotsEndOp>(location(), slots);
+}
+
 void CodeGen::leave_scope() {
     if (current_scope->parent) {
+        if (builder.getBlock() && !current_scope->worker_slots.empty())
+            end_worker_scopes(current_scope->parent);
         current_scope = current_scope->parent;
     }
 }
@@ -328,8 +336,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
         if (checked_data)
             checked_return_type = checked_data->symbols[checked_binding(func_def->name.get())].type;
         current_function_defers.clear();
-        continue_targets.clear();
-        break_targets.clear();
+        active_loops.clear();
         defer_record_types.clear();
         defer_head = {};
         auto funcOp = checked_data ? checked_functions.at(checked_binding(func_def->name.get()))
@@ -447,6 +454,7 @@ void CodeGen::gen_statement(const Statement *stmt) {
             const auto &source = checked_data->types.at(var_decl->type.get());
             if (source.is_array() && source.owns_thread()) {
                 auto slots = builder.create<gloin::WorkerSlotsOp>(location(), source_type(source));
+                current_scope->worker_slots.push_back(slots);
                 declare_binding(var_decl->name.get(), slots, false, type, var_decl->type->value);
                 return;
             }
@@ -539,17 +547,19 @@ void CodeGen::gen_statement(const Statement *stmt) {
     } else if (auto *broken = dynamic_cast<const BreakStatement *>(stmt)) {
         if (!checked_data || !checked_data->break_targets.contains(broken))
             fail("break requires a checked loop target");
-        auto target = break_targets.find(checked_data->break_targets.at(broken));
-        if (target == break_targets.end())
+        auto target = active_loops.find(checked_data->break_targets.at(broken));
+        if (target == active_loops.end())
             fail("break target is not an active loop");
-        branch_if_open(target->second);
+        end_worker_scopes(target->second.enclosing_scope);
+        branch_if_open(target->second.exit);
     } else if (auto *continued = dynamic_cast<const ContinueStatement *>(stmt)) {
         if (!checked_data || !checked_data->continue_targets.contains(continued))
             fail("continue requires a checked loop target");
-        auto target = continue_targets.find(checked_data->continue_targets.at(continued));
-        if (target == continue_targets.end())
+        auto target = active_loops.find(checked_data->continue_targets.at(continued));
+        if (target == active_loops.end())
             fail("continue target is not an active loop");
-        branch_if_open(target->second);
+        end_worker_scopes(target->second.enclosing_scope);
+        branch_if_open(target->second.update);
     } else if (auto *block = dynamic_cast<const BlockStatement *>(stmt)) {
         enter_scope();
         for (const auto &s : block->statements) {

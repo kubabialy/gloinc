@@ -1378,3 +1378,25 @@ TEST_F(CoreAcceptanceTest, CountedWorkerSlotsDrainEverySuccessfulPrefix) {
     reject("i < count;", "i < 4;", "must be live");
     reject("continue;", "return -1;", "must be joined");
 }
+
+TEST_F(CoreAcceptanceTest, WorkerSlotsMustBeEmptyAtLexicalScopeExits) {
+    const std::string start = R"(import "@threads";
+        def spawnable work() -> void { return; }
+        def main() -> i32 {
+          for def mut i: i32 = 0; i < 2; i = i + 1 {
+            def mut slots: [threads.Thread<void>; 1] = zeroed;
+            def r: result<threads.Thread<void>> = spawn work();
+            if r.erroneous { break; }
+            slots[0] = r.value;
+    )";
+    const std::string join = "def done: result<void> = slots[0].join(); "
+                             "if done.erroneous { return 1; } ";
+    for (auto edge : {"break;", "continue;", ""}) {
+        SCOPED_TRACE(edge);
+        // The loop after the scope never returns. Reject losing a live slot
+        // at the scope boundary itself, independently of function return.
+        auto finish = std::string(edge) + " } while true {} return 0; }";
+        expect_error(invoke({"--check", source(start + finish)}), 1, "worker_slots_end");
+        expect_success(invoke({"--check", source(start + join + finish)}), "");
+    }
+}

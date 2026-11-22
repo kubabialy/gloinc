@@ -2171,7 +2171,7 @@ bool check_legality(mlir::ModuleOp module, bool final) {
                 mlir::isa<
                     gloin::StructDefinitionOp, gloin::FromLayoutOp, gloin::ToLayoutOp,
                     gloin::SpawnOp, gloin::JoinOp, gloin::WorkerSlotsOp, gloin::WorkerPutOp,
-                    gloin::WorkerTakeOp, gloin::AbiCallOp, gloin::SwitchOp, gloin::MatchOp, gloin::MatchYieldOp,
+                    gloin::WorkerTakeOp, gloin::WorkerSlotsEndOp, gloin::AbiCallOp, gloin::SwitchOp, gloin::MatchOp, gloin::MatchYieldOp,
                     gloin::CaseTestOp, gloin::ConstantOp, gloin::AssertOp,
                     gloin::ExactIntegerWidenOp, gloin::EndianConvertOp, gloin::IntegerConvertOp,
                     gloin::CheckedIntegerBinaryOp, gloin::CheckedFloatBinaryOp,
