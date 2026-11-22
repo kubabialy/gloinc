@@ -585,6 +585,7 @@ std::shared_ptr<FunctionType> Sema::collect_function(const FunctionDefinition *f
     // Keep source functions independent of the defer bookkeeping's native ABI.
     if (recording && !current_module &&
         (sym.name == "malloc" || sym.name == "free" ||
+         sym.name == "gloin_worker_launch" || sym.name == "gloin_worker_join" ||
          arena_operation(sym.name, arena_runtime_names) ||
          memory_operation(sym.name, memory_runtime_names) ||
          standard_operation(sym.name, standard_runtime_names)))

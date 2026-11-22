@@ -6,12 +6,12 @@ follows calls through concrete generic helpers. A helper can borrow a local
 for the duration of its call. Stored borrows, pointer arithmetic, deferred
 captures and unaudited native operations are rejected on worker paths.
 
-With `import "@threads";`, `--check` and `--emit-ir` also accept the named
-`calculate` example below. The verifier follows both launch outcomes through
+With `import "@threads";`, the named `calculate` example below runs in JIT
+and native builds. A successful spawn creates a joinable OS thread. The verifier follows both launch outcomes through
 branches and loops. Every returning success path must transfer the handle once
 and join it once. A worker returning `result<u32>` gives the caller one
-`result<u32>` at join. Native worker execution, fixed arrays of handles,
-generic worker entries and executor scheduling remain under development.
+`result<u32>` at join. Fixed arrays of handles, generic worker entries and executor scheduling
+remain under development.
 [Roadmap](roadmap-0.4.0.md#milestone-1--freeze-the-concurrency-contract-spec-040)
 
 ## Who runs a call?
@@ -52,7 +52,7 @@ path to mutable global state, escaping references or unaudited native code.
 Report the offending chain, for example `work → sample → global counter`.
 
 Each program invocation has a finite worker-slot limit, exposed to the caller
-by `threads.worker_capacity()`. The proposed native/JIT default is four. An
+by `threads.worker_capacity()`. The native/JIT default is four. An
 embedding may set a smaller limit, including zero, before entry. Independent
 JIT invocations have separate budgets. A completed worker keeps its slot until
 collection. A full invocation fails launch with `status.WOULD_BLOCK`. Record
@@ -104,7 +104,7 @@ termination, it must retain the resources and JIT code while resolving it or
 trap on an unrecoverable invariant. Arithmetic and bounds traps in workers
 retain their process-level semantics.
 
-### Four launches, then four joins
+### Four launches, then four joins (proposed array support)
 
 ```gloin
 import "@threads";

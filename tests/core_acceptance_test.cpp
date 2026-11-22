@@ -1244,7 +1244,7 @@ TEST_F(CoreAcceptanceTest, NamedThreadOwnershipFollowsLaunchAndJoinPaths) {
     ASSERT_EQ(ir.status, 0) << ir.err;
     EXPECT_NE(ir.out.find("!gloin.result<!gloin.spawn<i32>>"), std::string::npos);
     EXPECT_NE(ir.out.find("\"gloin.join\""), std::string::npos);
-    expect_error(invoke({"--run", file}), 1, "native worker execution is not implemented");
+    expect_run(invoke({file}), 42);
 
     auto reject = [&](const std::string &body, const std::string &reason) {
         SCOPED_TRACE(body);
@@ -1292,6 +1292,17 @@ TEST_F(CoreAcceptanceTest, ThreadJoinPreservesOrdinaryAndVoidCompletionTypes) {
                    ">> = spawn work(); if r.erroneous { return 1; } def t: threads.Thread<" + type +
                    "> = r.value; def answer: result<" + type +
                    "> = t.join(); if answer.erroneous { return 2; } return 0; }");
-        expect_success(invoke({"--check", program}), "");
+        expect_run(invoke({program}), 0);
+    }
+}
+
+TEST_F(CoreAcceptanceTest, WorkerFrameOwnsPackedFieldsPaddingAndFallibleCompletion) {
+    auto program = fixture("run/worker_frame.gloin");
+    expect_run(invoke({program}), 42);
+    for (auto optimization : {"-O0", "-O2"}) {
+        auto executable = directory + "/worker-frame";
+        auto built = invoke_raw({optimization, "-o", executable, program});
+        ASSERT_EQ(built.status, 0) << built.err;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, {executable}, std::nullopt, {}, 30), 42);
     }
 }

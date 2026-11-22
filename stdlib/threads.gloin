@@ -1,2 +1,1 @@
-// Thread<T> is an opaque checked owner. Named local owners can be inspected
-// through --check and --emit-ir while native worker support is in development.
+// Thread<T> is an opaque checked owner of one joinable OS thread.

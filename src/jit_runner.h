@@ -4,6 +4,7 @@
 #include "diagnostics.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "time_runtime.h"
+#include "worker_runtime.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -29,7 +30,8 @@ class JitRunner {
     static ExecutionResult run(mlir::ModuleOp module,
                                const std::vector<std::string> &arguments = {},
                                const GloinClockSource *clock = nullptr,
-                               CompilationTimings *timings = nullptr);
+                               CompilationTimings *timings = nullptr,
+                               uint32_t worker_capacity = gloin::workers::default_capacity);
 };
 
 #endif // JIT_RUNNER_H
