@@ -2,6 +2,7 @@
 #include "dialect/GloinDialect.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "target_layout.h"
+#include <cstddef>
 
 using namespace mlir;
 
@@ -100,6 +101,12 @@ FailureOr<Adapter> make_adapter(ModuleOp module, func::FuncOp worker, Type paylo
         return failure();
     }
 
+    if (inputSize->alignment > alignof(std::max_align_t) ||
+        outputSize->alignment > alignof(std::max_align_t)) {
+        worker.emitError("worker frame exceeds the native allocator alignment");
+        return failure();
+    }
+
     // A distinct C callback has a pointer-only signature. Its direct Gloin
     // call goes through the same aggregate and endian lowering as a sync call.
     b.setInsertionPointToEnd(module.getBody());
@@ -151,6 +158,12 @@ LogicalResult gloin::workers::lower_launches(ModuleOp module) {
     auto layout = llvm::DataLayout::parse(attr.getValue());
     if (!layout)
         return module.emitError(llvm::toString(layout.takeError()));
+    // The C launcher writes a native receipt and memcpy uses these exact byte sizes.
+    auto host = native_target_layout();
+    if (!host)
+        return module.emitError(llvm::toString(host.takeError()));
+    if (*layout != llvm::DataLayout(host->data_layout))
+        return module.emitError("worker frames require the native runtime data layout");
     OpBuilder b(module.getContext());
     auto ptr = LLVM::LLVMPointerType::get(b.getContext());
     auto string = LLVM::LLVMStructType::getIdentified(b.getContext(), "gloin.string");

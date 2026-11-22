@@ -2568,3 +2568,22 @@ TEST(LoweringTest, ErrorAccessRejectsStorageBeforeSourceBoundary) {
             << render(diagnostics);
     }
 }
+
+TEST(LoweringTest, WorkerLaunchRejectsIncompatibleRuntimeDataLayout) {
+    mlir::MLIRContext context;
+    auto compiled = compile_source(R"(import "@threads";
+        def spawnable noop() -> void { return; }
+        def main() -> i32 {
+            def started: result<threads.Thread<void>> = spawn noop();
+            if started.erroneous { return 1; }
+            def worker: threads.Thread<void> = started.value;
+            def done: result<void> = worker.join();
+            if done.erroneous { return 2; }
+            return 0;
+        })", "worker-layout.gloin", context);
+    ASSERT_TRUE(compiled.success()) << render(*compiled.diagnostics);
+    (*compiled.module)->setAttr("llvm.data_layout", mlir::StringAttr::get(&context, "e-p:32:32"));
+    Diagnostics diagnostics;
+    EXPECT_FALSE(lower_to_llvm(std::move(compiled.module), diagnostics));
+    EXPECT_NE(render(diagnostics).find("native runtime data layout"), std::string::npos);
+}
